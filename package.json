@@ -1,0 +1,111 @@
+{
+  "name": "tywrap",
+  "version": "0.1.0",
+  "description": "TypeScript wrapper for Python libraries with full type safety (EXPERIMENTAL - v0.1.0)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./node": {
+      "import": "./dist/runtime/node.js",
+      "types": "./dist/runtime/node.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "test:node": "node --test test/node/*.test.js",
+    "test:deno": "deno test test/deno/",
+    "test:bun": "bun test test/bun/",
+    "test:coverage": "vitest --coverage",
+    "test:types": "tsd",
+    "lint": "eslint src test --ext .ts,.tsx",
+    "lint:fix": "eslint src test --ext .ts,.tsx --fix",
+    "format": "prettier --write src test",
+    "format:check": "prettier --check src test",
+    "prepare": "npm run build && npm run test:types",
+    "check:node": "node --check dist/index.js",
+    "check:deno": "deno check src/index.ts",
+    "check:bun": "bun run --dry-run src/index.ts",
+    "check:all": "npm run format:check && npm run lint && npm run build && npm run test:types && npm run test",
+    "cli:build": "tsc && node dist/cli.js generate --config tywrap.config.json",
+    "fix:all": "npm run format && npm run lint:fix",
+    "matrix": "node -e \"import('./tools/matrix.js').then(m=>m.run()).catch(e=>{console.error(e);process.exit(1)})\""
+  },
+  "keywords": [
+    "typescript",
+    "python",
+    "bridge",
+    "type-safety",
+    "interop",
+    "pyodide",
+    "ast",
+    "code-generation",
+    "node",
+    "deno",
+    "bun"
+  ],
+  "author": "tywrap contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tywrap/tywrap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tywrap/tywrap/issues"
+  },
+  "homepage": "https://github.com/tywrap/tywrap#readme",
+  "dependencies": {
+    "@babel/parser": "^7.25.6",
+    "@babel/types": "^7.25.6",
+    "tree-sitter": "^0.21.0",
+    "tree-sitter-python": "^0.21.0",
+    "typescript": "^5.6.2",
+    "web-tree-sitter": "^0.21.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.19",
+    "@types/node": "^22.5.4",
+    "@typescript-eslint/eslint-plugin": "^8.5.0",
+    "@typescript-eslint/parser": "^8.5.0",
+    "eslint": "^9.10.0",
+    "eslint-import-resolver-typescript": "^3.6.1",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-security": "^3.0.1",
+    "eslint-plugin-vitest": "^0.5.4",
+    "prettier": "^3.3.3",
+    "rollup": "^4.21.2",
+    "rollup-plugin-typescript2": "^0.36.0",
+    "tsd": "^0.33.0",
+    "vite": "^5.4.5",
+    "vitest": "^2.1.1"
+  },
+  "peerDependencies": {
+    "pyodide": ">=0.28.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "deno": ">=1.46.0",
+    "bun": ">=1.1.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "trustedDependencies": [
+    "pyodide"
+  ],
+  "bin": {
+    "tywrap": "dist/cli.js"
+  }
+}

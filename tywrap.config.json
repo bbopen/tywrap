@@ -1,0 +1,15 @@
+{
+  "pythonModules": {
+    "math": { "runtime": "node", "typeHints": "strict" }
+  },
+  "output": {
+    "dir": "./generated",
+    "format": "esm",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "runtime": {},
+  "performance": { "caching": false, "batching": false, "compression": "none" },
+  "development": { "hotReload": false, "sourceMap": false, "validation": "none" }
+}
+

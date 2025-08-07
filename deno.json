@@ -1,0 +1,42 @@
+{
+  "name": "@tywrap/core",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/runtime/node.ts",
+    "./pyodide": "./src/runtime/pyodide.ts"
+  },
+  "tasks": {
+    "dev": "deno run --watch --allow-read --allow-write --allow-net src/index.ts",
+    "test": "deno test --allow-read --allow-write --allow-net test/",
+    "check": "deno check src/index.ts",
+    "lint": "deno lint src/",
+    "fmt": "deno fmt src/",
+    "build": "deno run --allow-read --allow-write scripts/build.ts"
+  },
+  "imports": {
+    "@std/": "https://deno.land/std@0.224.0/",
+    "@babel/parser": "npm:@babel/parser@^7.25.6",
+    "@babel/types": "npm:@babel/types@^7.25.6"
+  },
+  "compilerOptions": {
+    "lib": ["deno.ns", "dom", "dom.iterable", "es2022"],
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"],
+      "include": ["ban-untagged-todo"]
+    }
+  },
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": true,
+    "proseWrap": "preserve"
+  }
+}

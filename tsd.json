@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "module": "node16",
+    "lib": ["es2022", "dom"],
+    "target": "es2022",
+    "moduleResolution": "node16",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "types": ["node", "bun-types"],
+    "typeRoots": ["./node_modules/@types", "./src/types"]
+  },
+  "typingsFile": "dist/index.d.ts",
+  "testFiles": [
+    "test-d/**/*.test-d.ts"
+  ],
+  "include": [
+    "src/types/global.d.ts"
+  ],
+  "exclude": []
+}

@@ -1,0 +1,40 @@
+# npm publish filter (note: package.json "files" governs what ships)
+# This file is an extra safety net.
+
+# VCS/CI
+.git*
+.github/
+
+# Development and meta
+scripts/
+tools/
+docs/
+test/
+test-d/
+tywrap_ir/
+TYWRAP_IMPLEMENTATION_PLAN.md
+CLAUDE.md
+
+# Caches and local env
+node_modules/
+.tywrap/
+.vite/
+.vitest/
+.rpt2_cache/
+coverage/
+*.tsbuildinfo
+*.log
+
+# Editor/IDE
+.vscode/
+.idea/
+
+# Root configs not needed for the package
+bunfig.toml
+deno.json
+rollup.config.js
+eslint.config.js
+tsd.json
+tsconfig.json
+
+debug_imports.js
