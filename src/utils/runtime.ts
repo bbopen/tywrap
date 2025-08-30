@@ -206,7 +206,33 @@ export const pathUtils = {
    */
   join(...segments: string[]): string {
     if (runtimeInfo.name === 'browser' || !pathModule?.join) {
-      return segments.join('/');
+      const parts: string[] = [];
+      let absolute = false;
+
+      for (const segment of segments) {
+        if (!segment) {
+          continue;
+        }
+        if (segment.startsWith('/')) {
+          absolute = true;
+        }
+        for (const part of segment.split('/')) {
+          if (!part || part === '.') {
+            continue;
+          }
+          if (part === '..') {
+            if (parts.length && parts[parts.length - 1] !== '..') {
+              parts.pop();
+            } else if (!absolute) {
+              parts.push('..');
+            }
+            continue;
+          }
+          parts.push(part);
+        }
+      }
+
+      return `${absolute ? '/' : ''}${parts.join('/')}`;
     }
     return pathModule.join(...segments);
   },
