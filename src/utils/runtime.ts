@@ -21,13 +21,20 @@ interface RuntimeCapabilities {
   fetch: boolean;
 }
 
+let runtimeCache: RuntimeInfo | null = null;
+
 /**
- * Detect the current JavaScript runtime environment
+ * Detect the current JavaScript runtime environment. The result is cached so
+ * subsequent calls avoid repeating environment checks.
  */
 export function detectRuntime(): RuntimeInfo {
+  if (runtimeCache) {
+    return runtimeCache;
+  }
+
   // Deno detection (must come before Node.js check)
   if (typeof Deno !== 'undefined') {
-    return {
+    runtimeCache = {
       name: 'deno',
       version: Deno.version?.deno,
       capabilities: {
@@ -39,11 +46,12 @@ export function detectRuntime(): RuntimeInfo {
         fetch: true,
       },
     };
+    return runtimeCache;
   }
 
   // Bun detection
   if (typeof Bun !== 'undefined') {
-    return {
+    runtimeCache = {
       name: 'bun',
       version: Bun.version,
       capabilities: {
@@ -55,11 +63,12 @@ export function detectRuntime(): RuntimeInfo {
         fetch: true,
       },
     };
+    return runtimeCache;
   }
 
   // Node.js detection
   if (typeof process !== 'undefined' && process.versions?.node) {
-    return {
+    runtimeCache = {
       name: 'node',
       version: process.versions.node,
       capabilities: {
@@ -71,6 +80,7 @@ export function detectRuntime(): RuntimeInfo {
         fetch: typeof fetch !== 'undefined', // Available in Node.js 18+
       },
     };
+    return runtimeCache;
   }
 
   // Browser detection
@@ -82,7 +92,7 @@ export function detectRuntime(): RuntimeInfo {
           ? self.isSecureContext
           : false;
 
-    return {
+    runtimeCache = {
       name: 'browser',
       capabilities: {
         filesystem: false,
@@ -93,9 +103,10 @@ export function detectRuntime(): RuntimeInfo {
         fetch: typeof fetch !== 'undefined',
       },
     };
+    return runtimeCache;
   }
 
-  return {
+  runtimeCache = {
     name: 'unknown',
     capabilities: {
       filesystem: false,
@@ -106,6 +117,7 @@ export function detectRuntime(): RuntimeInfo {
       fetch: false,
     },
   };
+  return runtimeCache;
 }
 
 /**
@@ -169,6 +181,22 @@ export function getBestPythonRuntime(): 'node' | 'pyodide' | 'http' {
   return 'http';
 }
 
+const runtimeInfo = detectRuntime();
+
+interface PathModule {
+  join(...paths: string[]): string;
+  resolve(...paths: string[]): string;
+}
+
+let pathModule: PathModule | null = null;
+if (runtimeInfo.name !== 'browser' && runtimeInfo.name !== 'unknown') {
+  try {
+    pathModule = await import('node:path');
+  } catch {
+    pathModule = null;
+  }
+}
+
 /**
  * Runtime-specific path utilities
  */
@@ -177,45 +205,23 @@ export const pathUtils = {
    * Join paths in a cross-runtime way
    */
   join(...segments: string[]): string {
-    const runtime = detectRuntime();
-
-    if (runtime.name === 'deno') {
-      // Use Deno's std library
-      try {
-        // Dynamic import to avoid build errors
-        return segments.join('/'); // Fallback
-      } catch {
-        return segments.join('/');
-      }
+    if (runtimeInfo.name === 'browser' || !pathModule?.join) {
+      return segments.join('/');
     }
-
-    if (runtime.name === 'node') {
-      // Use Node.js path module
-      try {
-        // Dynamic import for ESM compatibility
-        return segments.join('/'); // Fallback implementation
-      } catch {
-        return segments.join('/');
-      }
-    }
-
-    // Fallback for browser and other runtimes
-    return segments.join('/');
+    return pathModule.join(...segments);
   },
 
   /**
    * Resolve absolute path in a cross-runtime way
    */
-  resolve(path: string): string {
-    const runtime = detectRuntime();
-
-    if (runtime.name === 'browser') {
-      return new URL(path, location.href).href;
+  resolve(...segments: string[]): string {
+    if (runtimeInfo.name === 'browser') {
+      return new URL(segments.join('/'), location.href).href;
     }
-
-    // For server-side runtimes, return as-is for now
-    // Resolution for Node.js/Deno/Bun will be implemented in a future sprint
-    return path;
+    if (pathModule?.resolve) {
+      return pathModule.resolve(...segments);
+    }
+    return segments.join('/');
   },
 };
 
