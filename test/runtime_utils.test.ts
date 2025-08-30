@@ -8,8 +8,8 @@ describe('runtime utilities', () => {
     expect(second).toBe(first);
   });
 
-  it('normalizes joined paths', () => {
-    const joined = pathUtils.join('/foo', '.', 'bar');
+  it('normalizes joined paths', async () => {
+    const joined = await pathUtils.join('/foo', '.', 'bar');
     expect(joined.includes('/./')).toBe(false);
     expect(joined.endsWith('/foo/bar')).toBe(true);
   });

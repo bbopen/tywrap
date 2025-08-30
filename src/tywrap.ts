@@ -101,7 +101,7 @@ export async function generate(
         await modFs.mkdir(cacheDir, { recursive: true });
       } catch {}
       try {
-        const cached = await fsUtils.readFile(pathUtils.join(cacheDir, cacheKey));
+        const cached = await fsUtils.readFile(await pathUtils.join(cacheDir, cacheKey));
         ir = JSON.parse(cached);
       } catch {
         ir = null;
@@ -113,7 +113,7 @@ export async function generate(
       // Basic warning when stderr occurred is handled inside fetch; here we simply note miss
       if (ir && caching && fsUtils.isAvailable()) {
         try {
-          await fsUtils.writeFile(pathUtils.join(cacheDir, cacheKey), JSON.stringify(ir));
+          await fsUtils.writeFile(await pathUtils.join(cacheDir, cacheKey), JSON.stringify(ir));
         } catch {}
       }
     }
@@ -130,13 +130,13 @@ export async function generate(
 
     // Write file
     const baseName = moduleModel.name || 'module';
-    const outPath = pathUtils.join(outputDir, `${baseName}.generated.ts`);
+    const outPath = await pathUtils.join(outputDir, `${baseName}.generated.ts`);
     await fsUtils.writeFile(outPath, gen.typescript);
     written.push(outPath);
 
     // Optional .d.ts emission (header-only declarations mirroring exports)
     if (options.output?.declaration) {
-      const dtsPath = pathUtils.join(outputDir, `${baseName}.generated.d.ts`);
+      const dtsPath = await pathUtils.join(outputDir, `${baseName}.generated.d.ts`);
       const dts = renderDts(gen.typescript);
       await fsUtils.writeFile(dtsPath, dts);
       written.push(dtsPath);
@@ -144,7 +144,7 @@ export async function generate(
 
     // Optional source map emission (placeholder mapping for now)
     if (options.output?.sourceMap) {
-      const mapPath = pathUtils.join(outputDir, `${baseName}.generated.ts.map`);
+      const mapPath = await pathUtils.join(outputDir, `${baseName}.generated.ts.map`);
       const map = renderSourceMapPlaceholder(moduleModel.name);
       await fsUtils.writeFile(mapPath, map);
       written.push(mapPath);
@@ -162,9 +162,9 @@ export async function generate(
       );
       // Write JSON report
       try {
-        const reportsDir = pathUtils.join('.tywrap', 'reports');
+        const reportsDir = await pathUtils.join('.tywrap', 'reports');
         await fsUtils.writeFile(
-          pathUtils.join(reportsDir, `${baseName}.json`),
+          await pathUtils.join(reportsDir, `${baseName}.json`),
           JSON.stringify({
             module: baseName,
             unknowns: Object.fromEntries(entries),
@@ -197,7 +197,7 @@ async function fetchPythonIr(moduleName: string, pythonPath: string): Promise<un
     ]);
     if (result.code !== 0) {
       // Fallback to invoking local __main__.py
-      const localMain = pathUtils.join(process.cwd(), 'tywrap_ir', 'tywrap_ir', '__main__.py');
+      const localMain = await pathUtils.join(process.cwd(), 'tywrap_ir', 'tywrap_ir', '__main__.py');
       const fallback = await processUtils.exec(pythonPath, [
         localMain,
         '--module',

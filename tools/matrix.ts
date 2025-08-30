@@ -26,8 +26,8 @@ const PACKAGES: readonly MatrixPackage[] = [
 
 async function ensureVenv(venvDir: string): Promise<string> {
   const python = 'python3';
-  const binDir = pathUtils.join(venvDir, 'bin');
-  const pythonBin = pathUtils.join(binDir, 'python');
+  const binDir = await pathUtils.join(venvDir, 'bin');
+  const pythonBin = await pathUtils.join(binDir, 'python');
   try {
     // Try a quick version check to see if venv exists
     const res = await processUtils.exec(pythonBin, ['-V']);
@@ -36,7 +36,7 @@ async function ensureVenv(venvDir: string): Promise<string> {
     }
   } catch {}
 
-  await fsUtils.writeFile(pathUtils.join(venvDir, '.placeholder'), '');
+  await fsUtils.writeFile(await pathUtils.join(venvDir, '.placeholder'), '');
   const create = await processUtils.exec(python, ['-m', 'venv', venvDir]);
   if (create.code !== 0) {
     throw new Error(`Failed to create venv: ${create.stderr}`);
@@ -70,7 +70,7 @@ async function generateForPackage(pkg: MatrixPackage, pythonBin: string): Promis
     runtime: { node: { pythonPath: pythonBin } },
   } as const;
 
-  const tmpConfigPath = pathUtils.join('.tywrap', `matrix.${name}.json`);
+  const tmpConfigPath = await pathUtils.join('.tywrap', `matrix.${name}.json`);
   const configText = JSON.stringify(config, null, 2);
   await fsUtils.writeFile(tmpConfigPath, configText);
 
@@ -87,7 +87,7 @@ async function generateForPackage(pkg: MatrixPackage, pythonBin: string): Promis
 }
 
 export async function run(): Promise<void> {
-  const venvDir = pathUtils.join('.tywrap', 'venv');
+  const venvDir = await pathUtils.join('.tywrap', 'venv');
   const pythonBin = await ensureVenv(venvDir);
   // Ensure tywrap_ir is available in the venv environment via PYTHONPATH set by processUtils
 

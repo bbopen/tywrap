@@ -189,12 +189,22 @@ interface PathModule {
 }
 
 let pathModule: PathModule | null = null;
-if (runtimeInfo.name !== 'browser' && runtimeInfo.name !== 'unknown') {
-  try {
-    pathModule = await import('node:path');
-  } catch {
-    pathModule = null;
+let pathModulePromise: Promise<PathModule | null> | null = null;
+
+async function loadPathModule(): Promise<PathModule | null> {
+  if (pathModule) {
+    return pathModule;
   }
+  if (runtimeInfo.name === 'browser' || runtimeInfo.name === 'unknown') {
+    return null;
+  }
+  pathModulePromise ??= import('node:path')
+    .then(mod => {
+      pathModule = mod;
+      return mod;
+    })
+    .catch(() => null);
+  return pathModulePromise;
 }
 
 /**
@@ -204,22 +214,27 @@ export const pathUtils = {
   /**
    * Join paths in a cross-runtime way
    */
-  join(...segments: string[]): string {
-    if (runtimeInfo.name === 'browser' || !pathModule?.join) {
+  async join(...segments: string[]): Promise<string> {
+    if (runtimeInfo.name === 'browser') {
       return segments.join('/');
     }
-    return pathModule.join(...segments);
+    const mod = await loadPathModule();
+    if (mod?.join) {
+      return mod.join(...segments);
+    }
+    return segments.join('/');
   },
 
   /**
    * Resolve absolute path in a cross-runtime way
    */
-  resolve(...segments: string[]): string {
+  async resolve(...segments: string[]): Promise<string> {
     if (runtimeInfo.name === 'browser') {
       return new URL(segments.join('/'), location.href).href;
     }
-    if (pathModule?.resolve) {
-      return pathModule.resolve(...segments);
+    const mod = await loadPathModule();
+    if (mod?.resolve) {
+      return mod.resolve(...segments);
     }
     return segments.join('/');
   },
@@ -357,9 +372,9 @@ export const processUtils = {
 
     if (runtime.name === 'node') {
       const { spawn } = await import('child_process');
+      const extraPyPath = await pathUtils.join(process.cwd(), 'tywrap_ir');
 
       return new Promise((resolve, reject) => {
-        const extraPyPath = pathUtils.join(process.cwd(), 'tywrap_ir');
         const env = {
           ...process.env,
           PYTHONPATH: `${extraPyPath}${process.env.PYTHONPATH ? `:${process.env.PYTHONPATH}` : ''}`,

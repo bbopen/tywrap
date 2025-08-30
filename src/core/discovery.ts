@@ -104,8 +104,8 @@ export class ModuleDiscovery {
 
     for (const searchPath of searchPaths) {
       const candidates = [
-        pathUtils.join(searchPath, `${moduleName}.py`),
-        pathUtils.join(searchPath, moduleName, '__init__.py'),
+        await pathUtils.join(searchPath, `${moduleName}.py`),
+        await pathUtils.join(searchPath, moduleName, '__init__.py'),
       ];
 
       for (const candidate of candidates) {
@@ -275,8 +275,8 @@ export class ModuleDiscovery {
     // Add virtual environment paths
     if (this.options.virtualEnv) {
       paths.push(
-        pathUtils.join(this.options.virtualEnv, 'lib', 'python*', 'site-packages'),
-        pathUtils.join(this.options.virtualEnv, 'Lib', 'site-packages') // Windows
+        await pathUtils.join(this.options.virtualEnv, 'lib', 'python*', 'site-packages'),
+        await pathUtils.join(this.options.virtualEnv, 'Lib', 'site-packages') // Windows
       );
     }
 
