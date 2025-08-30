@@ -186,6 +186,9 @@ const runtimeInfo = detectRuntime();
 interface PathModule {
   join(...paths: string[]): string;
   resolve(...paths: string[]): string;
+  posix?: {
+    join(...paths: string[]): string;
+  };
 }
 
 let pathModule: PathModule | null = null;
@@ -205,10 +208,16 @@ export const pathUtils = {
    * Join paths in a cross-runtime way
    */
   join(...segments: string[]): string {
-    if (runtimeInfo.name === 'browser' || !pathModule?.join) {
-      return segments.join('/');
+    if (runtimeInfo.name === 'browser' || !pathModule) {
+      return segments.join('/').replace(/\\/g, '/');
     }
-    return pathModule.join(...segments);
+    if (pathModule.posix?.join) {
+      return pathModule.posix.join(...segments);
+    }
+    if (pathModule.join) {
+      return pathModule.join(...segments).replace(/\\/g, '/');
+    }
+    return segments.join('/').replace(/\\/g, '/');
   },
 
   /**
