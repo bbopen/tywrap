@@ -21,6 +21,8 @@ import type {
   FunctionSignature,
 } from '../types/index.js';
 
+import { globalCache } from '../utils/cache.js';
+
 export class PyAnalyzer {
   private parser: Parser;
   private initialized = false;
@@ -46,11 +48,18 @@ export class PyAnalyzer {
   }
 
   /**
-   * Analyze Python module source code and extract structure
+   * Analyze Python module source code and extract structure with caching
    */
   async analyzePythonModule(source: string, modulePath?: string): Promise<AnalysisResult> {
     await this.initialize();
 
+    // Check cache first
+    const cached = await globalCache.getCachedAnalysis(source, modulePath || 'unknown');
+    if (cached) {
+      return cached;
+    }
+
+    const startTime = performance.now();
     const errors: AnalysisError[] = [];
     const warnings: AnalysisWarning[] = [];
     const dependencies: string[] = [];
@@ -85,13 +94,19 @@ export class PyAnalyzer {
         exports: this.extractExports(rootNode),
       };
 
-      return {
+      const result = {
         module,
         errors,
         warnings,
         dependencies,
         statistics,
       };
+
+      // Cache the successful result
+      const computeTime = performance.now() - startTime;
+      await globalCache.setCachedAnalysis(source, modulePath || 'unknown', result, computeTime);
+
+      return result;
     } catch (error) {
       errors.push({
         type: 'syntax',

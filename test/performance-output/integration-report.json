@@ -1,0 +1,193 @@
+{
+  "timestamp": "2025-08-30T21:38:52.868Z",
+  "summary": {
+    "totalOperations": 10,
+    "totalTime": 6216.1064989999995,
+    "totalMemoryDelta": 7554016,
+    "averageTime": 621.6106499,
+    "peakMemoryDelta": 3919320
+  },
+  "metrics": [
+    {
+      "operation": "analyze_small_modules",
+      "duration": 50.03620799999999,
+      "memoryBefore": 14339912,
+      "memoryAfter": 17518304,
+      "memoryDelta": 3178392,
+      "cacheHits": 5,
+      "cacheSize": 38860,
+      "throughput": 99.92763640282256
+    },
+    {
+      "operation": "analyze_cache_miss",
+      "duration": 3.4389580000000706,
+      "memoryBefore": 17658168,
+      "memoryAfter": 18797128,
+      "memoryDelta": 1138960,
+      "cacheHits": 1,
+      "cacheSize": 7772
+    },
+    {
+      "operation": "analyze_cache_hit",
+      "duration": 0.055749999999989086,
+      "memoryBefore": 18801056,
+      "memoryAfter": 18808992,
+      "memoryDelta": 7936,
+      "cacheHits": 0,
+      "cacheSize": 7772
+    },
+    {
+      "operation": "analyze_large_module",
+      "duration": 0.67674999999997,
+      "memoryBefore": 19192256,
+      "memoryAfter": 19388472,
+      "memoryDelta": 196216,
+      "cacheHits": 0,
+      "cacheSize": 0
+    },
+    {
+      "operation": "generate_wrappers",
+      "duration": 11.254207999999949,
+      "memoryBefore": 16498920,
+      "memoryAfter": 16873704,
+      "memoryDelta": 374784,
+      "cacheHits": 3,
+      "cacheSize": 30651,
+      "throughput": 266.56695877666505
+    },
+    {
+      "operation": "optimize_bundles",
+      "duration": 2.5933749999999236,
+      "memoryBefore": 19177128,
+      "memoryAfter": 19625280,
+      "memoryDelta": 448152,
+      "cacheHits": 4,
+      "cacheSize": 20978
+    },
+    {
+      "operation": "parallel_analysis",
+      "duration": 2034.520916,
+      "memoryBefore": 20785528,
+      "memoryAfter": 22392520,
+      "memoryDelta": 1606992,
+      "cacheHits": 0,
+      "cacheSize": 0
+    },
+    {
+      "operation": "sequential_analysis",
+      "duration": 20.47149999999965,
+      "memoryBefore": 22576472,
+      "memoryAfter": 22250328,
+      "memoryDelta": -326144,
+      "cacheHits": 6,
+      "cacheSize": 46632
+    },
+    {
+      "operation": "parallel_analysis_comparison",
+      "duration": 2040.6169590000004,
+      "memoryBefore": 22263944,
+      "memoryAfter": 19273352,
+      "memoryDelta": -2990592,
+      "cacheHits": 0,
+      "cacheSize": 46632
+    },
+    {
+      "operation": "full_pipeline",
+      "duration": 2052.4418749999995,
+      "memoryBefore": 23229128,
+      "memoryAfter": 27148448,
+      "memoryDelta": 3919320,
+      "cacheHits": 2,
+      "cacheSize": 544,
+      "throughput": 1.9488980656273158
+    }
+  ],
+  "cacheStats": {
+    "totalEntries": 3,
+    "totalSize": 23304,
+    "hitRate": 0.6666666666666666,
+    "averageComputeTime": 2.0670520000000274,
+    "topKeys": [
+      {
+        "key": "b93eb636219ae7bb",
+        "hitCount": 4,
+        "size": 7768
+      },
+      {
+        "key": "3554a787d052213b",
+        "hitCount": 4,
+        "size": 7768
+      },
+      {
+        "key": "b3382d6d96e7125a",
+        "hitCount": 4,
+        "size": 7768
+      }
+    ],
+    "memoryUsage": 34235816
+  },
+  "memoryReport": {
+    "summary": {
+      "duration": 6338,
+      "totalOperations": 0,
+      "peakMemory": 34075416,
+      "averageMemory": 22759440,
+      "memoryGrowth": 19813400,
+      "gcEfficiency": 0
+    },
+    "leakAnalysis": {
+      "detected": true,
+      "severity": "medium",
+      "growthRate": 3126128.11612496,
+      "suspiciousOperations": [],
+      "recommendations": [
+        "Memory leak detected - investigate resource cleanup in your code",
+        "Enable garbage collection with --expose-gc for better measurements",
+        "Review cache expiration policies",
+        "Check for retained references to large objects",
+        "Monitor subprocess memory usage in Python bridge"
+      ],
+      "snapshots": [
+        {
+          "timestamp": 1756589926529,
+          "heapUsed": 14262016,
+          "heapTotal": 21757952,
+          "external": 3785664,
+          "rss": 75415552,
+          "arrayBuffers": 125049,
+          "gcCount": 0,
+          "operation": "monitoring_start"
+        },
+        {
+          "timestamp": 1756589931529,
+          "heapUsed": 19940888,
+          "heapTotal": 53886976,
+          "external": 3806914,
+          "rss": 500039680,
+          "arrayBuffers": 135311,
+          "gcCount": 0,
+          "operation": "periodic"
+        },
+        {
+          "timestamp": 1756589932867,
+          "heapUsed": 34075416,
+          "heapTotal": 54886400,
+          "external": 4549971,
+          "rss": 450723840,
+          "arrayBuffers": 617824,
+          "gcCount": 0,
+          "operation": "monitoring_stop"
+        }
+      ]
+    },
+    "operationMetrics": {},
+    "recommendations": [
+      "Low GC efficiency - may indicate memory fragmentation or retained references",
+      "Memory leak detected - investigate resource cleanup in your code",
+      "Enable garbage collection with --expose-gc for better measurements",
+      "Review cache expiration policies",
+      "Check for retained references to large objects",
+      "Monitor subprocess memory usage in Python bridge"
+    ]
+  }
+}

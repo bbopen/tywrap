@@ -26,7 +26,7 @@ interface RuntimeCapabilities {
  */
 export function detectRuntime(): RuntimeInfo {
   // Deno detection (must come before Node.js check)
-  if (typeof Deno !== 'undefined') {
+  if (typeof Deno !== 'undefined' && Deno !== null) {
     return {
       name: 'deno',
       version: Deno.version?.deno,
@@ -42,7 +42,7 @@ export function detectRuntime(): RuntimeInfo {
   }
 
   // Bun detection
-  if (typeof Bun !== 'undefined') {
+  if (typeof Bun !== 'undefined' && Bun !== null) {
     return {
       name: 'bun',
       version: Bun.version,
@@ -183,9 +183,11 @@ export const pathUtils = {
       // Use Deno's std library
       try {
         // Dynamic import to avoid build errors
-        return segments.join('/'); // Fallback
+        const joined = segments.filter(Boolean).join('/').replace(/\/+/g, '/');
+        return joined;
       } catch {
-        return segments.join('/');
+        const joined = segments.filter(Boolean).join('/').replace(/\/+/g, '/');
+        return joined;
       }
     }
 
@@ -193,14 +195,22 @@ export const pathUtils = {
       // Use Node.js path module
       try {
         // Dynamic import for ESM compatibility
-        return segments.join('/'); // Fallback implementation
+        const joined = segments.filter(Boolean).join('/').replace(/\/+/g, '/');
+        return joined;
       } catch {
-        return segments.join('/');
+        const joined = segments.filter(Boolean).join('/').replace(/\/+/g, '/');
+        return joined;
       }
     }
 
     // Fallback for browser and other runtimes
-    return segments.join('/');
+    // Normalize the path: remove empty segments and handle multiple slashes
+    const joined = segments
+      .filter(Boolean)
+      .join('/')
+      .replace(/\/+/g, '/'); // Replace multiple slashes with single slash
+    
+    return joined;
   },
 
   /**

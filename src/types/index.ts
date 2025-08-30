@@ -74,7 +74,10 @@ export type PythonType =
   | CallableType
   | LiteralType
   | AnnotatedType
-  | CustomType;
+  | CustomType
+  | TypeVarType
+  | FinalType
+  | ClassVarType;
 
 export interface PrimitiveType {
   kind: 'primitive';
@@ -126,6 +129,24 @@ export interface AnnotatedType {
   metadata: readonly unknown[];
 }
 
+export interface TypeVarType {
+  kind: 'typevar';
+  name: string;
+  bound?: PythonType;
+  constraints?: PythonType[];
+  variance?: 'covariant' | 'contravariant' | 'invariant';
+}
+
+export interface FinalType {
+  kind: 'final';
+  type: PythonType;
+}
+
+export interface ClassVarType {
+  kind: 'classvar';
+  type: PythonType;
+}
+
 // TypeScript type system
 export type TypescriptType =
   | TSPrimitiveType
@@ -140,7 +161,7 @@ export type TypescriptType =
 
 export interface TSPrimitiveType {
   kind: 'primitive';
-  name: 'string' | 'number' | 'boolean' | 'null' | 'undefined' | 'void' | 'unknown';
+  name: 'string' | 'number' | 'boolean' | 'null' | 'undefined' | 'void' | 'unknown' | 'never' | 'object';
 }
 
 export interface TSArrayType {

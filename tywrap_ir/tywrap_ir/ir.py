@@ -52,11 +52,28 @@ class IRClass:
 
 
 @dataclass
+class IRConstant:
+    name: str
+    annotation: str | None
+    value_repr: str | None
+    is_final: bool
+
+
+@dataclass
+class IRTypeAlias:
+    name: str
+    definition: str
+    is_generic: bool
+
+
+@dataclass
 class IRModule:
     ir_version: str
     module: str
     functions: List[IRFunction]
     classes: List[IRClass]
+    constants: List[IRConstant]
+    type_aliases: List[IRTypeAlias]
     metadata: Dict[str, Any]
     warnings: List[str]
 
@@ -67,7 +84,18 @@ def _stringify_annotation(annotation: Any) -> Optional[str]:
     if annotation is inspect._empty:  # type: ignore[attr-defined]
         return None
     try:
-        return str(annotation)
+        # Handle forward references more elegantly
+        str_repr = str(annotation)
+        
+        # Clean up class references to show just the class name
+        if str_repr.startswith("<class '") and str_repr.endswith("'>"):
+            # Extract class name from <class 'module.ClassName'>
+            class_path = str_repr[8:-2]  # Remove <class ' and '>
+            if '.' in class_path:
+                return class_path.split('.')[-1]  # Just the class name
+            return class_path
+        
+        return str_repr
     except Exception:
         return None
 
@@ -81,6 +109,101 @@ def _param_kind_to_str(kind: inspect._ParameterKind) -> str:
         inspect.Parameter.VAR_KEYWORD: "VAR_KEYWORD",
     }
     return mapping.get(kind, str(kind))
+
+
+def _extract_constants(module: Any, module_name: str, include_private: bool) -> List[IRConstant]:
+    """Extract module-level constants and Final variables."""
+    constants: List[IRConstant] = []
+    
+    # Check module annotations for type hints
+    annotations = getattr(module, '__annotations__', {})
+    
+    for name in dir(module):
+        if not include_private and name.startswith("_"):
+            continue
+            
+        try:
+            value = getattr(module, name)
+        except Exception:
+            continue
+            
+        # Skip functions, classes, modules, and other non-constant items
+        if (inspect.isfunction(value) or inspect.isclass(value) or 
+            inspect.ismodule(value) or callable(value)):
+            continue
+            
+        # Check if it's a constant (uppercase naming convention or Final)
+        is_constant = name.isupper() or name in annotations
+        
+        if is_constant:
+            annotation = annotations.get(name)
+            annotation_str = _stringify_annotation(annotation) if annotation else None
+            
+            # Check if it's Final
+            is_final = False
+            if annotation_str and ('Final[' in annotation_str or annotation_str == 'Final'):
+                is_final = True
+            
+            # Get string representation of value (truncated for large objects)
+            try:
+                value_repr = repr(value)
+                if len(value_repr) > 200:
+                    value_repr = value_repr[:197] + "..."
+            except Exception:
+                value_repr = "<unrepresentable>"
+            
+            constants.append(IRConstant(
+                name=name,
+                annotation=annotation_str,
+                value_repr=value_repr,
+                is_final=is_final
+            ))
+    
+    return constants
+
+
+def _extract_type_aliases(module: Any, module_name: str, include_private: bool) -> List[IRTypeAlias]:
+    """Extract type aliases from module."""
+    type_aliases: List[IRTypeAlias] = []
+    
+    # Check module annotations for type aliases
+    annotations = getattr(module, '__annotations__', {})
+    
+    for name, annotation in annotations.items():
+        if not include_private and name.startswith("_"):
+            continue
+            
+        try:
+            value = getattr(module, name, None)
+        except Exception:
+            continue
+            
+        # Type aliases are typically annotated but check for specific patterns
+        annotation_str = _stringify_annotation(annotation)
+        
+        # Check if it's a type alias (has TypeAlias annotation or follows patterns)
+        is_type_alias = (
+            annotation_str and ('TypeAlias' in annotation_str or 
+                              'typing.Union' in annotation_str or
+                              'typing.Optional' in annotation_str or
+                              'typing.List' in annotation_str or
+                              'typing.Dict' in annotation_str or
+                              '|' in annotation_str)  # Modern union syntax
+        )
+        
+        if is_type_alias:
+            # Check if it's generic (contains type parameters)
+            is_generic = bool(annotation_str and any(
+                marker in annotation_str for marker in ['[', '~', 'TypeVar', 'Generic']
+            ))
+            
+            type_aliases.append(IRTypeAlias(
+                name=name,
+                definition=annotation_str or str(annotation),
+                is_generic=is_generic
+            ))
+    
+    return type_aliases
 
 
 def _extract_function(obj: Any, qualname: str) -> Optional[IRFunction]:
@@ -289,6 +412,10 @@ def extract_module_ir(
     functions: List[IRFunction] = []
     classes: List[IRClass] = []
     warnings: List[str] = []
+    
+    # Extract constants and type aliases
+    constants = _extract_constants(module, module_name, include_private)
+    type_aliases = _extract_type_aliases(module, module_name, include_private)
 
     for name in dir(module):
         try:
@@ -313,6 +440,8 @@ def extract_module_ir(
         module=module_name,
         functions=functions,
         classes=classes,
+        constants=constants,
+        type_aliases=type_aliases,
         metadata=_collect_metadata(module_name, ir_version),
         warnings=warnings,
     )

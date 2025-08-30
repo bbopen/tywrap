@@ -11,6 +11,7 @@ import type {
 } from '../types/index.js';
 
 import { TypeMapper } from './mapper.js';
+import { globalCache } from '../utils/cache.js';
 
 export class CodeGenerator {
   private readonly mapper = new TypeMapper();
@@ -43,19 +44,65 @@ export class CodeGenerator {
     'false',
   ]);
 
-  private escapeIdentifier(name: string): string {
+  /**
+   * Convert Python snake_case to TypeScript camelCase and escape reserved words
+   */
+  private escapeIdentifier(name: string, options: { preserveCase?: boolean } = {}): string {
     if (!name) {
       return '_';
     }
-    if (this.reservedTsIdentifiers.has(name)) {
-      return `_${name}_`;
-    }
-    // Avoid dashes or invalid chars by converting to underscores
-    const safe = name.replace(/[^a-zA-Z0-9_]/g, '_');
+    
+    // First, normalize unicode characters
+    let safe = this.normalizeUnicode(name);
+    
+    // Then handle special characters and make it a valid identifier
+    safe = safe.replace(/[^a-zA-Z0-9_]/g, '_');
     if (/^[0-9]/.test(safe)) {
-      return `_${safe}`;
+      safe = `_${safe}`;
     }
+    
+    // Convert snake_case to camelCase unless preserveCase is true
+    if (!options.preserveCase) {
+      safe = this.toCamelCase(safe);
+    }
+    
+    // Check for reserved words after conversion
+    if (this.reservedTsIdentifiers.has(safe)) {
+      return `_${safe}_`;
+    }
+    
     return safe;
+  }
+  
+  /**
+   * Convert snake_case to camelCase
+   */
+  private toCamelCase(str: string): string {
+    return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+  }
+  
+  /**
+   * Convert unicode characters to ASCII equivalents for better compatibility
+   */
+  private normalizeUnicode(str: string): string {
+    // Basic unicode normalization - convert accented characters to ASCII equivalents
+    return str
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
+      .replace(/[^\x00-\x7F]/g, (char) => {
+        // Map common unicode characters to ASCII equivalents
+        const unicodeMap = new Map([
+          ['ñ', 'n'],
+          ['ü', 'u'],
+          ['ß', 'ss'],
+          ['æ', 'ae'],
+          ['œ', 'oe'],
+          ['ø', 'o'],
+          ['€', 'euro'],
+          // Add more mappings as needed
+        ]);
+        return unicodeMap.get(char) ?? char.charCodeAt(0).toString(16);
+      });
   }
 
   generateFunctionWrapper(
@@ -103,7 +150,7 @@ export class CodeGenerator {
         const head = positional.slice(0, i);
         const rest = filteredParams.filter(p => p.varArgs || p.kwArgs);
         const sigParams = [...head, ...rest].map(renderParam).join(', ');
-        overloads.push(`export function ${func.name}(${sigParams}): Promise<${returnType}>;`);
+        overloads.push(`export function ${fname}(${sigParams}): Promise<${returnType}>;`);
       }
     }
 
@@ -257,6 +304,29 @@ ${methodBodies}
     return this.wrap(ts, [cls.name]);
   }
 
+  /**
+   * Generate TypeScript wrapper for Python module with caching
+   */
+  async generateModule(
+    module: PythonModule, 
+    options: { moduleName: string; exportAll?: boolean; annotatedJSDoc?: boolean } = { moduleName: 'unknown' }
+  ): Promise<GeneratedCode> {
+    // Check cache first
+    const cached = await globalCache.getCachedGeneration(module, options);
+    if (cached) {
+      return cached;
+    }
+
+    const startTime = performance.now();
+    const result = this.generateModuleDefinition(module, options.annotatedJSDoc);
+    const computeTime = performance.now() - startTime;
+
+    // Cache the result
+    await globalCache.setCachedGeneration(module, options, result, computeTime);
+
+    return result;
+  }
+
   generateModuleDefinition(module: PythonModule, annotatedJSDoc = false): GeneratedCode {
     const functionCodes = [...module.functions]
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -318,6 +388,15 @@ ${methodBodies}
       }
       case 'object': {
         const t = type;
+        // If it's a simple Record<string, T> pattern, use that syntax
+        if (t.properties.length === 0 && t.indexSignature) {
+          const keyType = this.typeToTs(t.indexSignature.keyType);
+          const valueType = this.typeToTs(t.indexSignature.valueType);
+          if (keyType === 'string') {
+            return `Record<string, ${valueType}>`;
+          }
+        }
+        
         const props = t.properties
           .map(
             p =>
