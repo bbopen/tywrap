@@ -237,15 +237,16 @@ const tsType = mapper.mapPythonType(pythonType, 'value');
 
 #### Runtime Detection
 ```typescript
-import { 
-  detectRuntime, 
-  isNodejs, 
-  isDeno, 
-  isBun, 
-  isBrowser 
+import {
+  detectRuntime,
+  isNodejs,
+  isDeno,
+  isBun,
+  isBrowser
 } from 'tywrap';
 
 const runtime = detectRuntime(); // 'node' | 'deno' | 'bun' | 'browser'
+// runtime is a frozen object and should be treated as read-only
 
 if (isNodejs()) {
   // Node.js specific code

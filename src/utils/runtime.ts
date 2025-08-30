@@ -46,6 +46,7 @@ export function detectRuntime(): RuntimeInfo {
         fetch: true,
       },
     };
+    Object.freeze(runtimeCache);
     return runtimeCache;
   }
 
@@ -63,6 +64,7 @@ export function detectRuntime(): RuntimeInfo {
         fetch: true,
       },
     };
+    Object.freeze(runtimeCache);
     return runtimeCache;
   }
 
@@ -80,6 +82,7 @@ export function detectRuntime(): RuntimeInfo {
         fetch: typeof fetch !== 'undefined', // Available in Node.js 18+
       },
     };
+    Object.freeze(runtimeCache);
     return runtimeCache;
   }
 
@@ -103,6 +106,7 @@ export function detectRuntime(): RuntimeInfo {
         fetch: typeof fetch !== 'undefined',
       },
     };
+    Object.freeze(runtimeCache);
     return runtimeCache;
   }
 
@@ -117,6 +121,7 @@ export function detectRuntime(): RuntimeInfo {
       fetch: false,
     },
   };
+  Object.freeze(runtimeCache);
   return runtimeCache;
 }
 

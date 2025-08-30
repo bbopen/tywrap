@@ -8,6 +8,11 @@ describe('runtime utilities', () => {
     expect(second).toBe(first);
   });
 
+  it('returns a frozen runtime info object', () => {
+    const runtime = detectRuntime();
+    expect(Object.isFrozen(runtime)).toBe(true);
+  });
+
   it('normalizes joined paths', () => {
     const joined = pathUtils.join('/foo', '.', 'bar');
     expect(joined.includes('/./')).toBe(false);
