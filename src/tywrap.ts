@@ -13,6 +13,8 @@ import type {
   PythonType,
 } from './types/index.js';
 import { fsUtils, pathUtils, processUtils, hashUtils } from './utils/runtime.js';
+import { globalCache } from './utils/cache.js';
+import { globalParallelProcessor } from './utils/parallel-processor.js';
 
 // Collect unknown typing constructs encountered during annotation parsing (per-generate run)
 let unknownTypeNamesCollector: Map<string, number> = new Map();
@@ -33,6 +35,9 @@ export interface TywrapInstance {
 export async function tywrap(options: Partial<TywrapOptions> = {}): Promise<TywrapInstance> {
   const mapper = new TypeMapper();
   const generator = new CodeGenerator();
+
+  globalCache.setDebug(options.debug ?? false);
+  globalParallelProcessor.setDebug(options.debug ?? false);
 
   return {
     mapper,

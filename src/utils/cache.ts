@@ -41,6 +41,7 @@ export interface CacheConfig {
   compressionEnabled: boolean;
   persistToDisk: boolean;
   cleanupInterval: number; // Cleanup interval in milliseconds
+  debug?: boolean;
 }
 
 export class IntelligentCache {
@@ -54,6 +55,7 @@ export class IntelligentCache {
   private config: CacheConfig;
   private cleanupTimer?: NodeJS.Timeout;
   private compressionAvailable = false;
+  private debug = false;
 
   constructor(config: Partial<CacheConfig> = {}) {
     this.config = {
@@ -64,8 +66,11 @@ export class IntelligentCache {
       compressionEnabled: true,
       persistToDisk: true,
       cleanupInterval: 60 * 60 * 1000, // 1 hour
+      debug: false,
       ...config,
     };
+
+    this.debug = this.config.debug ?? false;
 
     if (this.config.persistToDisk) {
       fs.mkdir(this.config.baseDir, { recursive: true }).catch(error => {
@@ -94,6 +99,10 @@ export class IntelligentCache {
           console.warn('Failed to initialize disk cache:', error);
         });
     }
+  }
+
+  setDebug(debug: boolean): void {
+    this.debug = debug;
   }
 
   /**
@@ -136,7 +145,9 @@ export class IntelligentCache {
         entry.metadata.lastAccessed = Date.now();
         this.stats.hits++;
         
-        console.log(`Cache HIT [${key}] (memory) - ${(performance.now() - startTime).toFixed(2)}ms`);
+        if (this.debug) {
+          console.log(`Cache HIT [${key}] (memory) - ${(performance.now() - startTime).toFixed(2)}ms`);
+        }
         return entry.data as T;
       } else {
         this.memoryCache.delete(key);
@@ -153,13 +164,17 @@ export class IntelligentCache {
         diskEntry.metadata.lastAccessed = Date.now();
         this.stats.hits++;
         
-        console.log(`Cache HIT [${key}] (disk) - ${(performance.now() - startTime).toFixed(2)}ms`);
+        if (this.debug) {
+          console.log(`Cache HIT [${key}] (disk) - ${(performance.now() - startTime).toFixed(2)}ms`);
+        }
         return diskEntry.data;
       }
     }
 
     this.stats.misses++;
-    console.log(`Cache MISS [${key}] - ${(performance.now() - startTime).toFixed(2)}ms`);
+    if (this.debug) {
+      console.log(`Cache MISS [${key}] - ${(performance.now() - startTime).toFixed(2)}ms`);
+    }
     return null;
   }
 
@@ -208,7 +223,9 @@ export class IntelligentCache {
     // Trigger cleanup if needed
     await this.cleanup();
 
-    console.log(`Cache SET [${key}] - ${(performance.now() - startTime).toFixed(2)}ms`);
+    if (this.debug) {
+      console.log(`Cache SET [${key}] - ${(performance.now() - startTime).toFixed(2)}ms`);
+    }
   }
 
   /**
@@ -301,7 +318,9 @@ export class IntelligentCache {
       invalidatedCount += diskInvalidated;
     }
 
-    console.log(`Invalidated ${invalidatedCount} cache entries for dependency: ${dependency}`);
+    if (this.debug) {
+      console.log(`Invalidated ${invalidatedCount} cache entries for dependency: ${dependency}`);
+    }
     return invalidatedCount;
   }
 
@@ -457,7 +476,7 @@ export class IntelligentCache {
         }
       }
 
-      if (loadedCount > 0) {
+      if (this.debug && loadedCount > 0) {
         console.log(`Loaded ${loadedCount} cache entries from disk`);
       }
     } catch (error) {

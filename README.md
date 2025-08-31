@@ -129,9 +129,13 @@ export default defineConfig({
   development: {
     hotReload: true,
     validation: 'runtime'
-  }
+  },
+
+  debug: true
 });
 ```
+
+Enable `debug` to print cache and parallel processor diagnostics.
 
 ### Configuration Fields
 
@@ -140,6 +144,7 @@ export default defineConfig({
 - `runtime` – runtime paths and timeouts
 - `performance` – caching and batching controls
 - `development` – hot reloading and validation mode
+- `debug` – enable verbose debug logging
 
 ### Extension Hooks
 
