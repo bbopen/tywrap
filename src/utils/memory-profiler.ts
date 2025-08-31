@@ -226,7 +226,21 @@ export class MemoryProfiler extends EventEmitter {
     }
 
     const recentSnapshots = this.snapshots.slice(-10); // Last 10 snapshots
-    const timeSpan = recentSnapshots[recentSnapshots.length - 1].timestamp - recentSnapshots[0].timestamp;
+    const lastSnapshot = recentSnapshots[recentSnapshots.length - 1];
+    const firstSnapshot = recentSnapshots[0];
+    
+    if (!lastSnapshot || !firstSnapshot) {
+      return {
+        detected: false,
+        severity: 'low',
+        growthRate: 0,
+        suspiciousOperations: [],
+        recommendations: [],
+        snapshots: this.snapshots,
+      };
+    }
+    
+    const timeSpan = lastSnapshot.timestamp - firstSnapshot.timestamp;
     
     if (timeSpan === 0) {
       return {
@@ -239,7 +253,7 @@ export class MemoryProfiler extends EventEmitter {
       };
     }
 
-    const memoryGrowth = recentSnapshots[recentSnapshots.length - 1].heapUsed - recentSnapshots[0].heapUsed;
+    const memoryGrowth = lastSnapshot.heapUsed - firstSnapshot.heapUsed;
     const growthRate = (memoryGrowth / timeSpan) * 1000; // bytes per second
 
     // Detect leak severity
@@ -347,6 +361,11 @@ export class MemoryProfiler extends EventEmitter {
 
     const firstSnapshot = this.snapshots[0];
     const lastSnapshot = this.snapshots[this.snapshots.length - 1];
+    
+    if (!firstSnapshot || !lastSnapshot) {
+      throw new Error('Invalid snapshot data for report generation');
+    }
+    
     const duration = lastSnapshot.timestamp - firstSnapshot.timestamp;
 
     const heapValues = this.snapshots.map(s => s.heapUsed);
@@ -355,7 +374,10 @@ export class MemoryProfiler extends EventEmitter {
     const memoryGrowth = lastSnapshot.heapUsed - firstSnapshot.heapUsed;
 
     // Calculate GC efficiency
-    const gcEvents = this.snapshots.filter((s, i) => i > 0 && s.gcCount > this.snapshots[i - 1].gcCount);
+    const gcEvents = this.snapshots.filter((s, i) => {
+      const prevSnapshot = this.snapshots[i - 1];
+      return i > 0 && prevSnapshot && s.gcCount > prevSnapshot.gcCount;
+    });
     const gcEfficiency = gcEvents.length > 0 
       ? gcEvents.reduce((sum, s, i) => {
           const prev = this.snapshots[this.snapshots.indexOf(s) - 1];
@@ -426,9 +448,9 @@ export class MemoryProfiler extends EventEmitter {
     try {
       if (process.versions.node >= '14.0.0') {
         const perfHooks = require('perf_hooks');
-        const obs = new perfHooks.PerformanceObserver((list) => {
+        const obs = new perfHooks.PerformanceObserver((list: any) => {
           const entries = list.getEntries();
-          entries.forEach((entry) => {
+          entries.forEach((entry: any) => {
             if (entry.entryType === 'gc') {
               this.gcCount++;
               this.emit('gc', { 
@@ -484,6 +506,13 @@ export class MemoryProfiler extends EventEmitter {
   }
 
   /**
+   * Check if profiler has snapshots
+   */
+  hasSnapshots(): boolean {
+    return this.snapshots.length > 0;
+  }
+
+  /**
    * Dispose profiler
    */
   dispose(): void {
@@ -498,7 +527,7 @@ export const globalMemoryProfiler = new MemoryProfiler();
 
 // Automatic profiling for process exit
 process.on('exit', () => {
-  if (globalMemoryProfiler.snapshots.length > 0) {
+  if (globalMemoryProfiler.hasSnapshots()) {
     try {
       globalMemoryProfiler.saveReport('memory-profile-exit.json');
     } catch (error) {

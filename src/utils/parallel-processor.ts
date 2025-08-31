@@ -56,7 +56,7 @@ export class ParallelProcessor extends EventEmitter {
   private taskQueue: ParallelTask[] = [];
   private activeTasks = new Map<string, ParallelTask>();
   private pendingResults = new Map<string, {
-    resolve: (result: ParallelResult) => void;
+    resolve: (result: ParallelResult<any>) => void;
     reject: (error: Error) => void;
     timeout?: NodeJS.Timeout;
   }>();
@@ -278,7 +278,7 @@ export class ParallelProcessor extends EventEmitter {
    */
   private selectOptimalWorker(): Worker | null {
     const availableWorkers = Array.from(this.workers.values()).filter(w => 
-      !w.destroyed && w.threadId !== undefined
+      !(w as any).destroyed && w.threadId !== undefined
     );
 
     if (availableWorkers.length === 0) {
@@ -289,7 +289,7 @@ export class ParallelProcessor extends EventEmitter {
       case 'round-robin':
         const worker = availableWorkers[this.roundRobinIndex % availableWorkers.length];
         this.roundRobinIndex = (this.roundRobinIndex + 1) % availableWorkers.length;
-        return worker;
+        return worker || null;
 
       case 'least-loaded':
         // Find worker with least active tasks
@@ -325,7 +325,7 @@ export class ParallelProcessor extends EventEmitter {
         return workerWeights[0]?.worker || null;
 
       default:
-        return availableWorkers[0];
+        return availableWorkers[0] || null;
     }
   }
 
@@ -705,7 +705,7 @@ if (!isMainThread && parentPort) {
         parentPort!.postMessage({
           type: 'task_complete',
           taskId: task.id,
-          ...taskResult,
+          ...(typeof taskResult === 'object' && taskResult !== null ? taskResult : { result: taskResult }),
         });
       } catch (error) {
         parentPort!.postMessage({

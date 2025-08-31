@@ -174,7 +174,9 @@ export class BundleOptimizer {
     
     // Function and class exports
     while ((match = exportRegex.exec(code)) !== null) {
-      exports.push(match[1]);
+      if (match[1]) {
+        exports.push(match[1]);
+      }
     }
 
     // Default exports
@@ -185,8 +187,10 @@ export class BundleOptimizer {
 
     // Named exports
     while ((match = namedExportRegex.exec(code)) !== null) {
-      const namedExports = match[1].split(',').map(e => e.trim().split(' as ')[0]);
-      exports.push(...namedExports);
+      if (match[1]) {
+        const namedExports = match[1].split(',').map(e => e.trim().split(' as ')[0] || '').filter(Boolean);
+        exports.push(...namedExports);
+      }
     }
 
     return [...new Set(exports)]; // Remove duplicates
@@ -209,18 +213,22 @@ export class BundleOptimizer {
       const moduleName = match[3];
 
       if (namedImports) {
-        const names = namedImports.split(',').map(i => i.trim().split(' as ')[0]);
+        const names = namedImports.split(',').map(i => i.trim().split(' as ')[0] || '').filter(Boolean);
         imports.push(...names);
       }
       if (defaultImport) {
         imports.push(defaultImport);
       }
-      imports.push(moduleName);
+      if (moduleName) {
+        imports.push(moduleName);
+      }
     }
 
     // Dynamic imports
     while ((match = dynamicImportRegex.exec(code)) !== null) {
-      imports.push(match[1]);
+      if (match[1]) {
+        imports.push(match[1]);
+      }
     }
 
     return [...new Set(imports)];
@@ -246,7 +254,9 @@ export class BundleOptimizer {
     const typeImportRegex = /from\s+['"]([^'"]+)['"];?\s*\/\/.*types?/g;
     let match;
     while ((match = typeImportRegex.exec(code)) !== null) {
-      dependencies.push(match[1]);
+      if (match[1]) {
+        dependencies.push(match[1]);
+      }
     }
 
     return [...new Set(dependencies)];
@@ -481,7 +491,7 @@ export class BundleOptimizer {
     const lines = code.split('\n');
     const filteredLines = lines.filter(line => {
       const functionMatch = line.match(/export\s+(?:async\s+)?function\s+(\w+)/);
-      if (functionMatch) {
+      if (functionMatch && functionMatch[1]) {
         const functionName = functionMatch[1];
         return usedFunctions.has(functionName);
       }
@@ -501,13 +511,17 @@ export class BundleOptimizer {
     const callRegex = /(\w+)\s*\(/g;
     let match;
     while ((match = callRegex.exec(code)) !== null) {
-      used.add(match[1]);
+      if (match[1]) {
+        used.add(match[1]);
+      }
     }
 
     // Find all exported functions (assume all exports are used externally)
     const exportRegex = /export\s+(?:async\s+)?function\s+(\w+)/g;
     while ((match = exportRegex.exec(code)) !== null) {
-      used.add(match[1]);
+      if (match[1]) {
+        used.add(match[1]);
+      }
     }
 
     return used;
@@ -641,7 +655,16 @@ export function createRollupPlugin(options: Partial<BundleOptions> = {}) {
       for (const [fileName, chunk] of Object.entries(bundle)) {
         if (fileName.endsWith('.ts') || fileName.endsWith('.js')) {
           // Add to optimizer for analysis
-          const code = { typescript: (chunk as any).code };
+          const code = { 
+            typescript: (chunk as any).code,
+            declaration: '',
+            metadata: { 
+              generatedAt: new Date(),
+              sourceFiles: [fileName],
+              runtime: 'node' as const,
+              optimizations: ['tree-shaking']
+            }
+          };
           optimizer.addModule(fileName, code);
         }
       }
@@ -662,7 +685,16 @@ export function createWebpackPlugin(options: Partial<BundleOptions> = {}) {
         // Process webpack assets
         for (const [filename, asset] of Object.entries(compilation.assets)) {
           if (filename.endsWith('.js') || filename.endsWith('.ts')) {
-            const code = { typescript: (asset as any).source() };
+            const code = { 
+              typescript: (asset as any).source(),
+              declaration: '',
+              metadata: { 
+                generatedAt: new Date(),
+                sourceFiles: [filename],
+                runtime: 'node' as const,
+                optimizations: ['minification']
+              }
+            };
             optimizer.addModule(filename, code);
           }
         }
