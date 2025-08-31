@@ -38,7 +38,9 @@ const DEFAULT_CONFIG: TywrapConfig = {
 function merge<T>(base: T, override: Partial<T>): T {
   const result: Record<string, unknown> = { ...(base as Record<string, unknown>) };
   for (const [key, val] of Object.entries(override)) {
-    if (val === undefined) continue;
+    if (val === undefined) {
+      continue;
+    }
     const current = result[key];
     if (
       val &&
