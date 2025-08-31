@@ -250,7 +250,7 @@ function normalizePath(path: string): string {
   }
   
   const result = normalized.join('/');
-  return isAbsolute ? '/' + result : result;
+  return isAbsolute ? `/${ result}` : result;
 }
 
 /**
@@ -279,7 +279,7 @@ export const pathUtils = {
     // For Node.js, use the real path module when available
     if (runtime.name === 'node') {
       const pathMod = await loadPathModule();
-      if (pathMod && pathMod.posix) {
+      if (pathMod?.posix) {
         return pathMod.posix.join(...segments);
       }
     }
@@ -306,7 +306,7 @@ export const pathUtils = {
     }
 
     if (runtime.name === 'node' && typeof process !== 'undefined' && process.cwd) {
-      return normalizePath(process.cwd() + '/' + path);
+      return normalizePath(`${process.cwd() }/${ path}`);
     }
 
     if (runtime.name === 'browser' && typeof location !== 'undefined') {

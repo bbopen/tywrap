@@ -6,6 +6,7 @@
 import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
+
 import type { AnalysisResult, PythonModule, GeneratedCode } from '../types/index.js';
 
 export interface CacheEntry<T = unknown> {
@@ -147,7 +148,7 @@ export class IntelligentCache {
         this.stats.hits++;
         
         console.log(`Cache HIT [${key}] (disk) - ${(performance.now() - startTime).toFixed(2)}ms`);
-        return diskEntry.data as T;
+        return diskEntry.data;
       }
     }
 
@@ -505,7 +506,7 @@ export class IntelligentCache {
           const zlib = await import('zlib');
           const compressed = zlib.gzipSync(Buffer.from(data, 'utf8'));
           if (compressed.length < data.length * 0.8) { // Only if compression saves >20%
-            data = 'COMPRESSED:' + compressed.toString('base64');
+            data = `COMPRESSED:${ compressed.toString('base64')}`;
           }
         } catch (error) {
           console.warn(`Compression failed for ${key}:`, error);

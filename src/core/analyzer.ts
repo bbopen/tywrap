@@ -20,7 +20,6 @@ import type {
   Property,
   FunctionSignature,
 } from '../types/index.js';
-
 import { globalCache } from '../utils/cache.js';
 
 export class PyAnalyzer {
@@ -54,7 +53,7 @@ export class PyAnalyzer {
     await this.initialize();
 
     // Check cache first
-    const cached = await globalCache.getCachedAnalysis(source, modulePath || 'unknown');
+    const cached = await globalCache.getCachedAnalysis(source, modulePath ?? 'unknown');
     if (cached) {
       return cached;
     }
@@ -104,7 +103,7 @@ export class PyAnalyzer {
 
       // Cache the successful result
       const computeTime = performance.now() - startTime;
-      await globalCache.setCachedAnalysis(source, modulePath || 'unknown', result, computeTime);
+      await globalCache.setCachedAnalysis(source, modulePath ?? 'unknown', result, computeTime);
 
       return result;
     } catch (error) {

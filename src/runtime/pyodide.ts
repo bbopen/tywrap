@@ -68,7 +68,7 @@ export class PyodideBridge extends RuntimeBridge {
       if (typeof mod.loadPyodide === 'function') {
         return mod.loadPyodide;
       }
-    } catch (err) {
+    } catch {
       // Ignore import errors - pyodide may not be installed
       // This is expected in most environments
     }

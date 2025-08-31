@@ -3,10 +3,11 @@
  * Implements tree-shaking, code splitting, and runtime optimization strategies
  */
 
-import { writeFileSync, readFileSync, statSync } from 'fs';
-import { join, basename, extname } from 'path';
+import { writeFileSync } from 'fs';
+
+import type { GeneratedCode } from '../types/index.js';
+
 import { globalCache } from './cache.js';
-import type { GeneratedCode, PythonModule } from '../types/index.js';
 
 export interface BundleAnalysis {
   totalSize: number;
@@ -181,14 +182,14 @@ export class BundleOptimizer {
 
     // Default exports
     while ((match = defaultExportRegex.exec(code)) !== null) {
-      const name = match[1] || 'default';
+      const name = match[1] ?? 'default';
       exports.push(name);
     }
 
     // Named exports
     while ((match = namedExportRegex.exec(code)) !== null) {
       if (match[1]) {
-        const namedExports = match[1].split(',').map(e => e.trim().split(' as ')[0] || '').filter(Boolean);
+        const namedExports = match[1].split(',').map(e => e.trim().split(' as ')[0] ?? '').filter(Boolean);
         exports.push(...namedExports);
       }
     }
@@ -491,7 +492,7 @@ export class BundleOptimizer {
     const lines = code.split('\n');
     const filteredLines = lines.filter(line => {
       const functionMatch = line.match(/export\s+(?:async\s+)?function\s+(\w+)/);
-      if (functionMatch && functionMatch[1]) {
+      if (functionMatch?.[1]) {
         const functionName = functionMatch[1];
         return usedFunctions.has(functionName);
       }

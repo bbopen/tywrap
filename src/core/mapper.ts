@@ -166,7 +166,7 @@ export class TypeMapper {
 
   mapCustomType(
     type: { kind: 'custom'; name: string; module?: string },
-    context: MappingContext = 'value'
+    _context: MappingContext = 'value'
   ): TSCustomType {
     // Normalize some known typing names into TS primitives/generics
     const name = type.name;
@@ -289,7 +289,7 @@ export class TypeMapper {
     return { kind: 'literal', value: type.value };
   }
 
-  mapTypeVarType(type: PyTypeVarType, context: MappingContext = 'value'): TSCustomType {
+  mapTypeVarType(type: PyTypeVarType, _context: MappingContext = 'value'): TSCustomType {
     // TypeVar maps to a generic type parameter in TypeScript
     // Bounds and constraints are not directly expressible in TypeScript type system
     return {

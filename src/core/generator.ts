@@ -9,9 +9,9 @@ import type {
   GeneratedCode,
   TypescriptType,
 } from '../types/index.js';
+import { globalCache } from '../utils/cache.js';
 
 import { TypeMapper } from './mapper.js';
-import { globalCache } from '../utils/cache.js';
 
 export class CodeGenerator {
   private readonly mapper = new TypeMapper();

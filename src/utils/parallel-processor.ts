@@ -3,13 +3,15 @@
  * High-performance parallel processing for large Python codebases
  */
 
-import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
-import { cpus } from 'os';
 import { EventEmitter } from 'events';
+import { cpus } from 'os';
 import { performance } from 'perf_hooks';
+import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
+
+import type { AnalysisResult, PythonModule, GeneratedCode } from '../types/index.js';
+
 import { globalCache } from './cache.js';
 import { globalMemoryProfiler } from './memory-profiler.js';
-import type { AnalysisResult, PythonModule, GeneratedCode } from '../types/index.js';
 
 export interface ParallelTask<T = unknown> {
   id: string;
@@ -132,7 +134,7 @@ export class ParallelProcessor extends EventEmitter {
         if (Array.isArray(chunkResults)) {
           flatResults.push(...chunkResults);
         } else {
-          flatResults.push(result as ParallelResult<AnalysisResult>);
+          flatResults.push(result);
         }
       }
     }
@@ -169,7 +171,7 @@ export class ParallelProcessor extends EventEmitter {
         if (Array.isArray(chunkResults)) {
           flatResults.push(...chunkResults);
         } else {
-          flatResults.push(result as ParallelResult<GeneratedCode>);
+          flatResults.push(result);
         }
       }
     }

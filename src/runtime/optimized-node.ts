@@ -3,11 +3,14 @@
  * High-performance Python subprocess management for production workloads
  */
 
-import { EventEmitter } from 'events';
 import type { ChildProcess } from 'child_process';
-import { decodeValueAsync } from '../utils/codec.js';
-import { RuntimeBridge } from './base.js';
+import { EventEmitter } from 'events';
+
 import { globalCache } from '../utils/cache.js';
+import { decodeValueAsync } from '../utils/codec.js';
+
+import { RuntimeBridge } from './base.js';
+
 
 interface RpcRequest {
   id: number;
@@ -75,6 +78,8 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     processSpawns: 0,
     processDeaths: 0,
     memoryPeak: 0,
+    averageTime: 0,
+    cacheHitRate: 0,
   };
 
   constructor(options: ProcessPoolOptions = {}) {
@@ -126,7 +131,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     const cached = await globalCache.get<T>(cacheKey);
     if (cached !== null) {
       this.stats.cacheHits++;
-      console.log(`Runtime cache HIT for ${module}.${functionName}`);
+      // Runtime cache HIT for ${module}.${functionName}
       return cached;
     }
 
@@ -193,9 +198,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     }
 
     // Wait for worker if all are busy
-    if (!worker) {
-      worker = await this.waitForAvailableWorker();
-    }
+    worker ??= await this.waitForAvailableWorker();
 
     this.stats.poolHits++;
     return this.sendToWorker<T>(worker, payload);
@@ -215,7 +218,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     const worker = availableWorkers[this.roundRobinIndex % availableWorkers.length];
     this.roundRobinIndex = (this.roundRobinIndex + 1) % availableWorkers.length;
     
-    return worker || null;
+    return worker ?? null;
   }
 
   /**
@@ -227,7 +230,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
         reject(new Error('Timeout waiting for available worker'));
       }, timeoutMs);
 
-      const checkWorker = () => {
+      const checkWorker = (): void => {
         const worker = this.selectOptimalWorker();
         if (worker) {
           clearTimeout(timeout);
@@ -347,7 +350,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     this.processPool.push(worker);
     this.stats.processSpawns++;
 
-    console.log(`Spawned Python worker process ${workerId} (pool size: ${this.processPool.length})`);
+    // Spawned Python worker process ${workerId} (pool size: ${this.processPool.length})
 
     return worker;
   }
@@ -367,7 +370,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
         const line = worker.buffer.slice(0, idx).trim();
         worker.buffer = worker.buffer.slice(idx + 1);
         
-        if (!line) continue;
+        if (!line) {continue;}
 
         this.handleWorkerResponse(worker, line).catch(error => {
           console.error(`Error handling worker response: ${error}`);
@@ -474,7 +477,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     });
 
     await Promise.all(warmupPromises);
-    console.log(`Warmed up ${this.processPool.length} worker processes`);
+    // Warmed up ${this.processPool.length} worker processes
   }
 
   /**
@@ -515,7 +518,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   /**
    * Update performance statistics
    */
-  private updateStats(duration: number, error: boolean = false): void {
+  private updateStats(duration: number, _error: boolean = false): void {
     this.stats.totalRequests++;
     this.stats.totalTime += duration;
     
@@ -528,7 +531,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   /**
    * Get performance statistics
    */
-  getStats() {
+  getStats(): any {
     const avgTime = this.stats.totalRequests > 0 ? this.stats.totalTime / this.stats.totalRequests : 0;
     const hitRate = this.stats.totalRequests > 0 ? this.stats.cacheHits / this.stats.totalRequests : 0;
     
@@ -611,7 +614,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       console.warn(`Error terminating worker ${worker.id}:`, error);
     }
 
-    console.log(`Terminated worker ${worker.id}`);
+    // Terminated worker ${worker.id}
   }
 
   /**
@@ -649,7 +652,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     this.processPool.length = 0;
     this.emitter.removeAllListeners();
 
-    console.log('Disposed optimized Node.js bridge');
+    // Disposed optimized Node.js bridge
   }
 
   private errorFrom(err: { type: string; message: string; traceback?: string }): Error {
