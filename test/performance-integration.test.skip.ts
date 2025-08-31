@@ -255,9 +255,9 @@ describePerformance('Performance Integration Tests', () => {
     await testSuite.teardown();
   }, 10000);
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Clear cache between tests for accurate measurements
-    globalCache.clear();
+    await globalCache.clear();
   });
 
   describe('IR Extraction Performance', () => {

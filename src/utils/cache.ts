@@ -4,7 +4,7 @@
  */
 
 import { createHash } from 'crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync, unlinkSync } from 'fs';
+import { promises as fs } from 'fs';
 import { join, dirname } from 'path';
 
 import type { AnalysisResult, PythonModule, GeneratedCode } from '../types/index.js';
@@ -67,8 +67,10 @@ export class IntelligentCache {
       ...config,
     };
 
-    if (this.config.persistToDisk && !existsSync(this.config.baseDir)) {
-      mkdirSync(this.config.baseDir, { recursive: true });
+    if (this.config.persistToDisk) {
+      fs.mkdir(this.config.baseDir, { recursive: true }).catch(error => {
+        console.warn('Failed to create cache directory:', error);
+      });
     }
 
     // Check for compression availability
@@ -84,9 +86,13 @@ export class IntelligentCache {
       this.startCleanupScheduler();
     }
 
-    // Load existing cache from disk
     if (this.config.persistToDisk) {
-      this.loadFromDisk();
+      fs
+        .mkdir(this.config.baseDir, { recursive: true })
+        .then(() => this.loadFromDisk())
+        .catch(error => {
+          console.warn('Failed to initialize disk cache:', error);
+        });
     }
   }
 
@@ -332,12 +338,21 @@ export class IntelligentCache {
    */
   async clear(): Promise<void> {
     this.memoryCache.clear();
-    
-    if (this.config.persistToDisk && existsSync(this.config.baseDir)) {
-      const files = readdirSync(this.config.baseDir);
-      for (const file of files) {
-        if (file.endsWith('.cache')) {
-          unlinkSync(join(this.config.baseDir, file));
+    if (this.config.persistToDisk) {
+      try {
+        const files = await fs.readdir(this.config.baseDir);
+        await Promise.all(
+          files
+            .filter(file => file.endsWith('.cache'))
+            .map(file =>
+              fs
+                .unlink(join(this.config.baseDir, file))
+                .catch(error => console.warn(`Failed to remove cache file ${file}:`, error))
+            )
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.warn('Failed to clear disk cache:', error);
         }
       }
     }
@@ -422,21 +437,16 @@ export class IntelligentCache {
    * Load cache entries from disk
    */
   private async loadFromDisk(): Promise<void> {
-    if (!existsSync(this.config.baseDir)) {
-      return;
-    }
-
     try {
-      const files = readdirSync(this.config.baseDir);
+      const files = await fs.readdir(this.config.baseDir);
       let loadedCount = 0;
 
       for (const file of files) {
         if (file.endsWith('.cache')) {
           try {
-            const filePath = join(this.config.baseDir, file);
             const key = file.replace('.cache', '');
             const entry = await this.loadFromDiskKey<unknown>(key);
-            
+
             if (entry && this.isEntryValid(entry)) {
               this.memoryCache.set(key, entry);
               loadedCount++;
@@ -451,7 +461,9 @@ export class IntelligentCache {
         console.log(`Loaded ${loadedCount} cache entries from disk`);
       }
     } catch (error) {
-      console.warn('Failed to load cache from disk:', error);
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn('Failed to load cache from disk:', error);
+      }
     }
   }
 
@@ -460,13 +472,9 @@ export class IntelligentCache {
    */
   private async loadFromDiskKey<T>(key: string): Promise<CacheEntry<T> | null> {
     const filePath = join(this.config.baseDir, `${key}.cache`);
-    
-    if (!existsSync(filePath)) {
-      return null;
-    }
 
     try {
-      const data = readFileSync(filePath, 'utf8');
+      const data = await fs.readFile(filePath, 'utf8');
       let parsed;
       
       if (this.compressionAvailable && data.startsWith('COMPRESSED:')) {
@@ -480,7 +488,9 @@ export class IntelligentCache {
 
       return parsed as CacheEntry<T>;
     } catch (error) {
-      console.warn(`Failed to load cache key ${key}:`, error);
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(`Failed to load cache key ${key}:`, error);
+      }
       return null;
     }
   }
@@ -490,30 +500,27 @@ export class IntelligentCache {
    */
   private async saveToDiskKey<T>(key: string, entry: CacheEntry<T>): Promise<void> {
     const filePath = join(this.config.baseDir, `${key}.cache`);
-    
+
     try {
       // Ensure directory exists
-      const dir = dirname(filePath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
+      await fs.mkdir(dirname(filePath), { recursive: true });
 
       let data = JSON.stringify(entry);
-      
+
       // Compress if enabled and beneficial
       if (this.compressionAvailable && data.length > 1024) {
         try {
           const zlib = await import('zlib');
           const compressed = zlib.gzipSync(Buffer.from(data, 'utf8'));
-          if (compressed.length < data.length * 0.8) { // Only if compression saves >20%
-            data = `COMPRESSED:${ compressed.toString('base64')}`;
+          if (compressed.length < data.length * 0.8) {
+            data = `COMPRESSED:${compressed.toString('base64')}`;
           }
         } catch (error) {
           console.warn(`Compression failed for ${key}:`, error);
         }
       }
 
-      writeFileSync(filePath, data);
+      await fs.writeFile(filePath, data);
     } catch (error) {
       console.warn(`Failed to save cache key ${key}:`, error);
     }
@@ -523,26 +530,28 @@ export class IntelligentCache {
    * Invalidate disk cache by dependency
    */
   private async invalidateDiskByDependency(dependency: string): Promise<number> {
-    if (!existsSync(this.config.baseDir)) {
-      return 0;
-    }
-
     let invalidatedCount = 0;
-    const files = readdirSync(this.config.baseDir);
+    try {
+      const files = await fs.readdir(this.config.baseDir);
 
-    for (const file of files) {
-      if (file.endsWith('.cache')) {
-        try {
-          const key = file.replace('.cache', '');
-          const entry = await this.loadFromDiskKey(key);
-          
-          if (entry && entry.dependencies.includes(dependency)) {
-            unlinkSync(join(this.config.baseDir, file));
-            invalidatedCount++;
+      for (const file of files) {
+        if (file.endsWith('.cache')) {
+          try {
+            const key = file.replace('.cache', '');
+            const entry = await this.loadFromDiskKey(key);
+
+            if (entry && entry.dependencies.includes(dependency)) {
+              await fs.unlink(join(this.config.baseDir, file));
+              invalidatedCount++;
+            }
+          } catch (error) {
+            console.warn(`Failed to check cache file ${file}:`, error);
           }
-        } catch (error) {
-          console.warn(`Failed to check cache file ${file}:`, error);
         }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn('Failed to invalidate disk cache:', error);
       }
     }
 
