@@ -529,9 +529,9 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       expect(syncResult).toBe(testData);
     });
 
-    it('should handle Arrow decoding differences between sync and async', () => {
+    it('should handle Arrow decoding differences between sync and async', async () => {
       const mockTable = { numRows: 10, data: 'test' } as ArrowTable;
-      
+
       // Mock decoder that works synchronously
       registerArrowDecoder(() => mockTable);
 
@@ -542,9 +542,11 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       };
 
       const syncResult = decodeValue(envelope);
-      
+      const asyncResult = await decodeValueAsync(envelope);
+
       // Both should return the mocked table
       expect(syncResult).toBe(mockTable);
+      expect(asyncResult).toBe(mockTable);
     });
 
     it('should handle decoder failures consistently', async () => {
