@@ -97,7 +97,7 @@ export class NodeBridge extends RuntimeBridge {
     this.child = child;
 
     this.child?.on('error', (err) => {
-      const msg = `Python process error: ${(err as Error).message}`;
+      const msg = `Python process error: ${err instanceof Error ? err.message : String(err)}`;
       for (const [, p] of this.pending) {
         p.reject(new Error(msg));
       }
