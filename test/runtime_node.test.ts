@@ -159,6 +159,21 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
         bridge.call('math', 'nonexistent_function', [])
       ).rejects.toThrow();
     }, testTimeout);
+
+    it('should emit a descriptive error when Python fails to start', async () => {
+      if (!isBridgeScriptAvailable()) return;
+
+      const badBridge = new NodeBridge({
+        scriptPath,
+        pythonPath: 'nonexistent_python'
+      });
+
+      await expect(
+        badBridge.call('math', 'sqrt', [4])
+      ).rejects.toThrow(/Failed to start Python process/);
+
+      await badBridge.dispose();
+    }, testTimeout);
   });
 
   describe('Environment Configuration', () => {
@@ -202,7 +217,7 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       const pythonAvailable = await isPythonAvailable();
       if (!pythonAvailable || !isBridgeScriptAvailable()) return;
 
-      const customBridge = new NodeBridge({ 
+      const customBridge = new NodeBridge({
         scriptPath,
         env: { TEST_ENV_VAR: 'test_value' }
       });
@@ -212,6 +227,27 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       expect(result).toBe('test_value');
 
       await customBridge.dispose();
+    }, testTimeout);
+
+    it('should filter environment variables by TYWRAP_ prefix', async () => {
+      const pythonAvailable = await isPythonAvailable();
+      if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+      process.env.UNSAFE_VAR = 'secret';
+      process.env.TYWRAP_SAFE = 'exposed';
+
+      const filterBridge = new NodeBridge({ scriptPath });
+
+      const safe = await filterBridge.call('os', 'getenv', ['TYWRAP_SAFE']);
+      const unsafe = await filterBridge.call('os', 'getenv', ['UNSAFE_VAR']);
+
+      expect(safe).toBe('exposed');
+      expect(unsafe).toBeNull();
+
+      await filterBridge.dispose();
+
+      delete process.env.UNSAFE_VAR;
+      delete process.env.TYWRAP_SAFE;
     }, testTimeout);
 
     it('should support JSON fallback configuration', async () => {

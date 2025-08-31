@@ -35,13 +35,7 @@ export interface NodeBridgeOptions {
 }
 
 export class NodeBridge extends RuntimeBridge {
-  private child?: {
-    stdin?: NodeJS.WritableStream;
-    stdout?: NodeJS.ReadableStream;
-    stderr?: NodeJS.ReadableStream;
-    kill: (signal?: NodeJS.Signals | number) => void;
-    on: (event: 'exit' | 'error', listener: (...args: unknown[]) => void) => void;
-  };
+  private child?: import('child_process').ChildProcess;
   private nextId = 1;
   private readonly pending = new Map<
     number,
@@ -67,16 +61,48 @@ export class NodeBridge extends RuntimeBridge {
       return;
     }
     const { spawn } = await import('child_process');
-    const env: NodeJS.ProcessEnv = { ...process.env, ...this.options.env };
+    const allowedPrefixes = ['TYWRAP_'];
+    const allowedKeys = new Set(['PATH', 'PYTHONPATH']);
+    const baseEnv: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (allowedKeys.has(k) || allowedPrefixes.some((p) => k.startsWith(p))) {
+        baseEnv[k] = v;
+      }
+    }
+    const env: NodeJS.ProcessEnv = { ...baseEnv, ...this.options.env };
     // Respect explicit request for JSON fallback only; otherwise fast-fail by default
     if (this.options.enableJsonFallback && !env.TYWRAP_CODEC_FALLBACK) {
       env.TYWRAP_CODEC_FALLBACK = 'json';
     }
 
-    this.child = spawn(this.options.pythonPath, [this.options.scriptPath], {
-      cwd: this.options.cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env,
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(this.options.pythonPath, [this.options.scriptPath], {
+        cwd: this.options.cwd,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env,
+      });
+    } catch (err) {
+      throw new Error(`Failed to start Python process: ${(err as Error).message}`);
+    }
+
+    const startupError = await new Promise<Error | null>((resolve) => {
+      child.once('error', (e) => resolve(e));
+      child.once('spawn', () => resolve(null));
+    });
+    if (startupError) {
+      throw new Error(`Failed to start Python process: ${startupError.message}`);
+    }
+
+    this.child = child;
+
+    this.child?.on('error', (err) => {
+      const msg = `Python process error: ${err instanceof Error ? err.message : String(err)}`;
+      for (const [, p] of this.pending) {
+        p.reject(new Error(msg));
+      }
+      this.pending.clear();
+      this.child = undefined;
     });
 
     let buffer = '';
@@ -114,7 +140,7 @@ export class NodeBridge extends RuntimeBridge {
       }
     });
 
-    this.child.stderr?.on('data', (chunk: Buffer) => {
+    this.child?.stderr?.on('data', (chunk: Buffer) => {
       // Buffer stderr for better error diagnostics on failures/exits
       try {
         this.stderrBuffer += chunk.toString();
@@ -128,7 +154,7 @@ export class NodeBridge extends RuntimeBridge {
       }
     });
 
-    this.child.on('exit', () => {
+    this.child?.on('exit', () => {
       for (const [, p] of this.pending) {
         const stderrTail = this.stderrBuffer.trim();
         const msg = stderrTail
@@ -173,8 +199,9 @@ export class NodeBridge extends RuntimeBridge {
     const id = this.nextId++;
     const message: RpcRequest = { id, ...payload } as RpcRequest;
     const text = `${JSON.stringify(message)}\n`;
+    let timer: NodeJS.Timeout | undefined;
     const promise = new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         this.pending.delete(id);
         const stderrTail = this.stderrBuffer.trim();
         const msg = stderrTail
@@ -187,7 +214,18 @@ export class NodeBridge extends RuntimeBridge {
       };
       this.pending.set(id, { resolve: resolveWrapped, reject, timer });
     });
-    this.child?.stdin?.write(text);
+    try {
+      if (!this.child?.stdin) {
+        throw new Error('Python process not available');
+      }
+      this.child.stdin.write(text);
+    } catch (err) {
+      this.pending.delete(id);
+      if (timer) {
+        clearTimeout(timer);
+      }
+      throw new Error(`IPC failure: ${(err as Error).message}`);
+    }
     return promise;
   }
 
