@@ -4,6 +4,7 @@
  */
 
 import { writeFileSync } from 'fs';
+import ts from 'typescript';
 
 import type { GeneratedCode } from '../types/index.js';
 
@@ -166,101 +167,144 @@ export class BundleOptimizer {
    * Extract export statements from TypeScript code
    */
   private extractExports(code: string): string[] {
-    const exports: string[] = [];
-    const exportRegex = /export\s+(?:async\s+)?(?:function|class|interface|type|const|let|var)\s+(\w+)/g;
-    const defaultExportRegex = /export\s+default\s+(?:class|function)?\s*(\w*)/g;
-    const namedExportRegex = /export\s*\{\s*([^}]+)\s*\}/g;
+    const source = this.parseSource(code);
+    const exports = new Set<string>();
 
-    let match;
-    
-    // Function and class exports
-    while ((match = exportRegex.exec(code)) !== null) {
-      if (match[1]) {
-        exports.push(match[1]);
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isFunctionDeclaration(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isInterfaceDeclaration(node) ||
+        ts.isTypeAliasDeclaration(node) ||
+        ts.isEnumDeclaration(node)
+      ) {
+        if (node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)) {
+          const name = (node as ts.NamedDeclaration).name?.getText();
+          if (name) {
+            exports.add(name);
+          }
+        }
+      } else if (ts.isVariableStatement(node)) {
+        if (node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)) {
+          node.declarationList.declarations.forEach(d => {
+            if (ts.isIdentifier(d.name)) {
+              exports.add(d.name.text);
+            }
+          });
+        }
+      } else if (ts.isExportAssignment(node)) {
+        if (ts.isIdentifier(node.expression)) {
+          exports.add(node.expression.text);
+        } else {
+          exports.add('default');
+        }
+      } else if (ts.isExportDeclaration(node)) {
+        if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+          node.exportClause.elements.forEach(el => {
+            exports.add((el.propertyName ?? el.name).text);
+          });
+        } else {
+          exports.add('*');
+        }
       }
-    }
+      ts.forEachChild(node, visit);
+    };
 
-    // Default exports
-    while ((match = defaultExportRegex.exec(code)) !== null) {
-      const name = match[1] ?? 'default';
-      exports.push(name);
-    }
-
-    // Named exports
-    while ((match = namedExportRegex.exec(code)) !== null) {
-      if (match[1]) {
-        const namedExports = match[1].split(',').map(e => e.trim().split(' as ')[0] ?? '').filter(Boolean);
-        exports.push(...namedExports);
-      }
-    }
-
-    return [...new Set(exports)]; // Remove duplicates
+    visit(source);
+    return Array.from(exports);
   }
 
   /**
    * Extract import statements from TypeScript code
    */
   private extractImports(code: string): string[] {
-    const imports: string[] = [];
-    const importRegex = /import\s+(?:\{([^}]+)\}|(\w+))\s+from\s+['"]([^'"]+)['"]/g;
-    const dynamicImportRegex = /import\(['"]([^'"]+)['"]\)/g;
+    const source = this.parseSource(code);
+    const imports = new Set<string>();
 
-    let match;
-
-    // Static imports
-    while ((match = importRegex.exec(code)) !== null) {
-      const namedImports = match[1];
-      const defaultImport = match[2];
-      const moduleName = match[3];
-
-      if (namedImports) {
-        const names = namedImports.split(',').map(i => i.trim().split(' as ')[0] || '').filter(Boolean);
-        imports.push(...names);
+    const visit = (node: ts.Node): void => {
+      if (ts.isImportDeclaration(node)) {
+        const moduleName = (node.moduleSpecifier as ts.StringLiteral).text;
+        imports.add(moduleName);
+        const clause = node.importClause;
+        if (clause) {
+          if (clause.name) {
+            imports.add(clause.name.text);
+          }
+          if (clause.namedBindings) {
+            if (ts.isNamedImports(clause.namedBindings)) {
+              clause.namedBindings.elements.forEach(el => {
+                imports.add((el.propertyName ?? el.name).text);
+              });
+            } else if (ts.isNamespaceImport(clause.namedBindings)) {
+              imports.add(clause.namedBindings.name.text);
+            }
+          }
+        }
+      } else if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments.length > 0
+      ) {
+        const arg = node.arguments[0];
+        if (ts.isStringLiteral(arg)) {
+          imports.add(arg.text);
+        }
       }
-      if (defaultImport) {
-        imports.push(defaultImport);
-      }
-      if (moduleName) {
-        imports.push(moduleName);
-      }
-    }
+      ts.forEachChild(node, visit);
+    };
 
-    // Dynamic imports
-    while ((match = dynamicImportRegex.exec(code)) !== null) {
-      if (match[1]) {
-        imports.push(match[1]);
-      }
-    }
-
-    return [...new Set(imports)];
+    visit(source);
+    return Array.from(imports);
   }
 
   /**
    * Extract module dependencies
    */
   private extractDependencies(code: string): string[] {
-    const dependencies: string[] = [];
-    
-    // Bridge dependencies
-    if (code.includes('__bridge.call')) {
-      dependencies.push('runtime-bridge');
-    }
-    
-    // Codec dependencies
-    if (code.includes('decodeValue') || code.includes('encodeValue')) {
-      dependencies.push('codec');
-    }
+    const source = this.parseSource(code);
+    const dependencies = new Set<string>();
 
-    // Type dependencies
-    const typeImportRegex = /from\s+['"]([^'"]+)['"];?\s*\/\/.*types?/g;
-    let match;
-    while ((match = typeImportRegex.exec(code)) !== null) {
-      if (match[1]) {
-        dependencies.push(match[1]);
+    const visit = (node: ts.Node): void => {
+      if (ts.isPropertyAccessExpression(node)) {
+        if (
+          node.expression.getText(source) === '__bridge' &&
+          node.name.text === 'call'
+        ) {
+          dependencies.add('runtime-bridge');
+        }
       }
-    }
 
-    return [...new Set(dependencies)];
+      if (ts.isIdentifier(node)) {
+        if (node.text === 'decodeValue' || node.text === 'encodeValue') {
+          dependencies.add('codec');
+        }
+      }
+
+      if (ts.isImportDeclaration(node)) {
+        const moduleName = (node.moduleSpecifier as ts.StringLiteral).text;
+        if (node.importClause?.isTypeOnly) {
+          dependencies.add(moduleName);
+        } else {
+          const comments = ts.getTrailingCommentRanges(code, node.end) || [];
+          for (const range of comments) {
+            const comment = code.slice(range.pos, range.end);
+            if (/types?/i.test(comment)) {
+              dependencies.add(moduleName);
+              break;
+            }
+          }
+        }
+      }
+
+      ts.forEachChild(node, visit);
+    };
+
+    visit(source);
+    return Array.from(dependencies);
+  }
+
+  private parseSource(code: string): ts.SourceFile {
+    return ts.createSourceFile('module.ts', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   }
 
   /**
