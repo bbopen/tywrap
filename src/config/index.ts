@@ -29,6 +29,7 @@ const DEFAULT_CONFIG: TywrapConfig = {
   runtime: { node: { pythonPath: 'python3', timeout: 30000 } },
   performance: { caching: true, batching: false, compression: 'none' },
   development: { hotReload: false, sourceMap: false, validation: 'none' },
+  debug: false,
 };
 
 /**
@@ -68,6 +69,7 @@ function validateConfig(config: TywrapConfig): void {
     'runtime',
     'performance',
     'development',
+    'debug',
   ]);
   for (const key of Object.keys(config)) {
     if (!allowedTopLevel.has(key)) {
@@ -120,6 +122,10 @@ function validateConfig(config: TywrapConfig): void {
   const validValidation = ['runtime', 'compile', 'both', 'none'];
   if (!validValidation.includes(dev.validation)) {
     throw new Error(`development.validation must be one of ${validValidation.join(', ')}`);
+  }
+
+  if (typeof config.debug !== 'boolean') {
+    throw new Error('debug must be a boolean');
   }
 }
 

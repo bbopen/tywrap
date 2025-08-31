@@ -237,6 +237,7 @@ export interface TywrapOptions {
   runtime: RuntimeConfig;
   performance: PerformanceConfig;
   development: DevelopmentConfig;
+  debug?: boolean;
 }
 
 export interface PythonModuleConfig {

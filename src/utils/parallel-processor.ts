@@ -50,6 +50,7 @@ export interface ParallelProcessorOptions {
   workerScript?: string; // Custom worker script path
   batchSize?: number; // Number of tasks to batch per worker
   loadBalancing?: 'round-robin' | 'least-loaded' | 'weighted';
+  debug?: boolean;
 }
 
 export class ParallelProcessor extends EventEmitter {
@@ -65,6 +66,7 @@ export class ParallelProcessor extends EventEmitter {
   private roundRobinIndex = 0;
   private options: Required<ParallelProcessorOptions>;
   private disposed = false;
+  private debug = false;
 
   constructor(options: ParallelProcessorOptions = {}) {
     super();
@@ -78,9 +80,14 @@ export class ParallelProcessor extends EventEmitter {
       workerScript: options.workerScript ?? __filename,
       batchSize: options.batchSize ?? 1,
       loadBalancing: options.loadBalancing ?? 'least-loaded',
+      debug: options.debug ?? false,
     };
 
-    console.log(`🚀 Parallel processor initialized with ${this.options.maxWorkers} workers`);
+    this.debug = this.options.debug;
+
+    if (this.debug) {
+      console.log(`🚀 Parallel processor initialized with ${this.options.maxWorkers} workers`);
+    }
   }
 
   /**
@@ -99,7 +106,9 @@ export class ParallelProcessor extends EventEmitter {
     // Start task processing
     this.processQueue();
 
-    console.log(`✅ Worker pool initialized with ${this.workers.size} workers`);
+    if (this.debug) {
+      console.log(`✅ Worker pool initialized with ${this.workers.size} workers`);
+    }
   }
 
   /**
@@ -112,7 +121,9 @@ export class ParallelProcessor extends EventEmitter {
     const chunkSize = options.chunkSize ?? Math.ceil(sources.length / this.options.maxWorkers);
     const chunks = this.chunkArray(sources, chunkSize);
     
-    console.log(`📊 Analyzing ${sources.length} modules in ${chunks.length} chunks`);
+    if (this.debug) {
+      console.log(`📊 Analyzing ${sources.length} modules in ${chunks.length} chunks`);
+    }
 
     const tasks: ParallelTask<AnalysisResult>[] = chunks.map((chunk, index) => ({
       id: `analyze_chunk_${index}`,
@@ -152,7 +163,9 @@ export class ParallelProcessor extends EventEmitter {
     const chunkSize = options.chunkSize ?? Math.ceil(modules.length / this.options.maxWorkers);
     const chunks = this.chunkArray(modules, chunkSize);
 
-    console.log(`🏗️  Generating ${modules.length} wrappers in ${chunks.length} chunks`);
+    if (this.debug) {
+      console.log(`🏗️  Generating ${modules.length} wrappers in ${chunks.length} chunks`);
+    }
 
     const tasks: ParallelTask<GeneratedCode>[] = chunks.map((chunk, index) => ({
       id: `generate_chunk_${index}`,
@@ -229,7 +242,9 @@ export class ParallelProcessor extends EventEmitter {
       const cacheKey = globalCache.generateKey('parallel_task', task.type, task.data);
       const cached = await globalCache.get<ParallelResult<T>>(cacheKey);
       if (cached) {
-        console.log(`🎯 Cache HIT for task ${task.id}`);
+        if (this.debug) {
+          console.log(`🎯 Cache HIT for task ${task.id}`);
+        }
         return cached;
       }
     }
@@ -398,7 +413,9 @@ export class ParallelProcessor extends EventEmitter {
       isActive: true,
     });
 
-    console.log(`👷 Spawned worker ${workerId}`);
+    if (this.debug) {
+      console.log(`👷 Spawned worker ${workerId}`);
+    }
     return worker;
   }
 
@@ -574,7 +591,9 @@ export class ParallelProcessor extends EventEmitter {
 
     this.disposed = true;
 
-    console.log('🛑 Disposing parallel processor...');
+    if (this.debug) {
+      console.log('🛑 Disposing parallel processor...');
+    }
 
     // Terminate all workers
     const terminationPromises = Array.from(this.workers.values()).map(worker => {
@@ -604,7 +623,13 @@ export class ParallelProcessor extends EventEmitter {
 
     this.removeAllListeners();
 
-    console.log('✅ Parallel processor disposed');
+    if (this.debug) {
+      console.log('✅ Parallel processor disposed');
+    }
+  }
+
+  setDebug(debug: boolean): void {
+    this.debug = debug;
   }
 }
 
