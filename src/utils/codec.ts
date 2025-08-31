@@ -123,9 +123,7 @@ function decodeEnvelope<T>(
  * Decode values produced by the Python bridge.
  */
 export async function decodeValueAsync(value: unknown): Promise<DecodedValue> {
-  return await (decodeEnvelope(value, tryDecodeArrowTable) as
-    | Promise<DecodedValue>
-    | DecodedValue);
+  return await decodeEnvelope(value, tryDecodeArrowTable);
 }
 
 /**
@@ -142,6 +140,5 @@ export function decodeValue(value: unknown): DecodedValue {
     }
     return bytes;
   };
-
-  return decodeEnvelope(value, decodeArrow) as DecodedValue;
+  return decodeEnvelope(value, decodeArrow);
 }
