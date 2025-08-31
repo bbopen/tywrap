@@ -124,6 +124,9 @@ export class ParallelProcessor extends EventEmitter {
     // Flatten chunked results
     const flatResults: ParallelResult<AnalysisResult>[] = [];
     for (const result of results) {
+      if (!result.success || !result.result) {
+        continue;
+      }
       if (result.success && result.result) {
         const chunkResults = result.result as unknown as ParallelResult<AnalysisResult>[];
         if (Array.isArray(chunkResults)) {

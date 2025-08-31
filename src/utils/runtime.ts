@@ -21,56 +21,80 @@ interface RuntimeCapabilities {
   fetch: boolean;
 }
 
+// Cache for runtime detection to avoid repeated environment checks
+let runtimeCache: RuntimeInfo | null = null;
+
+/**
+ * Clear runtime cache (for testing purposes only)
+ * @internal
+ */
+export function clearRuntimeCache(): void {
+  runtimeCache = null;
+}
+
 /**
  * Detect the current JavaScript runtime environment
+ * Results are cached and frozen to prevent external mutation
  */
 export function detectRuntime(): RuntimeInfo {
+  if (runtimeCache) {
+    return runtimeCache;
+  }
   // Deno detection (must come before Node.js check)
   if (typeof Deno !== 'undefined' && Deno !== null) {
-    return {
+    const capabilities = {
+      filesystem: true,
+      subprocess: true,
+      webassembly: true,
+      webworkers: true,
+      sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+      fetch: true,
+    };
+    const result: RuntimeInfo = {
       name: 'deno',
       version: Deno.version?.deno,
-      capabilities: {
-        filesystem: true,
-        subprocess: true,
-        webassembly: true,
-        webworkers: true,
-        sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
-        fetch: true,
-      },
+      capabilities: Object.freeze(capabilities),
     };
+    runtimeCache = Object.freeze(result) as RuntimeInfo;
+    return runtimeCache;
   }
 
   // Bun detection
   if (typeof Bun !== 'undefined' && Bun !== null) {
-    return {
+    const capabilities = {
+      filesystem: true,
+      subprocess: true,
+      webassembly: true,
+      webworkers: true,
+      sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+      fetch: true,
+    };
+    const result: RuntimeInfo = {
       name: 'bun',
       version: Bun.version,
-      capabilities: {
-        filesystem: true,
-        subprocess: true,
-        webassembly: true,
-        webworkers: true,
-        sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
-        fetch: true,
-      },
+      capabilities: Object.freeze(capabilities),
     };
+    runtimeCache = Object.freeze(result) as RuntimeInfo;
+    return runtimeCache;
   }
 
   // Node.js detection
   if (typeof process !== 'undefined' && process.versions?.node) {
-    return {
+    const capabilities = {
+      filesystem: true,
+      subprocess: true,
+      webassembly: typeof WebAssembly !== 'undefined',
+      webworkers: false, // Node.js worker_threads are different
+      sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+      fetch: typeof fetch !== 'undefined', // Available in Node.js 18+
+    };
+    const result: RuntimeInfo = {
       name: 'node',
       version: process.versions.node,
-      capabilities: {
-        filesystem: true,
-        subprocess: true,
-        webassembly: typeof WebAssembly !== 'undefined',
-        webworkers: false, // Node.js worker_threads are different
-        sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
-        fetch: typeof fetch !== 'undefined', // Available in Node.js 18+
-      },
+      capabilities: Object.freeze(capabilities),
     };
+    runtimeCache = Object.freeze(result) as RuntimeInfo;
+    return runtimeCache;
   }
 
   // Browser detection
@@ -82,30 +106,38 @@ export function detectRuntime(): RuntimeInfo {
           ? self.isSecureContext
           : false;
 
-    return {
-      name: 'browser',
-      capabilities: {
-        filesystem: false,
-        subprocess: false,
-        webassembly: typeof WebAssembly !== 'undefined',
-        webworkers: typeof Worker !== 'undefined',
-        sharedArrayBuffer: isSecureContext && typeof SharedArrayBuffer !== 'undefined',
-        fetch: typeof fetch !== 'undefined',
-      },
-    };
-  }
-
-  return {
-    name: 'unknown',
-    capabilities: {
+    const capabilities = {
       filesystem: false,
       subprocess: false,
-      webassembly: false,
-      webworkers: false,
-      sharedArrayBuffer: false,
-      fetch: false,
-    },
+      webassembly: typeof WebAssembly !== 'undefined',
+      webworkers: typeof Worker !== 'undefined',
+      sharedArrayBuffer: isSecureContext && typeof SharedArrayBuffer !== 'undefined',
+      fetch: typeof fetch !== 'undefined',
+    };
+    const result: RuntimeInfo = {
+      name: 'browser',
+      capabilities: Object.freeze(capabilities),
+    };
+    runtimeCache = Object.freeze(result) as RuntimeInfo;
+    return runtimeCache;
+  }
+
+  const capabilities = {
+    filesystem: false,
+    subprocess: false,
+    webassembly: false,
+    webworkers: false,
+    sharedArrayBuffer: false,
+    fetch: false,
   };
+  const result: RuntimeInfo = {
+    name: 'unknown',
+    capabilities: Object.freeze(capabilities),
+  };
+
+  // Cache and freeze the result to prevent external mutation
+  runtimeCache = Object.freeze(result) as RuntimeInfo;
+  return runtimeCache;
 }
 
 /**
@@ -169,6 +201,58 @@ export function getBestPythonRuntime(): 'node' | 'pyodide' | 'http' {
   return 'http';
 }
 
+// Cache for lazy-loaded path module
+let pathModule: any = null;
+
+/**
+ * Lazy load Node.js path module on demand
+ */
+async function loadPathModule(): Promise<any> {
+  if (pathModule) {
+    return pathModule;
+  }
+
+  const runtime = detectRuntime();
+  if (runtime.name === 'node') {
+    try {
+      pathModule = await import('node:path');
+      return pathModule;
+    } catch {
+      // Fallback for older Node.js versions
+      pathModule = await import('path');
+      return pathModule;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Normalize path by stripping '.' and resolving '..' components
+ */
+function normalizePath(path: string): string {
+  const isAbsolute = path.startsWith('/');
+  const segments = path.split('/');
+  const normalized: string[] = [];
+  
+  for (const segment of segments) {
+    if (segment === '.' || segment === '') {
+      continue; // Skip current directory and empty segments
+    } else if (segment === '..') {
+      if (normalized.length > 0 && normalized[normalized.length - 1] !== '..') {
+        normalized.pop(); // Go up one directory
+      } else if (!isAbsolute) {
+        normalized.push(segment); // Keep '..' if not absolute and at root
+      }
+    } else {
+      normalized.push(segment);
+    }
+  }
+  
+  const result = normalized.join('/');
+  return isAbsolute ? '/' + result : result;
+}
+
 /**
  * Runtime-specific path utilities
  */
@@ -177,55 +261,58 @@ export const pathUtils = {
    * Join paths in a cross-runtime way
    */
   join(...segments: string[]): string {
-    const runtime = detectRuntime();
-
-    if (runtime.name === 'deno') {
-      // Use Deno's std library
-      try {
-        // Dynamic import to avoid build errors
-        const joined = segments.filter(Boolean).join('/').replace(/\/+/g, '/');
-        return joined;
-      } catch {
-        const joined = segments.filter(Boolean).join('/').replace(/\/+/g, '/');
-        return joined;
-      }
-    }
-
-    if (runtime.name === 'node') {
-      // Use Node.js path module
-      try {
-        // Dynamic import for ESM compatibility
-        const joined = segments.filter(Boolean).join('/').replace(/\/+/g, '/');
-        return joined;
-      } catch {
-        const joined = segments.filter(Boolean).join('/').replace(/\/+/g, '/');
-        return joined;
-      }
-    }
-
-    // Fallback for browser and other runtimes
-    // Normalize the path: remove empty segments and handle multiple slashes
     const joined = segments
       .filter(Boolean)
       .join('/')
-      .replace(/\/+/g, '/'); // Replace multiple slashes with single slash
+      .replace(/\/+/g, '/') // Replace multiple slashes with single slash
+      .replace(/\\/g, '/'); // Normalize backslashes to forward slashes
     
-    return joined;
+    return normalizePath(joined);
+  },
+
+  /**
+   * Join paths asynchronously with enhanced Node.js support
+   */
+  async joinAsync(...segments: string[]): Promise<string> {
+    const runtime = detectRuntime();
+
+    // For Node.js, use the real path module when available
+    if (runtime.name === 'node') {
+      const pathMod = await loadPathModule();
+      if (pathMod && pathMod.posix) {
+        return pathMod.posix.join(...segments);
+      }
+    }
+
+    // Fallback implementation with normalization
+    const joined = segments
+      .filter(Boolean)
+      .join('/')
+      .replace(/\/+/g, '/') // Replace multiple slashes with single slash
+      .replace(/\\/g, '/'); // Normalize backslashes to forward slashes
+    
+    return normalizePath(joined);
   },
 
   /**
    * Resolve absolute path in a cross-runtime way
    */
-  resolve(path: string): string {
+  async resolve(path: string): Promise<string> {
     const runtime = detectRuntime();
+
+    if (runtime.name === 'node') {
+      const pathMod = await loadPathModule();
+      if (pathMod) {
+        return pathMod.resolve(path);
+      }
+    }
 
     if (runtime.name === 'browser') {
       return new URL(path, location.href).href;
     }
 
-    // For server-side runtimes, return as-is for now
-    // Resolution for Node.js/Deno/Bun will be implemented in a future sprint
-    return path;
+    // Fallback: normalize and return as-is
+    return normalizePath(path);
   },
 };
 

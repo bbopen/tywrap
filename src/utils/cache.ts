@@ -104,8 +104,10 @@ export class IntelligentCache {
         hash.update(input);
       } else if (Buffer.isBuffer(input)) {
         hash.update(input);
-      } else {
+      } else if (input !== undefined && input !== null) {
         hash.update(JSON.stringify(input));
+      } else {
+        hash.update('null');
       }
     }
     
