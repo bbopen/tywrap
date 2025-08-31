@@ -2,6 +2,16 @@
 
 Complete configuration reference covering all options from basic setup to advanced optimization.
 
+## Top-Level Fields
+
+| Field | Description |
+|-------|-------------|
+| `pythonModules` | Mapping of module names to wrapper configuration |
+| `output` | Output directory, module format and artifact options |
+| `runtime` | Settings for Node, Pyodide or HTTP runtimes |
+| `performance` | Caching and optimization controls |
+| `development` | Development-time features like hot reloading |
+
 ## Configuration File Formats
 
 tywrap supports multiple configuration formats:
@@ -243,6 +253,18 @@ export default defineConfig({
 | `sourceMap` | `boolean` | `false` | Generate source maps |
 | `validation` | `'runtime' \| 'compile' \| 'both' \| 'none'` | `'none'` | Validation level |
 | `verbose` | `boolean` | `false` | Verbose logging |
+
+## Extension Hooks
+
+tywrap supports a lightweight plugin system that allows hooking into the
+generation lifecycle:
+
+- `beforeGeneration(options)` – invoked before code generation begins.
+- `afterGeneration(result)` – called after generation completes.
+- `transformPythonType(type)` – modify analyzed Python types.
+- `transformTypescriptCode(code)` – post-process generated TypeScript.
+
+Hooks are optional; implement only what your plugin needs.
 
 ## Environment Variables
 
