@@ -295,9 +295,32 @@ export const pathUtils = {
   },
 
   /**
-   * Resolve absolute path in a cross-runtime way
+   * Resolve absolute path in a cross-runtime way (synchronous)
    */
-  async resolve(path: string): Promise<string> {
+  resolve(path: string): string {
+    const runtime = detectRuntime();
+
+    // Simple synchronous resolution for testing
+    if (path.startsWith('/')) {
+      return path; // Already absolute
+    }
+
+    if (runtime.name === 'node' && typeof process !== 'undefined' && process.cwd) {
+      return normalizePath(process.cwd() + '/' + path);
+    }
+
+    if (runtime.name === 'browser' && typeof location !== 'undefined') {
+      return new URL(path, location.href).href;
+    }
+
+    // Fallback: normalize and return as-is for relative paths
+    return normalizePath(path);
+  },
+
+  /**
+   * Resolve absolute path in a cross-runtime way (asynchronous)
+   */
+  async resolveAsync(path: string): Promise<string> {
     const runtime = detectRuntime();
 
     if (runtime.name === 'node') {

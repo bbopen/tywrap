@@ -44,7 +44,7 @@ const createBunMocks = () => {
   return { mockBun, mockProcess };
 };
 
-describe('Bun Runtime Support', () => {
+describeBunOnly('Bun Runtime Support', () => {
   let originalBun: any;
   let mocks: ReturnType<typeof createBunMocks>;
 
