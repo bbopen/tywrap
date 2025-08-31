@@ -11,7 +11,8 @@ import { tywrap, type TywrapInstance } from './tywrap.js';
 export { TypeMapper } from './core/mapper.js';
 export { CodeGenerator } from './core/generator.js';
 export { PyAnalyzer } from './core/analyzer.js';
-export { TywrapConfig, createConfig } from './config/index.js';
+export type { TywrapConfig } from './config/index.js';
+export { createConfig } from './config/index.js';
 export { RuntimeBridge } from './runtime/base.js';
 
 // Runtime-specific exports
