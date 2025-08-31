@@ -17,6 +17,7 @@ import {
   fsUtils,
   processUtils,
   hashUtils,
+  clearRuntimeCache,
   type Runtime
 } from '../src/utils/runtime.js';
 
@@ -36,6 +37,9 @@ describeRuntimeDetection('Runtime Detection', () => {
   } = {};
 
   beforeEach(() => {
+    // Clear runtime cache before each test
+    clearRuntimeCache();
+    
     // Store original globals
     originalGlobals = {
       Deno: (globalThis as any).Deno,
@@ -58,6 +62,9 @@ describeRuntimeDetection('Runtime Detection', () => {
         delete (globalThis as any)[key];
       }
     });
+    
+    // Clear runtime cache after restoring globals
+    clearRuntimeCache();
   });
 
   describe('Basic Runtime Detection', () => {
