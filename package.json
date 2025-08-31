@@ -23,6 +23,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
     "test": "vitest --run",
     "test:watch": "vitest",
     "test:node": "node --test test/node/*.test.js",
