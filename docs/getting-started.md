@@ -80,6 +80,8 @@ tywrap generate --config tywrap.config.json
 node -e "import('tywrap').then(tw => tw.generate(require('./tywrap.config.json')))"
 ```
 
+Run `tywrap generate --help` to see all available options and defaults.
+
 ## Usage
 
 After generation, import and use your Python library with full TypeScript support:
