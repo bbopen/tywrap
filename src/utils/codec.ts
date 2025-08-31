@@ -75,10 +75,10 @@ async function tryDecodeArrowTable(bytes: Uint8Array): Promise<ArrowTable | Uint
   return bytes;
 }
 
-/**
- * Decode values produced by the Python bridge.
- */
-export async function decodeValueAsync(value: unknown): Promise<DecodedValue> {
+function decodeEnvelope<T>(
+  value: unknown,
+  decodeArrow: (bytes: Uint8Array) => T
+): T | unknown {
   if (!isObject(value)) {
     return value;
   }
@@ -89,7 +89,7 @@ export async function decodeValueAsync(value: unknown): Promise<DecodedValue> {
     typeof (value as { b64?: unknown }).b64 === 'string'
   ) {
     const bytes = fromBase64(String((value as { b64: string }).b64));
-    return await tryDecodeArrowTable(bytes);
+    return decodeArrow(bytes);
   }
   if (
     marker === 'dataframe' &&
@@ -120,53 +120,25 @@ export async function decodeValueAsync(value: unknown): Promise<DecodedValue> {
 }
 
 /**
+ * Decode values produced by the Python bridge.
+ */
+export async function decodeValueAsync(value: unknown): Promise<DecodedValue> {
+  return await decodeEnvelope(value, tryDecodeArrowTable);
+}
+
+/**
  * Synchronous best-effort decode. Arrow decoding falls back to raw bytes.
  */
 export function decodeValue(value: unknown): DecodedValue {
-  if (!isObject(value)) {
-    return value;
-  }
-  const marker = (value as { __tywrap__?: unknown }).__tywrap__;
-  if (
-    (marker === 'dataframe' || marker === 'series') &&
-    (value as { encoding?: unknown }).encoding === 'arrow' &&
-    typeof (value as { b64?: unknown }).b64 === 'string'
-  ) {
-    const bytes = fromBase64(String((value as { b64: string }).b64));
-    // Synchronous path uses registered decoder when available; otherwise raw bytes
+  const decodeArrow = (bytes: Uint8Array): DecodedValue => {
     if (arrowTableFrom) {
       try {
         return arrowTableFrom(bytes);
       } catch {
-        // ignore
+        // ignore and fall through to bytes
       }
     }
     return bytes;
-  }
-  if (
-    marker === 'dataframe' &&
-    (value as { encoding?: unknown }).encoding === 'json' &&
-    'data' in (value as object)
-  ) {
-    return (value as { data: unknown }).data;
-  }
-  if (
-    marker === 'series' &&
-    (value as { encoding?: unknown }).encoding === 'json' &&
-    'data' in (value as object)
-  ) {
-    return (value as { data: unknown }).data;
-  }
-  if (marker === 'ndarray') {
-    if (
-      (value as { encoding?: unknown }).encoding === 'arrow' &&
-      typeof (value as { b64?: unknown }).b64 === 'string'
-    ) {
-      return fromBase64(String((value as { b64: string }).b64));
-    }
-    if ((value as { encoding?: unknown }).encoding === 'json' && 'data' in (value as object)) {
-      return (value as { data: unknown }).data;
-    }
-  }
-  return value as unknown;
+  };
+  return decodeEnvelope(value, decodeArrow);
 }
