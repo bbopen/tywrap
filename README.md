@@ -133,6 +133,25 @@ export default defineConfig({
 });
 ```
 
+### Configuration Fields
+
+- `pythonModules` – modules to wrap and their options
+- `output` – directory, format and generated artifacts
+- `runtime` – runtime paths and timeouts
+- `performance` – caching and batching controls
+- `development` – hot reloading and validation mode
+
+### Extension Hooks
+
+Plugins can extend tywrap via lifecycle hooks:
+
+- `beforeGeneration(options)`
+- `afterGeneration(result)`
+- `transformPythonType(type)`
+- `transformTypescriptCode(code)`
+
+See the [Configuration Guide](./docs/configuration.md) for details.
+
 ## Build Tool Integration
 
 ### Vite
