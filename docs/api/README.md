@@ -484,16 +484,15 @@ try {
 ```bash
 # Generate wrappers
 tywrap generate [options]
-
-# Validate configuration  
-tywrap validate [options]
-
 # Show version
 tywrap --version
 
-# Show help
-tywrap --help
+# Show help for commands
+tywrap generate --help
 ```
+
+The CLI uses argument validation and will exit with an error on unknown
+commands or options.
 
 ### Programmatic CLI
 
