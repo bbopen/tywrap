@@ -23,6 +23,7 @@ export class PyodideBridge extends RuntimeBridge {
   private readonly indexURL: string;
   private readonly packages: readonly string[];
   private py?: PyodideInstance;
+  private initPromise?: Promise<void>;
 
   constructor(options: PyodideBridgeOptions = { indexURL: 'https://cdn.jsdelivr.net/pyodide/' }) {
     super();
@@ -34,6 +35,16 @@ export class PyodideBridge extends RuntimeBridge {
     if (this.py) {
       return;
     }
+    // If already initializing, wait for that promise
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+    // Start initialization and store the promise to prevent concurrent initialization
+    this.initPromise = this.doInit();
+    return this.initPromise;
+  }
+
+  private async doInit(): Promise<void> {
     const loadPyodideFn: LoadPyodide | undefined = await this.resolveLoadPyodide();
     if (!loadPyodideFn) {
       throw new Error('Pyodide is not available in this environment');
@@ -58,7 +69,8 @@ export class PyodideBridge extends RuntimeBridge {
         return mod.loadPyodide;
       }
     } catch {
-      // ignore
+      // Ignore import errors - pyodide may not be installed
+      // This is expected in most environments
     }
     return undefined;
   }

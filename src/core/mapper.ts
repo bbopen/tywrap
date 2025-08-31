@@ -9,6 +9,9 @@ import type {
   UnionType as PyUnionType,
   OptionalType as PyOptionalType,
   GenericType as PyGenericType,
+  TypeVarType as PyTypeVarType,
+  FinalType as PyFinalType,
+  ClassVarType as PyClassVarType,
   TypescriptType,
   TSPrimitiveType,
   TSArrayType,
@@ -46,6 +49,12 @@ export class TypeMapper {
       case 'annotated':
         // Pass-through base for type shape; metadata used at generation when configured
         return this.mapPythonType(pythonType.base, context);
+      case 'typevar':
+        return this.mapTypeVarType(pythonType, context);
+      case 'final':
+        return this.mapFinalType(pythonType, context);
+      case 'classvar':
+        return this.mapClassVarType(pythonType, context);
     }
   }
 
@@ -157,23 +166,35 @@ export class TypeMapper {
 
   mapCustomType(
     type: { kind: 'custom'; name: string; module?: string },
-    context: MappingContext = 'value'
+    _context: MappingContext = 'value'
   ): TSCustomType {
     // Normalize some known typing names into TS primitives/generics
     const name = type.name;
-    if (name === 'Any' || name === 'typing.Any') {
+    const fullName = type.module ? `${type.module}.${name}` : name;
+    
+    // Top and bottom types
+    if (name === 'Any' || fullName === 'typing.Any') {
       return { kind: 'primitive', name: 'unknown' } as unknown as TSCustomType;
     }
-    if (name === 'Never' || name === 'typing.Never') {
-      return {
-        kind: 'primitive',
-        name: context === 'return' ? 'never' : 'never',
-      } as unknown as TSCustomType;
+    if (name === 'Never' || fullName === 'typing.Never' || name === 'NoReturn' || fullName === 'typing.NoReturn') {
+      return { kind: 'primitive', name: 'never' } as unknown as TSCustomType;
     }
-    if (name === 'LiteralString' || name === 'typing.LiteralString') {
+    
+    // String types
+    if (name === 'LiteralString' || fullName === 'typing.LiteralString') {
       return { kind: 'primitive', name: 'string' } as unknown as TSCustomType;
     }
-    if (name === 'Callable') {
+    if (name === 'AnyStr' || fullName === 'typing.AnyStr') {
+      return { kind: 'primitive', name: 'string' } as unknown as TSCustomType;
+    }
+    
+    // Object types
+    if (name === 'object' || fullName === 'builtins.object') {
+      return { kind: 'primitive', name: 'object' } as unknown as TSCustomType;
+    }
+    
+    // Callable types
+    if (name === 'Callable' || fullName === 'typing.Callable') {
       return {
         kind: 'function',
         isAsync: false,
@@ -188,6 +209,43 @@ export class TypeMapper {
         returnType: { kind: 'primitive', name: 'unknown' },
       } as unknown as TSCustomType;
     }
+    
+    // Async types
+    if (name === 'Awaitable' || fullName === 'typing.Awaitable') {
+      return {
+        kind: 'generic',
+        name: 'Promise',
+        typeArgs: [{ kind: 'primitive', name: 'unknown' }]
+      } as unknown as TSCustomType;
+    }
+    if (name === 'Coroutine' || fullName === 'typing.Coroutine') {
+      return {
+        kind: 'generic',
+        name: 'Promise',
+        typeArgs: [{ kind: 'primitive', name: 'unknown' }]
+      } as unknown as TSCustomType;
+    }
+    
+    // Collection types that should be generics
+    if (name === 'Sequence' || fullName === 'typing.Sequence') {
+      return {
+        kind: 'generic',
+        name: 'Array',
+        typeArgs: [{ kind: 'primitive', name: 'unknown' }]
+      } as unknown as TSCustomType;
+    }
+    if (name === 'Mapping' || fullName === 'typing.Mapping') {
+      return {
+        kind: 'object',
+        properties: [],
+        indexSignature: {
+          keyType: { kind: 'primitive', name: 'string' },
+          valueType: { kind: 'primitive', name: 'unknown' }
+        }
+      } as unknown as TSCustomType;
+    }
+    
+    // Forward references and user types
     return { kind: 'custom', name: type.name, module: type.module };
   }
 
@@ -229,6 +287,28 @@ export class TypeMapper {
     value: string | number | boolean | null;
   }): TSLiteralType {
     return { kind: 'literal', value: type.value };
+  }
+
+  mapTypeVarType(type: PyTypeVarType, _context: MappingContext = 'value'): TSCustomType {
+    // TypeVar maps to a generic type parameter in TypeScript
+    // Bounds and constraints are not directly expressible in TypeScript type system
+    return {
+      kind: 'custom',
+      name: type.name,
+      module: 'typing'
+    };
+  }
+
+  mapFinalType(type: PyFinalType, context: MappingContext = 'value'): TypescriptType {
+    // Final[T] maps to T in TypeScript (no direct Final equivalent)
+    // The Final qualifier is more of a static analysis hint
+    return this.mapPythonType(type.type, context);
+  }
+
+  mapClassVarType(type: PyClassVarType, context: MappingContext = 'value'): TypescriptType {
+    // ClassVar[T] maps to T in TypeScript (class variables are just properties)
+    // The ClassVar qualifier is more of a static analysis hint
+    return this.mapPythonType(type.type, context);
   }
 
   private asIndexKeyType(key: TypescriptType): TSPrimitiveType {

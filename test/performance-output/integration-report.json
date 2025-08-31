@@ -1,0 +1,136 @@
+{
+  "timestamp": "2025-08-31T02:48:04.275Z",
+  "summary": {
+    "totalOperations": 6,
+    "totalTime": 2331.7641670000003,
+    "totalMemoryDelta": 9400128,
+    "averageTime": 388.62736116666673,
+    "peakMemoryDelta": 5301536
+  },
+  "metrics": [
+    {
+      "operation": "analyze_small_modules",
+      "duration": 130.39537499999994,
+      "memoryBefore": 15194704,
+      "memoryAfter": 17317112,
+      "memoryDelta": 2122408,
+      "cacheHits": 5,
+      "cacheSize": 38860,
+      "throughput": 38.34491829177225
+    },
+    {
+      "operation": "analyze_cache_miss",
+      "duration": 3.9733340000000226,
+      "memoryBefore": 17457000,
+      "memoryAfter": 18691040,
+      "memoryDelta": 1234040,
+      "cacheHits": 1,
+      "cacheSize": 7772
+    },
+    {
+      "operation": "analyze_cache_hit",
+      "duration": 0.054082999999991443,
+      "memoryBefore": 18694968,
+      "memoryAfter": 18611872,
+      "memoryDelta": -83096,
+      "cacheHits": 0,
+      "cacheSize": 7772
+    },
+    {
+      "operation": "generate_wrappers",
+      "duration": 9.79200000000003,
+      "memoryBefore": 15596160,
+      "memoryAfter": 15973624,
+      "memoryDelta": 377464,
+      "cacheHits": 3,
+      "cacheSize": 30651,
+      "throughput": 306.37254901960694
+    },
+    {
+      "operation": "optimize_bundles",
+      "duration": 2.469250000000102,
+      "memoryBefore": 18285168,
+      "memoryAfter": 18732944,
+      "memoryDelta": 447776,
+      "cacheHits": 4,
+      "cacheSize": 20978
+    },
+    {
+      "operation": "full_pipeline",
+      "duration": 2185.080125,
+      "memoryBefore": 16426456,
+      "memoryAfter": 21727992,
+      "memoryDelta": 5301536,
+      "cacheHits": 2,
+      "cacheSize": 544,
+      "throughput": 1.8305964867077817
+    }
+  ],
+  "cacheStats": {
+    "totalEntries": 3,
+    "totalSize": 23304,
+    "hitRate": 0.6666666666666666,
+    "averageComputeTime": 2.2777255833333356,
+    "topKeys": [
+      {
+        "key": "b93eb636219ae7bb",
+        "hitCount": 4,
+        "size": 7768
+      },
+      {
+        "key": "3554a787d052213b",
+        "hitCount": 4,
+        "size": 7768
+      },
+      {
+        "key": "b3382d6d96e7125a",
+        "hitCount": 4,
+        "size": 7768
+      }
+    ],
+    "memoryUsage": 21255776
+  },
+  "memoryReport": {
+    "summary": {
+      "duration": 2429,
+      "totalOperations": 0,
+      "peakMemory": 21132488,
+      "averageMemory": 18124664,
+      "memoryGrowth": 6015648,
+      "gcEfficiency": 0
+    },
+    "leakAnalysis": {
+      "detected": false,
+      "severity": "low",
+      "growthRate": 0,
+      "suspiciousOperations": [],
+      "recommendations": [],
+      "snapshots": [
+        {
+          "timestamp": 1756608481845,
+          "heapUsed": 15116840,
+          "heapTotal": 30146560,
+          "external": 3814671,
+          "rss": 80789504,
+          "arrayBuffers": 153680,
+          "gcCount": 0,
+          "operation": "monitoring_start"
+        },
+        {
+          "timestamp": 1756608484274,
+          "heapUsed": 21132488,
+          "heapTotal": 34340864,
+          "external": 3886786,
+          "rss": 401719296,
+          "arrayBuffers": 232205,
+          "gcCount": 0,
+          "operation": "monitoring_stop"
+        }
+      ]
+    },
+    "operationMetrics": {},
+    "recommendations": [
+      "Low GC efficiency - may indicate memory fragmentation or retained references"
+    ]
+  }
+}

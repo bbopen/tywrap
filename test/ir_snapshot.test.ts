@@ -2,12 +2,21 @@ import { describe, it, expect } from 'vitest';
 import { processUtils } from '../src/utils/runtime.js';
 
 function sanitizeIr(ir: any) {
+  // Filter to only stable math functions that exist across Python versions
+  const stableMathFunctions = [
+    'acos', 'asin', 'atan', 'atan2', 'ceil', 'cos', 'degrees', 'exp', 
+    'fabs', 'floor', 'fmod', 'frexp', 'log', 'log10', 'pow', 'radians',
+    'sin', 'sqrt', 'tan', 'trunc'
+  ];
+  
+  const functionNames = (ir.functions ?? [])
+    .map((f: any) => f.name)
+    .filter((name: string) => stableMathFunctions.includes(name))
+    .sort();
+    
   return {
     module: ir.module,
-    functionNames: (ir.functions ?? [])
-      .map((f: any) => f.name)
-      .sort()
-      .slice(0, 30),
+    functionNames,
     classNames: (ir.classes ?? []).map((c: any) => c.name).sort(),
     // Omit metadata and docstrings from snapshot for stability
   };

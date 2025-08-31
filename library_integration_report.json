@@ -1,0 +1,249 @@
+{
+  "test_timestamp": "2025-08-30 16:11:13",
+  "tywrap_version": "0.2.0",
+  "summary": {
+    "total_libraries_tested": 8,
+    "successful_extractions": 7,
+    "failed_extractions": 1,
+    "total_functions_found": 212,
+    "total_classes_found": 69,
+    "average_extraction_time": 0.05531960725784302
+  },
+  "library_results": {
+    "math": {
+      "success": true,
+      "extraction_time": 0.011812686920166016,
+      "functions_count": 55,
+      "classes_count": 0,
+      "constants_count": 0,
+      "functions_names": [
+        "acos",
+        "acosh",
+        "asin",
+        "asinh",
+        "atan",
+        "atan2",
+        "atanh",
+        "cbrt",
+        "ceil",
+        "comb"
+      ],
+      "classes_names": [],
+      "issues": []
+    },
+    "json": {
+      "success": true,
+      "extraction_time": 0.0003662109375,
+      "functions_count": 5,
+      "classes_count": 0,
+      "constants_count": 0,
+      "functions_names": [
+        "detect_encoding",
+        "dump",
+        "dumps",
+        "load",
+        "loads"
+      ],
+      "classes_names": [],
+      "issues": []
+    },
+    "datetime": {
+      "success": false,
+      "error": "can't multiply sequence by non-int of type 'float'",
+      "extraction_time": 0,
+      "functions_count": 0,
+      "classes_count": 0,
+      "constants_count": 0
+    },
+    "numpy": {
+      "success": true,
+      "extraction_time": 0.1286180019378662,
+      "functions_count": 51,
+      "classes_count": 69,
+      "constants_count": 0,
+      "functions_names": [
+        "asarray_chkfinite",
+        "asmatrix",
+        "bartlett",
+        "base_repr",
+        "binary_repr",
+        "blackman",
+        "bmat",
+        "broadcast_shapes",
+        "diag_indices",
+        "eye"
+      ],
+      "classes_names": [
+        "bool",
+        "bool",
+        "broadcast",
+        "busdaycalendar",
+        "int8",
+        "bytes_",
+        "complex128",
+        "character",
+        "clongdouble",
+        "complex128"
+      ],
+      "issues": []
+    },
+    "pandas": {
+      "success": true,
+      "extraction_time": 0.1681537628173828,
+      "functions_count": 57,
+      "classes_count": 0,
+      "constants_count": 1,
+      "functions_names": [
+        "array",
+        "bdate_range",
+        "concat",
+        "crosstab",
+        "cut",
+        "date_range",
+        "eval",
+        "factorize",
+        "from_dummies",
+        "get_dummies"
+      ],
+      "classes_names": [],
+      "issues": []
+    },
+    "pydantic": {
+      "success": true,
+      "extraction_time": 0.019576072692871094,
+      "functions_count": 25,
+      "classes_count": 0,
+      "constants_count": 1,
+      "functions_names": [
+        "Field",
+        "PrivateAttr",
+        "computed_field",
+        "conbytes",
+        "condate",
+        "condecimal",
+        "confloat",
+        "confrozenset",
+        "conint",
+        "conlist"
+      ],
+      "classes_names": [],
+      "issues": []
+    },
+    "requests": {
+      "success": true,
+      "extraction_time": 0.029255151748657227,
+      "functions_count": 10,
+      "classes_count": 0,
+      "constants_count": 0,
+      "functions_names": [
+        "check_compatibility",
+        "delete",
+        "get",
+        "head",
+        "options",
+        "patch",
+        "post",
+        "put",
+        "request",
+        "session"
+      ],
+      "classes_names": [],
+      "issues": []
+    },
+    "fastapi": {
+      "success": true,
+      "extraction_time": 0.08477497100830078,
+      "functions_count": 9,
+      "classes_count": 0,
+      "constants_count": 0,
+      "functions_names": [
+        "Body",
+        "Cookie",
+        "Depends",
+        "File",
+        "Form",
+        "Header",
+        "Path",
+        "Query",
+        "Security"
+      ],
+      "classes_names": [],
+      "issues": []
+    }
+  },
+  "type_mapping_results": {
+    "numpy.array": {
+      "found": false,
+      "description": "Should handle numpy.ndarray types"
+    },
+    "json.loads": {
+      "found": true,
+      "parameter_count": 8,
+      "return_type": "unknown",
+      "parameters": [
+        [
+          "s",
+          null
+        ],
+        [
+          "cls",
+          null
+        ],
+        [
+          "object_hook",
+          null
+        ],
+        [
+          "parse_float",
+          null
+        ],
+        [
+          "parse_int",
+          null
+        ]
+      ],
+      "description": "Should handle Union[str, bytes, bytearray] input"
+    },
+    "math.sin": {
+      "found": true,
+      "parameter_count": 1,
+      "return_type": "unknown",
+      "parameters": [
+        [
+          "x",
+          null
+        ]
+      ],
+      "description": "Should handle float input and output"
+    },
+    "requests.get": {
+      "found": true,
+      "parameter_count": 3,
+      "return_type": "unknown",
+      "parameters": [
+        [
+          "url",
+          null
+        ],
+        [
+          "params",
+          null
+        ],
+        [
+          "kwargs",
+          null
+        ]
+      ],
+      "description": "Should handle optional parameters and Response return"
+    }
+  },
+  "recommendations": [
+    "Failed libraries need investigation: datetime"
+  ],
+  "performance_analysis": {
+    "fastest_extraction": 0,
+    "slowest_extraction": 0.1681537628173828,
+    "most_functions": 57,
+    "most_classes": 69
+  }
+}

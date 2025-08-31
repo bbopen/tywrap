@@ -24,3 +24,8 @@ describe('generated pydantic wrapper (opportunistic)', () => {
     expect(content).toContain('// Module: pydantic');
   });
 });
+
+
+
+
+
