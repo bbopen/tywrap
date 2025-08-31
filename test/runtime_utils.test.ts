@@ -177,8 +177,14 @@ describe('Path Utilities', () => {
   });
 
   describe('Resolve', () => {
-    it('should resolve paths asynchronously', async () => {
-      const resolved = await pathUtils.resolve('./test-file');
+    it('should resolve paths synchronously', () => {
+      const resolved = pathUtils.resolve('./test-file');
+      expect(typeof resolved).toBe('string');
+      expect(resolved).toContain('test-file');
+    });
+
+    it('should resolve paths asynchronously with resolveAsync', async () => {
+      const resolved = await pathUtils.resolveAsync('./test-file');
       expect(typeof resolved).toBe('string');
       expect(resolved).toContain('test-file');
     });
@@ -215,8 +221,13 @@ describe('Path Utilities', () => {
       expect(joined).toBe('src/components');
     });
 
-    it('should resolve URLs in browser environment', async () => {
-      const resolved = await pathUtils.resolve('./module.js');
+    it('should resolve URLs in browser environment', () => {
+      const resolved = pathUtils.resolve('./module.js');
+      expect(resolved).toContain('module.js');
+    });
+
+    it('should resolve URLs asynchronously in browser environment', async () => {
+      const resolved = await pathUtils.resolveAsync('./module.js');
       expect(resolved).toContain('module.js');
     });
   });
