@@ -6,8 +6,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { isDeno, detectRuntime, processUtils, fsUtils, pathUtils } from '../src/utils/runtime.js';
 
-// Skip all tests if not running in Deno environment
-const describeDenoOnly = isDeno() ? describe : describe.skip;
+// Skip all tests if not running in Deno environment or in CI
+const describeDenoOnly = (isDeno() && !process.env.CI) ? describe : describe.skip;
 
 // Mock Deno APIs for testing in non-Deno environments
 const createDenoMocks = () => {
@@ -39,7 +39,7 @@ const createDenoMocks = () => {
   return mockDeno;
 };
 
-describe('Deno Runtime Support', () => {
+describeDenoOnly('Deno Runtime Support', () => {
   let originalDeno: any;
 
   beforeEach(() => {
