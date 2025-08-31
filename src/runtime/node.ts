@@ -35,13 +35,7 @@ export interface NodeBridgeOptions {
 }
 
 export class NodeBridge extends RuntimeBridge {
-  private child?: {
-    stdin?: NodeJS.WritableStream;
-    stdout?: NodeJS.ReadableStream;
-    stderr?: NodeJS.ReadableStream;
-    kill: (signal?: NodeJS.Signals | number) => void;
-    on: (event: 'exit' | 'error', listener: (...args: unknown[]) => void) => void;
-  };
+  private child?: import('child_process').ChildProcess;
   private nextId = 1;
   private readonly pending = new Map<
     number,
@@ -102,7 +96,7 @@ export class NodeBridge extends RuntimeBridge {
 
     this.child = child;
 
-    this.child.on('error', (err) => {
+    this.child?.on('error', (err) => {
       const msg = `Python process error: ${(err as Error).message}`;
       for (const [, p] of this.pending) {
         p.reject(new Error(msg));
@@ -146,7 +140,7 @@ export class NodeBridge extends RuntimeBridge {
       }
     });
 
-    this.child.stderr?.on('data', (chunk: Buffer) => {
+    this.child?.stderr?.on('data', (chunk: Buffer) => {
       // Buffer stderr for better error diagnostics on failures/exits
       try {
         this.stderrBuffer += chunk.toString();
@@ -160,7 +154,7 @@ export class NodeBridge extends RuntimeBridge {
       }
     });
 
-    this.child.on('exit', () => {
+    this.child?.on('exit', () => {
       for (const [, p] of this.pending) {
         const stderrTail = this.stderrBuffer.trim();
         const msg = stderrTail
@@ -205,7 +199,7 @@ export class NodeBridge extends RuntimeBridge {
     const id = this.nextId++;
     const message: RpcRequest = { id, ...payload } as RpcRequest;
     const text = `${JSON.stringify(message)}\n`;
-    let timer: NodeJS.Timeout;
+    let timer: NodeJS.Timeout | undefined;
     const promise = new Promise<T>((resolve, reject) => {
       timer = setTimeout(() => {
         this.pending.delete(id);
@@ -227,7 +221,9 @@ export class NodeBridge extends RuntimeBridge {
       this.child.stdin.write(text);
     } catch (err) {
       this.pending.delete(id);
-      clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+      }
       throw new Error(`IPC failure: ${(err as Error).message}`);
     }
     return promise;
