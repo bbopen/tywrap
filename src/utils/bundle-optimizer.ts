@@ -242,11 +242,10 @@ export class BundleOptimizer {
         }
       } else if (
         ts.isCallExpression(node) &&
-        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-        node.arguments.length > 0
+        node.expression.kind === ts.SyntaxKind.ImportKeyword
       ) {
         const arg = node.arguments[0];
-        if (ts.isStringLiteral(arg)) {
+        if (arg && ts.isStringLiteral(arg)) {
           imports.add(arg.text);
         }
       }
