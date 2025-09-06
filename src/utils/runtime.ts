@@ -430,7 +430,8 @@ export const processUtils = {
    */
   async exec(
     command: string,
-    args: string[] = []
+    args: string[] = [],
+    options: { timeout?: number; maxBuffer?: number } = {}
   ): Promise<{ stdout: string; stderr: string; code: number }> {
     const runtime = detectRuntime();
 
@@ -439,38 +440,140 @@ export const processUtils = {
     }
 
     if (runtime.name === 'deno' && Deno) {
-      const cmd = new Deno.Command(command, { args });
-      const { code, stdout, stderr } = await cmd.output();
+      const { timeout, maxBuffer } = options;
+      const cmd: any = new Deno.Command(command, {
+        args,
+        stdout: 'piped',
+        stderr: 'piped',
+      } as any);
+      const child: any = cmd.spawn();
 
-      return {
-        code,
-        stdout: new TextDecoder().decode(stdout),
-        stderr: new TextDecoder().decode(stderr),
+      const decoder = new TextDecoder();
+      let stdout = '';
+      let stderr = '';
+      let total = 0;
+      let finished = false;
+
+      const readStream = async (stream: ReadableStream<Uint8Array>, isStdout: boolean, kill: (err: Error) => void) => {
+        const reader = stream.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              total += value.length;
+              if (maxBuffer !== undefined && total > maxBuffer) {
+                kill(new Error(`Process output exceeded maxBuffer of ${maxBuffer} bytes`));
+                return;
+              }
+              const text = decoder.decode(value);
+              if (isStdout) stdout += text; else stderr += text;
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
       };
+
+      return await new Promise((resolve, reject) => {
+        const kill = (err: Error) => {
+          if (finished) return;
+          finished = true;
+          try { child.kill('SIGTERM'); } catch { /* ignore */ }
+          if (timeoutId) clearTimeout(timeoutId);
+          reject(err);
+        };
+
+        const timeoutId = timeout
+          ? setTimeout(() =>
+              kill(new Error(`Process execution timed out after ${timeout}ms`)),
+            timeout)
+          : undefined;
+
+        Promise.all([
+          readStream(child.stdout, true, kill),
+          readStream(child.stderr, false, kill),
+          child.status,
+        ])
+          .then(([, , status]: any[]) => {
+            if (finished) return;
+            if (timeoutId) clearTimeout(timeoutId);
+            resolve({ code: status.code ?? 0, stdout, stderr });
+          })
+          .catch(err => {
+            kill(err);
+          });
+      });
     }
 
     if (runtime.name === 'bun' && Bun) {
-      const proc = Bun.spawn([command, ...args], {
+      const { timeout, maxBuffer } = options;
+      const proc: any = Bun.spawn([command, ...args], {
         stdout: 'pipe',
         stderr: 'pipe',
       });
 
-      const [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-      ]);
+      const decoder = new TextDecoder();
+      let stdout = '';
+      let stderr = '';
+      let total = 0;
+      let finished = false;
 
-      await proc.exited;
-
-      return {
-        code: proc.exitCode ?? 0,
-        stdout,
-        stderr,
+      const readStream = async (stream: ReadableStream<Uint8Array>, isStdout: boolean, kill: (err: Error) => void) => {
+        const reader = stream.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              total += value.length;
+              if (maxBuffer !== undefined && total > maxBuffer) {
+                kill(new Error(`Process output exceeded maxBuffer of ${maxBuffer} bytes`));
+                return;
+              }
+              const text = decoder.decode(value);
+              if (isStdout) stdout += text; else stderr += text;
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
       };
+
+      return await new Promise((resolve, reject) => {
+        const kill = (err: Error) => {
+          if (finished) return;
+          finished = true;
+          try { proc.kill(); } catch { /* ignore */ }
+          if (timeoutId) clearTimeout(timeoutId);
+          reject(err);
+        };
+
+        const timeoutId = timeout
+          ? setTimeout(() =>
+              kill(new Error(`Process execution timed out after ${timeout}ms`)),
+            timeout)
+          : undefined;
+
+        Promise.all([
+          readStream(proc.stdout, true, kill),
+          readStream(proc.stderr, false, kill),
+          proc.exited,
+        ])
+          .then(() => {
+            if (finished) return; // already rejected
+            if (timeoutId) clearTimeout(timeoutId);
+            resolve({ code: proc.exitCode ?? 0, stdout, stderr });
+          })
+          .catch(err => {
+            kill(err);
+          });
+      });
     }
 
     if (runtime.name === 'node') {
       const { spawn } = await import('child_process');
+      const { timeout, maxBuffer } = options;
 
       return new Promise((resolve, reject) => {
         const extraPyPath = pathUtils.join(process.cwd(), 'tywrap_ir');
@@ -481,20 +584,55 @@ export const processUtils = {
         const child = spawn(command, args, { env });
         let stdout = '';
         let stderr = '';
+        let total = 0;
+        let finished = false;
+
+        const kill = (err: Error) => {
+          if (finished) return;
+          finished = true;
+          try { child.kill(); } catch { /* ignore */ }
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          if (timeoutId) clearTimeout(timeoutId);
+          reject(err);
+        };
+
+        const timeoutId = timeout
+          ? setTimeout(() =>
+              kill(new Error(`Process execution timed out after ${timeout}ms`)),
+            timeout)
+          : undefined;
+
+        const checkBuffer = (chunk: Buffer) => {
+          total += chunk.length;
+          if (maxBuffer !== undefined && total > maxBuffer) {
+            kill(new Error(`Process output exceeded maxBuffer of ${maxBuffer} bytes`));
+            return true;
+          }
+          return false;
+        };
 
         child.stdout?.on('data', data => {
+          if (finished) return;
+          if (checkBuffer(data)) return;
           stdout += data.toString();
         });
 
         child.stderr?.on('data', data => {
+          if (finished) return;
+          if (checkBuffer(data)) return;
           stderr += data.toString();
         });
 
         child.on('close', code => {
+          if (finished) return;
+          if (timeoutId) clearTimeout(timeoutId);
           resolve({ code: code ?? 0, stdout, stderr });
         });
 
-        child.on('error', reject);
+        child.on('error', err => {
+          kill(err);
+        });
       });
     }
 
