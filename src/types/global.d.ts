@@ -14,10 +14,8 @@ declare namespace DenoTypes {
     writeTextFile(path: string, content: string): Promise<void>;
     Command: new (
       cmd: string,
-      options?: { args?: string[] }
-    ) => {
-      output(): Promise<{ code: number; stdout: Uint8Array; stderr: Uint8Array }>;
-    };
+      options?: { args?: string[]; stdout?: string; stderr?: string }
+    ) => any;
   }
 }
 
@@ -39,10 +37,11 @@ declare namespace BunTypes {
         stderr?: string;
       }
     ): {
-      stdout: ReadableStream;
-      stderr: ReadableStream;
+      stdout: ReadableStream<Uint8Array>;
+      stderr: ReadableStream<Uint8Array>;
       exitCode?: number;
-      exited: Promise<void>;
+      exited: Promise<number | void>;
+      kill?: () => void;
     };
   }
 }
