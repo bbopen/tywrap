@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { processUtils } from '../src/utils/runtime.js';
+import { getDefaultPythonPath } from '../src/utils/python.js';
 
 /**
  * Advanced IR Extraction Test Suite
@@ -13,6 +14,7 @@ import { processUtils } from '../src/utils/runtime.js';
 // Test fixture paths
 const FIXTURES_DIR = join(process.cwd(), 'test', 'fixtures', 'python');
 const TEMP_DIR = join(process.cwd(), 'test', 'temp_python_modules');
+const PYTHON_EXECUTABLE = getDefaultPythonPath();
 
 /**
  * Helper function to execute Python IR extraction
@@ -22,21 +24,19 @@ async function extractIR(
   includePrivate: boolean = false,
   useFixtureDir: boolean = false
 ): Promise<any> {
-  // Use Bash tool directly to have full control over the environment
-  const { Bash } = await import('../src/utils/runtime.js');
+  const modulePath = useFixtureDir ? FIXTURES_DIR : TEMP_DIR;
+  const modulePathLiteral = JSON.stringify(modulePath);
+  const irPathLiteral = JSON.stringify('tywrap_ir');
+  const moduleNameLiteral = JSON.stringify(moduleName);
 
-  const pythonPath = useFixtureDir
-    ? `${FIXTURES_DIR}:tywrap_ir:${process.env.PYTHONPATH || ''}`
-    : `${TEMP_DIR}:tywrap_ir:${process.env.PYTHONPATH || ''}`;
-
-  const result = await processUtils.exec('python3', [
+  const result = await processUtils.exec(PYTHON_EXECUTABLE, [
     '-c',
     `
 import sys
-sys.path.insert(0, "${useFixtureDir ? FIXTURES_DIR : TEMP_DIR}")
-sys.path.insert(0, "tywrap_ir")
+sys.path.insert(0, ${modulePathLiteral})
+sys.path.insert(0, ${irPathLiteral})
 from tywrap_ir.ir import emit_ir_json
-print(emit_ir_json("${moduleName}", include_private=${includePrivate ? 'True' : 'False'}, pretty=False))
+print(emit_ir_json(${moduleNameLiteral}, include_private=${includePrivate ? 'True' : 'False'}, pretty=False))
 `,
   ]);
 
@@ -73,7 +73,7 @@ beforeAll(async () => {
 
   // Verify Python and tywrap_ir are available
   try {
-    const result = await processUtils.exec('python3', ['-m', 'tywrap_ir', '--help']);
+    const result = await processUtils.exec(PYTHON_EXECUTABLE, ['-m', 'tywrap_ir', '--help']);
     if (result.code !== 0) {
       throw new Error('tywrap_ir module not available');
     }

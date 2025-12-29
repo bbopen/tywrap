@@ -7,6 +7,7 @@ import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { decodeValueAsync } from '../utils/codec.js';
+import { getDefaultPythonPath } from '../utils/python.js';
 import type { BridgeInfo } from '../types/index.js';
 
 import { RuntimeBridge } from './base.js';
@@ -106,7 +107,7 @@ export class NodeBridge extends RuntimeBridge {
       pythonPath:
         options.pythonPath ??
         venv?.pythonPath ??
-        (process.platform === 'win32' ? 'python' : 'python3'),
+        getDefaultPythonPath(),
       scriptPath: resolvedScriptPath,
       virtualEnv,
       cwd,
@@ -276,6 +277,12 @@ export class NodeBridge extends RuntimeBridge {
         env.VIRTUAL_ENV = venv.venvPath;
         const currentPath = env.PATH ?? process.env.PATH ?? '';
         env.PATH = `${venv.binDir}${delimiter}${currentPath}`;
+      }
+      if (!env.PYTHONUTF8) {
+        env.PYTHONUTF8 = '1';
+      }
+      if (!env.PYTHONIOENCODING) {
+        env.PYTHONIOENCODING = 'UTF-8';
       }
       // Respect explicit request for JSON fallback only; otherwise fast-fail by default
       if (this.options.enableJsonFallback && !env.TYWRAP_CODEC_FALLBACK) {

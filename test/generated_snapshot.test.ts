@@ -1,14 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { generate } from '../src/tywrap.js';
 import { fsUtils } from '../src/utils/runtime.js';
+import { getDefaultPythonPath } from '../src/utils/python.js';
 
 describe('Generated TS snapshot - math', () => {
   it('contains stable header and a known function wrapper', async () => {
     const outDir = './generated';
+    const defaultPythonPath = getDefaultPythonPath();
     const res = await generate({
       pythonModules: { math: { runtime: 'node', typeHints: 'strict' } },
       output: { dir: outDir, format: 'esm', declaration: false, sourceMap: false },
-      runtime: { node: { pythonPath: 'python3' } },
+      runtime: { node: { pythonPath: defaultPythonPath } },
       performance: { caching: false, batching: false, compression: 'none' },
       development: { hotReload: false, sourceMap: false, validation: 'none' },
     } as any);

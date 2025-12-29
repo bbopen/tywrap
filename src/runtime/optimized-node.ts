@@ -10,6 +10,7 @@ import { EventEmitter } from 'events';
 
 import { globalCache } from '../utils/cache.js';
 import { decodeValueAsync } from '../utils/codec.js';
+import { getDefaultPythonPath } from '../utils/python.js';
 
 import { RuntimeBridge } from './base.js';
 import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
@@ -152,7 +153,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       maxProcesses: options.maxProcesses ?? 8,
       maxIdleTime: options.maxIdleTime ?? 300000, // 5 minutes
       maxRequestsPerProcess: options.maxRequestsPerProcess ?? 1000,
-      pythonPath: options.pythonPath ?? venv?.pythonPath ?? 'python3',
+      pythonPath: options.pythonPath ?? venv?.pythonPath ?? getDefaultPythonPath(),
       scriptPath: resolvedScriptPath,
       virtualEnv,
       cwd,
@@ -413,6 +414,12 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       PYTHONUNBUFFERED: '1', // Ensure immediate output
       PYTHONDONTWRITEBYTECODE: '1', // Skip .pyc files for faster startup
     };
+    if (!env.PYTHONUTF8) {
+      env.PYTHONUTF8 = '1';
+    }
+    if (!env.PYTHONIOENCODING) {
+      env.PYTHONIOENCODING = 'UTF-8';
+    }
     if (this.options.virtualEnv) {
       const venv = resolveVirtualEnv(this.options.virtualEnv, this.options.cwd);
       env.VIRTUAL_ENV = venv.venvPath;

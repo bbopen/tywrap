@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { generate } from '../src/tywrap.js';
 import { processUtils, fsUtils } from '../src/utils/runtime.js';
 import { NodeBridge } from '../src/runtime/node.js';
+import { getDefaultPythonPath } from '../src/utils/python.js';
 
 /**
  * IR-only Integration Tests
@@ -12,10 +13,11 @@ const isCi =
   ['1', 'true'].includes((process.env.ACT ?? '').toLowerCase());
 const nodeBridgeTimeoutMs = isCi ? 60000 : 30000;
 const nodeBridgeTestTimeoutMs = isCi ? 60000 : 30000;
+const defaultPythonPath = getDefaultPythonPath();
 
 describe('IR-only integration', () => {
   it('tywrap_ir emits JSON IR for math', async () => {
-    const result = await processUtils.exec('python3', [
+    const result = await processUtils.exec(defaultPythonPath, [
       '-m',
       'tywrap_ir',
       '--module',
@@ -33,7 +35,7 @@ describe('IR-only integration', () => {
     const res = await generate({
       pythonModules: { math: { runtime: 'node', typeHints: 'strict' } },
       output: { dir: outDir, format: 'esm', declaration: false, sourceMap: false },
-      runtime: { node: { pythonPath: 'python3' } },
+      runtime: { node: { pythonPath: defaultPythonPath } },
       performance: { caching: false, batching: false, compression: 'none' },
       development: { hotReload: false, sourceMap: false, validation: 'none' },
     } as any);

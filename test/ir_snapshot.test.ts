@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { processUtils } from '../src/utils/runtime.js';
+import { getDefaultPythonPath } from '../src/utils/python.js';
 
 function sanitizeIr(ir: any) {
   // Filter to only stable math functions that exist across Python versions
@@ -41,7 +42,7 @@ function sanitizeIr(ir: any) {
 
 describe('IR golden snapshot - math', () => {
   it('matches sanitized snapshot', async () => {
-    const result = await processUtils.exec('python3', [
+    const result = await processUtils.exec(getDefaultPythonPath(), [
       '-m',
       'tywrap_ir',
       '--module',
