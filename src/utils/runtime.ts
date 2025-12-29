@@ -507,6 +507,83 @@ export const processUtils = {
 };
 
 /**
+ * Platform detection utilities
+ */
+
+/**
+ * Check if running on Windows
+ */
+export function isWindows(): boolean {
+  if (typeof process !== 'undefined' && process.platform) {
+    return process.platform === 'win32';
+  }
+  const deno = (globalThis as unknown as { Deno?: { build?: { os?: string } } }).Deno;
+  return deno?.build?.os === 'windows';
+}
+
+/**
+ * Check if running on macOS
+ */
+export function isMacOS(): boolean {
+  if (typeof process !== 'undefined' && process.platform) {
+    return process.platform === 'darwin';
+  }
+  const deno = (globalThis as unknown as { Deno?: { build?: { os?: string } } }).Deno;
+  return deno?.build?.os === 'darwin';
+}
+
+/**
+ * Check if running on Linux
+ */
+export function isLinux(): boolean {
+  if (typeof process !== 'undefined' && process.platform) {
+    return process.platform === 'linux';
+  }
+  const deno = (globalThis as unknown as { Deno?: { build?: { os?: string } } }).Deno;
+  return deno?.build?.os === 'linux';
+}
+
+/**
+ * Check if a path is absolute
+ */
+export function isAbsolutePath(path: string): boolean {
+  // Unix absolute paths
+  if (path.startsWith('/')) {
+    return true;
+  }
+  // Windows absolute paths (e.g., C:\, D:/)
+  return /^[A-Za-z]:[\\/]/.test(path);
+}
+
+/**
+ * Get the path separator for the current platform
+ */
+export function getPathSeparator(): string {
+  return isWindows() ? '\\' : '/';
+}
+
+/**
+ * Get the default Python executable name for the current platform
+ */
+export function getPythonExecutableName(): string {
+  return isWindows() ? 'python' : 'python3';
+}
+
+/**
+ * Get the virtual environment bin directory name
+ */
+export function getVenvBinDir(): string {
+  return isWindows() ? 'Scripts' : 'bin';
+}
+
+/**
+ * Get the Python executable filename in a virtual environment
+ */
+export function getVenvPythonExe(): string {
+  return isWindows() ? 'python.exe' : 'python';
+}
+
+/**
  * Cross-runtime hashing and stable stringify utilities
  */
 export const hashUtils = {

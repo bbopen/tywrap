@@ -8,6 +8,9 @@ import { promises as fs } from 'node:fs';
 import { join, dirname } from 'path';
 
 import type { AnalysisResult, PythonModule, GeneratedCode } from '../types/index.js';
+import { getComponentLogger } from './logger.js';
+
+const log = getComponentLogger('Cache');
 
 export interface CacheEntry<T = unknown> {
   key: string;
@@ -74,7 +77,7 @@ export class IntelligentCache {
 
     if (this.config.persistToDisk) {
       this.safeMkdir(this.config.baseDir).catch(error => {
-        console.warn('Failed to create cache directory:', error);
+        log.warn('Failed to create cache directory', { error: String(error) });
       });
     }
 
@@ -95,7 +98,7 @@ export class IntelligentCache {
       this.safeMkdir(this.config.baseDir)
         .then(() => this.loadFromDisk())
         .catch(error => {
-          console.warn('Failed to initialize disk cache:', error);
+          log.warn('Failed to initialize disk cache', { error: String(error) });
         });
     }
   }
@@ -390,13 +393,13 @@ export class IntelligentCache {
             .filter(file => file.endsWith('.cache'))
             .map(file =>
               this.safeUnlink(join(this.config.baseDir, file)).catch(error =>
-                console.warn(`Failed to remove cache file ${file}:`, error)
+                log.warn('Failed to remove cache file', { file, error: String(error) })
               )
             )
         );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          console.warn('Failed to clear disk cache:', error);
+          log.warn('Failed to clear disk cache', { error: String(error) });
         }
       }
     }
@@ -500,7 +503,7 @@ export class IntelligentCache {
               loadedCount++;
             }
           } catch (error) {
-            console.warn(`Failed to load cache file ${file}:`, error);
+            log.warn('Failed to load cache file', { file, error: String(error) });
           }
         }
       }
@@ -510,7 +513,7 @@ export class IntelligentCache {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn('Failed to load cache from disk:', error);
+        log.warn('Failed to load cache from disk', { error: String(error) });
       }
     }
   }
@@ -537,7 +540,7 @@ export class IntelligentCache {
       return parsed as CacheEntry<T>;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn(`Failed to load cache key ${key}:`, error);
+        log.warn('Failed to load cache key', { key, error: String(error) });
       }
       return null;
     }
@@ -564,13 +567,13 @@ export class IntelligentCache {
             data = `COMPRESSED:${compressed.toString('base64')}`;
           }
         } catch (error) {
-          console.warn(`Compression failed for ${key}:`, error);
+          log.warn('Compression failed', { key, error: String(error) });
         }
       }
 
       await this.safeWriteFile(filePath, data);
     } catch (error) {
-      console.warn(`Failed to save cache key ${key}:`, error);
+      log.warn('Failed to save cache key', { key, error: String(error) });
     }
   }
 
@@ -593,13 +596,13 @@ export class IntelligentCache {
               invalidatedCount++;
             }
           } catch (error) {
-            console.warn(`Failed to check cache file ${file}:`, error);
+            log.warn('Failed to check cache file', { file, error: String(error) });
           }
         }
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn('Failed to invalidate disk cache:', error);
+        log.warn('Failed to invalidate disk cache', { error: String(error) });
       }
     }
 

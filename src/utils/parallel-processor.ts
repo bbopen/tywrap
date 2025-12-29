@@ -14,6 +14,9 @@ import type { AnalysisResult, PythonModule, GeneratedCode } from '../types/index
 import { CodeGenerator } from '../core/generator.js';
 import { PyAnalyzer } from '../core/analyzer.js';
 import { globalCache } from './cache.js';
+import { getComponentLogger } from './logger.js';
+
+const log = getComponentLogger('ParallelProcessor');
 
 export interface ParallelTask<Data = unknown> {
   id: string;
@@ -342,7 +345,7 @@ export class ParallelProcessor extends EventEmitter {
         return result;
       } catch (error) {
         lastError = error as Error;
-        console.warn(`⚠️  Task ${task.id} failed (attempt ${attempts}): ${error}`);
+        log.warn('Task failed', { taskId: task.id, attempt: attempts, error: String(error) });
 
         if (attempts < this.options.retryAttempts) {
           // Exponential backoff
@@ -469,13 +472,13 @@ export class ParallelProcessor extends EventEmitter {
 
     // Setup worker error handling
     worker.on('error', error => {
-      console.error(`❌ Worker ${workerId} error:`, error);
+      log.error('Worker error', { workerId, error: String(error) });
       this.handleWorkerError(workerId, error);
     });
 
     // Setup worker exit handling
     worker.on('exit', code => {
-      console.warn(`⚠️  Worker ${workerId} exited with code ${code}`);
+      log.warn('Worker exited', { workerId, code });
       this.handleWorkerExit(workerId, code);
     });
 
@@ -578,7 +581,7 @@ export class ParallelProcessor extends EventEmitter {
     // Respawn worker if not disposing
     if (!this.disposed && this.workers.size < this.options.maxWorkers) {
       this.spawnWorker(`${workerId}_respawn_${Date.now()}`).catch(error => {
-        console.error(`Failed to respawn worker: ${error}`);
+        log.error('Failed to respawn worker', { workerId, error: String(error) });
       });
     }
 
@@ -595,7 +598,7 @@ export class ParallelProcessor extends EventEmitter {
         const task = this.taskQueue.shift();
         if (task) {
           this.executeTask(task).catch(error => {
-            console.error(`Queue task execution failed: ${error}`);
+            log.error('Queue task execution failed', { error: String(error) });
           });
         }
       }
