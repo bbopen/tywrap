@@ -1,0 +1,49 @@
+# OS
+.DS_Store
+
+# Node
+node_modules/
+.npmrc
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
+/dist/
+/coverage/
+.vitest/
+.rpt2_cache/
+*.tsbuildinfo
+test/performance-output/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+.cursorrules
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Env
+.env
+.env.*
+.venv/
+
+# Misc
+.eslintcache
+
+# Tywrap generated artifacts
+.tywrap/
+.tywrap-cache/
+generated/
+library_integration_*.json
+
+# Vite/Vitest caches
+.vite/
+node_modules/.vite/

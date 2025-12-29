@@ -1,0 +1,29 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`IR golden snapshot - math > matches sanitized snapshot 1`] = `
+{
+  "classNames": [],
+  "functionNames": [
+    "acos",
+    "asin",
+    "atan",
+    "atan2",
+    "ceil",
+    "cos",
+    "degrees",
+    "exp",
+    "fabs",
+    "floor",
+    "fmod",
+    "frexp",
+    "log10",
+    "pow",
+    "radians",
+    "sin",
+    "sqrt",
+    "tan",
+    "trunc",
+  ],
+  "module": "math",
+}
+`;

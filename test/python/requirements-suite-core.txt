@@ -1,0 +1,4 @@
+attrs==23.2.0
+httpx==0.27.2
+pydantic==2.7.4
+requests==2.32.3

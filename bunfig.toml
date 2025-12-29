@@ -1,0 +1,23 @@
+[install]
+cache = false
+frozenLockfile = false
+production = false
+
+[install.scopes]
+"@tywrap" = { "registry" = "https://registry.npmjs.org/" }
+
+[run]
+bun = true
+shell = "system"
+
+[build]
+target = "bun"
+format = "esm"
+splitting = true
+minify = false
+sourcemap = "external"
+external = ["pyodide"]
+
+[dev]
+port = 3000
+hot = true
