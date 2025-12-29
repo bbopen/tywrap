@@ -10,7 +10,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'path';
 import { NodeBridge } from '../src/runtime/node.js';
-import { resolvePythonExecutable } from '../src/utils/python.js';
+import { getDefaultPythonPath, resolvePythonExecutable } from '../src/utils/python.js';
 import { isNodejs } from '../src/utils/runtime.js';
 
 // Skip all tests if not running in Node.js
@@ -27,6 +27,7 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
   const defaultTimeoutMs = isCi ? 45000 : 5000;
   const startupThresholdMs = isCi ? 15000 : 5000;
   const averageThresholdMs = isCi ? 2000 : 1000;
+  const defaultPythonPath = getDefaultPythonPath();
 
   // Helper function to check if Python is available
   const isPythonAvailable = async (pythonPath?: string): Promise<boolean> => {
@@ -745,7 +746,7 @@ def get_path():
           const scriptAbsolutePath = join(process.cwd(), scriptPath);
           bridge = new NodeBridge({
             scriptPath: scriptAbsolutePath,
-            pythonPath: 'python3',
+            pythonPath: defaultPythonPath,
             cwd: tempDir,
             virtualEnv: 'fake-venv',
             timeoutMs: defaultTimeoutMs,

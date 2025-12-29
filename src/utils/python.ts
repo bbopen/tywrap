@@ -48,6 +48,10 @@ function isAbsolutePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value);
 }
 
+export function getDefaultPythonPath(): string {
+  return isWindowsPlatform() ? 'python' : 'python3';
+}
+
 export async function resolvePythonExecutable(options: PythonResolveOptions = {}): Promise<string> {
   const pythonPath = options.pythonPath?.trim();
   const virtualEnv = options.virtualEnv?.trim();
@@ -79,5 +83,5 @@ export async function resolvePythonExecutable(options: PythonResolveOptions = {}
     return pythonPath;
   }
 
-  return isWindowsPlatform() ? 'python' : 'python3';
+  return getDefaultPythonPath();
 }

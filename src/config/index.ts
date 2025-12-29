@@ -17,6 +17,7 @@ import type {
   PerformanceConfig,
   DevelopmentConfig,
 } from '../types/index.js';
+import { getDefaultPythonPath } from '../utils/python.js';
 
 /**
  * Public configuration type. Currently identical to {@link TywrapOptions}.
@@ -37,7 +38,7 @@ type DeepPartial<T> = {
 const DEFAULT_CONFIG: TywrapConfig = {
   pythonModules: {},
   output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false },
-  runtime: { node: { pythonPath: 'python3', timeout: 30000 } },
+  runtime: { node: { pythonPath: getDefaultPythonPath(), timeout: 30000 } },
   performance: { caching: false, batching: false, compression: 'none' },
   development: { hotReload: false, sourceMap: false, validation: 'none' },
   types: { presets: [] },

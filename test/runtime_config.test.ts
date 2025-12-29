@@ -7,6 +7,7 @@ import { resolve as resolvePath } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NodeBridge, type NodeBridgeOptions } from '../src/runtime/node.js';
 import { PyodideBridge, type PyodideBridgeOptions } from '../src/runtime/pyodide.js';
+import { getDefaultPythonPath } from '../src/utils/python.js';
 import {
   detectRuntime,
   pathUtils,
@@ -17,6 +18,8 @@ import {
   isBun,
   isBrowser,
 } from '../src/utils/runtime.js';
+
+const defaultPythonPath = getDefaultPythonPath();
 
 describe('Runtime Configuration', () => {
   let originalEnv: NodeJS.ProcessEnv;
@@ -39,7 +42,7 @@ describe('Runtime Configuration', () => {
       const options = (bridge as any).options;
       const defaultScriptPath = resolvePath(process.cwd(), 'runtime/python_bridge.py');
 
-      expect(options.pythonPath).toBe('python3');
+      expect(options.pythonPath).toBe(defaultPythonPath);
       expect(options.scriptPath).toBe(defaultScriptPath);
       expect(options.timeoutMs).toBe(30000);
       expect(options.enableJsonFallback).toBe(false);
@@ -88,7 +91,7 @@ describe('Runtime Configuration', () => {
       const defaultScriptPath = resolvePath(process.cwd(), 'runtime/python_bridge.py');
 
       // Should use defaults for unspecified options
-      expect(options.pythonPath).toBe('python3');
+      expect(options.pythonPath).toBe(defaultPythonPath);
       expect(options.scriptPath).toBe(defaultScriptPath);
       expect(options.cwd).toBe(process.cwd());
       // Should use provided options
@@ -101,7 +104,7 @@ describe('Runtime Configuration', () => {
       const options = (bridge as any).options;
       const defaultScriptPath = resolvePath(process.cwd(), 'runtime/python_bridge.py');
 
-      expect(options.pythonPath).toBe('python3');
+      expect(options.pythonPath).toBe(defaultPythonPath);
       expect(options.scriptPath).toBe(defaultScriptPath);
       expect(options.timeoutMs).toBe(30000);
       expect(options.enableJsonFallback).toBe(false);
