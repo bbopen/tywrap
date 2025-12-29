@@ -6,6 +6,9 @@
 import { EventEmitter } from 'events';
 import { writeFileSync } from 'fs';
 import type { PerformanceEntry, PerformanceObserverEntryList } from 'node:perf_hooks';
+import { getComponentLogger } from './logger.js';
+
+const log = getComponentLogger('MemoryProfiler');
 
 export interface MemorySnapshot {
   timestamp: number;
@@ -478,7 +481,7 @@ export class MemoryProfiler extends EventEmitter {
    */
   private setupGCTracking(): void {
     if (typeof global.gc !== 'function') {
-      console.warn('GC tracking unavailable - run with --expose-gc for better memory analysis');
+      log.warn('GC tracking unavailable - run with --expose-gc for better memory analysis');
       return;
     }
 
@@ -503,7 +506,7 @@ export class MemoryProfiler extends EventEmitter {
         obs.observe({ entryTypes: ['gc'] });
       }
     } catch (error) {
-      console.warn('Advanced GC tracking unavailable:', error);
+      log.warn('Advanced GC tracking unavailable', { error: String(error) });
     }
   }
 
@@ -573,7 +576,7 @@ process.on('exit', () => {
     try {
       globalMemoryProfiler.saveReport('memory-profile-exit.json');
     } catch (error) {
-      console.error('Failed to save exit memory report:', error);
+      log.error('Failed to save exit memory report', { error: String(error) });
     }
   }
 });
