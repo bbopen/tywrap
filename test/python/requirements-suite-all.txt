@@ -1,0 +1,3 @@
+-r requirements-suite-core.txt
+-r requirements-suite-data.txt
+-r requirements-suite-ml.txt

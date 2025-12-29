@@ -1,0 +1,213 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+
+jobs:
+  lint:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: Install Python dependencies
+        run: |
+          cd tywrap_ir
+          pip install -e .
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Type tests
+        run: npm run test:types
+      - name: Build
+        run: npm run build
+
+  test:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: Install Python dependencies
+        run: |
+          cd tywrap_ir
+          pip install -e .
+      - name: Run tests
+        env:
+          NODE_OPTIONS: --expose-gc
+          TYWRAP_PERF_BUDGETS: '1'
+        run: npm test
+
+  python-suite-core:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install suite core dependencies
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: '1'
+          PIP_PROGRESS_BAR: 'off'
+        run: python -m pip install -r test/python/requirements-suite-core.txt
+      - name: Run suite core
+        run: python test/python/library_integration.py --suite core
+
+  python-suite-data:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install suite data dependencies
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: '1'
+          PIP_PROGRESS_BAR: 'off'
+        run: python -m pip install -r test/python/requirements-suite-data.txt
+      - name: Run suite data
+        run: python test/python/library_integration.py --suite data
+
+  python-suite-full:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install suite data dependencies
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: '1'
+          PIP_PROGRESS_BAR: 'off'
+        run: python -m pip install -r test/python/requirements-suite-core.txt -r test/python/requirements-suite-data.txt -r test/python/requirements-suite-ml.txt
+      - name: Run suite full
+        run: python test/python/library_integration.py --suite all
+
+  codec-suite:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: Install codec dependencies
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: '1'
+          PIP_PROGRESS_BAR: 'off'
+        run: python -m pip install -r test/python/requirements-suite-ml.txt
+      - name: Run codec tests
+        env:
+          TYWRAP_CODEC_PYTHON: python
+        run: npm test -- test/runtime_codec_scientific.test.ts
+
+  os:
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: Install Python dependencies
+        run: |
+          cd tywrap_ir
+          pip install -e .
+      - name: Run tests
+        env:
+          NODE_OPTIONS: --expose-gc
+          TYWRAP_PERF_BUDGETS: '1'
+        run: npm test
+
+  bun:
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: Install Python dependencies
+        run: |
+          cd tywrap_ir
+          pip install -e .
+      - name: Run Bun tests
+        run: bun run test:bun

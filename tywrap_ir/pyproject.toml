@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tywrap_ir"
+version = "0.0.1"
+description = "Python IR extractor for tywrap: emits versioned JSON IR for Python modules"
+readme = "README.md"
+authors = [
+  { name = "Tywrap Project" }
+]
+requires-python = ">=3.10"
+dependencies = []
+license = { text = "MIT" }
+
+[project.scripts]
+tywrap-ir = "tywrap_ir.__main__:main"

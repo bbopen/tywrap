@@ -1,0 +1,132 @@
+{
+  "name": "tywrap",
+  "version": "0.1.0",
+  "description": "TypeScript wrapper for Python libraries with full type safety (EXPERIMENTAL - v0.1.0)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./node": {
+      "import": "./dist/runtime/node.js",
+      "types": "./dist/runtime/node.d.ts"
+    },
+    "./pyodide": {
+      "import": "./dist/runtime/pyodide.js",
+      "types": "./dist/runtime/pyodide.d.ts"
+    },
+    "./http": {
+      "import": "./dist/runtime/http.js",
+      "types": "./dist/runtime/http.d.ts"
+    },
+    "./runtime": {
+      "import": "./dist/runtime/index.js",
+      "types": "./dist/runtime/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "runtime",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc && npm run build:tools",
+    "build:tools": "tsc -p tsconfig.tools.json",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "test:bun": "LC_ALL=C LANG=C bun run vitest --run test/runtime_bun.test.ts",
+    "test:coverage": "vitest --run --coverage",
+    "test:types": "tsd",
+    "test:python:suite:core": "npm run build:tools && node dist/tools/python_suite.js core",
+    "test:python:suite:data": "npm run build:tools && node dist/tools/python_suite.js data",
+    "test:python:suite:ml": "npm run build:tools && node dist/tools/python_suite.js ml",
+    "test:python:suite:all": "npm run build:tools && node dist/tools/python_suite.js all",
+    "lint": "eslint src test --ext .ts,.tsx",
+    "lint:fix": "eslint src test --ext .ts,.tsx --fix",
+    "format": "prettier --write src test",
+    "format:check": "prettier --check src test",
+    "prepare": "npm run build",
+    "check:node": "node --check dist/index.js",
+    "check:deno": "deno check src/index.ts",
+    "check:bun": "bun run --dry-run src/index.ts",
+    "check:all": "npm run format:check && npm run lint && npm run build && npm run test:types && npm run test",
+    "cli:build": "tsc && node dist/cli.js generate --config examples/tywrap.config.json",
+    "fix:all": "npm run format && npm run lint:fix",
+    "matrix": "node -e \"import('./tools/matrix.js').then(m=>m.run()).catch(e=>{console.error(e);process.exit(1)})\"",
+    "release": "node scripts/release.mjs",
+    "act": "node scripts/act.mjs",
+    "act:clean": "node scripts/act.mjs --clean",
+    "act:serial": "node scripts/act-matrix.mjs",
+    "docker:npm": "node scripts/node-docker.mjs npm"
+  },
+  "keywords": [
+    "typescript",
+    "python",
+    "bridge",
+    "type-safety",
+    "interop",
+    "pyodide",
+    "ast",
+    "code-generation",
+    "node",
+    "deno",
+    "bun"
+  ],
+  "author": "tywrap contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tywrap/tywrap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tywrap/tywrap/issues"
+  },
+  "homepage": "https://github.com/tywrap/tywrap#readme",
+  "dependencies": {
+    "@babel/parser": "^7.25.6",
+    "@babel/types": "^7.25.6",
+    "tree-sitter": "^0.21.0",
+    "tree-sitter-python": "^0.21.0",
+    "typescript": "^5.6.2",
+    "web-tree-sitter": "^0.21.0",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.19",
+    "@types/node": "^22.5.4",
+    "@types/yargs": "^17.0.33",
+    "@typescript-eslint/eslint-plugin": "^8.5.0",
+    "@typescript-eslint/parser": "^8.5.0",
+    "@vitest/coverage-v8": "^4.0.16",
+    "@vitest/eslint-plugin": "^1.6.4",
+    "eslint": "^9.10.0",
+    "eslint-import-resolver-typescript": "^3.6.1",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-security": "^3.0.1",
+    "fast-check": "^4.3.0",
+    "prettier": "^3.3.3",
+    "tsd": "^0.33.0",
+    "vite": "^7.3.0",
+    "vitest": "^4.0.16"
+  },
+  "peerDependencies": {
+    "pyodide": ">=0.28.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "deno": ">=1.46.0",
+    "bun": ">=1.1.0"
+  },
+  "trustedDependencies": [
+    "pyodide"
+  ],
+  "bin": {
+    "tywrap": "dist/cli.js"
+  }
+}
