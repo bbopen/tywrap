@@ -21,6 +21,9 @@ import type {
   FunctionSignature,
 } from '../types/index.js';
 import { globalCache } from '../utils/cache.js';
+import { getComponentLogger } from '../utils/logger.js';
+
+const log = getComponentLogger('Analyzer');
 
 const UNKNOWN_TYPE: PythonType = { kind: 'custom', name: 'Any', module: 'typing' };
 
@@ -145,8 +148,7 @@ export class PyAnalyzer {
         const func = await this.extractFunction(funcNode);
         functions.push(func);
       } catch (error) {
-        // Log warning but continue processing
-        console.warn(`Failed to extract function: ${error}`);
+        log.warn('Failed to extract function', { error: String(error) });
       }
     }
 
@@ -166,7 +168,7 @@ export class PyAnalyzer {
         const cls = await this.extractClass(classNode);
         classes.push(cls);
       } catch (error) {
-        console.warn(`Failed to extract class: ${error}`);
+        log.warn('Failed to extract class', { error: String(error) });
       }
     }
 
@@ -242,7 +244,7 @@ export class PyAnalyzer {
           const method = await this.extractFunction(methodNode);
           methods.push(method);
         } catch (error) {
-          console.warn(`Failed to extract method: ${error}`);
+          log.warn('Failed to extract method', { error: String(error) });
         }
       }
 

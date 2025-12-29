@@ -8,6 +8,9 @@
 // import type { PythonImport } from '../types/index.js';
 import { fsUtils, processUtils, pathUtils } from '../utils/runtime.js';
 import { resolvePythonExecutable } from '../utils/python.js';
+import { getComponentLogger } from '../utils/logger.js';
+
+const log = getComponentLogger('Discovery');
 
 export interface ModuleInfo {
   name: string;
@@ -65,7 +68,7 @@ export class ModuleDiscovery {
           }
         }
       } catch (error) {
-        console.warn(`Failed to scan path ${path}: ${error}`);
+        log.warn('Failed to scan path', { path, error: String(error) });
       }
     }
 
@@ -105,7 +108,7 @@ export class ModuleDiscovery {
           return modulePath;
         }
       } catch (error) {
-        console.warn(`Failed to resolve module ${moduleName}: ${error}`);
+        log.warn('Failed to resolve module', { moduleName, error: String(error) });
       }
     }
 
@@ -183,7 +186,7 @@ export class ModuleDiscovery {
       const source = await fsUtils.readFile(filePath);
       return this.parseDependenciesFromSource(source);
     } catch (error) {
-      console.warn(`Failed to read file ${filePath}: ${error}`);
+      log.warn('Failed to read file', { filePath, error: String(error) });
       return [];
     }
   }
@@ -307,7 +310,7 @@ export class ModuleDiscovery {
           paths.push(...sysPaths);
         }
       } catch (error) {
-        console.warn(`Failed to get Python sys.path: ${error}`);
+        log.warn('Failed to get Python sys.path', { error: String(error) });
       }
     }
 
@@ -339,7 +342,7 @@ export class ModuleDiscovery {
         });
       }
     } catch (error) {
-      console.warn(`Failed to scan ${path}: ${error}`);
+      log.warn('Failed to scan path', { path, error: String(error) });
     }
 
     return modules;
@@ -349,7 +352,9 @@ export class ModuleDiscovery {
    * Extract module name from file path
    */
   private extractModuleNameFromPath(path: string): string {
-    const parts = path.split('/');
+    // Normalize backslashes to forward slashes for Windows compatibility
+    const normalizedPath = path.replace(/\\/g, '/');
+    const parts = normalizedPath.split('/');
     const filename = parts[parts.length - 1];
 
     if (filename === '__init__.py') {
@@ -380,7 +385,7 @@ export class ModuleDiscovery {
         return result.stdout.trim();
       }
     } catch (error) {
-      console.warn(`Failed to get version for ${moduleName}: ${error}`);
+      log.warn('Failed to get module version', { moduleName, error: String(error) });
     }
 
     return undefined;

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'path';
 import { NodeBridge } from '../src/runtime/node.js';
 import { getDefaultPythonPath, resolvePythonExecutable } from '../src/utils/python.js';
-import { isNodejs } from '../src/utils/runtime.js';
+import { isNodejs, getVenvBinDir } from '../src/utils/runtime.js';
 
 // Skip all tests if not running in Node.js
 const describeNodeOnly = isNodejs() ? describe : describe.skip;
@@ -739,8 +739,7 @@ def get_path():
         try {
           tempDir = await mkdtemp(join(tmpdir(), 'tywrap-venv-'));
           const venvDir = join(tempDir, 'fake-venv');
-          const binDir =
-            process.platform === 'win32' ? join(venvDir, 'Scripts') : join(venvDir, 'bin');
+          const binDir = join(venvDir, getVenvBinDir());
           await mkdir(binDir, { recursive: true });
 
           const scriptAbsolutePath = join(process.cwd(), scriptPath);
@@ -760,7 +759,9 @@ def get_path():
         } finally {
           await bridge?.dispose();
           if (tempDir) {
-            await rm(tempDir, { recursive: true, force: true });
+            // On Windows, file handles may not be released immediately after dispose
+            // Use maxRetries to handle EBUSY errors
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
           }
         }
       },

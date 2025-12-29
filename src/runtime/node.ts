@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { decodeValueAsync } from '../utils/codec.js';
 import { getDefaultPythonPath } from '../utils/python.js';
+import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 import type { BridgeInfo } from '../types/index.js';
 
 import { RuntimeBridge } from './base.js';
@@ -77,8 +78,8 @@ function resolveVirtualEnv(
   pythonPath: string;
 } {
   const venvPath = resolve(cwd, virtualEnv);
-  const binDir = process.platform === 'win32' ? join(venvPath, 'Scripts') : join(venvPath, 'bin');
-  const pythonPath = join(binDir, process.platform === 'win32' ? 'python.exe' : 'python');
+  const binDir = join(venvPath, getVenvBinDir());
+  const pythonPath = join(binDir, getVenvPythonExe());
   return { venvPath, binDir, pythonPath };
 }
 

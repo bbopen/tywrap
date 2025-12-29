@@ -11,7 +11,10 @@ import path from 'node:path';
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const isWindows = process.platform === 'win32';
+// Platform utilities (inlined to avoid importing from src/ which is outside tools rootDir)
+const isWindows = (): boolean => process.platform === 'win32';
+const getVenvBinDir = (): string => (isWindows() ? 'Scripts' : 'bin');
+const getVenvPythonExe = (): string => (isWindows() ? 'python.exe' : 'python');
 
 type SuiteName = 'core' | 'data' | 'ml' | 'all';
 
@@ -57,7 +60,7 @@ function resolvePythonBin(): { python: string; argsPrefix: string[] } {
   const envPython = process.env.PYTHON_BIN?.trim();
   const candidates = envPython
     ? [envPython]
-    : isWindows
+    : isWindows()
       ? ['python', 'py']
       : ['python3.12', 'python3.11', 'python3.10', 'python3', 'python'];
 
@@ -79,8 +82,8 @@ function resolvePythonBin(): { python: string; argsPrefix: string[] } {
 }
 
 function venvPythonPath(venvDir: string): string {
-  const binDir = path.join(venvDir, isWindows ? 'Scripts' : 'bin');
-  return path.join(binDir, isWindows ? 'python.exe' : 'python');
+  const binDir = path.join(venvDir, getVenvBinDir());
+  return path.join(binDir, getVenvPythonExe());
 }
 
 function requirementsForSuite(rootDir: string, suite: string): SuiteRequirements {

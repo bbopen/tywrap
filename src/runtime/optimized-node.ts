@@ -11,10 +11,14 @@ import { EventEmitter } from 'events';
 import { globalCache } from '../utils/cache.js';
 import { decodeValueAsync } from '../utils/codec.js';
 import { getDefaultPythonPath } from '../utils/python.js';
+import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 
 import { RuntimeBridge } from './base.js';
 import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import { TYWRAP_PROTOCOL } from './protocol.js';
+import { getComponentLogger } from '../utils/logger.js';
+
+const log = getComponentLogger('OptimizedBridge');
 
 interface RpcRequest {
   id: number;
@@ -113,8 +117,8 @@ function resolveVirtualEnv(
   pythonPath: string;
 } {
   const venvPath = resolve(cwd, virtualEnv);
-  const binDir = process.platform === 'win32' ? join(venvPath, 'Scripts') : join(venvPath, 'bin');
-  const pythonPath = join(binDir, process.platform === 'win32' ? 'python.exe' : 'python');
+  const binDir = join(venvPath, getVenvBinDir());
+  const pythonPath = join(binDir, getVenvPythonExe());
   return { venvPath, binDir, pythonPath };
 }
 
@@ -483,7 +487,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
         }
 
         this.handleWorkerResponse(worker, line).catch(error => {
-          console.error(`Error handling worker response: ${error}`);
+          log.error('Error handling worker response', { workerId: worker.id, error: String(error) });
         });
       }
     });
@@ -492,19 +496,19 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     childProcess.stderr?.on('data', (chunk: Buffer) => {
       const errorText = chunk.toString().trim();
       if (errorText) {
-        console.warn(`Worker ${worker.id} stderr:`, errorText);
+        log.warn('Worker stderr', { workerId: worker.id, output: errorText });
       }
     });
 
     // Handle process exit
     childProcess.on('exit', code => {
-      console.warn(`Worker ${worker.id} exited with code ${code}`);
+      log.warn('Worker exited', { workerId: worker.id, code });
       this.handleWorkerExit(worker, code);
     });
 
     // Handle process errors
     childProcess.on('error', error => {
-      console.error(`Worker ${worker.id} error:`, error);
+      log.error('Worker error', { workerId: worker.id, error: String(error) });
       this.handleWorkerExit(worker, -1);
     });
   }
@@ -585,7 +589,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     // Spawn replacement if needed and not disposing
     if (!this.disposed && this.processPool.length < this.options.minProcesses) {
       this.spawnProcess().catch(error => {
-        console.error(`Failed to spawn replacement worker: ${error}`);
+        log.error('Failed to spawn replacement worker', { error: String(error) });
       });
     }
   }
@@ -602,7 +606,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
             params: cmd.params,
           });
         } catch (error) {
-          console.warn(`Warmup command failed for worker ${worker.id}:`, error);
+          log.warn('Warmup command failed', { workerId: worker.id, error: String(error) });
         }
       }
     });
@@ -745,7 +749,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
         }, 5000);
       }
     } catch (error) {
-      console.warn(`Error terminating worker ${worker.id}:`, error);
+      log.warn('Error terminating worker', { workerId: worker.id, error: String(error) });
     }
 
     // Terminated worker ${worker.id}
@@ -759,7 +763,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       try {
         await this.cleanup();
       } catch (error) {
-        console.error('Cleanup error:', error);
+        log.error('Cleanup error', { error: String(error) });
       }
     }, 60000); // Cleanup every minute
   }
@@ -816,7 +820,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
         worker.process.kill('SIGTERM');
       }
     } catch (killError) {
-      console.warn(`Error terminating worker ${worker.id} after protocol error:`, killError);
+      log.warn('Error terminating worker after protocol error', { workerId: worker.id, error: String(killError) });
     }
 
     const index = this.processPool.indexOf(worker);
@@ -827,7 +831,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
 
     if (!this.disposed && this.processPool.length < this.options.minProcesses) {
       this.spawnProcess().catch(spawnError => {
-        console.error(`Failed to spawn replacement worker: ${spawnError}`);
+        log.error('Failed to spawn replacement worker after protocol error', { error: String(spawnError) });
       });
     }
   }

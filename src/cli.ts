@@ -7,6 +7,9 @@ import { hideBin } from 'yargs/helpers';
 
 import { resolveConfig, type ResolveConfigOptions } from './config/index.js';
 import type { RuntimeStrategy, TywrapOptions } from './types/index.js';
+import { getComponentLogger } from './utils/logger.js';
+
+const log = getComponentLogger('CLI');
 
 const DEFAULT_CONFIG_FILES = [
   'tywrap.config.ts',
@@ -209,9 +212,7 @@ async function main(): Promise<void> {
         }
 
         if (!configPath && modules.length === 0) {
-          console.error(
-            'No config file found and no modules provided. Create a config with `tywrap init` or pass --modules.'
-          );
+          log.error('No config file found and no modules provided. Create a config with `tywrap init` or pass --modules.');
           process.exit(1);
         }
 
@@ -225,21 +226,19 @@ async function main(): Promise<void> {
           });
 
           if (!options.pythonModules || Object.keys(options.pythonModules).length === 0) {
-            console.error('No pythonModules configured. Use --modules or update your config.');
+            log.error('No pythonModules configured. Use --modules or update your config.');
             process.exit(1);
           }
 
           const res = await generate(options);
           process.stdout.write(`Generated: ${res.written.join(', ')}\n`);
           if (argv.failOnWarn && res.warnings.length > 0) {
-            console.error(
-              `Warnings encountered (count ${res.warnings.length}). Failing due to --fail-on-warn.`
-            );
+            log.error(`Warnings encountered (count ${res.warnings.length}). Failing due to --fail-on-warn.`);
             process.exit(2);
           }
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
-          console.error('Generation failed:', message);
+          log.error('Generation failed', { error: message });
           process.exit(1);
         }
       }
@@ -297,7 +296,7 @@ async function main(): Promise<void> {
 
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- config path is user-controlled
         if (!argv.force && existsSync(targetPath)) {
-          console.error(`Config file already exists: ${targetPath}. Use --force to overwrite.`);
+          log.error('Config file already exists. Use --force to overwrite.', { path: targetPath });
           process.exit(1);
         }
 
@@ -314,7 +313,7 @@ async function main(): Promise<void> {
           process.stdout.write(`Created ${targetPath}\n`);
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
-          console.error('Failed to write config:', message);
+          log.error('Failed to write config', { error: message });
           process.exit(1);
         }
       }
@@ -327,6 +326,6 @@ async function main(): Promise<void> {
 }
 
 main().catch(err => {
-  console.error(err instanceof Error ? err.message : String(err));
+  log.error('Unexpected error', { error: err instanceof Error ? err.message : String(err) });
   process.exit(1);
 });

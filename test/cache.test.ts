@@ -26,7 +26,8 @@ describe('IntelligentCache async operations', () => {
   });
 
   it('should handle I/O errors gracefully', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Spy on stderr since logger writes warnings there
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const fsModule = await import('node:fs');
     const writeSpy = vi
       .spyOn(fsModule.promises, 'writeFile')
@@ -34,9 +35,12 @@ describe('IntelligentCache async operations', () => {
 
     await cache.set('fail-key', {});
 
-    expect(warnSpy).toHaveBeenCalled();
+    // Verify warning was logged (logger writes to stderr)
+    expect(stderrSpy).toHaveBeenCalled();
+    const calls = stderrSpy.mock.calls.map(c => String(c[0]));
+    expect(calls.some(c => c.includes('WARN') && c.includes('fail-key'))).toBe(true);
 
     writeSpy.mockRestore();
-    warnSpy.mockRestore();
+    stderrSpy.mockRestore();
   });
 });

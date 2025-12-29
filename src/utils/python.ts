@@ -1,4 +1,12 @@
-import { detectRuntime, pathUtils } from './runtime.js';
+import {
+  detectRuntime,
+  pathUtils,
+  isWindows,
+  isAbsolutePath,
+  getPythonExecutableName,
+  getVenvBinDir,
+  getVenvPythonExe,
+} from './runtime.js';
 
 export interface PythonResolveOptions {
   pythonPath?: string;
@@ -33,23 +41,8 @@ async function loadNodePathModule(): Promise<PathModule | null> {
   return nodePathModule;
 }
 
-function isWindowsPlatform(): boolean {
-  if (typeof process !== 'undefined' && process.platform) {
-    return process.platform === 'win32';
-  }
-  const deno = (globalThis as unknown as { Deno?: { build?: { os?: string } } }).Deno;
-  return deno?.build?.os === 'windows';
-}
-
-function isAbsolutePath(value: string): boolean {
-  if (value.startsWith('/')) {
-    return true;
-  }
-  return /^[A-Za-z]:[\\/]/.test(value);
-}
-
 export function getDefaultPythonPath(): string {
-  return isWindowsPlatform() ? 'python' : 'python3';
+  return getPythonExecutableName();
 }
 
 export async function resolvePythonExecutable(options: PythonResolveOptions = {}): Promise<string> {
@@ -62,9 +55,8 @@ export async function resolvePythonExecutable(options: PythonResolveOptions = {}
       const cwd =
         options.cwd ??
         (typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '.');
-      const isWindows = isWindowsPlatform();
-      const binDir = isWindows ? 'Scripts' : 'bin';
-      const exe = isWindows ? 'python.exe' : 'python';
+      const binDir = getVenvBinDir();
+      const exe = getVenvPythonExe();
       const pathMod = await loadNodePathModule();
 
       if (pathMod) {

@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { NodeBridge } from '../src/runtime/node.js';
 import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 import { resolvePythonExecutable } from '../src/utils/python.js';
-import { isNodejs } from '../src/utils/runtime.js';
+import { isNodejs, getPythonExecutableName } from '../src/utils/runtime.js';
 
 const CLI_PATH = join(process.cwd(), 'dist', 'cli.js');
 const BRIDGE_SCRIPT = 'runtime/python_bridge.py';
@@ -26,7 +26,7 @@ const resolvePythonForTest = async (): Promise<string | null> => {
   } catch {
     // ignore
   }
-  candidates.add(process.platform === 'win32' ? 'python' : 'python3');
+  candidates.add(getPythonExecutableName());
   candidates.add('python');
 
   for (const candidate of candidates) {
