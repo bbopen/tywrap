@@ -228,7 +228,7 @@ def get_path():
         } finally {
           await bridge?.dispose();
           if (tempDir) {
-            await rm(tempDir, { recursive: true, force: true });
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
           }
         }
       },
