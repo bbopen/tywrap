@@ -48,11 +48,23 @@ describe('PyAnalyzer', () => {
 
     it('should use cached result when available', async () => {
       const cachedResult = {
-        module: { name: 'cached', path: 'cached.py', functions: [], classes: [], imports: [], exports: [] },
+        module: {
+          name: 'cached',
+          path: 'cached.py',
+          functions: [],
+          classes: [],
+          imports: [],
+          exports: [],
+        },
         errors: [],
         warnings: [],
         dependencies: [],
-        statistics: { functionsAnalyzed: 0, classesAnalyzed: 0, typeHintsCoverage: 0, estimatedComplexity: 0 },
+        statistics: {
+          functionsAnalyzed: 0,
+          classesAnalyzed: 0,
+          typeHintsCoverage: 0,
+          estimatedComplexity: 0,
+        },
       };
 
       vi.spyOn(cacheModule.globalCache, 'getCachedAnalysis').mockResolvedValue(cachedResult);
@@ -609,8 +621,9 @@ def outer():
 
     it('should handle class with many methods', async () => {
       // Generate a class with many methods to test scalability
-      const methods = Array.from({ length: 20 }, (_, i) =>
-        `    def method_${i}(self, arg${i}: int) -> str:\n        return str(arg${i})`
+      const methods = Array.from(
+        { length: 20 },
+        (_, i) => `    def method_${i}(self, arg${i}: int) -> str:\n        return str(arg${i})`
       ).join('\n\n');
 
       const source = `
@@ -921,8 +934,10 @@ class Factory:
   describe('edge cases - performance', () => {
     it('should handle large source files', async () => {
       // Generate a large module with many functions
-      const functions = Array.from({ length: 100 }, (_, i) =>
-        `def func_${i}(x: int) -> int:\n    """Function ${i} documentation."""\n    return x + ${i}`
+      const functions = Array.from(
+        { length: 100 },
+        (_, i) =>
+          `def func_${i}(x: int) -> int:\n    """Function ${i} documentation."""\n    return x + ${i}`
       ).join('\n\n');
 
       const startTime = Date.now();

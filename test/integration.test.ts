@@ -48,13 +48,17 @@ describe('IR-only integration', () => {
 });
 
 describe('NodeBridge smoke', () => {
-  it('calls math.sqrt', async () => {
-    const bridge = new NodeBridge({
-      scriptPath: 'runtime/python_bridge.py',
-      timeoutMs: nodeBridgeTimeoutMs,
-    });
-    const result = await bridge.call<number>('math', 'sqrt', [9]);
-    expect(result).toBe(3);
-    await bridge.dispose();
-  }, nodeBridgeTestTimeoutMs);
+  it(
+    'calls math.sqrt',
+    async () => {
+      const bridge = new NodeBridge({
+        scriptPath: 'runtime/python_bridge.py',
+        timeoutMs: nodeBridgeTimeoutMs,
+      });
+      const result = await bridge.call<number>('math', 'sqrt', [9]);
+      expect(result).toBe(3);
+      await bridge.dispose();
+    },
+    nodeBridgeTestTimeoutMs
+  );
 });

@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Writable } from 'stream';
-import { logger, createLogger, getComponentLogger, type Logger, type LogLevel } from '../src/utils/logger.js';
+import {
+  logger,
+  createLogger,
+  getComponentLogger,
+  type Logger,
+  type LogLevel,
+} from '../src/utils/logger.js';
 
 describe('Logger', () => {
   let output: string[];
@@ -163,7 +169,12 @@ describe('Logger', () => {
     });
 
     it('includes component in JSON output', () => {
-      const log = createLogger({ level: 'DEBUG', jsonOutput: true, component: 'Cache', output: mockStream });
+      const log = createLogger({
+        level: 'DEBUG',
+        jsonOutput: true,
+        component: 'Cache',
+        output: mockStream,
+      });
       log.debug('json with component');
       const parsed = JSON.parse(output[0]!);
       expect(parsed.component).toBe('Cache');

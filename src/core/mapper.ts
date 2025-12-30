@@ -441,9 +441,7 @@ export class TypeMapper {
       const allowModule = !moduleName || moduleName.startsWith('scipy');
       if (allowModule) {
         const baseProps = [prop('shape', numberArray), prop('dtype', stringType, true)];
-        const buildSparse = (
-          format: 'csr' | 'csc' | 'coo'
-        ): TSObjectType => ({
+        const buildSparse = (format: 'csr' | 'csc' | 'coo'): TSObjectType => ({
           kind: 'object',
           properties: [
             prop('format', { kind: 'literal', value: format }),
@@ -464,7 +462,10 @@ export class TypeMapper {
           return buildSparse('coo');
         }
         if (name === 'spmatrix') {
-          return { kind: 'union', types: [buildSparse('csr'), buildSparse('csc'), buildSparse('coo')] };
+          return {
+            kind: 'union',
+            types: [buildSparse('csr'), buildSparse('csc'), buildSparse('coo')],
+          };
         }
       }
     }

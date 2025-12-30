@@ -71,9 +71,10 @@ function getEnvJsonOutput(): boolean {
 
 function formatHumanReadable(entry: LogEntry): string {
   const componentPart = entry.component ? ` [${entry.component}]` : '';
-  const contextPart = entry.context && Object.keys(entry.context).length > 0
-    ? ` ${JSON.stringify(entry.context)}`
-    : '';
+  const contextPart =
+    entry.context && Object.keys(entry.context).length > 0
+      ? ` ${JSON.stringify(entry.context)}`
+      : '';
   return `${entry.timestamp} [${entry.level}]${componentPart} ${entry.message}${contextPart}`;
 }
 
@@ -104,7 +105,11 @@ class LoggerImpl implements Logger {
     this.component = options.component;
     this.jsonOutput = options.jsonOutput ?? getEnvJsonOutput();
     this.enabled = options.enabled ?? true;
-    this.output = options.output ?? (typeof process !== 'undefined' ? process.stderr : undefined as unknown as NodeJS.WritableStream);
+    this.output =
+      options.output ??
+      (typeof process !== 'undefined'
+        ? process.stderr
+        : (undefined as unknown as NodeJS.WritableStream));
   }
 
   configure(options: Partial<LoggerOptions>): void {
@@ -170,9 +175,7 @@ class LoggerImpl implements Logger {
   }
 
   child(component: string): Logger {
-    const childComponent = this.component
-      ? `${this.component}:${component}`
-      : component;
+    const childComponent = this.component ? `${this.component}:${component}` : component;
 
     return new LoggerImpl({
       level: this.level,

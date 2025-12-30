@@ -149,7 +149,15 @@ function validateConfig(config: TywrapConfig): void {
 
   if (config.types) {
     const presets = config.types.presets;
-    const validPresets = new Set(['numpy', 'pandas', 'pydantic', 'stdlib', 'scipy', 'torch', 'sklearn']);
+    const validPresets = new Set([
+      'numpy',
+      'pandas',
+      'pydantic',
+      'stdlib',
+      'scipy',
+      'torch',
+      'sklearn',
+    ]);
     if (presets !== undefined) {
       if (!Array.isArray(presets) || presets.some(p => typeof p !== 'string')) {
         throw new Error('types.presets must be an array of strings');

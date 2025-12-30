@@ -70,9 +70,7 @@ describe('OptimizedNodeBridge', () => {
 
     it('should accept warmup commands', () => {
       bridge = new OptimizedNodeBridge({
-        warmupCommands: [
-          { method: 'import', params: { module: 'os' } },
-        ],
+        warmupCommands: [{ method: 'import', params: { module: 'os' } }],
       });
       expect(bridge).toBeInstanceOf(OptimizedNodeBridge);
     });

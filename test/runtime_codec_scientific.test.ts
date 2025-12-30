@@ -43,89 +43,114 @@ const hasModule = (pythonPath: string, moduleName: string): boolean => {
 };
 
 describeNodeOnly('Scientific Codecs', () => {
-  it('serializes scipy sparse matrices', async () => {
-    const pythonPath = await resolvePythonForTests();
-    if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-    if (!pythonPath || !hasModule(pythonPath, 'scipy')) return;
+  it(
+    'serializes scipy sparse matrices',
+    async () => {
+      const pythonPath = await resolvePythonForTests();
+      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
+      if (!pythonPath || !hasModule(pythonPath, 'scipy')) return;
 
-    const bridge = new NodeBridge({
-      scriptPath,
-      pythonPath,
-      enableJsonFallback: true,
-      timeoutMs: bridgeTimeoutMs,
-    });
+      const bridge = new NodeBridge({
+        scriptPath,
+        pythonPath,
+        enableJsonFallback: true,
+        timeoutMs: bridgeTimeoutMs,
+      });
 
-    try {
-      const result = await bridge.call<{
-        format: string;
-        shape: number[];
-        data: unknown[];
-        indices?: number[];
-        indptr?: number[];
-      }>('scipy.sparse', 'csr_matrix', [[[1, 0], [0, 2]]]);
+      try {
+        const result = await bridge.call<{
+          format: string;
+          shape: number[];
+          data: unknown[];
+          indices?: number[];
+          indptr?: number[];
+        }>('scipy.sparse', 'csr_matrix', [
+          [
+            [1, 0],
+            [0, 2],
+          ],
+        ]);
 
-      expect(result.format).toBe('csr');
-      expect(result.shape).toEqual([2, 2]);
-      expect(result.data).toEqual([1, 2]);
-      expect(result.indices).toEqual([0, 1]);
-      expect(result.indptr).toEqual([0, 1, 2]);
-    } finally {
-      await bridge.dispose();
-    }
-  }, scientificTimeoutMs);
+        expect(result.format).toBe('csr');
+        expect(result.shape).toEqual([2, 2]);
+        expect(result.data).toEqual([1, 2]);
+        expect(result.indices).toEqual([0, 1]);
+        expect(result.indptr).toEqual([0, 1, 2]);
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    scientificTimeoutMs
+  );
 
-  it('serializes torch tensors', async () => {
-    const pythonPath = await resolvePythonForTests();
-    if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-    if (!pythonPath || !hasModule(pythonPath, 'torch')) return;
+  it(
+    'serializes torch tensors',
+    async () => {
+      const pythonPath = await resolvePythonForTests();
+      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
+      if (!pythonPath || !hasModule(pythonPath, 'torch')) return;
 
-    const bridge = new NodeBridge({
-      scriptPath,
-      pythonPath,
-      enableJsonFallback: true,
-      timeoutMs: bridgeTimeoutMs,
-    });
+      const bridge = new NodeBridge({
+        scriptPath,
+        pythonPath,
+        enableJsonFallback: true,
+        timeoutMs: bridgeTimeoutMs,
+      });
 
-    try {
-      const result = await bridge.call<{
-        data: unknown;
-        shape?: number[];
-        dtype?: string;
-        device?: string;
-      }>('torch', 'tensor', [[[1, 2], [3, 4]]]);
+      try {
+        const result = await bridge.call<{
+          data: unknown;
+          shape?: number[];
+          dtype?: string;
+          device?: string;
+        }>('torch', 'tensor', [
+          [
+            [1, 2],
+            [3, 4],
+          ],
+        ]);
 
-      expect(result.shape).toEqual([2, 2]);
-      expect(result.device).toBe('cpu');
-      expect(result.data).toEqual([[1, 2], [3, 4]]);
-    } finally {
-      await bridge.dispose();
-    }
-  }, scientificTimeoutMs);
+        expect(result.shape).toEqual([2, 2]);
+        expect(result.device).toBe('cpu');
+        expect(result.data).toEqual([
+          [1, 2],
+          [3, 4],
+        ]);
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    scientificTimeoutMs
+  );
 
-  it('serializes sklearn estimators', async () => {
-    const pythonPath = await resolvePythonForTests();
-    if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-    if (!pythonPath || !hasModule(pythonPath, 'sklearn')) return;
+  it(
+    'serializes sklearn estimators',
+    async () => {
+      const pythonPath = await resolvePythonForTests();
+      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
+      if (!pythonPath || !hasModule(pythonPath, 'sklearn')) return;
 
-    const bridge = new NodeBridge({
-      scriptPath,
-      pythonPath,
-      enableJsonFallback: true,
-      timeoutMs: bridgeTimeoutMs,
-    });
+      const bridge = new NodeBridge({
+        scriptPath,
+        pythonPath,
+        enableJsonFallback: true,
+        timeoutMs: bridgeTimeoutMs,
+      });
 
-    try {
-      const result = await bridge.call<{
-        className: string;
-        module: string;
-        params: Record<string, unknown>;
-      }>('sklearn.linear_model', 'LinearRegression', []);
+      try {
+        const result = await bridge.call<{
+          className: string;
+          module: string;
+          params: Record<string, unknown>;
+        }>('sklearn.linear_model', 'LinearRegression', []);
 
-      expect(result.className).toBe('LinearRegression');
-      expect(result.module).toContain('sklearn');
-      expect(result.params).toHaveProperty('fit_intercept');
-    } finally {
-      await bridge.dispose();
-    }
-  }, scientificTimeoutMs);
+        expect(result.className).toBe('LinearRegression');
+        expect(result.module).toContain('sklearn');
+        expect(result.params).toHaveProperty('fit_intercept');
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    scientificTimeoutMs
+  );
 });

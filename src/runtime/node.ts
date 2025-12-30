@@ -105,10 +105,7 @@ export class NodeBridge extends RuntimeBridge {
     const scriptPath = options.scriptPath ?? resolveDefaultScriptPath();
     const resolvedScriptPath = isAbsolute(scriptPath) ? scriptPath : resolve(cwd, scriptPath);
     this.options = {
-      pythonPath:
-        options.pythonPath ??
-        venv?.pythonPath ??
-        getDefaultPythonPath(),
+      pythonPath: options.pythonPath ?? venv?.pythonPath ?? getDefaultPythonPath(),
       scriptPath: resolvedScriptPath,
       virtualEnv,
       cwd,
