@@ -195,9 +195,7 @@ def get_path():
           await writeFile(modulePath, content, 'utf-8');
 
           const existingPyPath = process.env.PYTHONPATH;
-          const mergedPyPath = existingPyPath
-            ? `${tempDir}${delimiter}${existingPyPath}`
-            : tempDir;
+          const mergedPyPath = existingPyPath ? `${tempDir}${delimiter}${existingPyPath}` : tempDir;
 
           bridge = new NodeBridge({
             scriptPath,
@@ -664,12 +662,7 @@ def get_path():
       'should surface invalid JSON frames as errors',
       async () => {
         const pythonAvailable = await isPythonAvailable();
-        const invalidScriptPath = join(
-          process.cwd(),
-          'test',
-          'fixtures',
-          'invalid_json_bridge.py'
-        );
+        const invalidScriptPath = join(process.cwd(), 'test', 'fixtures', 'invalid_json_bridge.py');
         if (!pythonAvailable || !existsSync(invalidScriptPath)) return;
 
         bridge = new NodeBridge({ scriptPath: invalidScriptPath, timeoutMs: defaultTimeoutMs });

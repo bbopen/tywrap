@@ -212,7 +212,9 @@ async function main(): Promise<void> {
         }
 
         if (!configPath && modules.length === 0) {
-          log.error('No config file found and no modules provided. Create a config with `tywrap init` or pass --modules.');
+          log.error(
+            'No config file found and no modules provided. Create a config with `tywrap init` or pass --modules.'
+          );
           process.exit(1);
         }
 
@@ -233,7 +235,9 @@ async function main(): Promise<void> {
           const res = await generate(options);
           process.stdout.write(`Generated: ${res.written.join(', ')}\n`);
           if (argv.failOnWarn && res.warnings.length > 0) {
-            log.error(`Warnings encountered (count ${res.warnings.length}). Failing due to --fail-on-warn.`);
+            log.error(
+              `Warnings encountered (count ${res.warnings.length}). Failing due to --fail-on-warn.`
+            );
             process.exit(2);
           }
         } catch (err: unknown) {

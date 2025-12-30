@@ -487,7 +487,10 @@ export class OptimizedNodeBridge extends RuntimeBridge {
         }
 
         this.handleWorkerResponse(worker, line).catch(error => {
-          log.error('Error handling worker response', { workerId: worker.id, error: String(error) });
+          log.error('Error handling worker response', {
+            workerId: worker.id,
+            error: String(error),
+          });
         });
       }
     });
@@ -820,7 +823,10 @@ export class OptimizedNodeBridge extends RuntimeBridge {
         worker.process.kill('SIGTERM');
       }
     } catch (killError) {
-      log.warn('Error terminating worker after protocol error', { workerId: worker.id, error: String(killError) });
+      log.warn('Error terminating worker after protocol error', {
+        workerId: worker.id,
+        error: String(killError),
+      });
     }
 
     const index = this.processPool.indexOf(worker);
@@ -831,7 +837,9 @@ export class OptimizedNodeBridge extends RuntimeBridge {
 
     if (!this.disposed && this.processPool.length < this.options.minProcesses) {
       this.spawnProcess().catch(spawnError => {
-        log.error('Failed to spawn replacement worker after protocol error', { error: String(spawnError) });
+        log.error('Failed to spawn replacement worker after protocol error', {
+          error: String(spawnError),
+        });
       });
     }
   }

@@ -117,10 +117,14 @@ describe('CLI', () => {
     it('initializes with multiple modules', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'init', '--format', 'json', '--modules', 'math,os,sys'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'init', '--format', 'json', '--modules', 'math,os,sys'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+          }
+        );
         expect(res.status).toBe(0);
 
         const configPath = join(tempDir, 'tywrap.config.json');
@@ -136,10 +140,14 @@ describe('CLI', () => {
     it('initializes with custom output directory', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'init', '--format', 'json', '--output-dir', './custom-output'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'init', '--format', 'json', '--output-dir', './custom-output'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+          }
+        );
         expect(res.status).toBe(0);
 
         const configPath = join(tempDir, 'tywrap.config.json');
@@ -153,10 +161,14 @@ describe('CLI', () => {
     it('initializes with custom runtime', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'init', '--format', 'json', '--runtime', 'pyodide'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'init', '--format', 'json', '--runtime', 'pyodide'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+          }
+        );
         expect(res.status).toBe(0);
 
         const configPath = join(tempDir, 'tywrap.config.json');
@@ -192,10 +204,14 @@ describe('CLI', () => {
         const configPath = join(tempDir, 'tywrap.config.json');
         writeFileSync(configPath, '{"old": "config"}');
 
-        const res = spawnSync('node', [CLI_PATH, 'init', '--format', 'json', '--modules', 'numpy', '--force'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'init', '--format', 'json', '--modules', 'numpy', '--force'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+          }
+        );
         expect(res.status).toBe(0);
 
         const content = readFileSync(configPath, 'utf-8');
@@ -209,10 +225,14 @@ describe('CLI', () => {
     it('creates config at custom path', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'init', '--config', 'custom.config.json', '--format', 'json'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'init', '--config', 'custom.config.json', '--format', 'json'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+          }
+        );
         expect(res.status).toBe(0);
 
         const configPath = join(tempDir, 'custom.config.json');
@@ -275,11 +295,15 @@ describe('CLI', () => {
     it('accepts --runtime flag', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'generate', '--modules', 'math', '--runtime', 'node'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-          timeout: 30000,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--runtime', 'node'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+            timeout: 30000,
+          }
+        );
         expect(res.stderr).not.toContain('Unknown argument');
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
@@ -289,11 +313,15 @@ describe('CLI', () => {
     it('accepts --output-dir flag', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'generate', '--modules', 'math', '--output-dir', './out'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-          timeout: 30000,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--output-dir', './out'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+            timeout: 30000,
+          }
+        );
         expect(res.stderr).not.toContain('Unknown argument');
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
@@ -304,11 +332,15 @@ describe('CLI', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
         for (const format of ['esm', 'cjs', 'both']) {
-          const res = spawnSync('node', [CLI_PATH, 'generate', '--modules', 'math', '--format', format], {
-            encoding: 'utf-8',
-            cwd: tempDir,
-            timeout: 30000,
-          });
+          const res = spawnSync(
+            'node',
+            [CLI_PATH, 'generate', '--modules', 'math', '--format', format],
+            {
+              encoding: 'utf-8',
+              cwd: tempDir,
+              timeout: 30000,
+            }
+          );
           expect(res.stderr).not.toContain('Unknown argument');
           expect(res.stderr).not.toContain('Invalid values');
         }
@@ -320,10 +352,14 @@ describe('CLI', () => {
     it('rejects --format flag with invalid value', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'generate', '--modules', 'math', '--format', 'invalid'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--format', 'invalid'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+          }
+        );
         expect(res.status).not.toBe(0);
         expect(res.stderr).toContain('Invalid values');
       } finally {
@@ -334,11 +370,15 @@ describe('CLI', () => {
     it('accepts --declaration flag', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'generate', '--modules', 'math', '--declaration'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-          timeout: 30000,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--declaration'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+            timeout: 30000,
+          }
+        );
         expect(res.stderr).not.toContain('Unknown argument');
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
@@ -397,11 +437,15 @@ describe('CLI', () => {
     it('accepts --python flag', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'generate', '--modules', 'math', '--python', 'python3'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-          timeout: 30000,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--python', 'python3'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+            timeout: 30000,
+          }
+        );
         expect(res.stderr).not.toContain('Unknown argument');
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
@@ -411,11 +455,15 @@ describe('CLI', () => {
     it('accepts --fail-on-warn flag', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'generate', '--modules', 'math', '--fail-on-warn'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-          timeout: 30000,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--fail-on-warn'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+            timeout: 30000,
+          }
+        );
         expect(res.stderr).not.toContain('Unknown argument');
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
@@ -519,7 +567,10 @@ describe('CLI', () => {
       try {
         // Create both TS and JSON configs
         const tsConfig = `export default { pythonModules: { os: { runtime: 'node' } }, output: { dir: './ts-gen' } };`;
-        const jsonConfig = { pythonModules: { math: { runtime: 'node' } }, output: { dir: './json-gen' } };
+        const jsonConfig = {
+          pythonModules: { math: { runtime: 'node' } },
+          output: { dir: './json-gen' },
+        };
 
         writeFileSync(join(tempDir, 'tywrap.config.ts'), tsConfig);
         writeFileSync(join(tempDir, 'tywrap.config.json'), JSON.stringify(jsonConfig));
@@ -542,10 +593,14 @@ describe('CLI', () => {
     it('parses single module', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'init', '--format', 'json', '--modules', 'numpy'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'init', '--format', 'json', '--modules', 'numpy'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+          }
+        );
         expect(res.status).toBe(0);
 
         const content = readFileSync(join(tempDir, 'tywrap.config.json'), 'utf-8');
@@ -558,10 +613,14 @@ describe('CLI', () => {
     it('parses comma-separated modules', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'init', '--format', 'json', '--modules', 'numpy,pandas,scipy'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'init', '--format', 'json', '--modules', 'numpy,pandas,scipy'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+          }
+        );
         expect(res.status).toBe(0);
 
         const content = readFileSync(join(tempDir, 'tywrap.config.json'), 'utf-8');
@@ -576,10 +635,14 @@ describe('CLI', () => {
     it('handles modules with spaces', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'init', '--format', 'json', '--modules', 'numpy, pandas, scipy'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'init', '--format', 'json', '--modules', 'numpy, pandas, scipy'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+          }
+        );
         expect(res.status).toBe(0);
 
         const content = readFileSync(join(tempDir, 'tywrap.config.json'), 'utf-8');
@@ -619,11 +682,15 @@ describe('CLI', () => {
       try {
         // CLI accepts the flag but may fail later during generation if Python is invalid
         // This tests that the flag parsing works correctly
-        const res = spawnSync('node', [CLI_PATH, 'generate', '--modules', 'math', '--python', 'python3'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-          timeout: 30000,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--python', 'python3'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+            timeout: 30000,
+          }
+        );
         // Should not error on flag parsing
         expect(res.stderr).not.toContain('Unknown argument');
       } finally {
@@ -695,11 +762,15 @@ describe('CLI', () => {
     it('should exit with code 1 when explicit config file does not exist', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'generate', '--config', 'nonexistent.config.json'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-          timeout: 30000,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--config', 'nonexistent.config.json'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+            timeout: 30000,
+          }
+        );
         expect(res.status).not.toBe(0);
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
@@ -709,10 +780,14 @@ describe('CLI', () => {
     it('should handle invalid runtime choice gracefully', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'generate', '--modules', 'math', '--runtime', 'invalid-runtime'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-        });
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--runtime', 'invalid-runtime'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+          }
+        );
         expect(res.status).not.toBe(0);
         expect(res.stderr).toContain('Invalid values');
       } finally {

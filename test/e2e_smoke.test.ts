@@ -102,9 +102,7 @@ describeNodeOnly('E2E Smoke - CLI generate + runtime bridge', () => {
       writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 
       const existingPyPath = process.env.PYTHONPATH;
-      const mergedPyPath = existingPyPath
-        ? `${tempDir}${delimiter}${existingPyPath}`
-        : tempDir;
+      const mergedPyPath = existingPyPath ? `${tempDir}${delimiter}${existingPyPath}` : tempDir;
       const env = { ...process.env, PYTHONPATH: mergedPyPath };
 
       const res = spawnSync(

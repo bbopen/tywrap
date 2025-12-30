@@ -89,7 +89,13 @@ export type CodecEnvelope =
       readonly params: Record<string, unknown>;
     };
 
-export type DecodedValue = ArrowTable | Uint8Array | SparseMatrix | TorchTensor | SklearnEstimator | unknown;
+export type DecodedValue =
+  | ArrowTable
+  | Uint8Array
+  | SparseMatrix
+  | TorchTensor
+  | SklearnEstimator
+  | unknown;
 
 let arrowTableFrom: ((bytes: Uint8Array) => ArrowTable | Uint8Array) | undefined;
 
