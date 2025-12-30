@@ -1,32 +1,22 @@
 # Release
 
-Use the release helper to bump versions, run checks, and optionally tag/publish.
+## Creating a Release
 
-## Typical flow
+1. Ensure working tree is clean on main branch
 
-1. Ensure your working tree is clean.
-2. Run the release helper:
+2. Bump version and tag:
+   ```sh
+   node scripts/release.mjs <version> --commit --tag
+   ```
 
-```sh
-node scripts/release.mjs <version> --commit --tag
-```
+3. Push:
+   ```sh
+   git push && git push --tags
+   ```
 
-3. Publish to npm when ready:
+## Version Format
 
-```sh
-node scripts/release.mjs <version> --publish
-```
-
-## Options
-
-- `--dry-run`: updates versions and runs checks, but skips git/npm side effects.
-- `--allow-dirty`: allows running with uncommitted changes.
-- `--commit`: creates a `release: vX.Y.Z` commit.
-- `--tag`: creates a `vX.Y.Z` tag.
-- `--publish`: runs `npm publish` (use after a successful tag/commit).
-
-After tagging, push tags with:
-
-```sh
-git push --tags
-```
+- `X.Y.Z` - stable release
+- `X.Y.Z-alpha.N` - alpha
+- `X.Y.Z-beta.N` - beta
+- `X.Y.Z-rc.N` - release candidate
