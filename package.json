@@ -82,12 +82,16 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tywrap/tywrap.git"
+    "url": "https://github.com/bbopen/tywrap.git"
   },
   "bugs": {
-    "url": "https://github.com/tywrap/tywrap/issues"
+    "url": "https://github.com/bbopen/tywrap/issues"
   },
-  "homepage": "https://github.com/tywrap/tywrap#readme",
+  "homepage": "https://github.com/bbopen/tywrap#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "dependencies": {
     "@babel/parser": "^7.25.6",
     "@babel/types": "^7.25.6",

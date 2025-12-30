@@ -597,8 +597,8 @@ npx tywrap generate
 ```
 
 ### Community Resources
-- **GitHub Issues**: [Report bugs](https://github.com/tywrap/tywrap/issues)
-- **Discussions**: [Ask questions](https://github.com/tywrap/tywrap/discussions)
+- **GitHub Issues**: [Report bugs](https://github.com/bbopen/tywrap/issues)
+- **Discussions**: [Ask questions](https://github.com/bbopen/tywrap/discussions)
 - **Discord**: [Real-time help](https://discord.gg/tywrap)
 - **Stack Overflow**: Tag your questions with `tywrap`
 
