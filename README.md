@@ -1,56 +1,47 @@
 # tywrap
 
+[![npm version](https://img.shields.io/npm/v/tywrap.svg)](https://www.npmjs.com/package/tywrap)
+[![CI](https://github.com/bbopen/tywrap/actions/workflows/ci.yml/badge.svg)](https://github.com/bbopen/tywrap/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 TypeScript wrapper for Python libraries with full type safety.
 
-> **⚠️ EXPERIMENTAL SOFTWARE**  
+> **Warning: Experimental Software**
 > **Version 0.1.0** - This project is in early experimental development. APIs may change significantly between versions. Not recommended for production use until version 1.0.0.
 
-TypeScript is great. But there are many robust libraries in Python, especially for data and science. Sometimes, there's a library only in Python. Wouldn't it be great if you could those libraries them in your TypeScript project?
+TypeScript is great, but many robust libraries exist only in Python, especially for data science and machine learning. Wouldn't it be great if you could use those libraries in your TypeScript project?
 
-tywrap is a build-time code generation system that makes Python libraries feel native in TypeScript with zero runtime overhead and complete type safety.
+tywrap is a build-time code generation system that creates TypeScript wrappers for Python libraries, giving you type safety and IDE autocomplete for Python code.
 
 ## Features
 
-- **Full Type Safety** - Complete TypeScript type definitions generated from Python source
-- **Zero Runtime Overhead** - Build-time code generation with optimized execution
-- **Multi-Runtime Support** - Works in Node.js, Deno, Bun, and browsers
-- **IR-First Generation** - Python IR extractor drives type-safe generation
-- **Smart Caching** - Intelligent caching and batching for maximum performance
-- **Developer Experience** - Hot reload, source maps, and IDE integration
+- **Full Type Safety** - TypeScript type definitions generated from Python source analysis
+- **Multi-Runtime Support** - Works in Node.js (subprocess) and browsers (via Pyodide)
+- **IR-First Generation** - Python Intermediate Representation (IR) extractor analyzes modules and emits structured type information
+- **Rich Data Type Support** - Native handling for numpy, pandas, scipy, torch, sklearn, and Python stdlib types
+- **Efficient Serialization** - Apache Arrow binary format for high-performance data transfer (with JSON fallback)
+- **Optional Caching** - Intelligent result caching system (opt-in via config)
 
 ## Requirements
 
-- Node.js >=20 (or Bun >=1.1 / Deno >=1.46)
+- Node.js 20+ (or Bun 1.1+ / Deno 1.46+)
 - Python 3.10+
 
 ## Quick Start
 
 ```bash
-# npm
 npm install tywrap
-
-# pnpm
-pnpm add tywrap
-
-# yarn
-yarn add tywrap
-
-# bun
-bun add tywrap
-
-# deno
-deno add npm:tywrap
 ```
 
 ### Initialize a Config
-
-Create a starter config (defaults to `tywrap.config.ts`):
 
 ```bash
 npx tywrap init
 ```
 
-Generate wrappers:
+This creates a `tywrap.config.ts` file. Edit it to specify which Python modules to wrap.
+
+### Generate Wrappers
 
 ```bash
 npx tywrap generate
@@ -63,64 +54,87 @@ import { NodeBridge } from 'tywrap/node';
 import { setRuntimeBridge } from 'tywrap/runtime';
 import * as math from './generated/math.generated.js';
 
+// Create a "bridge" - the runtime adapter that executes Python code
 const bridge = new NodeBridge({
-  pythonPath: '/usr/bin/python3',
+  pythonPath: 'python3',
   virtualEnv: './venv'
 });
 
+// Set as the active bridge for generated wrappers
 setRuntimeBridge(bridge);
 
+// Call Python functions with full type safety
 const result = await math.sqrt(16);
-console.log(result);
+console.log(result); // 4
 ```
 
 ## Runtime Support
 
-### Node.js
+tywrap provides **bridge** implementations—runtime adapters that handle communication between TypeScript and Python.
+
+### Node.js (Primary)
+
+The Node.js bridge spawns a Python subprocess and communicates via JSON-RPC:
+
 ```typescript
 import { NodeBridge } from 'tywrap/node';
 import { setRuntimeBridge } from 'tywrap/runtime';
 
 const bridge = new NodeBridge({
-  pythonPath: '/usr/bin/python3',
-  virtualEnv: './venv'
+  pythonPath: 'python3',
+  virtualEnv: './venv',
+  timeout: 30000  // Optional: request timeout in ms
 });
 
 setRuntimeBridge(bridge);
 ```
 
-### Deno
-```typescript
-import { tywrap } from 'npm:tywrap';
-```
-
-### Bun
-```typescript
-import { tywrap } from 'tywrap';
-// Works out of the box with Bun's fast runtime
-```
-
 ### Browser (Pyodide)
+
+The browser bridge uses [Pyodide](https://pyodide.org/) to run Python in WebAssembly:
+
 ```typescript
 import { PyodideBridge } from 'tywrap/pyodide';
 import { setRuntimeBridge } from 'tywrap/runtime';
 
 const bridge = new PyodideBridge({
-  indexURL: 'https://cdn.jsdelivr.net/pyodide/'
+  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/'
 });
 
+await bridge.init();
 setRuntimeBridge(bridge);
 ```
 
-### Generated Classes
+### Deno / Bun
 
-Class wrappers are async-constructible:
+Deno and Bun can use the Node.js bridge. Import via npm specifier:
 
-```ts
+```typescript
+// Deno
+import { NodeBridge, setRuntimeBridge } from 'npm:tywrap';
+
+// Bun (same as Node.js)
+import { NodeBridge, setRuntimeBridge } from 'tywrap';
+
+const bridge = new NodeBridge({ pythonPath: 'python3' });
+setRuntimeBridge(bridge);
+```
+
+### Working with Classes
+
+Generated class wrappers use async factory methods:
+
+```typescript
 import { Counter } from './generated/collections.generated';
 
-const counter = await Counter.create([1, 2, 2]);
-const top = await counter.mostCommon(1);
+// Create instance (async because it calls Python)
+const counter = await Counter.create(['a', 'b', 'b', 'c', 'b']);
+
+// Call methods
+const mostCommon = await counter.mostCommon(2);
+console.log(mostCommon); // [['b', 3], ['c', 1]]
+
+// Clean up when done
 await counter.disposeHandle();
 ```
 
@@ -133,195 +147,166 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    'pandas': { 
+    'pandas': {
       version: '2.1.0',
-      runtime: 'pyodide',
       classes: ['DataFrame'],
-      functions: ['read_csv', 'concat'],
-      typeHints: 'strict'
+      functions: ['read_csv', 'concat']
     },
     'numpy': {
-      version: '1.24.0', 
-      runtime: 'auto', // Auto-select best runtime
-      alias: 'np',
-      typeHints: 'strict'
+      version: '1.24.0',
+      alias: 'np'
     },
     './custom_module.py': {
-      runtime: 'node',
-      typeHints: 'strict',
-      watch: true // Enable hot reload
+      // Local modules work too
     }
   },
-  
+
   output: {
     dir: './src/generated',
     format: 'esm',
-    declaration: true,
-    sourceMap: true
+    declaration: true
   },
-  
+
   performance: {
-    caching: true,
-    batching: true,
-    compression: 'auto'
+    caching: true,  // Enable result caching
+    batching: true  // Batch multiple calls
   },
 
-  types: {
-    presets: ['stdlib', 'pandas']
-  },
-  
-  development: {
-    hotReload: true,
-    validation: 'runtime'
-  },
-
-  debug: true
+  debug: false  // Set true for verbose logging
 });
 ```
 
-Enable `debug` to print cache and parallel processor diagnostics.
+Config file resolution: `tywrap.config.ts`, `.mts`, `.js`, `.mjs`, `.cjs`, `.json`.
 
-Config file resolution order (CLI): `tywrap.config.ts`, `.mts`, `.js`, `.mjs`, `.cjs`, `.json`.
-
-### Configuration Fields
-
-- `pythonModules` – modules to wrap and their options
-- `output` – directory, format and generated artifacts
-- `runtime` – runtime paths and timeouts
-- `performance` – caching and batching controls
-- `types` – opt-in type mapping presets
-- `development` – hot reloading and validation mode
-- `debug` – enable verbose debug logging
-
-### Extension Hooks
-
-Plugins can extend tywrap via lifecycle hooks:
-
-- `beforeGeneration(options)`
-- `afterGeneration(result)`
-- `transformPythonType(type)`
-- `transformTypescriptCode(code)`
-
-See the [Configuration Guide](./docs/configuration.md) for details.
-
-## Build Tool Integration
-
-Build tool integrations are planned. For now, run `tywrap generate` in your build pipeline.
-
-## Performance
-
-tywrap is designed for production use with enterprise-grade performance:
-
-- **30-50% faster** than runtime bridges
-- **Zero runtime overhead** with build-time optimization  
-- **Smart bundling** with tree-shaking and code splitting
-- **Intelligent caching** with automatic invalidation
-- **Request batching** for optimal throughput
+See the [Configuration Guide](./docs/configuration.md) for all options.
 
 ## How It Works
 
-1. **Python IR Extraction** - `tywrap_ir` reflects Python modules and emits versioned JSON IR
-2. **Type Mapping** - Converts Python IR annotations to TypeScript types
-3. **Code Generation** - Generates TypeScript wrappers with runtime bridge hooks
-4. **Runtime Execution** - Node.js (subprocess) MVP; others later
+1. **Python IR Extraction** - The `tywrap_ir` tool analyzes Python modules using AST parsing and emits a versioned JSON Intermediate Representation (IR) containing function signatures, class definitions, and type annotations.
 
-## Arrow/Codec (optional)
+2. **Type Mapping** - The IR is transformed into TypeScript types. Python's `int` becomes `number`, `List[str]` becomes `string[]`, etc.
 
-Numpy/Pandas results can be transported more efficiently using Arrow. tywrap emits structured envelopes from the Python side; on the JS side you can opt-in to Arrow decoding.
+3. **Code Generation** - TypeScript wrapper code is generated with proper async handling and bridge integration.
 
-Envelopes (from Python bridge):
-- `{"__tywrap__":"dataframe","encoding":"arrow","b64":"..."}` (Feather/Arrow)
-- `{"__tywrap__":"series","encoding":"arrow","b64":"..."}` or JSON fallback with `data`
-- `{"__tywrap__":"ndarray","encoding":"arrow","b64":"...","shape":[...]} or JSON fallback with `data`
-- `{"__tywrap__":"scipy.sparse","encoding":"json","format":"csr","shape":[...],"data":[...],...}` (sparse matrices)
-- `{"__tywrap__":"torch.tensor","encoding":"ndarray","value":{...},"shape":[...],"dtype":"...","device":"cpu"}` (torch tensors)
-- `{"__tywrap__":"sklearn.estimator","encoding":"json","className":"...","module":"...","params":{...}}` (estimator metadata)
-
-Enable decoding (Node/browser) when you have `apache-arrow` installed:
-
-```ts
-import { registerArrowDecoder } from 'tywrap';
-
-// If you have apache-arrow available, register a decoder once at app startup
-import('apache-arrow').then(mod => {
-  const Table = (mod as { Table: { from: (i: Uint8Array | Iterable<Uint8Array>) => unknown } }).Table;
-  registerArrowDecoder(bytes => {
-    try {
-      return Table.from(bytes as Uint8Array);
-    } catch {
-      return Table.from([bytes as Uint8Array]);
-    }
-  });
-});
-```
-
-If you don't register a decoder, `decodeValue`/`decodeValueAsync` will throw for Arrow-encoded payloads. To accept raw bytes, register a decoder that returns the input `Uint8Array`.
-
-Fallback policy: By default, the Python bridge requires Arrow for DataFrame/Series/ndarray and will throw if unavailable. To opt into JSON fallback for development or constrained environments, set the environment variable `TYWRAP_CODEC_FALLBACK=json` when launching Python (e.g., `TYWRAP_CODEC_FALLBACK=json node app.js`).
-
-Torch tensors on GPU or non-contiguous tensors require an explicit opt-in: set `TYWRAP_TORCH_ALLOW_COPY=1` to allow CPU transfer/contiguous copies during serialization.
-
-## Matrix quick run (optional)
-
-Generate wrappers for a curated set of libraries to validate coverage locally.
-
-```bash
-npm run build
-npm run matrix
-```
-
-Notes:
-- The harness creates `.tywrap/venv` and prefers `python3.12` for better wheel availability (e.g., pydantic-core).
-- Results end up in `generated/`. You can tweak the list in `tools/matrix.js`.
-
-## Roadmap
-
-- [x] Core architecture and multi-runtime support
-- [x] Python AST analysis and type extraction  
-- [x] TypeScript code generation
-- [ ] Build tool integrations (Vite, Webpack, Rollup)
-- [ ] Advanced optimizations (SharedArrayBuffer, streaming)
-- [ ] IDE extensions and developer tools
-- [ ] Enterprise features (security sandbox, monitoring)
+4. **Runtime Execution** - At runtime, the bridge serializes calls to Python and deserializes results back to JavaScript.
 
 ## Documentation
 
-- [Getting Started Guide](./docs/getting-started.md) - Get up and running in minutes
-- [Configuration Reference](./docs/configuration.md) - Complete configuration options
-- [Node.js Runtime](./docs/runtimes/nodejs.md) - Node.js integration guide
-- [Browser Runtime](./docs/runtimes/browser.md) - Browser/Pyodide integration
+- [Getting Started Guide](./docs/getting-started.md) - Detailed setup instructions
+- [Configuration Reference](./docs/configuration.md) - All configuration options
+- [Node.js Runtime](./docs/runtimes/nodejs.md) - Node.js bridge details
+- [Browser Runtime](./docs/runtimes/browser.md) - Pyodide integration
 - [API Reference](./docs/api/README.md) - Complete API documentation
 - [Examples](./docs/examples/README.md) - Real-world usage examples
 - [Troubleshooting](./docs/troubleshooting/README.md) - Common issues and solutions
+- [Release Notes](./docs/release.md) - Version history and upgrade guides
+
+## Data Type Support
+
+tywrap automatically serializes Python data types to JavaScript. The Python bridge wraps complex types in **envelopes**—metadata wrappers that preserve type information.
+
+### Supported Types
+
+| Python Type | JS/TS Type | Encoding | Notes |
+|-------------|-----------|----------|-------|
+| `numpy.ndarray` | `Uint8Array` or `array` | Arrow or JSON | Shape preserved |
+| `pandas.DataFrame` | Arrow Table or `object[]` | Arrow or JSON | Column types preserved |
+| `pandas.Series` | Arrow Table or `array` | Arrow or JSON | Name preserved |
+| `scipy.sparse.*` | `SparseMatrix` | JSON | CSR, CSC, COO formats |
+| `torch.Tensor` | `TorchTensor` | ndarray wrapper | CPU only by default |
+| `sklearn estimator` | `SklearnEstimator` | JSON | Params only (no pickle) |
+| `datetime.*` | `string` | ISO format | datetime, date, time |
+| `timedelta` | `number` | seconds | Total seconds as float |
+| `Decimal` | `string` | string | Preserves precision |
+| `UUID` | `string` | string | Standard format |
+| `Path` | `string` | string | Platform-neutral |
+
+### Arrow Encoding (Recommended)
+
+For numpy/pandas data, Arrow binary format is more efficient than JSON. Register a decoder at app startup:
+
+```typescript
+import { registerArrowDecoder } from 'tywrap';
+import { tableFromIPC } from 'apache-arrow';
+
+registerArrowDecoder(bytes => tableFromIPC(bytes));
+```
+
+### Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `TYWRAP_CODEC_FALLBACK=json` | Use JSON instead of Arrow (for dev or constrained environments) |
+| `TYWRAP_TORCH_ALLOW_COPY=1` | Allow GPU→CPU transfer and non-contiguous tensor copying |
+
+### Envelope Format
+
+```json
+{"__tywrap__": "dataframe", "encoding": "arrow", "b64": "..."}
+{"__tywrap__": "ndarray", "encoding": "json", "data": [...], "shape": [3, 4]}
+{"__tywrap__": "scipy.sparse", "format": "csr", "data": [...], "indices": [...]}
+{"__tywrap__": "torch.tensor", "value": {...}, "dtype": "float32", "device": "cpu"}
+{"__tywrap__": "sklearn.estimator", "className": "LinearRegression", "params": {...}}
+```
+
+See [codec-roadmap.md](./docs/codec-roadmap.md) for encoding details and planned features.
+
+## Roadmap
+
+### Implemented
+- [x] Core TypeScript generation from Python IR
+- [x] Node.js runtime bridge (subprocess)
+- [x] Browser runtime bridge (Pyodide)
+- [x] Python AST analysis and type extraction
+- [x] Codec support: numpy, pandas, scipy sparse, torch tensors, sklearn estimators
+- [x] Apache Arrow binary encoding (with JSON fallback)
+- [x] Python stdlib type conversions (datetime, Decimal, UUID, Path)
+- [x] Result caching system (opt-in)
+
+### Planned
+- [ ] Build tool plugins (Vite, Webpack, Rollup)
+- [ ] Hot reload / watch mode
+- [ ] Source map generation
+- [ ] IDE extensions
+- [ ] SharedArrayBuffer for zero-copy transfers
+- [ ] Streaming results for large datasets
 
 ## Versioning
 
 tywrap follows [Semantic Versioning](https://semver.org/):
 
-- **0.x.x** - Experimental releases. Breaking changes may occur in any release
-- **1.x.x** - Stable API. Breaking changes only in major versions
-- **x.Y.x** - New features and improvements (backwards compatible)
-- **x.x.Z** - Bug fixes and patches (backwards compatible)
+- **0.x.x** - Experimental releases. Breaking changes may occur in any release.
+- **1.x.x** - Stable API. Breaking changes only in major versions.
 
-### Version 0.1.0 Status
+### Current Status (v0.1.0)
 
-**Current State:**
-- ✅ Core TypeScript generation working
-- ✅ Node.js runtime bridge functional
-- ✅ Multi-runtime support (Node.js, Deno, Bun, Browser)
-- ✅ Type safety and IR extraction
-- ⚠️ API surface may change significantly
-- ⚠️ Limited real-world testing
-
-**Roadmap to 1.0:**
-- Extensive testing with popular Python libraries
-- API stabilization and documentation
-- Performance optimization
-- Production deployment guides
+| Feature | Status |
+|---------|--------|
+| TypeScript generation | ✅ Working |
+| Node.js bridge | ✅ Working |
+| Pyodide bridge | ✅ Working |
+| Type safety | ✅ Working |
+| numpy/pandas codecs | ✅ Working |
+| scipy/torch/sklearn codecs | ✅ Working |
+| Deno/Bun | ⚠️ Uses Node bridge |
+| API stability | ⚠️ May change |
 
 ## Contributing
 
-We welcome contributions! See [CONTRIBUTING](./CONTRIBUTING.md).
+We welcome contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
+
+To run tests locally:
+
+```bash
+npm install
+npm test
+```
+
+For the full test matrix including Python library integration:
+
+```bash
+npm run test:python:suite:core
+```
 
 ## License
 
@@ -329,7 +314,6 @@ MIT © [tywrap contributors](LICENSE)
 
 ## Links
 
-- [Documentation](https://tywrap.dev/docs)
-- [API Reference](https://tywrap.dev/api)  
-- [Examples](https://github.com/tywrap/examples)
-- [Discord Community](https://discord.gg/tywrap)
+- [GitHub Repository](https://github.com/bbopen/tywrap)
+- [npm Package](https://www.npmjs.com/package/tywrap)
+- [Issue Tracker](https://github.com/bbopen/tywrap/issues)

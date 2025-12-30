@@ -336,5 +336,5 @@ const batch = await mathBatch([
 ## Support
 
 - [Troubleshooting Guide](./troubleshooting/README.md)
-- [GitHub Issues](https://github.com/tywrap/tywrap/issues)
-- [GitHub Discussions](https://github.com/tywrap/tywrap/discussions)
+- [GitHub Issues](https://github.com/bbopen/tywrap/issues)
+- [GitHub Discussions](https://github.com/bbopen/tywrap/discussions)

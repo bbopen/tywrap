@@ -1,0 +1,187 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (skip actual publish)'
+        type: boolean
+        default: false
+
+# Required for npm provenance
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Publishing version: $VERSION"
+
+      - name: Validate version format
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "Invalid version format: $VERSION"
+            exit 1
+          fi
+
+      - name: Check version matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [[ "$TAG_VERSION" != "$PKG_VERSION" ]]; then
+            echo "Tag version ($TAG_VERSION) does not match package.json ($PKG_VERSION)"
+            exit 1
+          fi
+
+  test:
+    name: Test
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        node-version: [20, 22]
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Install Python dependencies
+        run: |
+          cd tywrap_ir
+          pip install -e .
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Type tests
+        run: npm run test:types
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests
+        env:
+          NODE_OPTIONS: --expose-gc
+          TYWRAP_PERF_BUDGETS: '1'
+        run: npm test
+
+  test-os:
+    name: Test (${{ matrix.os }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Install Python dependencies
+        run: |
+          cd tywrap_ir
+          pip install -e .
+
+      - name: Run tests
+        env:
+          NODE_OPTIONS: --expose-gc
+          TYWRAP_PERF_BUDGETS: '1'
+        run: npm test
+
+  publish:
+    name: Publish to npm
+    needs: [validate, test, test-os]
+    runs-on: ubuntu-latest
+    environment: npm
+    # Explicit permissions for OIDC trusted publishing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify package contents
+        run: npm pack --dry-run
+
+      - name: Publish (dry run)
+        if: inputs.dry_run == true
+        run: npm publish --dry-run
+
+      # With OIDC trusted publishing, no NPM_TOKEN needed
+      # Provenance is automatic with trusted publishing
+      - name: Publish to npm
+        if: inputs.dry_run != true
+        run: npm publish --provenance --access public
+
+      - name: Create GitHub Release
+        if: inputs.dry_run != true && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
