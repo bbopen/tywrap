@@ -360,6 +360,38 @@ describeNodeOnly('OptimizedNodeBridge - Functional Tests', () => {
     });
   });
 
+  describe('timeout handling', () => {
+    it('should ignore late responses for timed-out requests', async () => {
+      if (!pythonPath || !existsSync(BRIDGE_SCRIPT)) return;
+
+      bridge = new OptimizedNodeBridge({
+        pythonPath,
+        scriptPath: BRIDGE_SCRIPT,
+        minProcesses: 1,
+        maxProcesses: 1,
+        timeoutMs: 250,
+      });
+
+      await bridge.init();
+
+      const before = bridge.getStats();
+
+      await expect(bridge.call('time', 'sleep', [0.8])).rejects.toThrow(/timed out/i);
+
+      // Wait for the worker to eventually respond to the timed-out request.
+      await new Promise(resolve => setTimeout(resolve, 700));
+
+      const mid = bridge.getStats();
+      expect(mid.processDeaths).toBe(before.processDeaths);
+
+      const result = await bridge.call<string>('json', 'dumps', [{ a: 1 }]);
+      expect(result).toContain('"a"');
+
+      const after = bridge.getStats();
+      expect(after.processDeaths).toBe(before.processDeaths);
+    });
+  });
+
   describe('dispose lifecycle', () => {
     it('should clean up processes on dispose', async () => {
       if (!pythonPath || !existsSync(BRIDGE_SCRIPT)) return;

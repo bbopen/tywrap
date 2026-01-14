@@ -16,6 +16,10 @@ import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 import { RuntimeBridge } from './base.js';
 import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import { TYWRAP_PROTOCOL } from './protocol.js';
+import {
+  TimedOutRequestTracker,
+  type TimedOutRequestTrackerOptions,
+} from './timed-out-request-tracker.js';
 import { getComponentLogger } from '../utils/logger.js';
 
 const log = getComponentLogger('OptimizedBridge');
@@ -56,6 +60,7 @@ interface WorkerProcess {
   lastUsed: number;
   busy: boolean;
   buffer: string;
+  timedOutRequests: TimedOutRequestTracker;
   pendingRequests: Map<
     number,
     {
@@ -130,6 +135,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   private options: Required<ProcessPoolOptions>;
   private emitter = new EventEmitter();
   private disposed = false;
+  private readonly timedOutRequestsOptions: TimedOutRequestTrackerOptions;
 
   // Performance monitoring
   private stats: OptimizedBridgeStats = {
@@ -165,6 +171,10 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       enableJsonFallback: options.enableJsonFallback ?? false,
       env: options.env ?? {},
       warmupCommands: options.warmupCommands ?? [],
+    };
+
+    this.timedOutRequestsOptions = {
+      ttlMs: Math.max(1000, this.options.timeoutMs * 2),
     };
 
     // Start with minimum processes
@@ -306,7 +316,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
    * Select optimal worker based on load and performance
    */
   private selectOptimalWorker(): WorkerProcess | null {
-    const availableWorkers = this.processPool.filter(w => !w.busy && w.process.connected);
+    const availableWorkers = this.processPool.filter(w => !w.busy && w.process.exitCode === null);
 
     if (availableWorkers.length === 0) {
       return null;
@@ -363,6 +373,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
 
       const timer = setTimeout(() => {
         worker.pendingRequests.delete(id);
+        worker.timedOutRequests.mark(id);
         worker.busy = false;
         reject(new Error(`Request ${id} timed out after ${this.options.timeoutMs}ms`));
       }, this.options.timeoutMs);
@@ -447,6 +458,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       lastUsed: Date.now(),
       busy: false,
       buffer: '',
+      timedOutRequests: new TimedOutRequestTracker(this.timedOutRequestsOptions),
       pendingRequests: new Map(),
       stats: {
         totalRequests: 0,
@@ -539,6 +551,9 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       const pending = worker.pendingRequests.get(msg.id);
 
       if (!pending) {
+        if (worker.timedOutRequests.consume(msg.id)) {
+          return;
+        }
         this.handleProtocolError(
           worker,
           line,
@@ -581,6 +596,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     }
 
     worker.pendingRequests.clear();
+    worker.timedOutRequests.clear();
 
     // Remove from pool
     const index = this.processPool.indexOf(worker);
@@ -739,14 +755,17 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       pending.reject(new Error('Worker process terminated'));
     }
 
+    worker.pendingRequests.clear();
+    worker.timedOutRequests.clear();
+
     // Graceful termination
     try {
-      if (worker.process.connected) {
+      if (worker.process.exitCode === null) {
         worker.process.kill('SIGTERM');
 
         // Force kill if not terminated in 5 seconds
         setTimeout(() => {
-          if (!worker.process.killed) {
+          if (worker.process.exitCode === null) {
             worker.process.kill('SIGKILL');
           }
         }, 5000);
@@ -817,9 +836,10 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       pending.reject(bridgeError);
     }
     worker.pendingRequests.clear();
+    worker.timedOutRequests.clear();
 
     try {
-      if (worker.process.connected) {
+      if (worker.process.exitCode === null) {
         worker.process.kill('SIGTERM');
       }
     } catch (killError) {
