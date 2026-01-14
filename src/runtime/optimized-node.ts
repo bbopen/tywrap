@@ -56,6 +56,7 @@ interface WorkerProcess {
   lastUsed: number;
   busy: boolean;
   buffer: string;
+  timedOutRequests: Map<number, number>;
   pendingRequests: Map<
     number,
     {
@@ -130,6 +131,8 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   private options: Required<ProcessPoolOptions>;
   private emitter = new EventEmitter();
   private disposed = false;
+  private readonly timedOutTtlMs: number;
+  private readonly maxTimedOutRequests = 1000;
 
   // Performance monitoring
   private stats: OptimizedBridgeStats = {
@@ -166,6 +169,8 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       env: options.env ?? {},
       warmupCommands: options.warmupCommands ?? [],
     };
+
+    this.timedOutTtlMs = Math.max(1000, this.options.timeoutMs * 2);
 
     // Start with minimum processes
     this.startCleanupScheduler();
@@ -306,7 +311,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
    * Select optimal worker based on load and performance
    */
   private selectOptimalWorker(): WorkerProcess | null {
-    const availableWorkers = this.processPool.filter(w => !w.busy && w.process.connected);
+    const availableWorkers = this.processPool.filter(w => !w.busy && w.process.exitCode === null);
 
     if (availableWorkers.length === 0) {
       return null;
@@ -363,6 +368,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
 
       const timer = setTimeout(() => {
         worker.pendingRequests.delete(id);
+        this.markTimedOutRequest(worker, id);
         worker.busy = false;
         reject(new Error(`Request ${id} timed out after ${this.options.timeoutMs}ms`));
       }, this.options.timeoutMs);
@@ -447,6 +453,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       lastUsed: Date.now(),
       busy: false,
       buffer: '',
+      timedOutRequests: new Map(),
       pendingRequests: new Map(),
       stats: {
         totalRequests: 0,
@@ -539,6 +546,9 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       const pending = worker.pendingRequests.get(msg.id);
 
       if (!pending) {
+        if (this.consumeTimedOutRequest(worker, msg.id)) {
+          return;
+        }
         this.handleProtocolError(
           worker,
           line,
@@ -581,6 +591,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     }
 
     worker.pendingRequests.clear();
+    worker.timedOutRequests.clear();
 
     // Remove from pool
     const index = this.processPool.indexOf(worker);
@@ -739,14 +750,17 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       pending.reject(new Error('Worker process terminated'));
     }
 
+    worker.pendingRequests.clear();
+    worker.timedOutRequests.clear();
+
     // Graceful termination
     try {
-      if (worker.process.connected) {
+      if (worker.process.exitCode === null) {
         worker.process.kill('SIGTERM');
 
         // Force kill if not terminated in 5 seconds
         setTimeout(() => {
-          if (!worker.process.killed) {
+          if (worker.process.exitCode === null) {
             worker.process.kill('SIGKILL');
           }
         }, 5000);
@@ -796,6 +810,34 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     // Disposed optimized Node.js bridge
   }
 
+  private markTimedOutRequest(worker: WorkerProcess, id: number): void {
+    const now = Date.now();
+    const cutoff = now - this.timedOutTtlMs;
+    for (const [key, ts] of worker.timedOutRequests) {
+      if (ts >= cutoff) {
+        break;
+      }
+      worker.timedOutRequests.delete(key);
+    }
+    worker.timedOutRequests.set(id, now);
+    while (worker.timedOutRequests.size > this.maxTimedOutRequests) {
+      const oldest = worker.timedOutRequests.keys().next();
+      if (oldest.done) {
+        break;
+      }
+      worker.timedOutRequests.delete(oldest.value);
+    }
+  }
+
+  private consumeTimedOutRequest(worker: WorkerProcess, id: number): boolean {
+    const ts = worker.timedOutRequests.get(id);
+    if (ts === undefined) {
+      return false;
+    }
+    worker.timedOutRequests.delete(id);
+    return Date.now() - ts <= this.timedOutTtlMs;
+  }
+
   private errorFrom(err: { type: string; message: string; traceback?: string }): Error {
     const e = new BridgeExecutionError(`${err.type}: ${err.message}`);
     e.traceback = err.traceback;
@@ -817,9 +859,10 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       pending.reject(bridgeError);
     }
     worker.pendingRequests.clear();
+    worker.timedOutRequests.clear();
 
     try {
-      if (worker.process.connected) {
+      if (worker.process.exitCode === null) {
         worker.process.kill('SIGTERM');
       }
     } catch (killError) {

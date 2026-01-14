@@ -90,6 +90,9 @@ export class NodeBridge extends RuntimeBridge {
     number,
     { resolve: (v: unknown) => void; reject: (e: unknown) => void; timer?: NodeJS.Timeout }
   >();
+  private readonly timedOutRequests = new Map<number, number>();
+  private readonly timedOutTtlMs: number;
+  private readonly maxTimedOutRequests = 1000;
   private readonly options: ResolvedNodeBridgeOptions;
   private stderrBuffer = '';
   private disposed = false;
@@ -113,6 +116,7 @@ export class NodeBridge extends RuntimeBridge {
       enableJsonFallback: options.enableJsonFallback ?? false,
       env: options.env ?? {},
     };
+    this.timedOutTtlMs = Math.max(1000, this.options.timeoutMs * 2);
   }
 
   async init(): Promise<void> {
@@ -183,6 +187,7 @@ export class NodeBridge extends RuntimeBridge {
     this.disposed = true;
     this.initPromise = undefined;
     this.bridgeInfo = undefined;
+    this.timedOutRequests.clear();
     if (!this.child) {
       return;
     }
@@ -201,6 +206,7 @@ export class NodeBridge extends RuntimeBridge {
     const promise = new Promise<T>((resolvePromise, reject) => {
       timer = setTimeout(() => {
         this.pending.delete(id);
+        this.markTimedOutRequest(id);
         const stderrTail = this.stderrBuffer.trim();
         const msg = stderrTail
           ? `Python call timed out. Recent stderr from Python:\n${stderrTail}`
@@ -249,10 +255,39 @@ export class NodeBridge extends RuntimeBridge {
       p.reject(error);
     }
     this.pending.clear();
+    this.timedOutRequests.clear();
     this.child?.kill('SIGTERM');
     this.child = undefined;
     this.initPromise = undefined;
     this.bridgeInfo = undefined;
+  }
+
+  private markTimedOutRequest(id: number): void {
+    const now = Date.now();
+    const cutoff = now - this.timedOutTtlMs;
+    for (const [key, ts] of this.timedOutRequests) {
+      if (ts >= cutoff) {
+        break;
+      }
+      this.timedOutRequests.delete(key);
+    }
+    this.timedOutRequests.set(id, now);
+    while (this.timedOutRequests.size > this.maxTimedOutRequests) {
+      const oldest = this.timedOutRequests.keys().next();
+      if (oldest.done) {
+        break;
+      }
+      this.timedOutRequests.delete(oldest.value);
+    }
+  }
+
+  private consumeTimedOutRequest(id: number): boolean {
+    const ts = this.timedOutRequests.get(id);
+    if (ts === undefined) {
+      return false;
+    }
+    this.timedOutRequests.delete(id);
+    return Date.now() - ts <= this.timedOutTtlMs;
   }
 
   private async startProcess(): Promise<void> {
@@ -315,6 +350,7 @@ export class NodeBridge extends RuntimeBridge {
           p.reject(new BridgeProtocolError(msg));
         }
         this.pending.clear();
+        this.timedOutRequests.clear();
         this.child = undefined;
         this.initPromise = undefined;
         this.bridgeInfo = undefined;
@@ -348,6 +384,9 @@ export class NodeBridge extends RuntimeBridge {
               }
               const pending = this.pending.get(msg.id);
               if (!pending) {
+                if (this.consumeTimedOutRequest(msg.id)) {
+                  return;
+                }
                 this.handleProtocolError(`Unexpected response id ${msg.id}`, line);
                 return;
               }
@@ -404,6 +443,7 @@ export class NodeBridge extends RuntimeBridge {
           p.reject(new BridgeProtocolError(msg));
         }
         this.pending.clear();
+        this.timedOutRequests.clear();
         this.child = undefined;
         this.initPromise = undefined;
         this.bridgeInfo = undefined;
