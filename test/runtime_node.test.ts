@@ -235,6 +235,10 @@ def get_path():
   });
 
   describe('Timeout Handling', () => {
+    afterEach(async () => {
+      await bridge?.dispose();
+    });
+
     it(
       'should timeout long-running operations',
       async () => {
@@ -263,6 +267,30 @@ def get_path():
         await expect(shortTimeoutBridge.call('time', 'sleep', [1])).rejects.toThrow(/timed out/);
 
         await shortTimeoutBridge.dispose();
+      },
+      testTimeout
+    );
+
+    it(
+      'should ignore late responses for timed-out requests',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        bridge = new NodeBridge({ scriptPath, timeoutMs: 500 });
+
+        const before = await bridge.getBridgeInfo();
+
+        await expect(bridge.call('time', 'sleep', [1])).rejects.toThrow(/timed out/i);
+
+        // Wait for the Python process to eventually respond to the timed-out request.
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        const after = await bridge.getBridgeInfo({ refresh: true });
+        expect(after.pid).toBe(before.pid);
+
+        const result = await bridge.call<number>('math', 'sqrt', [16]);
+        expect(result).toBe(4);
       },
       testTimeout
     );
