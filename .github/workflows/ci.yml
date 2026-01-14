@@ -134,9 +134,11 @@ jobs:
           PIP_PROGRESS_BAR: 'off'
         run: |
           ./examples/living-app/.venv/bin/python -m pip install -e tywrap_ir
-          ./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements.txt
+          ./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements-arrow.txt
       - name: Run living-app smoke test
         run: npm run example:living-app:smoke
+      - name: Run living-app Arrow mode smoke test
+        run: npm run example:living-app:run:arrow
 
   python-suite-full:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
