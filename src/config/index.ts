@@ -258,6 +258,9 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
   if (ext === '.ts' || ext === '.mts' || ext === '.cts') {
     const ts = await import('typescript');
     const source = await safeReadFileAsync(resolved);
+    // Why: many configs want to `import { defineConfig } from 'tywrap'`. The tywrap package is ESM,
+    // so evaluating a transpiled CommonJS config would try `require('tywrap')` and fail. Treat
+    // `.ts`/`.mts` configs as ESM, and only treat `.cts` as CommonJS to match Node conventions.
     const emitCommonJs = ext === '.cts';
     const output = ts.transpileModule(source, {
       compilerOptions: {
@@ -284,6 +287,9 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
       return ensureConfigObject(loaded ?? {}, resolved);
     }
 
+    // Why: Node can't import ESM from a string without a custom loader. We write the transpiled
+    // output to a temporary `.mjs` file next to the source config so relative imports and Node
+    // resolution behave naturally, then clean it up immediately after loading.
     const tmpPath = resolve(
       dirname(resolved),
       `.tywrap.config.${Date.now()}.${Math.random().toString(16).slice(2)}.mjs`

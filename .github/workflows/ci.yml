@@ -134,6 +134,7 @@ jobs:
           PIP_PROGRESS_BAR: 'off'
         run: |
           ./examples/living-app/.venv/bin/python -m pip install -e tywrap_ir
+          # Why: install pyarrow so CI covers both the JSON fallback path and the Arrow transport path.
           ./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements-arrow.txt
       - name: Run living-app smoke test
         run: npm run example:living-app:smoke

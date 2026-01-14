@@ -94,6 +94,13 @@ def is_sklearn_estimator(obj):
 
 
 def serialize_ndarray(obj):
+    """
+    Encode a NumPy ndarray for transport over the JSONL bridge.
+
+    Why: Arrow IPC gives a compact, lossless binary payload that the JS side can decode as a
+    Table. If JSON fallback is explicitly requested, honor it even when pyarrow is installed so
+    callers don't unexpectedly need an Arrow decoder on the TypeScript side.
+    """
     if FALLBACK_JSON:
         return serialize_ndarray_json(obj)
     try:
@@ -123,6 +130,12 @@ def serialize_ndarray(obj):
 
 
 def serialize_ndarray_json(obj):
+    """
+    JSON fallback for ndarray encoding.
+
+    Why: this keeps the bridge usable in environments without pyarrow/Arrow decoding, at the
+    cost of larger payloads and potential dtype loss.
+    """
     try:
         data = obj.tolist()
     except Exception as exc:
@@ -136,6 +149,13 @@ def serialize_ndarray_json(obj):
 
 
 def serialize_dataframe(obj):
+    """
+    Encode a pandas DataFrame for transport.
+
+    Why: we emit Feather (Arrow IPC file) as *uncompressed* because the JS apache-arrow reader
+    does not implement record batch compression. Keeping this uncompressed makes Arrow mode
+    work out-of-the-box for Node decoders.
+    """
     if FALLBACK_JSON:
         return serialize_dataframe_json(obj)
     try:
@@ -165,6 +185,12 @@ def serialize_dataframe(obj):
 
 
 def serialize_dataframe_json(obj):
+    """
+    JSON fallback for DataFrame encoding.
+
+    Why: this keeps the example/runtime working without Arrow; it is easy to inspect but larger
+    than Arrow and may not preserve all dtypes exactly.
+    """
     try:
         data = obj.to_dict(orient='records')
     except Exception as exc:
@@ -177,6 +203,12 @@ def serialize_dataframe_json(obj):
 
 
 def serialize_series(obj):
+    """
+    Encode a pandas Series for transport.
+
+    Why: encode as a single-column Arrow Table stream (not a raw Array schema) because the JS
+    decoder contract is "table-like" and pyarrow's IPC writer expects a Schema, not a DataType.
+    """
     if FALLBACK_JSON:
         return serialize_series_json(obj)
     try:
@@ -206,6 +238,12 @@ def serialize_series(obj):
 
 
 def serialize_series_json(obj):
+    """
+    JSON fallback for Series encoding.
+
+    Why: avoids requiring Arrow decoding support, at the cost of potentially lossy dtype/NA
+    representation compared to Arrow.
+    """
     try:
         data = obj.to_list()  # type: ignore
     except Exception:

@@ -26,6 +26,8 @@ function resolveExampleRoot(): string {
 type CodecMode = 'json' | 'arrow';
 
 function resolveCodecMode(argv: readonly string[]): CodecMode {
+  // Why: keep the example runnable in "no extra deps" mode by default (JSON), but make it easy to
+  // flip into Arrow mode from CI/CLI without changing code.
   if (argv.includes('--arrow')) {
     return 'arrow';
   }
@@ -39,6 +41,13 @@ function resolveCodecMode(argv: readonly string[]): CodecMode {
   return 'json';
 }
 
+/**
+ * Register an Arrow decoder for this Node process.
+ *
+ * Why: `apache-arrow` is an optional dependency and tywrap should run without it in JSON mode.
+ * We use `require()` instead of ESM `import()` so Node/TypeScript resolve the package's "node"
+ * export + typings correctly (the ESM export map can otherwise select the DOM build/types).
+ */
 async function enableArrowDecoder(): Promise<void> {
   const require = createRequire(import.meta.url);
   const arrow = require('apache-arrow') as unknown as {
@@ -50,6 +59,12 @@ async function enableArrowDecoder(): Promise<void> {
   registerArrowDecoder((bytes: Uint8Array) => arrow.tableFromIPC!(bytes));
 }
 
+/**
+ * Coerce Arrow-decoded values into something safe to JSON.stringify for demo output.
+ *
+ * Why: in Arrow mode `topUsersBySpend` returns an Arrow Table object (with methods/BigInts).
+ * This function keeps console output readable and avoids accidentally dumping megabytes.
+ */
 function toJsonSafe(value: unknown): unknown {
   if (value instanceof Uint8Array) {
     return { __tywrap__: 'bytes', byteLength: value.byteLength };
@@ -71,6 +86,12 @@ function toJsonSafe(value: unknown): unknown {
   return value;
 }
 
+/**
+ * JSON.stringify replacer for Arrow-mode output.
+ *
+ * Why: Arrow decoding can surface `BigInt` values (e.g. int64 columns), and JSON doesn't support
+ * BigInt. We downcast safely when possible, otherwise stringify.
+ */
 function jsonReplacer(_key: string, value: unknown): unknown {
   if (typeof value === 'bigint') {
     const asNumber = Number(value);
@@ -99,6 +120,8 @@ async function main(): Promise<void> {
     await enableArrowDecoder();
     const info = await bridge.getBridgeInfo();
     if (!info.arrowAvailable) {
+      // Why: fail fast with a clear message; otherwise the bridge will emit Arrow envelopes and the
+      // caller will see confusing decode errors.
       throw new Error(
         'Arrow mode requested but pyarrow is not installed in the Python environment. Install pyarrow or run with --json.'
       );
@@ -148,6 +171,8 @@ async function main(): Promise<void> {
     );
   } finally {
     await bridge.dispose();
+    // Why: registerArrowDecoder is global process state; clear it so other examples/tests don't
+    // inherit Arrow decoding unexpectedly.
     clearArrowDecoder();
   }
 }
