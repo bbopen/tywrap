@@ -258,11 +258,121 @@ function decodeEnvelope<T>(value: unknown, decodeArrow: (bytes: Uint8Array) => T
   return value as unknown;
 }
 
+async function decodeEnvelopeAsync<T>(
+  value: unknown,
+  decodeArrow: (bytes: Uint8Array) => T | Promise<T>
+): Promise<T | unknown> {
+  if (!isObject(value)) {
+    return value;
+  }
+  const marker = (value as { __tywrap__?: unknown }).__tywrap__;
+  if (
+    (marker === 'dataframe' || marker === 'series') &&
+    (value as { encoding?: unknown }).encoding === 'arrow' &&
+    typeof (value as { b64?: unknown }).b64 === 'string'
+  ) {
+    const bytes = fromBase64(String((value as { b64: string }).b64));
+    return await decodeArrow(bytes);
+  }
+  if (
+    marker === 'dataframe' &&
+    (value as { encoding?: unknown }).encoding === 'json' &&
+    'data' in (value as object)
+  ) {
+    return (value as { data: unknown }).data;
+  }
+  if (
+    marker === 'series' &&
+    (value as { encoding?: unknown }).encoding === 'json' &&
+    'data' in (value as object)
+  ) {
+    return (value as { data: unknown }).data;
+  }
+  if (marker === 'ndarray') {
+    if (
+      (value as { encoding?: unknown }).encoding === 'arrow' &&
+      typeof (value as { b64?: unknown }).b64 === 'string'
+    ) {
+      const bytes = fromBase64(String((value as { b64: string }).b64));
+      return await decodeArrow(bytes);
+    }
+    if ((value as { encoding?: unknown }).encoding === 'json' && 'data' in (value as object)) {
+      return (value as { data: unknown }).data;
+    }
+  }
+  if (
+    marker === 'scipy.sparse' &&
+    (value as { encoding?: unknown }).encoding === 'json' &&
+    typeof (value as { format?: unknown }).format === 'string' &&
+    Array.isArray((value as { shape?: unknown }).shape) &&
+    Array.isArray((value as { data?: unknown }).data)
+  ) {
+    const sparse = value as {
+      format: 'csr' | 'csc' | 'coo';
+      shape: readonly number[];
+      data: readonly unknown[];
+      indices?: readonly number[];
+      indptr?: readonly number[];
+      row?: readonly number[];
+      col?: readonly number[];
+      dtype?: string;
+    };
+    return {
+      format: sparse.format,
+      shape: sparse.shape,
+      data: sparse.data,
+      indices: sparse.indices,
+      indptr: sparse.indptr,
+      row: sparse.row,
+      col: sparse.col,
+      dtype: sparse.dtype,
+    } satisfies SparseMatrix;
+  }
+  if (marker === 'torch.tensor' && (value as { encoding?: unknown }).encoding === 'ndarray') {
+    const torchValue = value as {
+      value?: unknown;
+      shape?: readonly number[];
+      dtype?: string;
+      device?: string;
+    };
+    if ('value' in (torchValue as object)) {
+      const decoded = await decodeEnvelopeAsync(torchValue.value, decodeArrow);
+      return {
+        data: decoded,
+        shape: torchValue.shape,
+        dtype: torchValue.dtype,
+        device: torchValue.device,
+      } satisfies TorchTensor;
+    }
+  }
+  if (
+    marker === 'sklearn.estimator' &&
+    (value as { encoding?: unknown }).encoding === 'json' &&
+    typeof (value as { className?: unknown }).className === 'string' &&
+    typeof (value as { module?: unknown }).module === 'string' &&
+    isObject((value as { params?: unknown }).params)
+  ) {
+    const estimator = value as {
+      className: string;
+      module: string;
+      version?: string;
+      params: Record<string, unknown>;
+    };
+    return {
+      className: estimator.className,
+      module: estimator.module,
+      version: estimator.version,
+      params: estimator.params,
+    } satisfies SklearnEstimator;
+  }
+  return value as unknown;
+}
+
 /**
  * Decode values produced by the Python bridge.
  */
 export async function decodeValueAsync(value: unknown): Promise<DecodedValue> {
-  return await decodeEnvelope(value, tryDecodeArrowTable);
+  return await decodeEnvelopeAsync(value, tryDecodeArrowTable);
 }
 
 /**
