@@ -369,17 +369,17 @@ describeNodeOnly('OptimizedNodeBridge - Functional Tests', () => {
         scriptPath: BRIDGE_SCRIPT,
         minProcesses: 1,
         maxProcesses: 1,
-        timeoutMs: 100,
+        timeoutMs: 250,
       });
 
       await bridge.init();
 
       const before = bridge.getStats();
 
-      await expect(bridge.call('time', 'sleep', [0.2])).rejects.toThrow(/timed out/i);
+      await expect(bridge.call('time', 'sleep', [0.8])).rejects.toThrow(/timed out/i);
 
       // Wait for the worker to eventually respond to the timed-out request.
-      await new Promise(resolve => setTimeout(resolve, 400));
+      await new Promise(resolve => setTimeout(resolve, 700));
 
       const mid = bridge.getStats();
       expect(mid.processDeaths).toBe(before.processDeaths);

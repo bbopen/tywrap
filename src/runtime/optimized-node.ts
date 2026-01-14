@@ -16,6 +16,10 @@ import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 import { RuntimeBridge } from './base.js';
 import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import { TYWRAP_PROTOCOL } from './protocol.js';
+import {
+  TimedOutRequestTracker,
+  type TimedOutRequestTrackerOptions,
+} from './timed-out-request-tracker.js';
 import { getComponentLogger } from '../utils/logger.js';
 
 const log = getComponentLogger('OptimizedBridge');
@@ -56,7 +60,7 @@ interface WorkerProcess {
   lastUsed: number;
   busy: boolean;
   buffer: string;
-  timedOutRequests: Map<number, number>;
+  timedOutRequests: TimedOutRequestTracker;
   pendingRequests: Map<
     number,
     {
@@ -131,8 +135,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   private options: Required<ProcessPoolOptions>;
   private emitter = new EventEmitter();
   private disposed = false;
-  private readonly timedOutTtlMs: number;
-  private readonly maxTimedOutRequests = 1000;
+  private readonly timedOutRequestsOptions: TimedOutRequestTrackerOptions;
 
   // Performance monitoring
   private stats: OptimizedBridgeStats = {
@@ -170,7 +173,9 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       warmupCommands: options.warmupCommands ?? [],
     };
 
-    this.timedOutTtlMs = Math.max(1000, this.options.timeoutMs * 2);
+    this.timedOutRequestsOptions = {
+      ttlMs: Math.max(1000, this.options.timeoutMs * 2),
+    };
 
     // Start with minimum processes
     this.startCleanupScheduler();
@@ -368,7 +373,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
 
       const timer = setTimeout(() => {
         worker.pendingRequests.delete(id);
-        this.markTimedOutRequest(worker, id);
+        worker.timedOutRequests.mark(id);
         worker.busy = false;
         reject(new Error(`Request ${id} timed out after ${this.options.timeoutMs}ms`));
       }, this.options.timeoutMs);
@@ -453,7 +458,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       lastUsed: Date.now(),
       busy: false,
       buffer: '',
-      timedOutRequests: new Map(),
+      timedOutRequests: new TimedOutRequestTracker(this.timedOutRequestsOptions),
       pendingRequests: new Map(),
       stats: {
         totalRequests: 0,
@@ -546,7 +551,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       const pending = worker.pendingRequests.get(msg.id);
 
       if (!pending) {
-        if (this.consumeTimedOutRequest(worker, msg.id)) {
+        if (worker.timedOutRequests.consume(msg.id)) {
           return;
         }
         this.handleProtocolError(
@@ -808,34 +813,6 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     this.emitter.removeAllListeners();
 
     // Disposed optimized Node.js bridge
-  }
-
-  private markTimedOutRequest(worker: WorkerProcess, id: number): void {
-    const now = Date.now();
-    const cutoff = now - this.timedOutTtlMs;
-    for (const [key, ts] of worker.timedOutRequests) {
-      if (ts >= cutoff) {
-        break;
-      }
-      worker.timedOutRequests.delete(key);
-    }
-    worker.timedOutRequests.set(id, now);
-    while (worker.timedOutRequests.size > this.maxTimedOutRequests) {
-      const oldest = worker.timedOutRequests.keys().next();
-      if (oldest.done) {
-        break;
-      }
-      worker.timedOutRequests.delete(oldest.value);
-    }
-  }
-
-  private consumeTimedOutRequest(worker: WorkerProcess, id: number): boolean {
-    const ts = worker.timedOutRequests.get(id);
-    if (ts === undefined) {
-      return false;
-    }
-    worker.timedOutRequests.delete(id);
-    return Date.now() - ts <= this.timedOutTtlMs;
   }
 
   private errorFrom(err: { type: string; message: string; traceback?: string }): Error {

@@ -277,14 +277,14 @@ def get_path():
         const pythonAvailable = await isPythonAvailable();
         if (!pythonAvailable || !isBridgeScriptAvailable()) return;
 
-        bridge = new NodeBridge({ scriptPath, timeoutMs: 50 });
+        bridge = new NodeBridge({ scriptPath, timeoutMs: 500 });
 
         const before = await bridge.getBridgeInfo();
 
-        await expect(bridge.call('time', 'sleep', [0.2])).rejects.toThrow(/timed out/i);
+        await expect(bridge.call('time', 'sleep', [1])).rejects.toThrow(/timed out/i);
 
         // Wait for the Python process to eventually respond to the timed-out request.
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise(resolve => setTimeout(resolve, 800));
 
         const after = await bridge.getBridgeInfo({ refresh: true });
         expect(after.pid).toBe(before.pid);
