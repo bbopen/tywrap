@@ -6,7 +6,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, extname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -258,27 +258,44 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
   if (ext === '.ts' || ext === '.mts' || ext === '.cts') {
     const ts = await import('typescript');
     const source = await safeReadFileAsync(resolved);
+    const emitCommonJs = ext === '.cts';
     const output = ts.transpileModule(source, {
       compilerOptions: {
-        module: ts.ModuleKind.CommonJS,
+        module: emitCommonJs ? ts.ModuleKind.CommonJS : ts.ModuleKind.ES2020,
         target: ts.ScriptTarget.ES2020,
         esModuleInterop: true,
       },
       fileName: resolved,
     });
-    const require = createRequire(import.meta.url);
-    const nodeModule = require('module') as typeof import('module');
-    const moduleCtor = nodeModule.Module as unknown as typeof import('module').Module & {
-      _nodeModulePaths: (path: string) => string[];
-    };
-    const mod = new moduleCtor(resolved) as import('module').Module & {
-      _compile: (code: string, filename: string) => void;
-    };
-    mod.filename = resolved;
-    mod.paths = moduleCtor._nodeModulePaths(dirname(resolved));
-    mod._compile(output.outputText, resolved);
-    const loaded = (mod.exports as Record<string, unknown>).default ?? mod.exports;
-    return ensureConfigObject(loaded ?? {}, resolved);
+
+    if (emitCommonJs) {
+      const require = createRequire(import.meta.url);
+      const nodeModule = require('module') as typeof import('module');
+      const moduleCtor = nodeModule.Module as unknown as typeof import('module').Module & {
+        _nodeModulePaths: (path: string) => string[];
+      };
+      const mod = new moduleCtor(resolved) as import('module').Module & {
+        _compile: (code: string, filename: string) => void;
+      };
+      mod.filename = resolved;
+      mod.paths = moduleCtor._nodeModulePaths(dirname(resolved));
+      mod._compile(output.outputText, resolved);
+      const loaded = (mod.exports as Record<string, unknown>).default ?? mod.exports;
+      return ensureConfigObject(loaded ?? {}, resolved);
+    }
+
+    const tmpPath = resolve(
+      dirname(resolved),
+      `.tywrap.config.${Date.now()}.${Math.random().toString(16).slice(2)}.mjs`
+    );
+    try {
+      await writeFile(tmpPath, output.outputText, 'utf-8');
+      const mod = (await import(pathToFileURL(tmpPath).href)) as Record<string, unknown>;
+      const loaded = mod.default ?? mod;
+      return ensureConfigObject(loaded ?? {}, resolved);
+    } finally {
+      await rm(tmpPath, { force: true });
+    }
   }
 
   throw new Error(`Unsupported configuration file extension: ${ext}`);

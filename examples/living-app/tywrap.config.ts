@@ -1,4 +1,6 @@
-export default {
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
   pythonModules: {
     'living_app.app': { runtime: 'node', typeHints: 'strict' },
   },
@@ -17,4 +19,4 @@ export default {
   types: {
     presets: ['stdlib', 'numpy', 'pandas', 'pydantic'],
   },
-};
+});

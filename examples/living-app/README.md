@@ -44,5 +44,9 @@ npm run example:living-app:smoke
 ## Notes
 
 - The example deliberately uses JSON codec fallback for `pandas.DataFrame` / `numpy.ndarray` so it runs without `pyarrow` or a JS Arrow decoder.
-- If you want to experiment with Arrow paths, install `pyarrow` and register a JS Arrow decoder via `registerArrowDecoder(...)`.
+- To exercise Arrow paths, install `pyarrow` and run the example with `--arrow` (it registers an `apache-arrow` decoder):
 
+```sh
+./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements-arrow.txt
+npm run example:living-app:smoke:arrow
+```

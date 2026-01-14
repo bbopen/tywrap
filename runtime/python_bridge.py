@@ -94,19 +94,20 @@ def is_sklearn_estimator(obj):
 
 
 def serialize_ndarray(obj):
+    if FALLBACK_JSON:
+        return serialize_ndarray_json(obj)
     try:
         import pyarrow as pa  # type: ignore
     except Exception as exc:
-        if FALLBACK_JSON:
-            return serialize_ndarray_json(obj)
         raise RuntimeError(
             'Arrow encoding unavailable for ndarray; install pyarrow or set TYWRAP_CODEC_FALLBACK=json to enable JSON fallback'
         ) from exc
     try:
         arr = pa.array(obj)
+        table = pa.Table.from_arrays([arr], names=['value'])
         sink = pa.BufferOutputStream()
-        with pa.ipc.new_stream(sink, arr.type) as writer:
-            writer.write(arr)
+        with pa.ipc.new_stream(sink, table.schema) as writer:
+            writer.write_table(table)
         buf = sink.getvalue()
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
@@ -135,19 +136,21 @@ def serialize_ndarray_json(obj):
 
 
 def serialize_dataframe(obj):
+    if FALLBACK_JSON:
+        return serialize_dataframe_json(obj)
     try:
         import pyarrow as pa  # type: ignore
         import pyarrow.feather as feather  # type: ignore
     except Exception as exc:
-        if FALLBACK_JSON:
-            return serialize_dataframe_json(obj)
         raise RuntimeError(
             'Arrow encoding unavailable for pandas.DataFrame; install pyarrow or set TYWRAP_CODEC_FALLBACK=json to enable JSON fallback'
         ) from exc
     try:
         table = pa.Table.from_pandas(obj)  # type: ignore
         sink = pa.BufferOutputStream()
-        feather.write_feather(table, sink)
+        # Use explicit uncompressed payloads so JS decoders (apache-arrow) can read them
+        # without optional compression dependencies.
+        feather.write_feather(table, sink, compression='uncompressed')
         buf = sink.getvalue()
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
@@ -174,19 +177,20 @@ def serialize_dataframe_json(obj):
 
 
 def serialize_series(obj):
+    if FALLBACK_JSON:
+        return serialize_series_json(obj)
     try:
         import pyarrow as pa  # type: ignore
     except Exception as exc:
-        if FALLBACK_JSON:
-            return serialize_series_json(obj)
         raise RuntimeError(
             'Arrow encoding unavailable for pandas.Series; install pyarrow or set TYWRAP_CODEC_FALLBACK=json to enable JSON fallback'
         ) from exc
     try:
         arr = pa.Array.from_pandas(obj)  # type: ignore
+        table = pa.Table.from_arrays([arr], names=['value'])
         sink = pa.BufferOutputStream()
-        with pa.ipc.new_stream(sink, arr.type) as writer:
-            writer.write(arr)
+        with pa.ipc.new_stream(sink, table.schema) as writer:
+            writer.write_table(table)
         buf = sink.getvalue()
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
