@@ -267,7 +267,8 @@ export class TypeMapper {
     }
 
     // Forward references and user types
-    return { kind: 'custom', name: type.name, module: type.module };
+    const normalized = this.normalizeCustomType(type);
+    return { kind: 'custom', name: normalized.name, module: normalized.module };
   }
 
   mapCallableType(type: {

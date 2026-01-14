@@ -1,0 +1,48 @@
+# Living App (pandas + numpy + pydantic)
+
+This is a small but non-trivial “living example” that exercises tywrap end-to-end:
+
+- TypeScript (Node) calls into Python via `NodeBridge`
+- Python uses `pandas` + `numpy` for data work and `pydantic` for config validation
+- Results come back as JSON (no Arrow decoder required)
+
+## What it does
+
+The example generates two synthetic CSV datasets (“baseline” and “current”), profiles them, and produces a simple drift report.
+
+## Setup (fresh checkout)
+
+From the repo root:
+
+1. Install Node dependencies:
+
+```sh
+npm ci
+```
+
+2. Create a Python venv and install Python dependencies:
+
+```sh
+python3 -m venv examples/living-app/.venv
+./examples/living-app/.venv/bin/python -m pip install -U pip
+./examples/living-app/.venv/bin/python -m pip install -e tywrap_ir
+./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements.txt
+```
+
+3. Build tywrap (for the CLI + runtime bridge):
+
+```sh
+npm run build
+```
+
+4. Generate wrappers, build the example, and run it:
+
+```sh
+npm run example:living-app:smoke
+```
+
+## Notes
+
+- The example deliberately uses JSON codec fallback for `pandas.DataFrame` / `numpy.ndarray` so it runs without `pyarrow` or a JS Arrow decoder.
+- If you want to experiment with Arrow paths, install `pyarrow` and register a JS Arrow decoder via `registerArrowDecoder(...)`.
+

@@ -10,6 +10,15 @@ import decimal
 import uuid
 from pathlib import Path, PurePath
 
+# Ensure the working directory is importable so local modules can be resolved when
+# the bridge is launched as a script from a different directory.
+try:
+    cwd = os.getcwd()
+    if cwd and cwd not in sys.path:
+        sys.path.insert(0, cwd)
+except Exception:
+    pass
+
 instances = {}
 
 FALLBACK_JSON = os.environ.get('TYWRAP_CODEC_FALLBACK', '').lower() == 'json'

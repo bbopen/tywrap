@@ -146,7 +146,7 @@ export class CodeGenerator {
     const firstOptionalIndex = positional.findIndex(p => p.optional);
     const overloads: string[] = [];
     if (firstOptionalIndex >= 0) {
-      for (let i = firstOptionalIndex; i < positional.length; i++) {
+      for (let i = firstOptionalIndex; i <= positional.length; i++) {
         const head = positional.slice(0, i);
         const rest = filteredParams.filter(p => p.varArgs || p.kwArgs);
         const sigParams = [...head, ...rest].map(renderParam).join(', ');
