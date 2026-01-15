@@ -1,10 +1,10 @@
-# Living App (pandas + numpy + pydantic)
+# Living App (pandas + numpy + pydantic + Arrow)
 
 This is a small but non-trivial “living example” that exercises tywrap end-to-end:
 
 - TypeScript (Node) calls into Python via `NodeBridge`
 - Python uses `pandas` + `numpy` for data work and `pydantic` for config validation
-- Results come back as JSON (no Arrow decoder required)
+- Rich results (e.g. `pandas.DataFrame`) come back via Arrow IPC and are decoded in Node with `apache-arrow`
 
 ## What it does
 
@@ -26,7 +26,7 @@ npm ci
 python3 -m venv examples/living-app/.venv
 ./examples/living-app/.venv/bin/python -m pip install -U pip
 ./examples/living-app/.venv/bin/python -m pip install -e tywrap_ir
-./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements.txt
+./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements-arrow.txt
 ```
 
 3. Build tywrap (for the CLI + runtime bridge):
@@ -43,10 +43,10 @@ npm run example:living-app:smoke
 
 ## Notes
 
-- The example deliberately uses JSON codec fallback for `pandas.DataFrame` / `numpy.ndarray` so it runs without `pyarrow` or a JS Arrow decoder.
-- To exercise Arrow paths, install `pyarrow` and run the example with `--arrow` (it registers an `apache-arrow` decoder):
+- The living app defaults to Arrow mode to exercise tywrap’s primary transport path for `pandas` / `numpy`.
+- JSON mode is still supported, but must be requested explicitly (and it forces `TYWRAP_CODEC_FALLBACK=json` so no Arrow decoder is required):
 
 ```sh
-./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements-arrow.txt
-npm run example:living-app:smoke:arrow
+./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements.txt
+npm run example:living-app:smoke:json
 ```

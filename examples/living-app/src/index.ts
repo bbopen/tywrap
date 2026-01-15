@@ -25,19 +25,27 @@ function resolveExampleRoot(): string {
 type CodecMode = 'json' | 'arrow';
 
 function resolveCodecMode(argv: readonly string[]): CodecMode {
-  // Why: keep the example runnable in "no extra deps" mode by default (JSON), but make it easy to
-  // flip into Arrow mode from CI/CLI without changing code.
-  if (argv.includes('--arrow')) {
+  // Why: the living app exists to validate tywrap's Arrow transport path in a real-ish workflow.
+  // JSON mode is still supported, but only when explicitly requested.
+  const wantsArrow = argv.includes('--arrow');
+  const wantsJson = argv.includes('--json');
+  if (wantsArrow && wantsJson) {
+    throw new Error('Pass only one of --arrow or --json.');
+  }
+  if (wantsArrow) {
     return 'arrow';
   }
-  if (argv.includes('--json')) {
+  if (wantsJson) {
     return 'json';
   }
   const env = process.env.TYWRAP_LIVING_APP_CODEC?.toLowerCase();
+  if (env === 'json') {
+    return 'json';
+  }
   if (env === 'arrow') {
     return 'arrow';
   }
-  return 'json';
+  return 'arrow';
 }
 
 /**
@@ -123,12 +131,17 @@ async function main(): Promise<void> {
     cwd: exampleRoot,
     virtualEnv: existsSync(venvPath) ? '.venv' : undefined,
     enableJsonFallback: codec === 'json',
+    // Why: keep the example deterministic even if the developer has TYWRAP_CODEC_FALLBACK set in
+    // their shell. Arrow mode should exercise Arrow transport; JSON mode should never require a
+    // decoder.
+    env: {
+      TYWRAP_CODEC_FALLBACK: codec === 'json' ? 'json' : undefined,
+    },
     timeoutMs: 30_000,
   });
   setRuntimeBridge(bridge);
 
   if (codec === 'arrow') {
-    await enableArrowDecoder();
     const info = await bridge.getBridgeInfo();
     if (!info.arrowAvailable) {
       // Why: fail fast with a clear message; otherwise the bridge will emit Arrow envelopes and the
@@ -137,6 +150,7 @@ async function main(): Promise<void> {
         'Arrow mode requested but pyarrow is not installed in the Python environment. Install pyarrow or run with --json.'
       );
     }
+    await enableArrowDecoder();
   }
 
   const profileConfig: ProfileConfig = {

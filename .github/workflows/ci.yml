@@ -134,12 +134,12 @@ jobs:
           PIP_PROGRESS_BAR: 'off'
         run: |
           ./examples/living-app/.venv/bin/python -m pip install -e tywrap_ir
-          # Why: install pyarrow so CI covers both the JSON fallback path and the Arrow transport path.
+          # Why: the living app defaults to Arrow mode; install pyarrow so CI exercises Arrow transport.
           ./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements-arrow.txt
       - name: Run living-app smoke test
         run: npm run example:living-app:smoke
-      - name: Run living-app Arrow mode smoke test
-        run: npm run example:living-app:run:arrow
+      - name: Run living-app JSON mode smoke test
+        run: npm run example:living-app:run:json
 
   python-suite-full:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
