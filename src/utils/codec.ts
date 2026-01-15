@@ -151,7 +151,22 @@ async function tryDecodeArrowTable(bytes: Uint8Array): Promise<ArrowTable | Uint
   }
 }
 
-function decodeEnvelope<T>(value: unknown, decodeArrow: (bytes: Uint8Array) => T): T | unknown {
+type MaybePromise<T> = T | Promise<T>;
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'then' in value &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+function decodeEnvelopeCore<T>(
+  value: unknown,
+  decodeArrow: (bytes: Uint8Array) => MaybePromise<T>,
+  recurse: (value: unknown) => MaybePromise<T | unknown>
+): MaybePromise<T | unknown> {
   if (!isObject(value)) {
     return value;
   }
@@ -226,7 +241,15 @@ function decodeEnvelope<T>(value: unknown, decodeArrow: (bytes: Uint8Array) => T
       device?: string;
     };
     if ('value' in (torchValue as object)) {
-      const decoded = decodeEnvelope(torchValue.value, decodeArrow);
+      const decoded = recurse(torchValue.value);
+      if (isPromiseLike(decoded)) {
+        return decoded.then(data => ({
+          data,
+          shape: torchValue.shape,
+          dtype: torchValue.dtype,
+          device: torchValue.device,
+        })) as Promise<T | unknown>;
+      }
       return {
         data: decoded,
         shape: torchValue.shape,
@@ -258,11 +281,30 @@ function decodeEnvelope<T>(value: unknown, decodeArrow: (bytes: Uint8Array) => T
   return value as unknown;
 }
 
+function decodeEnvelope<T>(value: unknown, decodeArrow: (bytes: Uint8Array) => T): T | unknown {
+  const recurse: (value: unknown) => MaybePromise<T | unknown> = v =>
+    decodeEnvelopeCore(v, decodeArrow, recurse);
+  const decoded = decodeEnvelopeCore(value, decodeArrow, recurse);
+  if (isPromiseLike(decoded)) {
+    throw new Error('Unexpected Promise return from decodeValue; use decodeValueAsync instead.');
+  }
+  return decoded;
+}
+
+async function decodeEnvelopeAsync<T>(
+  value: unknown,
+  decodeArrow: (bytes: Uint8Array) => Promise<T>
+): Promise<T | unknown> {
+  const recurse: (value: unknown) => MaybePromise<T | unknown> = v =>
+    decodeEnvelopeCore(v, decodeArrow, recurse);
+  return await decodeEnvelopeCore(value, decodeArrow, recurse);
+}
+
 /**
  * Decode values produced by the Python bridge.
  */
 export async function decodeValueAsync(value: unknown): Promise<DecodedValue> {
-  return await decodeEnvelope(value, tryDecodeArrowTable);
+  return await decodeEnvelopeAsync(value, tryDecodeArrowTable);
 }
 
 /**
