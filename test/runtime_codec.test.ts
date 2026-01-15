@@ -346,6 +346,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     it('should decode JSON sparse matrix envelope', async () => {
       const envelope: CodecEnvelope = {
         __tywrap__: 'scipy.sparse',
+        codecVersion: 1,
         encoding: 'json',
         format: 'csr',
         shape: [2, 2],
@@ -364,6 +365,46 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         indptr: [0, 1, 2],
         dtype: 'float64',
       });
+    });
+
+    it('should reject invalid sparse matrix envelopes', async () => {
+      await expect(
+        decodeValueAsync({
+          __tywrap__: 'scipy.sparse',
+          codecVersion: 1,
+          encoding: 'json',
+          format: 'csr',
+          shape: [2, 2],
+          data: [1, 2],
+          // missing indices + indptr
+        })
+      ).rejects.toThrow('csr/csc requires indices and indptr');
+
+      await expect(
+        decodeValueAsync({
+          __tywrap__: 'scipy.sparse',
+          codecVersion: 1,
+          encoding: 'json',
+          format: 'coo',
+          shape: [2, 2],
+          data: [1, 2],
+          row: [0, 1],
+          // missing col
+        })
+      ).rejects.toThrow('coo requires row and col');
+
+      await expect(
+        decodeValueAsync({
+          __tywrap__: 'scipy.sparse',
+          codecVersion: 1,
+          encoding: 'json',
+          format: 'csr',
+          shape: [2],
+          data: [1, 2],
+          indices: [0, 1],
+          indptr: [0, 1, 2],
+        })
+      ).rejects.toThrow('shape must be a 2-item number[]');
     });
   });
 
@@ -398,9 +439,11 @@ describe('Cross-Runtime Data Transfer Codec', () => {
 
       const envelope: CodecEnvelope = {
         __tywrap__: 'torch.tensor',
+        codecVersion: 1,
         encoding: 'ndarray',
         value: {
           __tywrap__: 'ndarray',
+          codecVersion: 1,
           encoding: 'arrow',
           b64: Buffer.from(testData, 'utf-8').toString('base64'),
         },
@@ -423,9 +466,11 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     it('should fail when Arrow decoder is not registered (nested)', async () => {
       const envelope: CodecEnvelope = {
         __tywrap__: 'torch.tensor',
+        codecVersion: 1,
         encoding: 'ndarray',
         value: {
           __tywrap__: 'ndarray',
+          codecVersion: 1,
           encoding: 'arrow',
           b64: Buffer.from('test', 'utf-8').toString('base64'),
         },
@@ -444,9 +489,11 @@ describe('Cross-Runtime Data Transfer Codec', () => {
 
       const envelope: CodecEnvelope = {
         __tywrap__: 'torch.tensor',
+        codecVersion: 1,
         encoding: 'ndarray',
         value: {
           __tywrap__: 'ndarray',
+          codecVersion: 1,
           encoding: 'arrow',
           b64: Buffer.from('test', 'utf-8').toString('base64'),
         },
@@ -463,9 +510,11 @@ describe('Cross-Runtime Data Transfer Codec', () => {
 
       const envelope: CodecEnvelope = {
         __tywrap__: 'torch.tensor',
+        codecVersion: 1,
         encoding: 'ndarray',
         value: {
           __tywrap__: 'ndarray',
+          codecVersion: 1,
           encoding: 'arrow',
           b64: Buffer.from('test', 'utf-8').toString('base64'),
         },
@@ -482,12 +531,33 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         device: 'cpu',
       });
     });
+
+    it('should reject invalid torch tensor envelopes', async () => {
+      await expect(
+        decodeValueAsync({
+          __tywrap__: 'torch.tensor',
+          codecVersion: 1,
+          encoding: 'ndarray',
+          value: { not: 'an envelope' },
+        })
+      ).rejects.toThrow('value must be an ndarray envelope');
+
+      await expect(
+        decodeValueAsync({
+          __tywrap__: 'torch.tensor',
+          codecVersion: 1,
+          encoding: 'json',
+          value: { __tywrap__: 'ndarray', encoding: 'json', data: [1] },
+        })
+      ).rejects.toThrow('unsupported encoding');
+    });
   });
 
   describe('Sklearn Estimator Decoding', () => {
     it('should decode estimator metadata envelope', async () => {
       const envelope: CodecEnvelope = {
         __tywrap__: 'sklearn.estimator',
+        codecVersion: 1,
         encoding: 'json',
         className: 'LinearRegression',
         module: 'sklearn.linear_model._base',
@@ -502,6 +572,53 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         version: '1.4.2',
         params: { fit_intercept: true },
       });
+    });
+
+    it('should reject invalid sklearn estimator envelopes', async () => {
+      await expect(
+        decodeValueAsync({
+          __tywrap__: 'sklearn.estimator',
+          codecVersion: 1,
+          encoding: 'json',
+          className: 'LinearRegression',
+          module: 'sklearn.linear_model._base',
+          version: 1.4,
+          params: { fit_intercept: true },
+        })
+      ).rejects.toThrow('version must be a string');
+
+      await expect(
+        decodeValueAsync({
+          __tywrap__: 'sklearn.estimator',
+          codecVersion: 1,
+          encoding: 'json',
+          className: 123,
+          module: 'sklearn.linear_model._base',
+          params: {},
+        })
+      ).rejects.toThrow('expected className/module strings');
+    });
+  });
+
+  describe('Envelope Validation', () => {
+    it('should reject unsupported codec versions', async () => {
+      await expect(
+        decodeValueAsync({
+          __tywrap__: 'ndarray',
+          codecVersion: 2,
+          encoding: 'json',
+          data: [1, 2, 3],
+        })
+      ).rejects.toThrow('Unsupported ndarray envelope codecVersion');
+
+      expect(() =>
+        decodeValue({
+          __tywrap__: 'dataframe',
+          codecVersion: '1',
+          encoding: 'json',
+          data: [],
+        })
+      ).toThrow('codecVersion must be a number');
     });
   });
 
@@ -551,8 +668,9 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         b64: btoa('test'),
       } as any;
 
-      const result = await decodeValueAsync(envelope);
-      expect(result).toBe(envelope); // Should pass through unchanged
+      await expect(decodeValueAsync(envelope)).rejects.toThrow(
+        'Invalid dataframe envelope: unsupported encoding'
+      );
     });
 
     it('should handle invalid encoding values', async () => {
@@ -562,8 +680,9 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         b64: btoa('test'),
       } as any;
 
-      const result = await decodeValueAsync(envelope);
-      expect(result).toBe(envelope);
+      await expect(decodeValueAsync(envelope)).rejects.toThrow(
+        'Invalid dataframe envelope: unsupported encoding'
+      );
     });
 
     it('should handle missing b64 field for Arrow encoding', async () => {
@@ -573,8 +692,9 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         // b64 field missing
       } as any;
 
-      const result = await decodeValueAsync(envelope);
-      expect(result).toBe(envelope);
+      await expect(decodeValueAsync(envelope)).rejects.toThrow(
+        'Invalid dataframe envelope: missing b64'
+      );
     });
 
     it('should handle non-string b64 values', async () => {
@@ -584,8 +704,9 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         b64: 123, // Should be string
       } as any;
 
-      const result = await decodeValueAsync(envelope);
-      expect(result).toBe(envelope);
+      await expect(decodeValueAsync(envelope)).rejects.toThrow(
+        'Invalid ndarray envelope: missing b64'
+      );
     });
 
     it('should handle missing data field for JSON encoding', async () => {
@@ -595,8 +716,9 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         // data field missing
       } as any;
 
-      const result = await decodeValueAsync(envelope);
-      expect(result).toBe(envelope);
+      await expect(decodeValueAsync(envelope)).rejects.toThrow(
+        'Invalid series envelope: missing data'
+      );
     });
   });
 

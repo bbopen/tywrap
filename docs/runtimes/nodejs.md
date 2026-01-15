@@ -208,7 +208,18 @@ Or set environment variable:
 export TYWRAP_CODEC_FALLBACK=json
 ```
 
+### Payload Size Limit
+
+The subprocess bridge writes a single JSONL response per call. To prevent oversized payloads:
+
+```bash
+export TYWRAP_CODEC_MAX_BYTES=10485760  # 10 MB cap
+```
+
+If a response exceeds `TYWRAP_CODEC_MAX_BYTES`, the call fails with an explicit error.
+
 ### Torch Tensor Copy Opt-in
+
 For GPU tensors or non-contiguous tensors, enable explicit CPU/copy conversion:
 
 ```bash

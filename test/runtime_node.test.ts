@@ -354,6 +354,48 @@ def get_path():
     );
 
     it(
+      'should reject responses that exceed TYWRAP_CODEC_MAX_BYTES',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        let tempDir: string | undefined;
+        let limitBridge: NodeBridge | undefined;
+        try {
+          tempDir = await mkdtemp(join(tmpdir(), 'tywrap-size-limit-'));
+          const moduleName = 'size_limit_fixture';
+          const modulePath = join(tempDir, `${moduleName}.py`);
+          const content = `def big_payload():\n    return "x" * 5000\n`;
+          await writeFile(modulePath, content, 'utf-8');
+
+          const existingPyPath = process.env.PYTHONPATH;
+          const mergedPyPath = existingPyPath ? `${tempDir}${delimiter}${existingPyPath}` : tempDir;
+
+          limitBridge = new NodeBridge({
+            scriptPath,
+            env: {
+              PYTHONPATH: mergedPyPath,
+              TYWRAP_CODEC_MAX_BYTES: '200',
+            },
+            timeoutMs: defaultTimeoutMs,
+          });
+
+          await expect(limitBridge.call(moduleName, 'big_payload', [])).rejects.toThrow(
+            'TYWRAP_CODEC_MAX_BYTES'
+          );
+        } finally {
+          if (limitBridge) {
+            await limitBridge.dispose();
+          }
+          if (tempDir) {
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          }
+        }
+      },
+      testTimeout
+    );
+
+    it(
       'should emit a descriptive error when Python fails to start',
       async () => {
         if (!isBridgeScriptAvailable()) return;
