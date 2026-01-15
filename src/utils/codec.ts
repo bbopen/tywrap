@@ -132,6 +132,10 @@ function isObject(value: unknown): value is { [k: string]: unknown } {
   return typeof value === 'object' && value !== null;
 }
 
+function isNumberArray(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'number');
+}
+
 function fromBase64(b64: string): Uint8Array {
   if (typeof Buffer !== 'undefined') {
     const buf = Buffer.from(b64, 'base64');
@@ -296,6 +300,8 @@ function decodeEnvelopeCore<T>(
     if (!Array.isArray(data)) {
       throw new Error('Invalid scipy.sparse envelope: data must be an array');
     }
+    const dtypeValue = (value as { dtype?: unknown }).dtype;
+    const dtype = typeof dtypeValue === 'string' ? dtypeValue : undefined;
 
     if (format === 'coo') {
       const row = (value as { row?: unknown }).row;
@@ -309,7 +315,7 @@ function decodeEnvelopeCore<T>(
         data,
         row,
         col,
-        dtype: typeof (value as { dtype?: unknown }).dtype === 'string' ? (value as any).dtype : undefined,
+        dtype,
       } satisfies SparseMatrix;
     }
 
@@ -324,7 +330,7 @@ function decodeEnvelopeCore<T>(
       data,
       indices,
       indptr,
-      dtype: typeof (value as { dtype?: unknown }).dtype === 'string' ? (value as any).dtype : undefined,
+      dtype,
     } satisfies SparseMatrix;
   }
 
@@ -341,12 +347,12 @@ function decodeEnvelopeCore<T>(
       throw new Error('Invalid torch.tensor envelope: value must be an ndarray envelope');
     }
     const decoded = recurse(nested);
-    const shape = Array.isArray((value as { shape?: unknown }).shape)
-      ? ((value as { shape: readonly number[] }).shape as readonly number[])
-      : undefined;
-    const dtype = typeof (value as { dtype?: unknown }).dtype === 'string' ? (value as any).dtype : undefined;
-    const device =
-      typeof (value as { device?: unknown }).device === 'string' ? (value as any).device : undefined;
+    const shapeValue = (value as { shape?: unknown }).shape;
+    const shape = isNumberArray(shapeValue) ? shapeValue : undefined;
+    const dtypeValue = (value as { dtype?: unknown }).dtype;
+    const dtype = typeof dtypeValue === 'string' ? dtypeValue : undefined;
+    const deviceValue = (value as { device?: unknown }).device;
+    const device = typeof deviceValue === 'string' ? deviceValue : undefined;
 
     if (isPromiseLike(decoded)) {
       return decoded.then(data => ({ data, shape, dtype, device })) as Promise<T | unknown>;
@@ -365,15 +371,16 @@ function decodeEnvelopeCore<T>(
     if (typeof className !== 'string' || typeof module !== 'string' || !isObject(params)) {
       throw new Error('Invalid sklearn.estimator envelope: expected className/module strings + params object');
     }
-    const version = (value as { version?: unknown }).version;
-    if (version !== undefined && typeof version !== 'string') {
+    const versionValue = (value as { version?: unknown }).version;
+    if (versionValue !== undefined && typeof versionValue !== 'string') {
       throw new Error('Invalid sklearn.estimator envelope: version must be a string when provided');
     }
+    const version = typeof versionValue === 'string' ? versionValue : undefined;
     return {
       className,
       module,
-      version: version as string | undefined,
-      params: params as Record<string, unknown>,
+      version,
+      params,
     } satisfies SklearnEstimator;
   }
 
