@@ -260,7 +260,9 @@ async function demo() {
 ```
 
 ### Build Integration
-Run `tywrap generate` as part of your build pipeline until official integrations land.
+Run `tywrap generate --check` in CI to ensure generated wrappers are committed and up to date. After upgrading Python dependencies, run `tywrap generate` to refresh the generated surface.
+
+If you ran `tywrap init` in a Node project, it will also add `tywrap:generate` and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).
 
 ## Performance Tips
 
