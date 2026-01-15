@@ -33,6 +33,32 @@ BRIDGE_NAME = 'python-subprocess'
 CODEC_VERSION = 1
 
 
+def get_codec_max_bytes():
+    """
+    Return the optional max payload size (bytes) for JSONL responses.
+
+    Why: the subprocess transport writes a single JSON line per response; limiting size avoids
+    accidental large payloads that can spike memory or clog IPC, and keeps failures explicit.
+    """
+    raw = os.environ.get('TYWRAP_CODEC_MAX_BYTES')
+    if raw is None:
+        return None
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except Exception as exc:
+        raise ValueError('TYWRAP_CODEC_MAX_BYTES must be an integer byte count') from exc
+    if value <= 0:
+        return None
+    return value
+
+
+# Why: parse once at startup to avoid per-response env lookups.
+CODEC_MAX_BYTES = get_codec_max_bytes()
+
+
 class ProtocolError(Exception):
     pass
 
@@ -272,6 +298,12 @@ def serialize_series_json(obj):
 
 
 def serialize_sparse_matrix(obj):
+    """
+    Serialize scipy sparse matrices into structured JSON envelopes.
+
+    Why: preserve sparsity and matrix shape without implicit dense conversion, keeping
+    failures explicit when unsupported formats or dtypes are encountered.
+    """
     try:
         fmt = obj.getformat()
     except Exception as exc:
@@ -322,6 +354,11 @@ def serialize_sparse_matrix(obj):
 
 
 def serialize_torch_tensor(obj):
+    """
+    Serialize torch.Tensor values via the ndarray envelope.
+
+    Why: ensure CPU-only transport by default and make device/copy behavior explicit to callers.
+    """
     allow_copy = os.environ.get('TYWRAP_TORCH_ALLOW_COPY', '').lower() in ('1', 'true', 'yes')
     tensor = obj.detach()
     if getattr(tensor, 'device', None) is not None and tensor.device.type != 'cpu':
@@ -353,6 +390,11 @@ def serialize_torch_tensor(obj):
 
 
 def serialize_sklearn_estimator(obj):
+    """
+    Serialize sklearn estimators as metadata only.
+
+    Why: avoid unsafe pickling while still exposing model identity and params to TypeScript.
+    """
     try:
         import sklearn  # noqa: F401
     except Exception as exc:
@@ -375,28 +417,6 @@ def serialize_sklearn_estimator(obj):
         'version': getattr(sklearn, '__version__', None),
         'params': params,
     }
-
-
-def get_codec_max_bytes():
-    """
-    Return the optional max payload size (bytes) for JSONL responses.
-
-    Why: the subprocess transport writes a single JSON line per response; limiting size avoids
-    accidental large payloads that can spike memory or clog IPC, and keeps failures explicit.
-    """
-    raw = os.environ.get('TYWRAP_CODEC_MAX_BYTES')
-    if raw is None:
-        return None
-    raw = str(raw).strip()
-    if not raw:
-        return None
-    try:
-        value = int(raw)
-    except Exception as exc:
-        raise ValueError('TYWRAP_CODEC_MAX_BYTES must be an integer byte count') from exc
-    if value <= 0:
-        return None
-    return value
 
 
 _NO_PYDANTIC = object()
@@ -574,11 +594,10 @@ def main():
 
         try:
             payload = json.dumps(out)
-            max_bytes = get_codec_max_bytes()
             payload_bytes = len(payload.encode('utf-8'))
-            if max_bytes is not None and payload_bytes > max_bytes:
+            if CODEC_MAX_BYTES is not None and payload_bytes > CODEC_MAX_BYTES:
                 raise ValueError(
-                    f'Response payload is {payload_bytes} bytes which exceeds TYWRAP_CODEC_MAX_BYTES={max_bytes}'
+                    f'Response payload is {payload_bytes} bytes which exceeds TYWRAP_CODEC_MAX_BYTES={CODEC_MAX_BYTES}'
                 )
             sys.stdout.write(payload + '\n')
         except Exception as e:

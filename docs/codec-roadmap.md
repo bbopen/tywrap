@@ -35,7 +35,8 @@ Targets:
 - `scipy.sparse.csr_matrix`, `csc_matrix`, `coo_matrix`
 
 Envelope (current):
-```
+
+```json
 {
   "__tywrap__": "scipy.sparse",
   "codecVersion": 1,
@@ -66,7 +67,8 @@ Targets:
 - `torch.Tensor` (CPU tensors only by default)
 
 Envelope (current):
-```
+
+```json
 {
   "__tywrap__": "torch.tensor",
   "codecVersion": 1,
@@ -99,7 +101,8 @@ Targets:
 - Optional model metadata envelope (no full model pickling by default).
 
 Envelope (current):
-```
+
+```json
 {
   "__tywrap__": "sklearn.estimator",
   "codecVersion": 1,
