@@ -417,6 +417,69 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         device: 'cpu',
       });
     });
+
+    it('should fail when Arrow decoder is not registered (nested)', async () => {
+      const envelope: CodecEnvelope = {
+        __tywrap__: 'torch.tensor',
+        encoding: 'ndarray',
+        value: {
+          __tywrap__: 'ndarray',
+          encoding: 'arrow',
+          b64: Buffer.from('test', 'utf-8').toString('base64'),
+        },
+        shape: [3],
+        dtype: 'float32',
+        device: 'cpu',
+      };
+
+      await expect(decodeValueAsync(envelope)).rejects.toThrow('Arrow decoder not registered');
+    });
+
+    it('should surface Arrow decode errors from nested ndarray', async () => {
+      registerArrowDecoder(() => {
+        throw new Error('Decoder failed');
+      });
+
+      const envelope: CodecEnvelope = {
+        __tywrap__: 'torch.tensor',
+        encoding: 'ndarray',
+        value: {
+          __tywrap__: 'ndarray',
+          encoding: 'arrow',
+          b64: Buffer.from('test', 'utf-8').toString('base64'),
+        },
+        shape: [3],
+        dtype: 'float32',
+        device: 'cpu',
+      };
+
+      await expect(decodeValueAsync(envelope)).rejects.toThrow('Arrow decode failed');
+    });
+
+    it('should decode nested Arrow ndarray synchronously', () => {
+      registerArrowDecoder(bytes => bytes);
+
+      const envelope: CodecEnvelope = {
+        __tywrap__: 'torch.tensor',
+        encoding: 'ndarray',
+        value: {
+          __tywrap__: 'ndarray',
+          encoding: 'arrow',
+          b64: Buffer.from('test', 'utf-8').toString('base64'),
+        },
+        shape: [3],
+        dtype: 'float32',
+        device: 'cpu',
+      };
+
+      const result = decodeValue(envelope);
+      expect(result).toEqual({
+        data: expect.any(Uint8Array),
+        shape: [3],
+        dtype: 'float32',
+        device: 'cpu',
+      });
+    });
   });
 
   describe('Sklearn Estimator Decoding', () => {
