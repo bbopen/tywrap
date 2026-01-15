@@ -15,5 +15,6 @@ Thanks for your interest in contributing!
 - Pull Requests:
   - Include tests and type definitions where applicable
   - Ensure `npm run check:all` passes
+  - Wait for CI to be green (including `CI/required`) and for CodeRabbit to complete; resolve all review threads
 
 By contributing, you agree to license your contributions under the project’s MIT License.

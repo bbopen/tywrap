@@ -244,3 +244,27 @@ jobs:
           pip install -e .
       - name: Run Bun tests
         run: bun run test:bun
+
+  required:
+    if: ${{ always() && github.event_name != 'schedule' }}
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - test
+      - python-suite-core
+      - python-suite-data
+      - living-app
+      - os
+      - bun
+    steps:
+      - name: Check required jobs
+        run: |
+          fail=0
+          if [ "${{ needs.lint.result }}" != "success" ]; then echo "::error::lint: ${{ needs.lint.result }}"; fail=1; fi
+          if [ "${{ needs.test.result }}" != "success" ]; then echo "::error::test: ${{ needs.test.result }}"; fail=1; fi
+          if [ "${{ needs.python-suite-core.result }}" != "success" ]; then echo "::error::python-suite-core: ${{ needs.python-suite-core.result }}"; fail=1; fi
+          if [ "${{ needs.python-suite-data.result }}" != "success" ]; then echo "::error::python-suite-data: ${{ needs.python-suite-data.result }}"; fail=1; fi
+          if [ "${{ needs.living-app.result }}" != "success" ]; then echo "::error::living-app: ${{ needs.living-app.result }}"; fail=1; fi
+          if [ "${{ needs.os.result }}" != "success" ]; then echo "::error::os: ${{ needs.os.result }}"; fail=1; fi
+          if [ "${{ needs.bun.result }}" != "success" ]; then echo "::error::bun: ${{ needs.bun.result }}"; fail=1; fi
+          if [ "$fail" -ne 0 ]; then exit 1; fi
