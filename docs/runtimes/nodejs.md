@@ -177,18 +177,13 @@ npm install apache-arrow
 ```
 
 ```typescript
+import { createRequire } from 'node:module';
 import { registerArrowDecoder } from 'tywrap';
 
 // Register Arrow decoder for optimal performance
-import('apache-arrow').then(arrow => {
-  registerArrowDecoder(bytes => {
-    try {
-      return arrow.Table.from(bytes);
-    } catch {
-      return arrow.Table.from([bytes]);
-    }
-  });
-});
+const require = createRequire(import.meta.url);
+const { tableFromIPC } = require('apache-arrow');
+registerArrowDecoder(bytes => tableFromIPC(bytes));
 
 // If you don't register a decoder, Arrow-encoded payloads will throw.
 // To accept raw bytes, register a passthrough decoder:

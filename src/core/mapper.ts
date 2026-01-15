@@ -267,7 +267,8 @@ export class TypeMapper {
     }
 
     // Forward references and user types
-    return { kind: 'custom', name: type.name, module: type.module };
+    const normalized = this.normalizeCustomType(type);
+    return { kind: 'custom', name: normalized.name, module: normalized.module };
   }
 
   mapCallableType(type: {
@@ -348,15 +349,26 @@ export class TypeMapper {
     module?: string;
     rawName: string;
   } {
+    // Why: the Python IR sometimes represents qualified names like "pandas.DataFrame" as a single
+    // `name` string (with dots) instead of splitting into { module, name }. Dots are not valid in
+    // TypeScript identifiers, and we want stable test expectations, so normalize to a leaf `name`
+    // plus a `module` path when possible.
     const rawName = type.name;
     if (type.module) {
       return { name: type.name, module: type.module, rawName };
     }
     if (rawName.includes('.')) {
-      const parts = rawName.split('.');
+      const parts = rawName.split('.').filter(part => part.length > 0);
+      if (parts.length === 0) {
+        return { name: rawName, module: undefined, rawName };
+      }
+      const name = parts[parts.length - 1];
+      if (!name) {
+        return { name: rawName, module: undefined, rawName };
+      }
       return {
-        name: parts[parts.length - 1] ?? rawName,
-        module: parts.slice(0, -1).join('.'),
+        name,
+        module: parts.length > 1 ? parts.slice(0, -1).join('.') : undefined,
         rawName,
       };
     }

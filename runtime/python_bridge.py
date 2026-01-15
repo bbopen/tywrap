@@ -10,6 +10,19 @@ import decimal
 import uuid
 from pathlib import Path, PurePath
 
+# Ensure the working directory is importable so local modules can be resolved when
+# the bridge is launched as a script from a different directory.
+try:
+    cwd = os.getcwd()
+    if cwd and cwd not in sys.path:
+        sys.path.insert(0, cwd)
+except (OSError, ValueError, TypeError, AttributeError) as exc:
+    # Non-fatal: continue without cwd in path.
+    try:
+        sys.stderr.write(f'[tywrap] Warning: could not add cwd to sys.path: {exc}\n')
+    except (OSError, ValueError):
+        pass
+
 instances = {}
 
 FALLBACK_JSON = os.environ.get('TYWRAP_CODEC_FALLBACK', '').lower() == 'json'
@@ -85,19 +98,27 @@ def is_sklearn_estimator(obj):
 
 
 def serialize_ndarray(obj):
+    """
+    Encode a NumPy ndarray for transport over the JSONL bridge.
+
+    Why: Arrow IPC gives a compact, lossless binary payload that the JS side can decode as a
+    Table. If JSON fallback is explicitly requested, honor it even when pyarrow is installed so
+    callers don't unexpectedly need an Arrow decoder on the TypeScript side.
+    """
+    if FALLBACK_JSON:
+        return serialize_ndarray_json(obj)
     try:
         import pyarrow as pa  # type: ignore
     except Exception as exc:
-        if FALLBACK_JSON:
-            return serialize_ndarray_json(obj)
         raise RuntimeError(
             'Arrow encoding unavailable for ndarray; install pyarrow or set TYWRAP_CODEC_FALLBACK=json to enable JSON fallback'
         ) from exc
     try:
         arr = pa.array(obj)
+        table = pa.Table.from_arrays([arr], names=['value'])
         sink = pa.BufferOutputStream()
-        with pa.ipc.new_stream(sink, arr.type) as writer:
-            writer.write(arr)
+        with pa.ipc.new_stream(sink, table.schema) as writer:
+            writer.write_table(table)
         buf = sink.getvalue()
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
@@ -113,6 +134,12 @@ def serialize_ndarray(obj):
 
 
 def serialize_ndarray_json(obj):
+    """
+    JSON fallback for ndarray encoding.
+
+    Why: this keeps the bridge usable in environments without pyarrow/Arrow decoding, at the
+    cost of larger payloads and potential dtype loss.
+    """
     try:
         data = obj.tolist()
     except Exception as exc:
@@ -126,19 +153,28 @@ def serialize_ndarray_json(obj):
 
 
 def serialize_dataframe(obj):
+    """
+    Encode a pandas DataFrame for transport.
+
+    Why: we emit Feather (Arrow IPC file) as *uncompressed* because the JS apache-arrow reader
+    does not implement record batch compression. Keeping this uncompressed makes Arrow mode
+    work out-of-the-box for Node decoders.
+    """
+    if FALLBACK_JSON:
+        return serialize_dataframe_json(obj)
     try:
         import pyarrow as pa  # type: ignore
         import pyarrow.feather as feather  # type: ignore
     except Exception as exc:
-        if FALLBACK_JSON:
-            return serialize_dataframe_json(obj)
         raise RuntimeError(
             'Arrow encoding unavailable for pandas.DataFrame; install pyarrow or set TYWRAP_CODEC_FALLBACK=json to enable JSON fallback'
         ) from exc
     try:
         table = pa.Table.from_pandas(obj)  # type: ignore
         sink = pa.BufferOutputStream()
-        feather.write_feather(table, sink)
+        # Use explicit uncompressed payloads so JS decoders (apache-arrow) can read them
+        # without optional compression dependencies.
+        feather.write_feather(table, sink, compression='uncompressed')
         buf = sink.getvalue()
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
@@ -153,6 +189,12 @@ def serialize_dataframe(obj):
 
 
 def serialize_dataframe_json(obj):
+    """
+    JSON fallback for DataFrame encoding.
+
+    Why: this keeps the example/runtime working without Arrow; it is easy to inspect but larger
+    than Arrow and may not preserve all dtypes exactly.
+    """
     try:
         data = obj.to_dict(orient='records')
     except Exception as exc:
@@ -165,19 +207,26 @@ def serialize_dataframe_json(obj):
 
 
 def serialize_series(obj):
+    """
+    Encode a pandas Series for transport.
+
+    Why: encode as a single-column Arrow Table stream (not a raw Array schema) because the JS
+    decoder contract is "table-like" and pyarrow's IPC writer expects a Schema, not a DataType.
+    """
+    if FALLBACK_JSON:
+        return serialize_series_json(obj)
     try:
         import pyarrow as pa  # type: ignore
     except Exception as exc:
-        if FALLBACK_JSON:
-            return serialize_series_json(obj)
         raise RuntimeError(
             'Arrow encoding unavailable for pandas.Series; install pyarrow or set TYWRAP_CODEC_FALLBACK=json to enable JSON fallback'
         ) from exc
     try:
         arr = pa.Array.from_pandas(obj)  # type: ignore
+        table = pa.Table.from_arrays([arr], names=['value'])
         sink = pa.BufferOutputStream()
-        with pa.ipc.new_stream(sink, arr.type) as writer:
-            writer.write(arr)
+        with pa.ipc.new_stream(sink, table.schema) as writer:
+            writer.write_table(table)
         buf = sink.getvalue()
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
@@ -193,6 +242,12 @@ def serialize_series(obj):
 
 
 def serialize_series_json(obj):
+    """
+    JSON fallback for Series encoding.
+
+    Why: avoids requiring Arrow decoding support, at the cost of potentially lossy dtype/NA
+    representation compared to Arrow.
+    """
     try:
         data = obj.to_list()  # type: ignore
     except Exception:
@@ -309,6 +364,29 @@ def serialize_sklearn_estimator(obj):
         'params': params,
     }
 
+
+_NO_PYDANTIC = object()
+
+
+def serialize_pydantic(obj):
+    """
+    Serialize Pydantic v2 models without importing Pydantic.
+
+    Why: returning BaseModel instances is common in typed Python APIs. Converting via
+    `model_dump` keeps Python type hints accurate (return the model), while the bridge still
+    emits a JSON-serializable payload. We default to `by_alias=True` so alias_generator-based
+    camelCase schemas round-trip cleanly to TypeScript.
+    """
+
+    model_dump = getattr(obj, 'model_dump', None)
+    if not callable(model_dump):
+        return _NO_PYDANTIC
+    try:
+        return model_dump(by_alias=True, mode='json')
+    except TypeError:
+        # Older Pydantic versions may not support `mode=...`.
+        return model_dump(by_alias=True)
+
 def serialize(obj):
     if is_numpy_array(obj):
         return serialize_ndarray(obj)
@@ -322,6 +400,9 @@ def serialize(obj):
         return serialize_torch_tensor(obj)
     if is_sklearn_estimator(obj):
         return serialize_sklearn_estimator(obj)
+    pydantic_value = serialize_pydantic(obj)
+    if pydantic_value is not _NO_PYDANTIC:
+        return pydantic_value
     stdlib_value = serialize_stdlib(obj)
     if stdlib_value is not None:
         return stdlib_value
