@@ -29,6 +29,8 @@ FALLBACK_JSON = os.environ.get('TYWRAP_CODEC_FALLBACK', '').lower() == 'json'
 PROTOCOL = 'tywrap/1'
 PROTOCOL_VERSION = 1
 BRIDGE_NAME = 'python-subprocess'
+# Why: include a stable version in envelopes so decoders can reject incompatible changes.
+CODEC_VERSION = 1
 
 
 class ProtocolError(Exception):
@@ -123,6 +125,7 @@ def serialize_ndarray(obj):
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
             '__tywrap__': 'ndarray',
+            'codecVersion': CODEC_VERSION,
             'encoding': 'arrow',
             'b64': b64,
             'shape': getattr(obj, 'shape', None),
@@ -146,6 +149,7 @@ def serialize_ndarray_json(obj):
         raise RuntimeError('JSON fallback failed for ndarray') from exc
     return {
         '__tywrap__': 'ndarray',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'data': data,
         'shape': getattr(obj, 'shape', None),
@@ -179,6 +183,7 @@ def serialize_dataframe(obj):
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
             '__tywrap__': 'dataframe',
+            'codecVersion': CODEC_VERSION,
             'encoding': 'arrow',
             'b64': b64,
         }
@@ -201,6 +206,7 @@ def serialize_dataframe_json(obj):
         raise RuntimeError('JSON fallback failed for pandas.DataFrame') from exc
     return {
         '__tywrap__': 'dataframe',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'data': data,
     }
@@ -231,6 +237,7 @@ def serialize_series(obj):
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
             '__tywrap__': 'series',
+            'codecVersion': CODEC_VERSION,
             'encoding': 'arrow',
             'b64': b64,
             'name': getattr(obj, 'name', None),
@@ -257,6 +264,7 @@ def serialize_series_json(obj):
             raise RuntimeError('JSON fallback failed for pandas.Series') from exc
     return {
         '__tywrap__': 'series',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'data': data,
         'name': getattr(obj, 'name', None),
@@ -286,6 +294,7 @@ def serialize_sparse_matrix(obj):
         indptr = obj.indptr.tolist()
         return {
             '__tywrap__': 'scipy.sparse',
+            'codecVersion': CODEC_VERSION,
             'encoding': 'json',
             'format': fmt,
             'shape': list(obj.shape),
@@ -301,6 +310,7 @@ def serialize_sparse_matrix(obj):
     col = obj.col.tolist()
     return {
         '__tywrap__': 'scipy.sparse',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'format': fmt,
         'shape': list(obj.shape),
@@ -333,6 +343,7 @@ def serialize_torch_tensor(obj):
 
     return {
         '__tywrap__': 'torch.tensor',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'ndarray',
         'value': serialize_ndarray(arr),
         'shape': list(tensor.shape),
@@ -357,12 +368,35 @@ def serialize_sklearn_estimator(obj):
 
     return {
         '__tywrap__': 'sklearn.estimator',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'className': obj.__class__.__name__,
         'module': obj.__class__.__module__,
         'version': getattr(sklearn, '__version__', None),
         'params': params,
     }
+
+
+def get_codec_max_bytes():
+    """
+    Return the optional max payload size (bytes) for JSONL responses.
+
+    Why: the subprocess transport writes a single JSON line per response; limiting size avoids
+    accidental large payloads that can spike memory or clog IPC, and keeps failures explicit.
+    """
+    raw = os.environ.get('TYWRAP_CODEC_MAX_BYTES')
+    if raw is None:
+        return None
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except Exception as exc:
+        raise ValueError('TYWRAP_CODEC_MAX_BYTES must be an integer byte count') from exc
+    if value <= 0:
+        return None
+    return value
 
 
 _NO_PYDANTIC = object()
@@ -539,14 +573,21 @@ def main():
             }
 
         try:
-            sys.stdout.write(json.dumps(out) + '\n')
+            payload = json.dumps(out)
+            max_bytes = get_codec_max_bytes()
+            payload_bytes = len(payload.encode('utf-8'))
+            if max_bytes is not None and payload_bytes > max_bytes:
+                raise ValueError(
+                    f'Response payload is {payload_bytes} bytes which exceeds TYWRAP_CODEC_MAX_BYTES={max_bytes}'
+                )
+            sys.stdout.write(payload + '\n')
         except Exception as e:
             err_out = {
                 'id': mid if mid is not None else -1,
                 'protocol': PROTOCOL,
                 'error': {
                     'type': type(e).__name__,
-                    'message': f'Failed to serialize response: {e}'
+                    'message': str(e)
                 }
             }
             sys.stdout.write(json.dumps(err_out) + '\n')
