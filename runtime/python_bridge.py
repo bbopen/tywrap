@@ -33,6 +33,26 @@ BRIDGE_NAME = 'python-subprocess'
 CODEC_VERSION = 1
 
 
+class CodecConfigError(ValueError):
+    """Codec configuration error."""
+
+
+class CodecMaxBytesParseError(CodecConfigError):
+    """Invalid TYWRAP_CODEC_MAX_BYTES value."""
+
+    def __init__(self) -> None:
+        super().__init__('TYWRAP_CODEC_MAX_BYTES must be an integer byte count')
+
+
+class PayloadTooLargeError(ValueError):
+    """Response payload exceeds configured size limit."""
+
+    def __init__(self, payload_bytes: int, max_bytes: int) -> None:
+        super().__init__(
+            f'Response payload is {payload_bytes} bytes which exceeds TYWRAP_CODEC_MAX_BYTES={max_bytes}'
+        )
+
+
 def get_codec_max_bytes():
     """
     Return the optional max payload size (bytes) for JSONL responses.
@@ -49,7 +69,7 @@ def get_codec_max_bytes():
     try:
         value = int(raw)
     except Exception as exc:
-        raise ValueError('TYWRAP_CODEC_MAX_BYTES must be an integer byte count') from exc
+        raise CodecMaxBytesParseError() from exc
     if value <= 0:
         return None
     return value
@@ -549,6 +569,63 @@ def require_protocol(msg):
     return mid
 
 
+def dispatch_request(msg):
+    """
+    Dispatch a validated request to the correct handler.
+
+    Why: keep the main loop focused on I/O while this function handles validation and routing.
+    """
+    mid = require_protocol(msg)
+    method = msg.get('method')
+    if not isinstance(method, str):
+        raise ProtocolError('Missing method')
+    params = msg.get('params') or {}
+    if not isinstance(params, dict):
+        raise ProtocolError('Invalid params')
+    if method == 'call':
+        result = handle_call(params)
+    elif method == 'instantiate':
+        result = handle_instantiate(params)
+    elif method == 'call_method':
+        result = handle_call_method(params)
+    elif method == 'dispose_instance':
+        result = handle_dispose_instance(params)
+    elif method == 'meta':
+        result = handle_meta()
+    else:
+        raise ValueError('Unknown method')
+    return mid, result
+
+
+def build_error_payload(mid, exc, *, include_traceback):
+    """
+    Build a protocol error response.
+
+    Why: ensure error formatting stays consistent while keeping exception handling centralized.
+    """
+    error = { 'type': type(exc).__name__, 'message': str(exc) }
+    if include_traceback:
+        error['traceback'] = traceback.format_exc()
+    return {
+        'id': mid if mid is not None else -1,
+        'protocol': PROTOCOL,
+        'error': error,
+    }
+
+
+def encode_response(out):
+    """
+    Serialize the response and enforce size limits.
+
+    Why: keep payload size checks outside the main loop for clarity and lint compliance.
+    """
+    payload = json.dumps(out)
+    payload_bytes = len(payload.encode('utf-8'))
+    if CODEC_MAX_BYTES is not None and payload_bytes > CODEC_MAX_BYTES:
+        raise PayloadTooLargeError(payload_bytes, CODEC_MAX_BYTES)
+    return payload
+
+
 def main():
     for line in sys.stdin:
         line = line.strip()
@@ -558,57 +635,22 @@ def main():
         out = None
         try:
             msg = json.loads(line)
-            mid = require_protocol(msg)
-            method = msg.get('method')
-            if not isinstance(method, str):
-                raise ProtocolError('Missing method')
-            params = msg.get('params') or {}
-            if not isinstance(params, dict):
-                raise ProtocolError('Invalid params')
             try:
-                if method == 'call':
-                    result = handle_call(params)
-                elif method == 'instantiate':
-                    result = handle_instantiate(params)
-                elif method == 'call_method':
-                    result = handle_call_method(params)
-                elif method == 'dispose_instance':
-                    result = handle_dispose_instance(params)
-                elif method == 'meta':
-                    result = handle_meta()
-                else:
-                    raise ValueError('Unknown method')
+                mid, result = dispatch_request(msg)
                 out = { 'id': mid, 'protocol': PROTOCOL, 'result': result }
-            except Exception as e:
-                out = {
-                    'id': mid,
-                    'protocol': PROTOCOL,
-                    'error': { 'type': type(e).__name__, 'message': str(e), 'traceback': traceback.format_exc() }
-                }
-        except Exception as e:
-            out = {
-                'id': mid if mid is not None else -1,
-                'protocol': PROTOCOL,
-                'error': { 'type': type(e).__name__, 'message': str(e) }
-            }
+            except Exception as e:  # noqa: BLE001
+                # Why: ensure any handler error becomes a protocol-compliant response.
+                out = build_error_payload(mid, e, include_traceback=True)
+        except Exception as e:  # noqa: BLE001
+            # Why: catch malformed input without breaking the JSONL protocol.
+            out = build_error_payload(mid, e, include_traceback=False)
 
         try:
-            payload = json.dumps(out)
-            payload_bytes = len(payload.encode('utf-8'))
-            if CODEC_MAX_BYTES is not None and payload_bytes > CODEC_MAX_BYTES:
-                raise ValueError(
-                    f'Response payload is {payload_bytes} bytes which exceeds TYWRAP_CODEC_MAX_BYTES={CODEC_MAX_BYTES}'
-                )
+            payload = encode_response(out)
             sys.stdout.write(payload + '\n')
-        except Exception as e:
-            err_out = {
-                'id': mid if mid is not None else -1,
-                'protocol': PROTOCOL,
-                'error': {
-                    'type': type(e).__name__,
-                    'message': str(e)
-                }
-            }
+        except Exception as e:  # noqa: BLE001
+            # Why: fallback error keeps responses well-formed even if serialization fails.
+            err_out = build_error_payload(mid, e, include_traceback=False)
             sys.stdout.write(json.dumps(err_out) + '\n')
         sys.stdout.flush()
 
