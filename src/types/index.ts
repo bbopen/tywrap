@@ -317,6 +317,9 @@ export interface BridgeInfo {
   pid: number;
   codecFallback: 'json' | 'none';
   arrowAvailable: boolean;
+  scipyAvailable: boolean;
+  torchAvailable: boolean;
+  sklearnAvailable: boolean;
   instances: number;
 }
 
