@@ -72,16 +72,50 @@ expectType<Record<string, unknown>>(mod);
   await writeFile(filePath, content, 'utf-8');
 }
 
+export interface GenerateRunOptions {
+  /**
+   * If true, do not write files; instead compare generated output to what's on disk.
+   * Intended for CI to ensure wrappers are checked in and up to date.
+   */
+  check?: boolean;
+}
+
+export interface GenerateResult {
+  written: string[];
+  warnings: string[];
+  /**
+   * Only set when `GenerateRunOptions.check === true`.
+   * Lists files that are missing or differ from what would be generated.
+   */
+  outOfDate?: string[];
+}
+
+function normalizeForComparison(text: string): string {
+  // Avoid false positives from CRLF vs LF (e.g. Windows checkouts)
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+async function safeReadFile(path: string): Promise<string | null> {
+  try {
+    return await fsUtils.readFile(path);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Generate TypeScript wrappers for configured Python modules.
  * Minimal MVP implementation: resolves module file, analyzes, generates TS, writes to output.dir
  */
 export async function generate(
-  options: Partial<TywrapOptions>
-): Promise<{ written: string[]; warnings: string[] }> {
+  options: Partial<TywrapOptions>,
+  runOptions: GenerateRunOptions = {}
+): Promise<GenerateResult> {
+  const checkMode = runOptions.check === true;
   const resolvedOptions = createConfig(options);
   const instance = await tywrap(resolvedOptions);
   const written: string[] = [];
+  const outOfDate: string[] = [];
   const warnings: string[] = [];
   const outputDir = resolvedOptions.output.dir;
   const caching = resolvedOptions.performance.caching;
@@ -92,11 +126,13 @@ export async function generate(
   });
 
   // Ensure directory exists (Node-only best-effort)
-  try {
-    const modFs = await import('fs/promises');
-    await modFs.mkdir(outputDir, { recursive: true });
-  } catch {
-    // ignore in non-node or if already exists
+  if (!checkMode) {
+    try {
+      const modFs = await import('fs/promises');
+      await modFs.mkdir(outputDir, { recursive: true });
+    } catch {
+      // ignore in non-node or if already exists
+    }
   }
 
   const modules = resolvedOptions.pythonModules ?? {};
@@ -110,10 +146,6 @@ export async function generate(
     let irError: string | undefined;
     if (caching && fsUtils.isAvailable()) {
       try {
-        const modFs = await import('fs/promises');
-        await modFs.mkdir(cacheDir, { recursive: true });
-      } catch {}
-      try {
         const cached = await fsUtils.readFile(pathUtils.join(cacheDir, cacheKey));
         ir = JSON.parse(cached);
       } catch {
@@ -124,7 +156,7 @@ export async function generate(
       const fetchResult = await fetchPythonIr(moduleKey, pythonPath);
       ir = fetchResult.ir;
       irError = fetchResult.error;
-      if (ir && caching && fsUtils.isAvailable()) {
+      if (ir && caching && fsUtils.isAvailable() && !checkMode) {
         try {
           await fsUtils.writeFile(pathUtils.join(cacheDir, cacheKey), JSON.stringify(ir));
         } catch {}
@@ -141,26 +173,43 @@ export async function generate(
     const annotatedJSDoc = Boolean(resolvedOptions.output?.annotatedJSDoc);
     const gen = instance.generator.generateModuleDefinition(moduleModel, annotatedJSDoc);
 
-    // Write file
     const baseName = moduleModel.name || 'module';
-    const outPath = pathUtils.join(outputDir, `${baseName}.generated.ts`);
-    await fsUtils.writeFile(outPath, gen.typescript);
-    written.push(outPath);
+    const filesToEmit: Array<{ path: string; content: string }> = [
+      { path: pathUtils.join(outputDir, `${baseName}.generated.ts`), content: gen.typescript },
+    ];
 
     // Optional .d.ts emission (header-only declarations mirroring exports)
     if (resolvedOptions.output?.declaration) {
-      const dtsPath = pathUtils.join(outputDir, `${baseName}.generated.d.ts`);
-      const dts = renderDts(gen.typescript);
-      await fsUtils.writeFile(dtsPath, dts);
-      written.push(dtsPath);
+      filesToEmit.push({
+        path: pathUtils.join(outputDir, `${baseName}.generated.d.ts`),
+        content: renderDts(gen.typescript),
+      });
     }
 
     // Optional source map emission (placeholder mapping for now)
     if (resolvedOptions.output?.sourceMap) {
-      const mapPath = pathUtils.join(outputDir, `${baseName}.generated.ts.map`);
-      const map = renderSourceMapPlaceholder(moduleModel.name);
-      await fsUtils.writeFile(mapPath, map);
-      written.push(mapPath);
+      filesToEmit.push({
+        path: pathUtils.join(outputDir, `${baseName}.generated.ts.map`),
+        content: renderSourceMapPlaceholder(moduleModel.name),
+      });
+    }
+
+    if (checkMode) {
+      for (const file of filesToEmit) {
+        const existing = await safeReadFile(file.path);
+        if (existing === null) {
+          outOfDate.push(file.path);
+          continue;
+        }
+        if (normalizeForComparison(existing) !== normalizeForComparison(file.content)) {
+          outOfDate.push(file.path);
+        }
+      }
+    } else {
+      for (const file of filesToEmit) {
+        await fsUtils.writeFile(file.path, file.content);
+        written.push(file.path);
+      }
     }
 
     // Emit warning summary of unknown typing constructs (best-effort)
@@ -174,20 +223,26 @@ export async function generate(
         `Module ${baseName}: unknown typing constructs encountered: ${unkList}${entries.length > 25 ? '…' : ''}`
       );
       // Write JSON report
-      try {
-        const reportsDir = pathUtils.join('.tywrap', 'reports');
-        await fsUtils.writeFile(
-          pathUtils.join(reportsDir, `${baseName}.json`),
-          JSON.stringify({
-            module: baseName,
-            unknowns: Object.fromEntries(entries),
-            generatedAt: new Date().toISOString(),
-          })
-        );
-      } catch {
-        // ignore
+      if (!checkMode) {
+        try {
+          const reportsDir = pathUtils.join('.tywrap', 'reports');
+          await fsUtils.writeFile(
+            pathUtils.join(reportsDir, `${baseName}.json`),
+            JSON.stringify({
+              module: baseName,
+              unknowns: Object.fromEntries(entries),
+              generatedAt: new Date().toISOString(),
+            })
+          );
+        } catch {
+          // ignore
+        }
       }
     }
+  }
+
+  if (checkMode) {
+    return { written: [], warnings, outOfDate };
   }
 
   return { written, warnings };

@@ -24,8 +24,14 @@ TypeScript wrapper for Python libraries with full type safety.
 
 ```bash
 npm install tywrap
-npx tywrap init      # Create config
+npx tywrap init      # Create config (and package.json scripts if present)
 npx tywrap generate  # Generate wrappers
+```
+
+For CI (or to verify a dependency upgrade didn’t change the generated surface):
+
+```bash
+npx tywrap generate --check
 ```
 
 ```typescript

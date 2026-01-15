@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import yargs, { type Argv, type ArgumentsCamelCase } from 'yargs';
 import { hideBin } from 'yargs/helpers';
@@ -99,6 +99,46 @@ ${moduleLines}
 `;
 }
 
+async function addRecommendedScriptsToPackageJson(cwd: string): Promise<void> {
+  const packageJsonPath = resolve(cwd, 'package.json');
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- path is derived from cwd
+  if (!existsSync(packageJsonPath)) {
+    return;
+  }
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- path is derived from cwd
+    const raw = await readFile(packageJsonPath, 'utf-8');
+    const pkg = JSON.parse(raw) as Record<string, unknown>;
+    const scripts =
+      typeof pkg.scripts === 'object' && pkg.scripts !== null && !Array.isArray(pkg.scripts)
+        ? (pkg.scripts as Record<string, unknown>)
+        : {};
+    const nextScripts: Record<string, unknown> = { ...scripts };
+    let changed = false;
+
+    if (nextScripts['tywrap:generate'] === undefined) {
+      nextScripts['tywrap:generate'] = 'tywrap generate';
+      changed = true;
+    }
+    if (nextScripts['tywrap:check'] === undefined) {
+      nextScripts['tywrap:check'] = 'tywrap generate --check';
+      changed = true;
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    pkg.scripts = nextScripts;
+    const out = `${JSON.stringify(pkg, null, 2)}\n`;
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- path is derived from cwd
+    await writeFile(packageJsonPath, out, 'utf-8');
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn('Failed to update package.json scripts', { error: message });
+  }
+}
+
 async function main(): Promise<void> {
   await yargs(hideBin(process.argv))
     .scriptName('tywrap')
@@ -157,6 +197,11 @@ async function main(): Promise<void> {
             default: false,
             describe: 'Exit with code 2 if generation emits warnings',
           })
+          .option('check', {
+            type: 'boolean',
+            default: false,
+            describe: 'Check whether generated wrappers are up to date without writing files',
+          })
           .strict(),
       async (
         argv: ArgumentsCamelCase<{
@@ -171,6 +216,7 @@ async function main(): Promise<void> {
           useCache?: boolean;
           debug?: boolean;
           failOnWarn: boolean;
+          check: boolean;
         }>
       ) => {
         const { configPath, explicit } = resolveConfigPath(argv.config);
@@ -232,8 +278,24 @@ async function main(): Promise<void> {
             process.exit(1);
           }
 
-          const res = await generate(options);
-          process.stdout.write(`Generated: ${res.written.join(', ')}\n`);
+          const res = await generate(options, { check: argv.check });
+          if (argv.check) {
+            const outOfDate = res.outOfDate ?? [];
+            if (outOfDate.length === 0) {
+              process.stdout.write('Generated wrappers are up to date.\n');
+            } else {
+              process.stderr.write('Generated wrappers are out of date:\n');
+              for (const file of outOfDate) {
+                process.stderr.write(`- ${file}\n`);
+              }
+              process.stderr.write('\nRun `tywrap generate` to update.\n');
+              if (!(argv.failOnWarn && res.warnings.length > 0)) {
+                process.exit(3);
+              }
+            }
+          } else {
+            process.stdout.write(`Generated: ${res.written.join(', ')}\n`);
+          }
           if (argv.failOnWarn && res.warnings.length > 0) {
             log.error(
               `Warnings encountered (count ${res.warnings.length}). Failing due to --fail-on-warn.`
@@ -283,6 +345,12 @@ async function main(): Promise<void> {
             default: false,
             describe: 'Overwrite existing config file',
           })
+          .option('scripts', {
+            type: 'boolean',
+            default: true,
+            describe:
+              'Add recommended tywrap scripts to package.json (use --no-scripts to disable)',
+          })
           .strict(),
       async (
         argv: ArgumentsCamelCase<{
@@ -292,6 +360,7 @@ async function main(): Promise<void> {
           runtime: RuntimeStrategy;
           outputDir: string;
           force: boolean;
+          scripts: boolean;
         }>
       ) => {
         const modules = parseModules(argv.modules);
@@ -315,6 +384,9 @@ async function main(): Promise<void> {
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- config path is user-controlled
           await writeFile(targetPath, content, 'utf-8');
           process.stdout.write(`Created ${targetPath}\n`);
+          if (argv.scripts) {
+            await addRecommendedScriptsToPackageJson(process.cwd());
+          }
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           log.error('Failed to write config', { error: message });

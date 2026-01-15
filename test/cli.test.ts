@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -241,6 +241,54 @@ describe('CLI', () => {
         rmSync(tempDir, { recursive: true, force: true });
       }
     });
+
+    it('adds recommended scripts to package.json by default', () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
+      try {
+        writeFileSync(
+          join(tempDir, 'package.json'),
+          JSON.stringify({ name: 'tmp', private: true, scripts: {} }, null, 2)
+        );
+
+        const res = spawnSync('node', [CLI_PATH, 'init'], {
+          encoding: 'utf-8',
+          cwd: tempDir,
+        });
+        expect(res.status).toBe(0);
+
+        const pkg = JSON.parse(readFileSync(join(tempDir, 'package.json'), 'utf-8')) as {
+          scripts?: Record<string, unknown>;
+        };
+        expect(pkg.scripts?.['tywrap:generate']).toBe('tywrap generate');
+        expect(pkg.scripts?.['tywrap:check']).toBe('tywrap generate --check');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not update package.json scripts with --no-scripts', () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
+      try {
+        writeFileSync(
+          join(tempDir, 'package.json'),
+          JSON.stringify({ name: 'tmp', private: true, scripts: {} }, null, 2)
+        );
+
+        const res = spawnSync('node', [CLI_PATH, 'init', '--no-scripts'], {
+          encoding: 'utf-8',
+          cwd: tempDir,
+        });
+        expect(res.status).toBe(0);
+
+        const pkg = JSON.parse(readFileSync(join(tempDir, 'package.json'), 'utf-8')) as {
+          scripts?: Record<string, unknown>;
+        };
+        expect(pkg.scripts?.['tywrap:generate']).toBeUndefined();
+        expect(pkg.scripts?.['tywrap:check']).toBeUndefined();
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('generate command', () => {
@@ -273,6 +321,7 @@ describe('CLI', () => {
       expect(res.stdout).toContain('--use-cache');
       expect(res.stdout).toContain('--debug');
       expect(res.stdout).toContain('--fail-on-warn');
+      expect(res.stdout).toContain('--check');
     });
 
     it('accepts --modules flag', () => {
@@ -465,6 +514,64 @@ describe('CLI', () => {
           }
         );
         expect(res.stderr).not.toContain('Unknown argument');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('supports --check without writing files', () => {
+      const repoRoot = join(__dirname, '..');
+      const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
+      const outputDir = join(tempDir, 'generated');
+
+      try {
+        const pythonPath = join(repoRoot, 'tywrap_ir');
+        const env = {
+          ...process.env,
+          PYTHONPATH: process.env.PYTHONPATH
+            ? `${pythonPath}${delimiter}${process.env.PYTHONPATH}`
+            : pythonPath,
+        };
+
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--output-dir', outputDir, '--check'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+            env,
+            timeout: 30000,
+          }
+        );
+        expect(res.status).toBe(3);
+        expect(res.stderr).toContain('Generated wrappers are out of date');
+        expect(existsSync(join(outputDir, 'math.generated.ts'))).toBe(false);
+
+        const gen = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--output-dir', outputDir],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+            env,
+            timeout: 30000,
+          }
+        );
+        expect(gen.status).toBe(0);
+        expect(existsSync(join(outputDir, 'math.generated.ts'))).toBe(true);
+
+        const ok = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--output-dir', outputDir, '--check'],
+          {
+            encoding: 'utf-8',
+            cwd: tempDir,
+            env,
+            timeout: 30000,
+          }
+        );
+        expect(ok.status).toBe(0);
+        expect(ok.stdout).toContain('up to date');
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
