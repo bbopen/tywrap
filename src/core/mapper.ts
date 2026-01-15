@@ -362,8 +362,12 @@ export class TypeMapper {
       if (parts.length === 0) {
         return { name: rawName, module: undefined, rawName };
       }
+      const name = parts[parts.length - 1];
+      if (!name) {
+        return { name: rawName, module: undefined, rawName };
+      }
       return {
-        name: parts[parts.length - 1] ?? rawName,
+        name,
         module: parts.length > 1 ? parts.slice(0, -1).join('.') : undefined,
         rawName,
       };

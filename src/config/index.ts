@@ -279,14 +279,31 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
       const require = createRequire(import.meta.url);
       const nodeModule = require('module') as typeof import('module');
       const moduleCtor = nodeModule.Module as unknown as typeof import('module').Module & {
-        _nodeModulePaths: (path: string) => string[];
+        _nodeModulePaths?: (path: string) => string[];
       };
+      if (typeof moduleCtor !== 'function') {
+        throw new Error(
+          '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node Module constructor'
+        );
+      }
+      const nodeModulePaths = moduleCtor._nodeModulePaths;
+      if (typeof nodeModulePaths !== 'function') {
+        throw new Error(
+          '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node private API Module._nodeModulePaths'
+        );
+      }
       const mod = new moduleCtor(resolved) as import('module').Module & {
-        _compile: (code: string, filename: string) => void;
+        _compile?: (code: string, filename: string) => void;
       };
+      const compile = mod._compile;
+      if (typeof compile !== 'function') {
+        throw new Error(
+          '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node private API Module._compile'
+        );
+      }
       mod.filename = resolved;
-      mod.paths = moduleCtor._nodeModulePaths(dirname(resolved));
-      mod._compile(output.outputText, resolved);
+      mod.paths = nodeModulePaths(dirname(resolved));
+      compile.call(mod, output.outputText, resolved);
       const loaded = (mod.exports as Record<string, unknown>).default ?? mod.exports;
       return ensureConfigObject(loaded ?? {}, resolved);
     }
