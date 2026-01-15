@@ -5,6 +5,7 @@
  * with basic validation of known options.
  */
 
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -311,10 +312,7 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
     // Why: Node can't import ESM from a string without a custom loader. We write the transpiled
     // output to a temporary `.mjs` file next to the source config so relative imports and Node
     // resolution behave naturally, then clean it up immediately after loading.
-    const tmpPath = resolve(
-      dirname(resolved),
-      `.tywrap.config.${Date.now()}.${Math.random().toString(16).slice(2)}.mjs`
-    );
+    const tmpPath = resolve(dirname(resolved), `.tywrap.config.${randomUUID()}.mjs`);
     try {
       await writeFile(tmpPath, output.outputText, 'utf-8');
       const mod = (await import(pathToFileURL(tmpPath).href)) as Record<string, unknown>;
