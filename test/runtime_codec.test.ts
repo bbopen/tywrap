@@ -391,6 +391,32 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         device: 'cpu',
       });
     });
+
+    it('should await nested Arrow ndarray decoding', async () => {
+      registerArrowDecoder(bytes => bytes);
+      const testData = 'binary array data';
+
+      const envelope: CodecEnvelope = {
+        __tywrap__: 'torch.tensor',
+        encoding: 'ndarray',
+        value: {
+          __tywrap__: 'ndarray',
+          encoding: 'arrow',
+          b64: Buffer.from(testData, 'utf-8').toString('base64'),
+        },
+        shape: [3],
+        dtype: 'float32',
+        device: 'cpu',
+      };
+
+      const result = await decodeValueAsync(envelope);
+      expect(result).toEqual({
+        data: expect.any(Uint8Array),
+        shape: [3],
+        dtype: 'float32',
+        device: 'cpu',
+      });
+    });
   });
 
   describe('Sklearn Estimator Decoding', () => {
