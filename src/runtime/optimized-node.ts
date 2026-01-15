@@ -5,11 +5,12 @@
 
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import type { ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 
 import { globalCache } from '../utils/cache.js';
-import { decodeValueAsync } from '../utils/codec.js';
+import { autoRegisterArrowDecoder, decodeValueAsync } from '../utils/codec.js';
 import { getDefaultPythonPath } from '../utils/python.js';
 import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 
@@ -185,6 +186,11 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     if (this.disposed) {
       throw new Error('Bridge has been disposed');
     }
+
+    const require = createRequire(import.meta.url);
+    await autoRegisterArrowDecoder({
+      loader: async () => require('apache-arrow'),
+    });
 
     // Ensure minimum processes are available
     while (this.processPool.length < this.options.minProcesses) {
