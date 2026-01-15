@@ -410,6 +410,8 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       };
 
       const result = await decodeValueAsync(envelope);
+      // Explicitly verify data is resolved, not a Promise (issue #21)
+      expect((result as any).data).not.toBeInstanceOf(Promise);
       expect(result).toEqual({
         data: expect.any(Uint8Array),
         shape: [3],
