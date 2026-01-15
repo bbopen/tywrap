@@ -141,7 +141,11 @@ export class CodeGenerator {
     const fname = this.escapeIdentifier(func.name);
     const moduleId = moduleName ?? '__main__';
 
-    // Overloads: generate trailing optional parameter drop variants (exclude *args/**kwargs)
+    // Overloads: generate trailing optional parameter drop variants (exclude *args/**kwargs).
+    // Why: Python APIs frequently have many optional tail params. TypeScript callers expect
+    // `fn(a)`, `fn(a, b)`, ... all to typecheck. We emit a family of overloads that progressively
+    // "drop" optional tail args, but also include the full positional signature (<= length) so a
+    // call that supplies all args still matches an overload.
     const positional = filteredParams.filter(p => !p.varArgs && !p.kwArgs);
     const firstOptionalIndex = positional.findIndex(p => p.optional);
     const overloads: string[] = [];

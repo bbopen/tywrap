@@ -349,6 +349,10 @@ export class TypeMapper {
     module?: string;
     rawName: string;
   } {
+    // Why: the Python IR sometimes represents qualified names like "pandas.DataFrame" as a single
+    // `name` string (with dots) instead of splitting into { module, name }. Dots are not valid in
+    // TypeScript identifiers, and we want stable test expectations, so normalize to a leaf `name`
+    // plus a `module` path when possible.
     const rawName = type.name;
     if (type.module) {
       return { name: type.name, module: type.module, rawName };
