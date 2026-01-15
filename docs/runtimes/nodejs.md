@@ -177,17 +177,13 @@ npm install apache-arrow
 ```
 
 ```typescript
-import { createRequire } from 'node:module';
-import { registerArrowDecoder } from 'tywrap';
+import { autoRegisterArrowDecoder, registerArrowDecoder } from 'tywrap';
 
-// Register Arrow decoder for optimal performance
-const require = createRequire(import.meta.url);
-const { tableFromIPC } = require('apache-arrow');
-registerArrowDecoder(bytes => tableFromIPC(bytes));
-
-// If you don't register a decoder, Arrow-encoded payloads will throw.
-// To accept raw bytes, register a passthrough decoder:
-// registerArrowDecoder(bytes => bytes);
+// NodeBridge auto-registers an Arrow decoder when apache-arrow is installed.
+// If you need custom behavior (or you're decoding outside NodeBridge), register manually:
+await autoRegisterArrowDecoder();
+// const { tableFromIPC } = await import('apache-arrow');
+// registerArrowDecoder(bytes => tableFromIPC(bytes));
 ```
 
 ### JSON Fallback

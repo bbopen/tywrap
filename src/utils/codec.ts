@@ -128,6 +128,52 @@ export function hasArrowDecoder(): boolean {
   return typeof arrowTableFrom === 'function';
 }
 
+function isNodeRuntime(): boolean {
+  return (
+    typeof process !== 'undefined' &&
+    typeof (process as { versions?: { node?: string } }).versions?.node === 'string'
+  );
+}
+
+function registerArrowDecoderFromModule(module: { tableFromIPC?: unknown }): void {
+  const tableFromIPC = module.tableFromIPC;
+  if (typeof tableFromIPC !== 'function') {
+    throw new Error('apache-arrow does not export tableFromIPC');
+  }
+  registerArrowDecoder((bytes: Uint8Array) => tableFromIPC(bytes));
+}
+
+export async function autoRegisterArrowDecoder(
+  options: { loader?: () => Promise<unknown> } = {}
+): Promise<boolean> {
+  if (hasArrowDecoder()) {
+    return true;
+  }
+  const loader =
+    options.loader ??
+    (isNodeRuntime()
+      ? async () => {
+          try {
+            const nodeModule = await import('node:module');
+            const require = nodeModule.createRequire(import.meta.url);
+            return require('apache-arrow') as unknown;
+          } catch {
+            return await import('apache-arrow');
+          }
+        }
+      : undefined);
+  if (!loader) {
+    return false;
+  }
+  try {
+    const arrowModule = await loader();
+    registerArrowDecoderFromModule(arrowModule as { tableFromIPC?: unknown });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isObject(value: unknown): value is { [k: string]: unknown } {
   return typeof value === 'object' && value !== null;
 }
