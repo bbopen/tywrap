@@ -43,11 +43,19 @@ export interface SklearnEstimator {
 export type CodecEnvelope =
   | {
       readonly __tywrap__: 'dataframe';
+      readonly codecVersion?: number;
       readonly encoding: 'arrow';
       readonly b64: string;
     }
   | {
+      readonly __tywrap__: 'dataframe';
+      readonly codecVersion?: number;
+      readonly encoding: 'json';
+      readonly data: unknown;
+    }
+  | {
       readonly __tywrap__: 'series';
+      readonly codecVersion?: number;
       readonly encoding: 'arrow' | 'json';
       readonly b64?: string;
       readonly data?: unknown;
@@ -55,6 +63,7 @@ export type CodecEnvelope =
     }
   | {
       readonly __tywrap__: 'ndarray';
+      readonly codecVersion?: number;
       readonly encoding: 'arrow' | 'json';
       readonly b64?: string; // when encoding=arrow
       readonly data?: unknown; // when encoding=json
@@ -62,6 +71,7 @@ export type CodecEnvelope =
     }
   | {
       readonly __tywrap__: 'scipy.sparse';
+      readonly codecVersion?: number;
       readonly encoding: 'json';
       readonly format: 'csr' | 'csc' | 'coo';
       readonly shape: readonly number[];
@@ -74,6 +84,7 @@ export type CodecEnvelope =
     }
   | {
       readonly __tywrap__: 'torch.tensor';
+      readonly codecVersion?: number;
       readonly encoding: 'ndarray';
       readonly value: unknown;
       readonly shape?: readonly number[];
@@ -82,6 +93,7 @@ export type CodecEnvelope =
     }
   | {
       readonly __tywrap__: 'sklearn.estimator';
+      readonly codecVersion?: number;
       readonly encoding: 'json';
       readonly className: string;
       readonly module: string;
@@ -118,6 +130,10 @@ export function hasArrowDecoder(): boolean {
 
 function isObject(value: unknown): value is { [k: string]: unknown } {
   return typeof value === 'object' && value !== null;
+}
+
+function isNumberArray(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'number');
 }
 
 function fromBase64(b64: string): Uint8Array {
@@ -162,6 +178,25 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   );
 }
 
+// Why: decoding needs to reject incompatible envelopes before we attempt to interpret payloads.
+const CODEC_VERSION = 1;
+
+function assertCodecVersion(envelope: { codecVersion?: unknown }, marker: string): void {
+  if (!('codecVersion' in envelope)) {
+    return;
+  }
+  const version = envelope.codecVersion;
+  if (version === undefined) {
+    return;
+  }
+  if (typeof version !== 'number' || !Number.isFinite(version)) {
+    throw new Error(`Invalid ${marker} envelope: codecVersion must be a number`);
+  }
+  if (version !== CODEC_VERSION) {
+    throw new Error(`Unsupported ${marker} envelope codecVersion: ${version}`);
+  }
+}
+
 function decodeEnvelopeCore<T>(
   value: unknown,
   decodeArrow: (bytes: Uint8Array) => MaybePromise<T>,
@@ -171,113 +206,184 @@ function decodeEnvelopeCore<T>(
     return value;
   }
   const marker = (value as { __tywrap__?: unknown }).__tywrap__;
-  if (
-    (marker === 'dataframe' || marker === 'series') &&
-    (value as { encoding?: unknown }).encoding === 'arrow' &&
-    typeof (value as { b64?: unknown }).b64 === 'string'
-  ) {
-    const bytes = fromBase64(String((value as { b64: string }).b64));
-    return decodeArrow(bytes);
+  if (typeof marker !== 'string') {
+    return value as unknown;
   }
+
   if (
-    marker === 'dataframe' &&
-    (value as { encoding?: unknown }).encoding === 'json' &&
-    'data' in (value as object)
+    marker === 'dataframe' ||
+    marker === 'series' ||
+    marker === 'ndarray' ||
+    marker === 'scipy.sparse' ||
+    marker === 'torch.tensor' ||
+    marker === 'sklearn.estimator'
   ) {
-    return (value as { data: unknown }).data;
+    assertCodecVersion(value as { codecVersion?: unknown }, marker);
   }
-  if (
-    marker === 'series' &&
-    (value as { encoding?: unknown }).encoding === 'json' &&
-    'data' in (value as object)
-  ) {
-    return (value as { data: unknown }).data;
-  }
-  if (marker === 'ndarray') {
-    if (
-      (value as { encoding?: unknown }).encoding === 'arrow' &&
-      typeof (value as { b64?: unknown }).b64 === 'string'
-    ) {
-      const bytes = fromBase64(String((value as { b64: string }).b64));
+
+  if (marker === 'dataframe') {
+    const encoding = (value as { encoding?: unknown }).encoding;
+    if (encoding === 'arrow') {
+      const b64 = (value as { b64?: unknown }).b64;
+      if (typeof b64 !== 'string') {
+        throw new Error('Invalid dataframe envelope: missing b64');
+      }
+      const bytes = fromBase64(b64);
       return decodeArrow(bytes);
     }
-    if ((value as { encoding?: unknown }).encoding === 'json' && 'data' in (value as object)) {
+    if (encoding === 'json') {
+      if (!('data' in (value as object))) {
+        throw new Error('Invalid dataframe envelope: missing data');
+      }
       return (value as { data: unknown }).data;
     }
+    throw new Error(`Invalid dataframe envelope: unsupported encoding ${String(encoding)}`);
   }
-  if (
-    marker === 'scipy.sparse' &&
-    (value as { encoding?: unknown }).encoding === 'json' &&
-    typeof (value as { format?: unknown }).format === 'string' &&
-    Array.isArray((value as { shape?: unknown }).shape) &&
-    Array.isArray((value as { data?: unknown }).data)
-  ) {
-    const sparse = value as {
-      format: 'csr' | 'csc' | 'coo';
-      shape: readonly number[];
-      data: readonly unknown[];
-      indices?: readonly number[];
-      indptr?: readonly number[];
-      row?: readonly number[];
-      col?: readonly number[];
-      dtype?: string;
-    };
-    return {
-      format: sparse.format,
-      shape: sparse.shape,
-      data: sparse.data,
-      indices: sparse.indices,
-      indptr: sparse.indptr,
-      row: sparse.row,
-      col: sparse.col,
-      dtype: sparse.dtype,
-    } satisfies SparseMatrix;
+
+  if (marker === 'series') {
+    const encoding = (value as { encoding?: unknown }).encoding;
+    if (encoding === 'arrow') {
+      const b64 = (value as { b64?: unknown }).b64;
+      if (typeof b64 !== 'string') {
+        throw new Error('Invalid series envelope: missing b64');
+      }
+      const bytes = fromBase64(b64);
+      return decodeArrow(bytes);
+    }
+    if (encoding === 'json') {
+      if (!('data' in (value as object))) {
+        throw new Error('Invalid series envelope: missing data');
+      }
+      return (value as { data: unknown }).data;
+    }
+    throw new Error(`Invalid series envelope: unsupported encoding ${String(encoding)}`);
   }
-  if (marker === 'torch.tensor' && (value as { encoding?: unknown }).encoding === 'ndarray') {
-    const torchValue = value as {
-      value?: unknown;
-      shape?: readonly number[];
-      dtype?: string;
-      device?: string;
-    };
-    if ('value' in (torchValue as object)) {
-      const decoded = recurse(torchValue.value);
-      if (isPromiseLike(decoded)) {
-        return decoded.then(data => ({
-          data,
-          shape: torchValue.shape,
-          dtype: torchValue.dtype,
-          device: torchValue.device,
-        })) as Promise<T | unknown>;
+
+  if (marker === 'ndarray') {
+    const encoding = (value as { encoding?: unknown }).encoding;
+    if (encoding === 'arrow') {
+      const b64 = (value as { b64?: unknown }).b64;
+      if (typeof b64 !== 'string') {
+        throw new Error('Invalid ndarray envelope: missing b64');
+      }
+      const bytes = fromBase64(b64);
+      return decodeArrow(bytes);
+    }
+    if (encoding === 'json') {
+      if (!('data' in (value as object))) {
+        throw new Error('Invalid ndarray envelope: missing data');
+      }
+      return (value as { data: unknown }).data;
+    }
+    throw new Error(`Invalid ndarray envelope: unsupported encoding ${String(encoding)}`);
+  }
+
+  if (marker === 'scipy.sparse') {
+    const encoding = (value as { encoding?: unknown }).encoding;
+    if (encoding !== 'json') {
+      throw new Error(`Invalid scipy.sparse envelope: unsupported encoding ${String(encoding)}`);
+    }
+    const format = (value as { format?: unknown }).format;
+    if (format !== 'csr' && format !== 'csc' && format !== 'coo') {
+      throw new Error(`Invalid scipy.sparse envelope: unsupported format ${String(format)}`);
+    }
+    const shape = (value as { shape?: unknown }).shape;
+    if (
+      !Array.isArray(shape) ||
+      shape.length !== 2 ||
+      typeof shape[0] !== 'number' ||
+      typeof shape[1] !== 'number'
+    ) {
+      throw new Error('Invalid scipy.sparse envelope: shape must be a 2-item number[]');
+    }
+    const data = (value as { data?: unknown }).data;
+    if (!Array.isArray(data)) {
+      throw new Error('Invalid scipy.sparse envelope: data must be an array');
+    }
+    const dtypeValue = (value as { dtype?: unknown }).dtype;
+    const dtype = typeof dtypeValue === 'string' ? dtypeValue : undefined;
+
+    if (format === 'coo') {
+      const row = (value as { row?: unknown }).row;
+      const col = (value as { col?: unknown }).col;
+      if (!Array.isArray(row) || !Array.isArray(col)) {
+        throw new Error('Invalid scipy.sparse envelope: coo requires row and col arrays');
       }
       return {
-        data: decoded,
-        shape: torchValue.shape,
-        dtype: torchValue.dtype,
-        device: torchValue.device,
-      } satisfies TorchTensor;
+        format,
+        shape,
+        data,
+        row,
+        col,
+        dtype,
+      } satisfies SparseMatrix;
     }
-  }
-  if (
-    marker === 'sklearn.estimator' &&
-    (value as { encoding?: unknown }).encoding === 'json' &&
-    typeof (value as { className?: unknown }).className === 'string' &&
-    typeof (value as { module?: unknown }).module === 'string' &&
-    isObject((value as { params?: unknown }).params)
-  ) {
-    const estimator = value as {
-      className: string;
-      module: string;
-      version?: string;
-      params: Record<string, unknown>;
-    };
+
+    const indices = (value as { indices?: unknown }).indices;
+    const indptr = (value as { indptr?: unknown }).indptr;
+    if (!Array.isArray(indices) || !Array.isArray(indptr)) {
+      throw new Error('Invalid scipy.sparse envelope: csr/csc requires indices and indptr arrays');
+    }
     return {
-      className: estimator.className,
-      module: estimator.module,
-      version: estimator.version,
-      params: estimator.params,
+      format,
+      shape,
+      data,
+      indices,
+      indptr,
+      dtype,
+    } satisfies SparseMatrix;
+  }
+
+  if (marker === 'torch.tensor') {
+    const encoding = (value as { encoding?: unknown }).encoding;
+    if (encoding !== 'ndarray') {
+      throw new Error(`Invalid torch.tensor envelope: unsupported encoding ${String(encoding)}`);
+    }
+    if (!('value' in (value as object))) {
+      throw new Error('Invalid torch.tensor envelope: missing value');
+    }
+    const nested = (value as { value: unknown }).value;
+    if (!isObject(nested) || (nested as { __tywrap__?: unknown }).__tywrap__ !== 'ndarray') {
+      throw new Error('Invalid torch.tensor envelope: value must be an ndarray envelope');
+    }
+    const decoded = recurse(nested);
+    const shapeValue = (value as { shape?: unknown }).shape;
+    const shape = isNumberArray(shapeValue) ? shapeValue : undefined;
+    const dtypeValue = (value as { dtype?: unknown }).dtype;
+    const dtype = typeof dtypeValue === 'string' ? dtypeValue : undefined;
+    const deviceValue = (value as { device?: unknown }).device;
+    const device = typeof deviceValue === 'string' ? deviceValue : undefined;
+
+    if (isPromiseLike(decoded)) {
+      return decoded.then(data => ({ data, shape, dtype, device })) as Promise<T | unknown>;
+    }
+    return { data: decoded, shape, dtype, device } satisfies TorchTensor;
+  }
+
+  if (marker === 'sklearn.estimator') {
+    const encoding = (value as { encoding?: unknown }).encoding;
+    if (encoding !== 'json') {
+      throw new Error(`Invalid sklearn.estimator envelope: unsupported encoding ${String(encoding)}`);
+    }
+    const className = (value as { className?: unknown }).className;
+    const module = (value as { module?: unknown }).module;
+    const params = (value as { params?: unknown }).params;
+    if (typeof className !== 'string' || typeof module !== 'string' || !isObject(params)) {
+      throw new Error('Invalid sklearn.estimator envelope: expected className/module strings + params object');
+    }
+    const versionValue = (value as { version?: unknown }).version;
+    if (versionValue !== undefined && typeof versionValue !== 'string') {
+      throw new Error('Invalid sklearn.estimator envelope: version must be a string when provided');
+    }
+    const version = typeof versionValue === 'string' ? versionValue : undefined;
+    return {
+      className,
+      module,
+      version,
+      params,
     } satisfies SklearnEstimator;
   }
+
   return value as unknown;
 }
 

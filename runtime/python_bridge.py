@@ -29,6 +29,54 @@ FALLBACK_JSON = os.environ.get('TYWRAP_CODEC_FALLBACK', '').lower() == 'json'
 PROTOCOL = 'tywrap/1'
 PROTOCOL_VERSION = 1
 BRIDGE_NAME = 'python-subprocess'
+# Why: include a stable version in envelopes so decoders can reject incompatible changes.
+CODEC_VERSION = 1
+
+
+class CodecConfigError(ValueError):
+    """Codec configuration error."""
+
+
+class CodecMaxBytesParseError(CodecConfigError):
+    """Invalid TYWRAP_CODEC_MAX_BYTES value."""
+
+    def __init__(self) -> None:
+        super().__init__('TYWRAP_CODEC_MAX_BYTES must be an integer byte count')
+
+
+class PayloadTooLargeError(ValueError):
+    """Response payload exceeds configured size limit."""
+
+    def __init__(self, payload_bytes: int, max_bytes: int) -> None:
+        super().__init__(
+            f'Response payload is {payload_bytes} bytes which exceeds TYWRAP_CODEC_MAX_BYTES={max_bytes}'
+        )
+
+
+def get_codec_max_bytes():
+    """
+    Return the optional max payload size (bytes) for JSONL responses.
+
+    Why: the subprocess transport writes a single JSON line per response; limiting size avoids
+    accidental large payloads that can spike memory or clog IPC, and keeps failures explicit.
+    """
+    raw = os.environ.get('TYWRAP_CODEC_MAX_BYTES')
+    if raw is None:
+        return None
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except Exception as exc:
+        raise CodecMaxBytesParseError() from exc
+    if value <= 0:
+        return None
+    return value
+
+
+# Why: parse once at startup to avoid per-response env lookups.
+CODEC_MAX_BYTES = get_codec_max_bytes()
 
 
 class ProtocolError(Exception):
@@ -123,6 +171,7 @@ def serialize_ndarray(obj):
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
             '__tywrap__': 'ndarray',
+            'codecVersion': CODEC_VERSION,
             'encoding': 'arrow',
             'b64': b64,
             'shape': getattr(obj, 'shape', None),
@@ -146,6 +195,7 @@ def serialize_ndarray_json(obj):
         raise RuntimeError('JSON fallback failed for ndarray') from exc
     return {
         '__tywrap__': 'ndarray',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'data': data,
         'shape': getattr(obj, 'shape', None),
@@ -179,6 +229,7 @@ def serialize_dataframe(obj):
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
             '__tywrap__': 'dataframe',
+            'codecVersion': CODEC_VERSION,
             'encoding': 'arrow',
             'b64': b64,
         }
@@ -201,6 +252,7 @@ def serialize_dataframe_json(obj):
         raise RuntimeError('JSON fallback failed for pandas.DataFrame') from exc
     return {
         '__tywrap__': 'dataframe',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'data': data,
     }
@@ -231,6 +283,7 @@ def serialize_series(obj):
         b64 = base64.b64encode(buf.to_pybytes()).decode('ascii')
         return {
             '__tywrap__': 'series',
+            'codecVersion': CODEC_VERSION,
             'encoding': 'arrow',
             'b64': b64,
             'name': getattr(obj, 'name', None),
@@ -257,6 +310,7 @@ def serialize_series_json(obj):
             raise RuntimeError('JSON fallback failed for pandas.Series') from exc
     return {
         '__tywrap__': 'series',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'data': data,
         'name': getattr(obj, 'name', None),
@@ -264,6 +318,12 @@ def serialize_series_json(obj):
 
 
 def serialize_sparse_matrix(obj):
+    """
+    Serialize scipy sparse matrices into structured JSON envelopes.
+
+    Why: preserve sparsity and matrix shape without implicit dense conversion, keeping
+    failures explicit when unsupported formats or dtypes are encountered.
+    """
     try:
         fmt = obj.getformat()
     except Exception as exc:
@@ -286,6 +346,7 @@ def serialize_sparse_matrix(obj):
         indptr = obj.indptr.tolist()
         return {
             '__tywrap__': 'scipy.sparse',
+            'codecVersion': CODEC_VERSION,
             'encoding': 'json',
             'format': fmt,
             'shape': list(obj.shape),
@@ -301,6 +362,7 @@ def serialize_sparse_matrix(obj):
     col = obj.col.tolist()
     return {
         '__tywrap__': 'scipy.sparse',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'format': fmt,
         'shape': list(obj.shape),
@@ -312,6 +374,11 @@ def serialize_sparse_matrix(obj):
 
 
 def serialize_torch_tensor(obj):
+    """
+    Serialize torch.Tensor values via the ndarray envelope.
+
+    Why: ensure CPU-only transport by default and make device/copy behavior explicit to callers.
+    """
     allow_copy = os.environ.get('TYWRAP_TORCH_ALLOW_COPY', '').lower() in ('1', 'true', 'yes')
     tensor = obj.detach()
     if getattr(tensor, 'device', None) is not None and tensor.device.type != 'cpu':
@@ -333,6 +400,7 @@ def serialize_torch_tensor(obj):
 
     return {
         '__tywrap__': 'torch.tensor',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'ndarray',
         'value': serialize_ndarray(arr),
         'shape': list(tensor.shape),
@@ -342,6 +410,11 @@ def serialize_torch_tensor(obj):
 
 
 def serialize_sklearn_estimator(obj):
+    """
+    Serialize sklearn estimators as metadata only.
+
+    Why: avoid unsafe pickling while still exposing model identity and params to TypeScript.
+    """
     try:
         import sklearn  # noqa: F401
     except Exception as exc:
@@ -357,6 +430,7 @@ def serialize_sklearn_estimator(obj):
 
     return {
         '__tywrap__': 'sklearn.estimator',
+        'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'className': obj.__class__.__name__,
         'module': obj.__class__.__module__,
@@ -495,6 +569,63 @@ def require_protocol(msg):
     return mid
 
 
+def dispatch_request(msg):
+    """
+    Dispatch a validated request to the correct handler.
+
+    Why: keep the main loop focused on I/O while this function handles validation and routing.
+    """
+    mid = require_protocol(msg)
+    method = msg.get('method')
+    if not isinstance(method, str):
+        raise ProtocolError('Missing method')
+    params = msg.get('params') or {}
+    if not isinstance(params, dict):
+        raise ProtocolError('Invalid params')
+    if method == 'call':
+        result = handle_call(params)
+    elif method == 'instantiate':
+        result = handle_instantiate(params)
+    elif method == 'call_method':
+        result = handle_call_method(params)
+    elif method == 'dispose_instance':
+        result = handle_dispose_instance(params)
+    elif method == 'meta':
+        result = handle_meta()
+    else:
+        raise ValueError('Unknown method')
+    return mid, result
+
+
+def build_error_payload(mid, exc, *, include_traceback):
+    """
+    Build a protocol error response.
+
+    Why: ensure error formatting stays consistent while keeping exception handling centralized.
+    """
+    error = { 'type': type(exc).__name__, 'message': str(exc) }
+    if include_traceback:
+        error['traceback'] = traceback.format_exc()
+    return {
+        'id': mid if mid is not None else -1,
+        'protocol': PROTOCOL,
+        'error': error,
+    }
+
+
+def encode_response(out):
+    """
+    Serialize the response and enforce size limits.
+
+    Why: keep payload size checks outside the main loop for clarity and lint compliance.
+    """
+    payload = json.dumps(out)
+    payload_bytes = len(payload.encode('utf-8'))
+    if CODEC_MAX_BYTES is not None and payload_bytes > CODEC_MAX_BYTES:
+        raise PayloadTooLargeError(payload_bytes, CODEC_MAX_BYTES)
+    return payload
+
+
 def main():
     for line in sys.stdin:
         line = line.strip()
@@ -504,51 +635,22 @@ def main():
         out = None
         try:
             msg = json.loads(line)
-            mid = require_protocol(msg)
-            method = msg.get('method')
-            if not isinstance(method, str):
-                raise ProtocolError('Missing method')
-            params = msg.get('params') or {}
-            if not isinstance(params, dict):
-                raise ProtocolError('Invalid params')
             try:
-                if method == 'call':
-                    result = handle_call(params)
-                elif method == 'instantiate':
-                    result = handle_instantiate(params)
-                elif method == 'call_method':
-                    result = handle_call_method(params)
-                elif method == 'dispose_instance':
-                    result = handle_dispose_instance(params)
-                elif method == 'meta':
-                    result = handle_meta()
-                else:
-                    raise ValueError('Unknown method')
+                mid, result = dispatch_request(msg)
                 out = { 'id': mid, 'protocol': PROTOCOL, 'result': result }
-            except Exception as e:
-                out = {
-                    'id': mid,
-                    'protocol': PROTOCOL,
-                    'error': { 'type': type(e).__name__, 'message': str(e), 'traceback': traceback.format_exc() }
-                }
-        except Exception as e:
-            out = {
-                'id': mid if mid is not None else -1,
-                'protocol': PROTOCOL,
-                'error': { 'type': type(e).__name__, 'message': str(e) }
-            }
+            except Exception as e:  # noqa: BLE001
+                # Why: ensure any handler error becomes a protocol-compliant response.
+                out = build_error_payload(mid, e, include_traceback=True)
+        except Exception as e:  # noqa: BLE001
+            # Why: catch malformed input without breaking the JSONL protocol.
+            out = build_error_payload(mid, e, include_traceback=False)
 
         try:
-            sys.stdout.write(json.dumps(out) + '\n')
-        except Exception as e:
-            err_out = {
-                'id': mid if mid is not None else -1,
-                'protocol': PROTOCOL,
-                'error': {
-                    'type': type(e).__name__,
-                    'message': f'Failed to serialize response: {e}'
-                }
-            }
+            payload = encode_response(out)
+            sys.stdout.write(payload + '\n')
+        except Exception as e:  # noqa: BLE001
+            # Why: fallback error keeps responses well-formed even if serialization fails.
+            err_out = build_error_payload(mid, e, include_traceback=False)
             sys.stdout.write(json.dumps(err_out) + '\n')
         sys.stdout.flush()
 
