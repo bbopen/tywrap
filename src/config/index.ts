@@ -272,6 +272,10 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
     });
 
     if (emitCommonJs) {
+      // Why: `.cts` is explicitly CommonJS. We evaluate the transpiled output in-memory using
+      // Node's Module internals (`Module._compile` / `_nodeModulePaths`) to avoid writing an extra
+      // temp file. These are private Node APIs, so we keep this tooling path scoped and rely on
+      // supported Node versions (see package.json engines).
       const require = createRequire(import.meta.url);
       const nodeModule = require('module') as typeof import('module');
       const moduleCtor = nodeModule.Module as unknown as typeof import('module').Module & {

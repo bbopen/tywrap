@@ -16,8 +16,12 @@ try:
     cwd = os.getcwd()
     if cwd and cwd not in sys.path:
         sys.path.insert(0, cwd)
-except Exception:
-    pass
+except (OSError, ValueError, TypeError, AttributeError) as exc:
+    # Non-fatal: continue without cwd in path.
+    try:
+        sys.stderr.write(f'[tywrap] Warning: could not add cwd to sys.path: {exc}\n')
+    except (OSError, ValueError):
+        pass
 
 instances = {}
 
@@ -360,6 +364,29 @@ def serialize_sklearn_estimator(obj):
         'params': params,
     }
 
+
+_NO_PYDANTIC = object()
+
+
+def serialize_pydantic(obj):
+    """
+    Serialize Pydantic v2 models without importing Pydantic.
+
+    Why: returning BaseModel instances is common in typed Python APIs. Converting via
+    `model_dump` keeps Python type hints accurate (return the model), while the bridge still
+    emits a JSON-serializable payload. We default to `by_alias=True` so alias_generator-based
+    camelCase schemas round-trip cleanly to TypeScript.
+    """
+
+    model_dump = getattr(obj, 'model_dump', None)
+    if not callable(model_dump):
+        return _NO_PYDANTIC
+    try:
+        return model_dump(by_alias=True, mode='json')
+    except TypeError:
+        # Older Pydantic versions may not support `mode=...`.
+        return model_dump(by_alias=True)
+
 def serialize(obj):
     if is_numpy_array(obj):
         return serialize_ndarray(obj)
@@ -373,6 +400,9 @@ def serialize(obj):
         return serialize_torch_tensor(obj)
     if is_sklearn_estimator(obj):
         return serialize_sklearn_estimator(obj)
+    pydantic_value = serialize_pydantic(obj)
+    if pydantic_value is not _NO_PYDANTIC:
+        return pydantic_value
     stdlib_value = serialize_stdlib(obj)
     if stdlib_value is not None:
         return stdlib_value

@@ -169,8 +169,8 @@ def profile_csv(path: str, config: ProfileConfig) -> DatasetProfile:
     """
     Profile a CSV file and return a JSON-serializable dataset summary.
 
-    Note: we return a plain dict (via pydantic `model_dump`) so the Python bridge
-    can serialize it without requiring a custom codec.
+    Note: we return a Pydantic model; the tywrap Python bridge detects `model_dump`
+    and serializes it to a JSON-friendly dict for transport to TypeScript.
     """
 
     cfg = ProfileConfig.model_validate(config)
@@ -257,7 +257,7 @@ def profile_csv(path: str, config: ProfileConfig) -> DatasetProfile:
         profiles=profiles,
         correlations=correlations,
     )
-    return profile.model_dump(by_alias=True)
+    return profile
 
 
 def _value_counts_normalized(series: pd.Series, *, top_k: int) -> tuple[dict[str, float], list[ValueCount]]:
@@ -339,7 +339,7 @@ def drift_report(
         numeric=numeric,
         categorical=categorical,
     )
-    return report.model_dump(by_alias=True)
+    return report
 
 
 def top_users_by_spend(path: str, top_n: int = 10) -> pd.DataFrame:
@@ -347,6 +347,9 @@ def top_users_by_spend(path: str, top_n: int = 10) -> pd.DataFrame:
     Return a small table of the top spenders in the dataset.
 
     This returns a DataFrame intentionally to exercise the pandas codec path.
+
+    Why: the synthetic dataset always includes spend columns, but in real usage people will
+    often swap in their own CSVs. Being defensive here avoids a confusing KeyError.
     """
 
     df = pd.read_csv(path)
@@ -359,4 +362,6 @@ def top_users_by_spend(path: str, top_n: int = 10) -> pd.DataFrame:
         "churned",
     ]
     cols = [c for c in cols if c in df.columns]
+    if "spend_usd_last_7d" not in df.columns:
+        return df[cols].head(top_n)
     return df[cols].sort_values("spend_usd_last_7d", ascending=False).head(top_n)

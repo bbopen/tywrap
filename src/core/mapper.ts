@@ -358,10 +358,13 @@ export class TypeMapper {
       return { name: type.name, module: type.module, rawName };
     }
     if (rawName.includes('.')) {
-      const parts = rawName.split('.');
+      const parts = rawName.split('.').filter(part => part.length > 0);
+      if (parts.length === 0) {
+        return { name: rawName, module: undefined, rawName };
+      }
       return {
         name: parts[parts.length - 1] ?? rawName,
-        module: parts.slice(0, -1).join('.'),
+        module: parts.length > 1 ? parts.slice(0, -1).join('.') : undefined,
         rawName,
       };
     }

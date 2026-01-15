@@ -1,8 +1,7 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { mkdtempSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 import { NodeBridge } from 'tywrap/node';
@@ -50,7 +49,19 @@ function resolveCodecMode(argv: readonly string[]): CodecMode {
  */
 async function enableArrowDecoder(): Promise<void> {
   const require = createRequire(import.meta.url);
-  const arrow = require('apache-arrow') as unknown as {
+  let arrowModule: unknown;
+  try {
+    arrowModule = require('apache-arrow');
+  } catch (err) {
+    const code = (err as { code?: unknown }).code;
+    if (code === 'MODULE_NOT_FOUND') {
+      throw new Error(
+        "Arrow mode requires the optional dependency 'apache-arrow'. Install it with `npm install apache-arrow`."
+      );
+    }
+    throw err;
+  }
+  const arrow = arrowModule as {
     tableFromIPC?: (bytes: Uint8Array) => { toArray?: () => unknown[] };
   };
   if (typeof arrow.tableFromIPC !== 'function') {
@@ -128,13 +139,6 @@ async function main(): Promise<void> {
     }
   }
 
-  const tmp = mkdtempSync(join(tmpdir(), 'tywrap-living-app-'));
-  const baselinePath = join(tmp, 'baseline.csv');
-  const currentPath = join(tmp, 'current.csv');
-
-  const baseline = await writeSyntheticEventsCsv(baselinePath, 750, 1, 0.0);
-  const current = await writeSyntheticEventsCsv(currentPath, 750, 1, 0.25);
-
   const profileConfig: ProfileConfig = {
     topK: 5,
     sampleRows: 1000,
@@ -149,7 +153,15 @@ async function main(): Promise<void> {
     topK: 5,
   };
 
+  let tmp: string | undefined;
   try {
+    tmp = mkdtempSync(join(tmpdir(), 'tywrap-living-app-'));
+    const baselinePath = join(tmp, 'baseline.csv');
+    const currentPath = join(tmp, 'current.csv');
+
+    const baseline = await writeSyntheticEventsCsv(baselinePath, 750, 1, 0.0);
+    const current = await writeSyntheticEventsCsv(currentPath, 750, 1, 0.25);
+
     const baselineProfile = await profileCsv(baseline, profileConfig);
     const currentProfile = await profileCsv(current, profileConfig);
     const drift = await driftReport(baseline, current, driftConfig);
@@ -170,6 +182,14 @@ async function main(): Promise<void> {
       )
     );
   } finally {
+    // Why: mkdtempSync creates real filesystem state; cleanup keeps local runs and CI tidy.
+    if (tmp) {
+      try {
+        rmSync(tmp, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
     await bridge.dispose();
     // Why: registerArrowDecoder is global process state; clear it so other examples/tests don't
     // inherit Arrow decoding unexpectedly.
