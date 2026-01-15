@@ -2,6 +2,7 @@
 import sys
 import json
 import importlib
+import importlib.util
 import os
 import traceback
 import base64
@@ -89,6 +90,19 @@ def arrow_available():
     except Exception:
         return False
     return True
+
+
+def module_available(module_name: str) -> bool:
+    """
+    Lightweight feature detection for optional codec dependencies.
+
+    Why: exposes availability in bridge metadata without importing heavy modules or triggering
+    side effects, so the TS side can decide when to rely on optional codecs.
+    """
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:
+        return False
 
 
 def is_numpy_array(obj):
@@ -555,6 +569,9 @@ def handle_meta():
         'pid': os.getpid(),
         'codecFallback': 'json' if FALLBACK_JSON else 'none',
         'arrowAvailable': arrow_available(),
+        'scipyAvailable': module_available('scipy.sparse'),
+        'torchAvailable': module_available('torch'),
+        'sklearnAvailable': module_available('sklearn.base'),
         'instances': len(instances),
     }
 
