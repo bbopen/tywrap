@@ -5,8 +5,9 @@
  * with basic validation of known options.
  */
 
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, extname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -258,27 +259,68 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
   if (ext === '.ts' || ext === '.mts' || ext === '.cts') {
     const ts = await import('typescript');
     const source = await safeReadFileAsync(resolved);
+    // Why: many configs want to `import { defineConfig } from 'tywrap'`. The tywrap package is ESM,
+    // so evaluating a transpiled CommonJS config would try `require('tywrap')` and fail. Treat
+    // `.ts`/`.mts` configs as ESM, and only treat `.cts` as CommonJS to match Node conventions.
+    const emitCommonJs = ext === '.cts';
     const output = ts.transpileModule(source, {
       compilerOptions: {
-        module: ts.ModuleKind.CommonJS,
+        module: emitCommonJs ? ts.ModuleKind.CommonJS : ts.ModuleKind.ES2020,
         target: ts.ScriptTarget.ES2020,
         esModuleInterop: true,
       },
       fileName: resolved,
     });
-    const require = createRequire(import.meta.url);
-    const nodeModule = require('module') as typeof import('module');
-    const moduleCtor = nodeModule.Module as unknown as typeof import('module').Module & {
-      _nodeModulePaths: (path: string) => string[];
-    };
-    const mod = new moduleCtor(resolved) as import('module').Module & {
-      _compile: (code: string, filename: string) => void;
-    };
-    mod.filename = resolved;
-    mod.paths = moduleCtor._nodeModulePaths(dirname(resolved));
-    mod._compile(output.outputText, resolved);
-    const loaded = (mod.exports as Record<string, unknown>).default ?? mod.exports;
-    return ensureConfigObject(loaded ?? {}, resolved);
+
+    if (emitCommonJs) {
+      // Why: `.cts` is explicitly CommonJS. We evaluate the transpiled output in-memory using
+      // Node's Module internals (`Module._compile` / `_nodeModulePaths`) to avoid writing an extra
+      // temp file. These are private Node APIs, so we keep this tooling path scoped and rely on
+      // supported Node versions (see package.json engines).
+      const require = createRequire(import.meta.url);
+      const nodeModule = require('module') as typeof import('module');
+      const moduleCtor = nodeModule.Module as unknown as typeof import('module').Module & {
+        _nodeModulePaths?: (path: string) => string[];
+      };
+      if (typeof moduleCtor !== 'function') {
+        throw new Error(
+          '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node Module constructor'
+        );
+      }
+      const nodeModulePaths = moduleCtor._nodeModulePaths;
+      if (typeof nodeModulePaths !== 'function') {
+        throw new Error(
+          '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node private API Module._nodeModulePaths'
+        );
+      }
+      const mod = new moduleCtor(resolved) as import('module').Module & {
+        _compile?: (code: string, filename: string) => void;
+      };
+      const compile = mod._compile;
+      if (typeof compile !== 'function') {
+        throw new Error(
+          '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node private API Module._compile'
+        );
+      }
+      mod.filename = resolved;
+      mod.paths = nodeModulePaths(dirname(resolved));
+      compile.call(mod, output.outputText, resolved);
+      const loaded = (mod.exports as Record<string, unknown>).default ?? mod.exports;
+      return ensureConfigObject(loaded ?? {}, resolved);
+    }
+
+    // Why: Node can't import ESM from a string without a custom loader. We write the transpiled
+    // output to a temporary `.mjs` file next to the source config so relative imports and Node
+    // resolution behave naturally, then clean it up immediately after loading.
+    const tmpPath = resolve(dirname(resolved), `.tywrap.config.${randomUUID()}.mjs`);
+    try {
+      await writeFile(tmpPath, output.outputText, 'utf-8');
+      const mod = (await import(pathToFileURL(tmpPath).href)) as Record<string, unknown>;
+      const loaded = mod.default ?? mod;
+      return ensureConfigObject(loaded ?? {}, resolved);
+    } finally {
+      await rm(tmpPath, { force: true });
+    }
   }
 
   throw new Error(`Unsupported configuration file extension: ${ext}`);

@@ -108,6 +108,39 @@ jobs:
       - name: Run suite data
         run: python test/python/library_integration.py --suite data
 
+  living-app:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Node dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: Create living-app virtualenv
+        run: |
+          python -m venv examples/living-app/.venv
+          ./examples/living-app/.venv/bin/python -m pip install -U pip
+      - name: Install tywrap_ir + living-app Python dependencies
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: '1'
+          PIP_PROGRESS_BAR: 'off'
+        run: |
+          ./examples/living-app/.venv/bin/python -m pip install -e tywrap_ir
+          # Why: the living app defaults to Arrow mode; install pyarrow so CI exercises Arrow transport.
+          ./examples/living-app/.venv/bin/python -m pip install -r examples/living-app/requirements-arrow.txt
+      - name: Run living-app smoke test
+        run: npm run example:living-app:smoke
+      - name: Run living-app JSON mode smoke test
+        run: npm run example:living-app:run:json
+
   python-suite-full:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
