@@ -103,7 +103,8 @@ def module_available(module_name: str) -> bool:
     Lightweight feature detection for optional codec dependencies.
 
     Why: exposes availability in bridge metadata without importing heavy modules or triggering
-    side effects, so the TS side can decide when to rely on optional codecs.
+    side effects, so the TS side can decide when to rely on optional codecs. These flags are
+    best-effort hints; serialization still performs its own import checks for correctness.
     """
     try:
         return importlib.util.find_spec(module_name) is not None

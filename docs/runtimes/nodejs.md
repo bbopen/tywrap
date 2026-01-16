@@ -176,18 +176,20 @@ pip install pyarrow
 npm install apache-arrow
 ```
 
+Auto path (when apache-arrow is installed):
+
 ```typescript
 import { autoRegisterArrowDecoder } from 'tywrap';
 
-// Auto registration: NodeBridge does this when apache-arrow is installed.
 await autoRegisterArrowDecoder();
 ```
+
+Manual path (customize decoding outside NodeBridge):
 
 ```typescript
 import { registerArrowDecoder } from 'tywrap';
 import { tableFromIPC } from 'apache-arrow';
 
-// Manual registration: customize decoding outside NodeBridge.
 registerArrowDecoder(bytes => tableFromIPC(bytes));
 ```
 

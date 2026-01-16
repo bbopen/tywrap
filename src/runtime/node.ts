@@ -276,7 +276,7 @@ export class NodeBridge extends RuntimeBridge {
     try {
       const require = createRequire(import.meta.url);
       await autoRegisterArrowDecoder({
-        loader: async () => require('apache-arrow'),
+        loader: () => require('apache-arrow'),
       });
       const { spawn } = await import('child_process');
       const allowedPrefixes = ['TYWRAP_'];

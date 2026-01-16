@@ -128,6 +128,8 @@ export function hasArrowDecoder(): boolean {
   return typeof arrowTableFrom === 'function';
 }
 
+type ArrowModuleLoader = () => unknown | Promise<unknown>;
+
 /**
  * Detect Node.js runtime capabilities without hard dependencies.
  *
@@ -161,15 +163,15 @@ function registerArrowDecoderFromModule(module: { tableFromIPC?: unknown }): voi
  * Arrow decoding when the module is present.
  */
 export async function autoRegisterArrowDecoder(
-  options: { loader?: () => Promise<unknown> } = {}
+  options: { loader?: ArrowModuleLoader } = {}
 ): Promise<boolean> {
   if (hasArrowDecoder()) {
     return true;
   }
-  const loader =
+  const loader: ArrowModuleLoader | undefined =
     options.loader ??
     (isNodeRuntime()
-      ? async (): Promise<unknown> => {
+      ? (async (): Promise<unknown> => {
           try {
             const nodeModule = await import('node:module');
             const require = nodeModule.createRequire(import.meta.url);
@@ -177,7 +179,7 @@ export async function autoRegisterArrowDecoder(
           } catch {
             return await import('apache-arrow');
           }
-        }
+        })
       : undefined);
   if (!loader) {
     return false;
