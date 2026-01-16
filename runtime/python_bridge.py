@@ -85,6 +85,12 @@ class ProtocolError(Exception):
 
 
 def arrow_available():
+    """
+    Return True when pyarrow can be imported.
+
+    Why: advertise Arrow capability to the TS side without crashing startup when
+    pyarrow is optional or missing.
+    """
     try:
         import pyarrow  # noqa: F401
     except Exception:
@@ -106,6 +112,11 @@ def module_available(module_name: str) -> bool:
 
 
 def is_numpy_array(obj):
+    """
+    Detect numpy arrays when NumPy is installed.
+
+    Why: keep NumPy optional while enabling ndarray serialization.
+    """
     try:
         import numpy as np  # noqa: F401
     except Exception:
@@ -114,6 +125,11 @@ def is_numpy_array(obj):
 
 
 def is_pandas_dataframe(obj):
+    """
+    Detect pandas DataFrame instances when pandas is installed.
+
+    Why: avoid hard pandas dependency while enabling dataframe encoding.
+    """
     try:
         import pandas as pd  # noqa: F401
     except Exception:
@@ -122,6 +138,11 @@ def is_pandas_dataframe(obj):
 
 
 def is_pandas_series(obj):
+    """
+    Detect pandas Series instances when pandas is installed.
+
+    Why: avoid hard pandas dependency while enabling series encoding.
+    """
     try:
         import pandas as pd  # noqa: F401
     except Exception:
@@ -130,6 +151,11 @@ def is_pandas_series(obj):
 
 
 def is_scipy_sparse(obj):
+    """
+    Detect scipy sparse matrices when scipy is installed.
+
+    Why: allow sparse matrix encoding without importing scipy in all environments.
+    """
     try:
         import scipy.sparse as sp  # noqa: F401
     except Exception:
@@ -141,6 +167,11 @@ def is_scipy_sparse(obj):
 
 
 def is_torch_tensor(obj):
+    """
+    Detect torch tensors when torch is installed.
+
+    Why: allow tensor encoding without a hard torch dependency.
+    """
     try:
         import torch  # noqa: F401
     except Exception:
@@ -152,6 +183,11 @@ def is_torch_tensor(obj):
 
 
 def is_sklearn_estimator(obj):
+    """
+    Detect sklearn estimators for metadata-only serialization.
+
+    Why: allow feature-gated estimator metadata without importing sklearn by default.
+    """
     try:
         from sklearn.base import BaseEstimator  # noqa: F401
     except Exception:

@@ -128,6 +128,11 @@ export function hasArrowDecoder(): boolean {
   return typeof arrowTableFrom === 'function';
 }
 
+/**
+ * Detect Node.js runtime capabilities without hard dependencies.
+ *
+ * Why: keep browser/bundler builds safe while still enabling Node-only paths.
+ */
 function isNodeRuntime(): boolean {
   return (
     typeof process !== 'undefined' &&
@@ -135,6 +140,12 @@ function isNodeRuntime(): boolean {
   );
 }
 
+/**
+ * Validate the Arrow module shape and register its IPC decoder.
+ *
+ * Why: centralize tableFromIPC checks so callers get consistent errors and can
+ * rely on a single registration path.
+ */
 function registerArrowDecoderFromModule(module: { tableFromIPC?: unknown }): void {
   const tableFromIPC = module.tableFromIPC;
   if (typeof tableFromIPC !== 'function') {
@@ -143,6 +154,12 @@ function registerArrowDecoderFromModule(module: { tableFromIPC?: unknown }): voi
   registerArrowDecoder((bytes: Uint8Array) => tableFromIPC(bytes));
 }
 
+/**
+ * Attempt to lazily register an Arrow decoder at runtime.
+ *
+ * Why: keep apache-arrow optional while letting NodeBridge (or callers) enable
+ * Arrow decoding when the module is present.
+ */
 export async function autoRegisterArrowDecoder(
   options: { loader?: () => Promise<unknown> } = {}
 ): Promise<boolean> {
@@ -152,7 +169,7 @@ export async function autoRegisterArrowDecoder(
   const loader =
     options.loader ??
     (isNodeRuntime()
-      ? async () => {
+      ? async (): Promise<unknown> => {
           try {
             const nodeModule = await import('node:module');
             const require = nodeModule.createRequire(import.meta.url);

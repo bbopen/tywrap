@@ -81,6 +81,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       const registered = await autoRegisterArrowDecoder({ loader });
 
       expect(registered).toBe(false);
+      expect(hasArrowDecoder()).toBe(false);
     });
 
     it('should return false when loader throws', async () => {
@@ -89,6 +90,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       const registered = await autoRegisterArrowDecoder({ loader });
 
       expect(registered).toBe(false);
+      expect(hasArrowDecoder()).toBe(false);
     });
 
     it('should initially have no Arrow decoder', () => {

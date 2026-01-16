@@ -189,7 +189,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
 
     const require = createRequire(import.meta.url);
     await autoRegisterArrowDecoder({
-      loader: async () => require('apache-arrow'),
+      loader: () => require('apache-arrow'),
     });
 
     // Ensure minimum processes are available
