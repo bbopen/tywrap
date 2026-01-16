@@ -92,8 +92,8 @@ def arrow_available():
     pyarrow is optional or missing.
     """
     try:
-        import pyarrow  # noqa: F401
-    except Exception:
+        import pyarrow
+    except (ImportError, OSError):
         return False
     return True
 
@@ -107,7 +107,8 @@ def module_available(module_name: str) -> bool:
     """
     try:
         return importlib.util.find_spec(module_name) is not None
-    except Exception:
+    except (ImportError, AttributeError, TypeError, ValueError):
+        # Why: guard against unusual importlib edge cases without masking other failures.
         return False
 
 
@@ -597,6 +598,11 @@ def handle_dispose_instance(params):
 
 
 def handle_meta():
+    """
+    Return bridge metadata for capability detection.
+
+    Why: the Node side uses this to decide whether optional codecs can be used.
+    """
     return {
         'protocol': PROTOCOL,
         'protocolVersion': PROTOCOL_VERSION,
@@ -605,9 +611,9 @@ def handle_meta():
         'pid': os.getpid(),
         'codecFallback': 'json' if FALLBACK_JSON else 'none',
         'arrowAvailable': arrow_available(),
-        'scipyAvailable': module_available('scipy.sparse'),
+        'scipyAvailable': module_available('scipy'),
         'torchAvailable': module_available('torch'),
-        'sklearnAvailable': module_available('sklearn.base'),
+        'sklearnAvailable': module_available('sklearn'),
         'instances': len(instances),
     }
 
