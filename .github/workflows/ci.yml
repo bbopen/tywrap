@@ -159,7 +159,12 @@ jobs:
         run: python test/python/library_integration.py --suite all
 
   codec-suite:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'area:codec'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
