@@ -96,3 +96,113 @@ def crash_process(exit_code: int = 1) -> None:
     Why: simulate hard crashes so the bridge can surface process exits cleanly.
     """
     os._exit(int(exit_code))
+
+
+def return_bad_codec_version() -> dict[str, Any]:
+    """Return an envelope with an unsupported codec version.
+
+    Why: ensure the JS decoder rejects incompatible envelopes.
+    """
+    return {
+        "__tywrap__": "dataframe",
+        "codecVersion": 999,
+        "encoding": "json",
+        "data": [],
+    }
+
+
+def return_bad_encoding() -> dict[str, Any]:
+    """Return an envelope with an unsupported encoding.
+
+    Why: validate decoder errors when encodings are unknown.
+    """
+    return {
+        "__tywrap__": "dataframe",
+        "codecVersion": 1,
+        "encoding": "xml",
+        "data": [],
+    }
+
+
+def return_missing_b64() -> dict[str, Any]:
+    """Return an Arrow envelope without a b64 payload.
+
+    Why: ensure missing required fields are rejected.
+    """
+    return {
+        "__tywrap__": "dataframe",
+        "codecVersion": 1,
+        "encoding": "arrow",
+    }
+
+
+def return_missing_data() -> dict[str, Any]:
+    """Return a JSON envelope without data.
+
+    Why: ensure missing required fields are rejected.
+    """
+    return {
+        "__tywrap__": "ndarray",
+        "codecVersion": 1,
+        "encoding": "json",
+    }
+
+
+def return_invalid_sparse_format() -> dict[str, Any]:
+    """Return a sparse envelope with an unsupported format.
+
+    Why: validate SciPy sparse envelope guards.
+    """
+    return {
+        "__tywrap__": "scipy.sparse",
+        "codecVersion": 1,
+        "encoding": "json",
+        "format": "dok",
+        "shape": [1, 1],
+        "data": [],
+    }
+
+
+def return_invalid_sparse_shape() -> dict[str, Any]:
+    """Return a sparse envelope with an invalid shape.
+
+    Why: ensure shape validation rejects malformed payloads.
+    """
+    return {
+        "__tywrap__": "scipy.sparse",
+        "codecVersion": 1,
+        "encoding": "json",
+        "format": "csr",
+        "shape": [1],
+        "data": [],
+        "indices": [],
+        "indptr": [],
+    }
+
+
+def return_invalid_torch_value() -> dict[str, Any]:
+    """Return a torch envelope with an invalid nested value.
+
+    Why: ensure nested ndarray requirements are enforced.
+    """
+    return {
+        "__tywrap__": "torch.tensor",
+        "codecVersion": 1,
+        "encoding": "ndarray",
+        "value": {"not": "ndarray"},
+    }
+
+
+def return_invalid_sklearn_payload() -> dict[str, Any]:
+    """Return a sklearn envelope with invalid types.
+
+    Why: validate estimator payload checks (className/module/params).
+    """
+    return {
+        "__tywrap__": "sklearn.estimator",
+        "codecVersion": 1,
+        "encoding": "json",
+        "className": 123,
+        "module": "sklearn.linear_model",
+        "params": [],
+    }

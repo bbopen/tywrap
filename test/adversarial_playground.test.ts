@@ -12,6 +12,7 @@ const testTimeoutMs = shouldRun ? 15_000 : 5_000;
 
 const scriptPath = join(process.cwd(), 'runtime', 'python_bridge.py');
 const fixturesRoot = join(process.cwd(), 'test', 'fixtures', 'python');
+const fixturesDir = join(process.cwd(), 'test', 'fixtures');
 const moduleName = 'adversarial_module';
 
 const resolvePythonForTests = async (): Promise<string | null> => {
@@ -61,6 +62,26 @@ const createBridge = async (
   });
 };
 
+const createFixtureBridge = async (
+  scriptName: string,
+  options: { timeoutMs?: number; env?: Record<string, string | undefined> } = {}
+): Promise<NodeBridge | null> => {
+  const fixtureScript = join(fixturesDir, scriptName);
+  if (!existsSync(fixtureScript)) {
+    return null;
+  }
+  const pythonPath = await resolvePythonForTests();
+  if (!pythonAvailable(pythonPath)) {
+    return null;
+  }
+  return new NodeBridge({
+    scriptPath: fixtureScript,
+    pythonPath,
+    timeoutMs: options.timeoutMs ?? 2000,
+    env: options.env ?? {},
+  });
+};
+
 const callAdversarial = (bridge: NodeBridge, name: string, args: unknown[]) =>
   bridge.call(moduleName, name, args);
 
@@ -83,6 +104,35 @@ describeAdversarial('Adversarial playground', () => {
 
         const result = await callAdversarial(bridge, 'echo', ['still-alive']);
         expect(result).toBe('still-alive');
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it.fails(
+    'handles mixed concurrency with a timeout and a fast success',
+    async () => {
+      const bridge = await createBridge({ timeoutMs: 250 });
+      if (!bridge) return;
+
+      try {
+        const slow = callAdversarial(bridge, 'sleep_and_return', ['slow', 0.5]);
+        const fast = callAdversarial(bridge, 'echo', ['fast']);
+        const results = await Promise.allSettled([slow, fast]);
+
+        // Known limitation: the subprocess bridge is serial, so a slow call can
+        // starve subsequent calls and time them out.
+        expect(results[0].status).toBe('rejected');
+        expect(results[1].status).toBe('fulfilled');
+        if (results[1].status === 'fulfilled') {
+          expect(results[1].value).toBe('fast');
+        }
+
+        await delay(600);
+        const again = await callAdversarial(bridge, 'echo', ['after-timeout']);
+        expect(again).toBe('after-timeout');
       } finally {
         await bridge.dispose();
       }
@@ -251,4 +301,139 @@ describeAdversarial('Adversarial playground', () => {
     },
     testTimeoutMs
   );
+
+  describe('Decoder validation failures', () => {
+    const cases: Array<{ name: string; pattern: RegExp }> = [
+      {
+        name: 'return_bad_codec_version',
+        pattern: /Unsupported dataframe envelope codecVersion: 999/,
+      },
+      {
+        name: 'return_bad_encoding',
+        pattern: /Invalid dataframe envelope: unsupported encoding/,
+      },
+      {
+        name: 'return_missing_b64',
+        pattern: /Invalid dataframe envelope: missing b64/,
+      },
+      {
+        name: 'return_missing_data',
+        pattern: /Invalid ndarray envelope: missing data/,
+      },
+      {
+        name: 'return_invalid_sparse_format',
+        pattern: /Invalid scipy\.sparse envelope: unsupported format/,
+      },
+      {
+        name: 'return_invalid_sparse_shape',
+        pattern: /Invalid scipy\.sparse envelope: shape must be a 2-item number\[\]/,
+      },
+      {
+        name: 'return_invalid_torch_value',
+        pattern: /Invalid torch\.tensor envelope: value must be an ndarray envelope/,
+      },
+      {
+        name: 'return_invalid_sklearn_payload',
+        pattern: /Invalid sklearn\.estimator envelope/,
+      },
+    ];
+
+    for (const { name, pattern } of cases) {
+      it(
+        `rejects malformed envelope: ${name}`,
+        async () => {
+          const bridge = await createBridge();
+          if (!bridge) return;
+
+          try {
+            await expect(callAdversarial(bridge, name, [])).rejects.toThrow(pattern);
+          } finally {
+            await bridge.dispose();
+          }
+        },
+        testTimeoutMs
+      );
+    }
+  });
+
+  describe('Protocol contract violations', () => {
+    const fixtureCases: Array<{ script: string; pattern: RegExp }> = [
+      {
+        script: 'wrong_protocol_bridge.py',
+        pattern: /Invalid protocol/,
+      },
+      {
+        script: 'missing_id_bridge.py',
+        pattern: /Invalid response id/,
+      },
+      {
+        script: 'string_id_bridge.py',
+        pattern: /Invalid response id/,
+      },
+      {
+        script: 'unexpected_id_bridge.py',
+        pattern: /Unexpected response id/,
+      },
+      {
+        script: 'invalid_json_bridge.py',
+        pattern: /Invalid JSON/,
+      },
+      {
+        script: 'noisy_bridge.py',
+        pattern: /Protocol error from Python bridge/,
+      },
+    ];
+
+    for (const { script, pattern } of fixtureCases) {
+      it(
+        `surfaces protocol errors for ${script}`,
+        async () => {
+          const bridge = await createFixtureBridge(script);
+          if (!bridge) return;
+
+          try {
+            await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow(pattern);
+          } finally {
+            await bridge.dispose();
+          }
+        },
+        testTimeoutMs
+      );
+    }
+
+    it(
+      'handles fragmented JSON frames',
+      async () => {
+        const bridge = await createFixtureBridge('fragmented_bridge.py', { timeoutMs: 2000 });
+        if (!bridge) return;
+
+        try {
+          const result = await bridge.call('math', 'sqrt', [4]);
+          expect(result).toBe(42);
+        } finally {
+          await bridge.dispose();
+        }
+      },
+      testTimeoutMs
+    );
+
+    it(
+      'handles out-of-order responses',
+      async () => {
+        const bridge = await createFixtureBridge('out_of_order_bridge.py', { timeoutMs: 2000 });
+        if (!bridge) return;
+
+        try {
+          const results = await Promise.all([
+            bridge.call('math', 'sqrt', [4]),
+            bridge.call('math', 'sqrt', [9]),
+          ]);
+          expect(results).toEqual([1, 2]);
+        } finally {
+          await bridge.dispose();
+        }
+      },
+      testTimeoutMs
+    );
+  });
 });
