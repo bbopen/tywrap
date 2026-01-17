@@ -695,6 +695,11 @@ def main():
         out = None
         try:
             msg = json.loads(line)
+            if isinstance(msg, dict):
+                req_id = msg.get('id')
+                if isinstance(req_id, int):
+                    # Why: preserve request ids even when handlers raise.
+                    mid = req_id
             try:
                 mid, result = dispatch_request(msg)
                 out = { 'id': mid, 'protocol': PROTOCOL, 'result': result }
