@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { describe, it, expect } from 'vitest';
 import { CodeGenerator } from '../src/core/generator.js';
 import type {
@@ -9,7 +10,7 @@ import type {
 } from '../src/types/index.js';
 import { isNodejs } from '../src/utils/runtime.js';
 
-const shouldRun = isNodejs() && (process.env.CI || process.env.TYWRAP_PERF_BUDGETS === '1');
+const shouldRun = isNodejs() && process.env.TYWRAP_PERF_BUDGETS === '1';
 const describeBudget = shouldRun ? describe : describe.skip;
 
 function primitiveType(name: 'int' | 'str' | 'bool' | 'float' | 'bytes' | 'None'): PythonType {

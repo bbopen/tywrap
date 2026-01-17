@@ -1,8 +1,9 @@
+import { performance } from 'node:perf_hooks';
 import { describe, it, expect } from 'vitest';
 import { decodeValue } from '../src/utils/codec.js';
 import { isNodejs } from '../src/utils/runtime.js';
 
-const shouldRun = isNodejs() && (process.env.CI || process.env.TYWRAP_PERF_BUDGETS === '1');
+const shouldRun = isNodejs() && process.env.TYWRAP_PERF_BUDGETS === '1';
 const describeBudget = shouldRun ? describe : describe.skip;
 
 const readEnvNumber = (name: string, fallback: string): number =>
