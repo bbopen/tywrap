@@ -5,11 +5,21 @@ import { isNodejs } from '../src/utils/runtime.js';
 const shouldRun = isNodejs() && (process.env.CI || process.env.TYWRAP_PERF_BUDGETS === '1');
 const describeBudget = shouldRun ? describe : describe.skip;
 
+const readEnvNumber = (name: string, fallback: string): number =>
+  Number(process.env[name] ?? fallback);
+
+const runGc = (): void => {
+  if (global.gc) {
+    global.gc();
+  }
+};
+
 describeBudget('Codec performance budgets', () => {
   it('decodes representative envelopes within time/memory budgets', () => {
-    const iterations = Number(process.env.TYWRAP_CODEC_PERF_ITERATIONS ?? '200');
-    const timeBudgetMs = Number(process.env.TYWRAP_CODEC_PERF_TIME_BUDGET_MS ?? '500');
-    const memoryBudgetMb = Number(process.env.TYWRAP_CODEC_PERF_MEMORY_BUDGET_MB ?? '32');
+    const iterations = readEnvNumber('TYWRAP_CODEC_PERF_ITERATIONS', '200');
+    const timeBudgetMs = readEnvNumber('TYWRAP_CODEC_PERF_TIME_BUDGET_MS', '500');
+    const memoryBudgetMb = readEnvNumber('TYWRAP_CODEC_PERF_MEMORY_BUDGET_MB', '32');
+    const memoryBudgetBytes = memoryBudgetMb * 1024 * 1024;
 
     const sparseEnvelope = {
       __tywrap__: 'scipy.sparse',
@@ -54,9 +64,7 @@ describeBudget('Codec performance budgets', () => {
       },
     } as const;
 
-    if (global.gc) {
-      global.gc();
-    }
+    runGc();
     const startMem = process.memoryUsage().heapUsed;
     const start = performance.now();
 
@@ -67,13 +75,11 @@ describeBudget('Codec performance budgets', () => {
     }
 
     const duration = performance.now() - start;
-    if (global.gc) {
-      global.gc();
-    }
+    runGc();
     const endMem = process.memoryUsage().heapUsed;
     const deltaMem = endMem - startMem;
 
     expect(duration).toBeLessThan(timeBudgetMs);
-    expect(deltaMem).toBeLessThan(memoryBudgetMb * 1024 * 1024);
+    expect(deltaMem).toBeLessThan(memoryBudgetBytes);
   });
 });
