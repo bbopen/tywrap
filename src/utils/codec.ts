@@ -128,6 +128,71 @@ export function hasArrowDecoder(): boolean {
   return typeof arrowTableFrom === 'function';
 }
 
+type ArrowModuleLoader = () => unknown | Promise<unknown>;
+
+/**
+ * Detect Node.js runtime capabilities without hard dependencies.
+ *
+ * Why: keep browser/bundler builds safe while still enabling Node-only paths.
+ */
+function isNodeRuntime(): boolean {
+  return (
+    typeof process !== 'undefined' &&
+    typeof (process as { versions?: { node?: string } }).versions?.node === 'string'
+  );
+}
+
+/**
+ * Validate the Arrow module shape and register its IPC decoder.
+ *
+ * Why: centralize tableFromIPC checks so callers get consistent errors and can
+ * rely on a single registration path.
+ */
+function registerArrowDecoderFromModule(module: { tableFromIPC?: unknown }): void {
+  const tableFromIPC = module.tableFromIPC;
+  if (typeof tableFromIPC !== 'function') {
+    throw new Error('apache-arrow does not export tableFromIPC');
+  }
+  registerArrowDecoder((bytes: Uint8Array) => tableFromIPC(bytes));
+}
+
+/**
+ * Attempt to lazily register an Arrow decoder at runtime.
+ *
+ * Why: keep apache-arrow optional while letting NodeBridge (or callers) enable
+ * Arrow decoding when the module is present.
+ */
+export async function autoRegisterArrowDecoder(
+  options: { loader?: ArrowModuleLoader } = {}
+): Promise<boolean> {
+  if (hasArrowDecoder()) {
+    return true;
+  }
+  const loader: ArrowModuleLoader | undefined =
+    options.loader ??
+    (isNodeRuntime()
+      ? (async (): Promise<unknown> => {
+          try {
+            const nodeModule = await import('node:module');
+            const require = nodeModule.createRequire(import.meta.url);
+            return require('apache-arrow') as unknown;
+          } catch {
+            return await import('apache-arrow');
+          }
+        })
+      : undefined);
+  if (!loader) {
+    return false;
+  }
+  try {
+    const arrowModule = await loader();
+    registerArrowDecoderFromModule(arrowModule as { tableFromIPC?: unknown });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isObject(value: unknown): value is { [k: string]: unknown } {
   return typeof value === 'object' && value !== null;
 }

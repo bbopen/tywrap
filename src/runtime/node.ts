@@ -5,8 +5,9 @@
 import { existsSync } from 'node:fs';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
-import { decodeValueAsync } from '../utils/codec.js';
+import { autoRegisterArrowDecoder, decodeValueAsync } from '../utils/codec.js';
 import { getDefaultPythonPath } from '../utils/python.js';
 import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 import type { BridgeInfo } from '../types/index.js';
@@ -273,6 +274,10 @@ export class NodeBridge extends RuntimeBridge {
 
   private async startProcess(): Promise<void> {
     try {
+      const require = createRequire(import.meta.url);
+      await autoRegisterArrowDecoder({
+        loader: () => require('apache-arrow'),
+      });
       const { spawn } = await import('child_process');
       const allowedPrefixes = ['TYWRAP_'];
       const allowedKeys = new Set(['PATH', 'PYTHONPATH', 'VIRTUAL_ENV', 'PYTHONHOME']);

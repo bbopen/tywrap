@@ -137,13 +137,24 @@ interface HttpBridgeOptions {
 ## Codec Utilities
 
 ```ts
-import { decodeValue, decodeValueAsync, registerArrowDecoder, clearArrowDecoder } from 'tywrap';
+import {
+  decodeValue,
+  decodeValueAsync,
+  autoRegisterArrowDecoder,
+  registerArrowDecoder,
+  clearArrowDecoder,
+} from 'tywrap';
 
-registerArrowDecoder(bytes => bytes);
+// NodeBridge auto-registers when apache-arrow is installed.
+// If you're decoding outside the bridge, call autoRegisterArrowDecoder() or register manually:
+const arrowReady = await autoRegisterArrowDecoder();
+// if (!arrowReady) throw new Error('Install apache-arrow or enable JSON fallback');
+// registerArrowDecoder(bytes => bytes);
+
 const value = await decodeValueAsync(pythonValue);
 ```
 
-Arrow-encoded payloads throw unless you register a decoder or enable JSON fallback on the Python bridge.
+Arrow-encoded payloads throw unless a decoder is registered or JSON fallback is enabled on the Python bridge.
 
 ## Error Types
 
