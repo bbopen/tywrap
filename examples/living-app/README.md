@@ -4,7 +4,7 @@ This is a small but non-trivial “living example” that exercises tywrap end-t
 
 - TypeScript (Node) calls into Python via `NodeBridge`
 - Python uses `pandas` + `numpy` for data work and `pydantic` for config validation
-- Rich results (e.g. `pandas.DataFrame`) come back via Arrow IPC and are decoded in Node with `apache-arrow`
+- Rich results (e.g. `pandas.DataFrame`) come back via Arrow IPC and are decoded in Node with `apache-arrow` (auto-registered by `NodeBridge`)
 
 ## What it does
 

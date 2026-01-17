@@ -176,18 +176,21 @@ pip install pyarrow
 npm install apache-arrow
 ```
 
+Auto path (when apache-arrow is installed):
+
 ```typescript
-import { createRequire } from 'node:module';
+import { autoRegisterArrowDecoder } from 'tywrap';
+
+await autoRegisterArrowDecoder();
+```
+
+Manual path (customize decoding outside NodeBridge):
+
+```typescript
 import { registerArrowDecoder } from 'tywrap';
+import { tableFromIPC } from 'apache-arrow';
 
-// Register Arrow decoder for optimal performance
-const require = createRequire(import.meta.url);
-const { tableFromIPC } = require('apache-arrow');
 registerArrowDecoder(bytes => tableFromIPC(bytes));
-
-// If you don't register a decoder, Arrow-encoded payloads will throw.
-// To accept raw bytes, register a passthrough decoder:
-// registerArrowDecoder(bytes => bytes);
 ```
 
 ### JSON Fallback

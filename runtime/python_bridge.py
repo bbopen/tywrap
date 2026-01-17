@@ -2,6 +2,7 @@
 import sys
 import json
 import importlib
+import importlib.util
 import os
 import traceback
 import base64
@@ -84,14 +85,40 @@ class ProtocolError(Exception):
 
 
 def arrow_available():
+    """
+    Return True when pyarrow can be imported.
+
+    Why: advertise Arrow capability to the TS side without crashing startup when
+    pyarrow is optional or missing.
+    """
     try:
-        import pyarrow  # noqa: F401
-    except Exception:
+        import pyarrow
+    except (ImportError, OSError):
         return False
     return True
 
 
+def module_available(module_name: str) -> bool:
+    """
+    Lightweight feature detection for optional codec dependencies.
+
+    Why: exposes availability in bridge metadata without importing heavy modules or triggering
+    side effects, so the TS side can decide when to rely on optional codecs. These flags are
+    best-effort hints; serialization still performs its own import checks for correctness.
+    """
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, AttributeError, TypeError, ValueError):
+        # Why: guard against unusual importlib edge cases without masking other failures.
+        return False
+
+
 def is_numpy_array(obj):
+    """
+    Detect numpy arrays when NumPy is installed.
+
+    Why: keep NumPy optional while enabling ndarray serialization.
+    """
     try:
         import numpy as np  # noqa: F401
     except Exception:
@@ -100,6 +127,11 @@ def is_numpy_array(obj):
 
 
 def is_pandas_dataframe(obj):
+    """
+    Detect pandas DataFrame instances when pandas is installed.
+
+    Why: avoid hard pandas dependency while enabling dataframe encoding.
+    """
     try:
         import pandas as pd  # noqa: F401
     except Exception:
@@ -108,6 +140,11 @@ def is_pandas_dataframe(obj):
 
 
 def is_pandas_series(obj):
+    """
+    Detect pandas Series instances when pandas is installed.
+
+    Why: avoid hard pandas dependency while enabling series encoding.
+    """
     try:
         import pandas as pd  # noqa: F401
     except Exception:
@@ -116,6 +153,11 @@ def is_pandas_series(obj):
 
 
 def is_scipy_sparse(obj):
+    """
+    Detect scipy sparse matrices when scipy is installed.
+
+    Why: allow sparse matrix encoding without importing scipy in all environments.
+    """
     try:
         import scipy.sparse as sp  # noqa: F401
     except Exception:
@@ -127,6 +169,11 @@ def is_scipy_sparse(obj):
 
 
 def is_torch_tensor(obj):
+    """
+    Detect torch tensors when torch is installed.
+
+    Why: allow tensor encoding without a hard torch dependency.
+    """
     try:
         import torch  # noqa: F401
     except Exception:
@@ -138,6 +185,11 @@ def is_torch_tensor(obj):
 
 
 def is_sklearn_estimator(obj):
+    """
+    Detect sklearn estimators for metadata-only serialization.
+
+    Why: allow feature-gated estimator metadata without importing sklearn by default.
+    """
     try:
         from sklearn.base import BaseEstimator  # noqa: F401
     except Exception:
@@ -547,6 +599,11 @@ def handle_dispose_instance(params):
 
 
 def handle_meta():
+    """
+    Return bridge metadata for capability detection.
+
+    Why: the Node side uses this to decide whether optional codecs can be used.
+    """
     return {
         'protocol': PROTOCOL,
         'protocolVersion': PROTOCOL_VERSION,
@@ -555,6 +612,9 @@ def handle_meta():
         'pid': os.getpid(),
         'codecFallback': 'json' if FALLBACK_JSON else 'none',
         'arrowAvailable': arrow_available(),
+        'scipyAvailable': module_available('scipy'),
+        'torchAvailable': module_available('torch'),
+        'sklearnAvailable': module_available('sklearn'),
         'instances': len(instances),
     }
 

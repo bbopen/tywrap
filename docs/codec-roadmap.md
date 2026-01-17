@@ -14,6 +14,13 @@ This is a forward-looking plan for adding codecs beyond numpy/pandas. The focus 
 - Keep failures explicit unless a user opts into lossy fallbacks.
 - Avoid heavy implicit conversions (CPU/GPU) without clear config.
 
+## DX Defaults (Decisions)
+
+- Arrow is the default for ndarray/dataframe/series. The JS runtime should auto-register an Arrow decoder when `apache-arrow` is installed so users do not have to wire it manually.
+- JSON fallback is opt-in only (via `TYWRAP_CODEC_FALLBACK=json`) and remains explicitly lossy for dtype/NA fidelity.
+- GPU handling stays explicit: no implicit `.cpu()` or contiguous copies. Opt-in copy/transfer remains available, and GPU-native transport is a follow-up track (DLPack/Arrow CUDA).
+- Large payloads should not be forced through single-line JSONL forever; add an artifact/chunked transport to keep responses reliable without silent truncation.
+
 ## Envelope Conventions
 
 All tywrap codec envelopes share:
@@ -28,6 +35,11 @@ The subprocess JSONL transport is not streaming: large results must fit in memor
 
 - Set `TYWRAP_CODEC_MAX_BYTES` (bytes, UTF-8) to cap the maximum serialized response size emitted by the Python bridge.
   - If exceeded, the call fails with an explicit error instead of attempting a silent fallback.
+- Planned: add an artifact/chunked transport path for large payloads to avoid JSONL size ceilings.
+
+### Feature Detection
+
+Bridge metadata should surface optional codec availability to help the JS side decide when to rely on SciPy/Torch/Sklearn codecs.
 
 ## SciPy (sparse matrices)
 
@@ -93,6 +105,7 @@ Notes:
 - Default to CPU tensors; require opt-in for `.cpu()` conversion.
 - Reject non-contiguous tensors unless explicitly allowed.
 - Opt-in copy/transfer via `TYWRAP_TORCH_ALLOW_COPY=1`.
+- Future: GPU-native transport (DLPack/Arrow CUDA) to avoid implicit device transfers.
 
 ## Sklearn (models + outputs)
 
@@ -123,9 +136,7 @@ Notes:
 1. Define envelope specs and validation tests (round-trip + size limits).
 2. Implement Python bridge serialization with feature detection.
 3. Implement JS decoder + type mapping presets.
-4. Add performance gates and CI coverage for the new codecs.
-
-## Open Questions
-
-- GPU handling: do we allow implicit device transfers?
-- Max payload sizes: per-call limits vs global caps beyond `TYWRAP_CODEC_MAX_BYTES`?
+4. Make Arrow frictionless (auto-register decoder + living app on Arrow path).
+5. Add payload scaling via artifact/chunked transport (protocol versioned if needed).
+6. Improve scientific codec ergonomics (explicit GPU opt-in, SciPy format expansion, safe sklearn opt-ins).
+7. Add performance gates and CI coverage for the new codecs.

@@ -2,11 +2,9 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { createRequire } from 'node:module';
-
 import { NodeBridge } from 'tywrap/node';
 import { setRuntimeBridge } from 'tywrap/runtime';
-import { clearArrowDecoder, registerArrowDecoder } from 'tywrap';
+import { autoRegisterArrowDecoder, clearArrowDecoder } from 'tywrap';
 
 import {
   driftReport,
@@ -52,30 +50,14 @@ function resolveCodecMode(argv: readonly string[]): CodecMode {
  * Register an Arrow decoder for this Node process.
  *
  * Why: `apache-arrow` is an optional dependency and tywrap should run without it in JSON mode.
- * We use `require()` instead of ESM `import()` so Node/TypeScript resolve the package's "node"
- * export + typings correctly (the ESM export map can otherwise select the DOM build/types).
  */
 async function enableArrowDecoder(): Promise<void> {
-  const require = createRequire(import.meta.url);
-  let arrowModule: unknown;
-  try {
-    arrowModule = require('apache-arrow');
-  } catch (err) {
-    const code = (err as { code?: unknown }).code;
-    if (code === 'MODULE_NOT_FOUND') {
-      throw new Error(
-        "Arrow mode requires the optional dependency 'apache-arrow'. Install it with `npm install apache-arrow`."
-      );
-    }
-    throw err;
+  const registered = await autoRegisterArrowDecoder();
+  if (!registered) {
+    throw new Error(
+      "Arrow mode requires the optional dependency 'apache-arrow'. Install it with `npm install apache-arrow`."
+    );
   }
-  const arrow = arrowModule as {
-    tableFromIPC?: (bytes: Uint8Array) => { toArray?: () => unknown[] };
-  };
-  if (typeof arrow.tableFromIPC !== 'function') {
-    throw new Error('apache-arrow does not export tableFromIPC');
-  }
-  registerArrowDecoder((bytes: Uint8Array) => arrow.tableFromIPC!(bytes));
 }
 
 /**

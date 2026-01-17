@@ -69,6 +69,7 @@ export { detectRuntime, isNodejs, isDeno, isBun, isBrowser } from './utils/runti
 export {
   decodeValue,
   decodeValueAsync,
+  autoRegisterArrowDecoder,
   registerArrowDecoder,
   clearArrowDecoder,
 } from './utils/codec.js';

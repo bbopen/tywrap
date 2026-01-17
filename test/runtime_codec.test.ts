@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   decodeValueAsync,
   decodeValue,
+  autoRegisterArrowDecoder,
   registerArrowDecoder,
   clearArrowDecoder,
   hasArrowDecoder,
@@ -49,6 +50,47 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       registerArrowDecoder(mockDecoder);
 
       expect(hasArrowDecoder()).toBe(true);
+    });
+
+    it('should auto-register Arrow decoder from loader', async () => {
+      const tableFromIPC = vi.fn().mockReturnValue({ numRows: 1, numCols: 1 });
+      const loader = vi.fn().mockResolvedValue({ tableFromIPC });
+
+      const registered = await autoRegisterArrowDecoder({ loader });
+
+      expect(registered).toBe(true);
+      expect(loader).toHaveBeenCalled();
+      expect(hasArrowDecoder()).toBe(true);
+    });
+
+    it('should skip loader when decoder already registered', async () => {
+      registerArrowDecoder(bytes => bytes);
+      const loader = vi.fn().mockImplementation(() => {
+        throw new Error('loader should not be called');
+      });
+
+      const registered = await autoRegisterArrowDecoder({ loader });
+
+      expect(registered).toBe(true);
+      expect(loader).not.toHaveBeenCalled();
+    });
+
+    it('should return false when loader lacks tableFromIPC', async () => {
+      const loader = vi.fn().mockResolvedValue({});
+
+      const registered = await autoRegisterArrowDecoder({ loader });
+
+      expect(registered).toBe(false);
+      expect(hasArrowDecoder()).toBe(false);
+    });
+
+    it('should return false when loader throws', async () => {
+      const loader = vi.fn().mockRejectedValue(new Error('missing'));
+
+      const registered = await autoRegisterArrowDecoder({ loader });
+
+      expect(registered).toBe(false);
+      expect(hasArrowDecoder()).toBe(false);
     });
 
     it('should initially have no Arrow decoder', () => {

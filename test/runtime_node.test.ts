@@ -140,6 +140,9 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
         expect(info.protocol).toBe('tywrap/1');
         expect(info.protocolVersion).toBeGreaterThan(0);
         expect(info.pythonVersion).toMatch(/^\d+\.\d+\.\d+$/);
+        expect(typeof info.scipyAvailable).toBe('boolean');
+        expect(typeof info.torchAvailable).toBe('boolean');
+        expect(typeof info.sklearnAvailable).toBe('boolean');
 
         const before = info.instances;
         const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);

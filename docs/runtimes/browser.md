@@ -63,7 +63,7 @@ loading, rely on Pyodide directly.
 
 ## Data Transport
 
-Arrow envelopes are supported in the browser if you register an Arrow decoder:
+Arrow envelopes are supported in the browser if you register an Arrow decoder (Node auto-registers when `apache-arrow` is installed):
 
 ```ts
 import { registerArrowDecoder } from 'tywrap';
