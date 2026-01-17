@@ -161,6 +161,81 @@ describeAdversarial('Adversarial playground', () => {
   );
 
   it(
+    'treats stdout noise as a protocol error and recovers',
+    async () => {
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      try {
+        await expect(callAdversarial(bridge, 'print_to_stdout', ['noise'])).rejects.toThrow(
+          /Protocol error from Python bridge/
+        );
+        await delay(200);
+
+        const result = await callAdversarial(bridge, 'echo', ['recovered']);
+        expect(result).toBe('recovered');
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'allows stderr noise without breaking responses',
+    async () => {
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      try {
+        const result = await callAdversarial(bridge, 'write_to_stderr', ['note']);
+        expect(result).toBe('note');
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'surfaces Python exceptions with type and message',
+    async () => {
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      try {
+        await expect(callAdversarial(bridge, 'raise_error', ['boom'])).rejects.toThrow(
+          /ValueError: boom/
+        );
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'recovers after the Python process exits unexpectedly',
+    async () => {
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      try {
+        await expect(callAdversarial(bridge, 'crash_process', [1])).rejects.toThrow(
+          /Python process exited|Python process error/
+        );
+        await delay(200);
+
+        const result = await callAdversarial(bridge, 'echo', ['after-crash']);
+        expect(result).toBe('after-crash');
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
     'surfaces missing module imports as execution errors',
     async () => {
       const bridge = await createBridge();

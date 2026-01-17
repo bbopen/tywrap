@@ -6,6 +6,8 @@ and invalid payloads so the bridge can be hardened against real-world failures.
 
 from __future__ import annotations
 
+import os
+import sys
 import time
 from typing import Any
 
@@ -59,3 +61,38 @@ def return_nan_payload() -> list[float]:
     Why: exercise invalid JSON payloads that must be handled explicitly.
     """
     return [float("nan"), float("inf"), -float("inf")]
+
+
+def print_to_stdout(value: Any) -> Any:
+    """Print to stdout before returning the value.
+
+    Why: stdout noise should surface as a protocol error on the JS side.
+    """
+    print(value)
+    return value
+
+
+def write_to_stderr(value: Any) -> Any:
+    """Write to stderr before returning the value.
+
+    Why: stderr noise should not break protocol parsing.
+    """
+    sys.stderr.write(f"{value}\n")
+    sys.stderr.flush()
+    return value
+
+
+def raise_error(message: str) -> None:
+    """Raise a ValueError with a custom message.
+
+    Why: verify Python exceptions are surfaced with type and message.
+    """
+    raise ValueError(message)
+
+
+def crash_process(exit_code: int = 1) -> None:
+    """Exit the process immediately.
+
+    Why: simulate hard crashes so the bridge can surface process exits cleanly.
+    """
+    os._exit(int(exit_code))
