@@ -21,6 +21,7 @@ import {
   type RpcRequest,
   ensureJsonFallback,
   ensurePythonEncoding,
+  getMaxLineLengthFromEnv,
   getPathKey,
   normalizeEnv,
 } from './bridge-core.js';
@@ -38,6 +39,7 @@ interface ProcessPoolOptions {
   virtualEnv?: string | undefined;
   cwd?: string;
   timeoutMs?: number;
+  maxLineLength?: number;
   enableJsonFallback?: boolean;
   enableCache?: boolean;
   env?: Record<string, string | undefined>;
@@ -148,6 +150,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       virtualEnv,
       cwd,
       timeoutMs: options.timeoutMs ?? 30000,
+      maxLineLength: options.maxLineLength,
       enableJsonFallback: options.enableJsonFallback ?? false,
       enableCache: options.enableCache ?? false,
       env: options.env ?? {},
@@ -194,6 +197,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       const cached = await globalCache.get<T>(cacheKey);
       if (cached !== null) {
         this.stats.cacheHits++;
+        this.updateStats(performance.now() - startTime);
         // Runtime cache HIT for ${module}.${functionName}
         return cached;
       }
@@ -417,6 +421,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     ensureJsonFallback(env, this.options.enableJsonFallback);
 
     env = normalizeEnv(env, {});
+    const maxLineLength = this.options.maxLineLength ?? getMaxLineLengthFromEnv(env);
 
     const childProcess = spawn(this.options.pythonPath, [this.options.scriptPath], {
       cwd: this.options.cwd,
@@ -451,6 +456,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       },
       {
         timeoutMs: this.options.timeoutMs,
+        maxLineLength,
         decodeValue: decodeValueAsync,
         onFatalError: (error: Error): void => this.quarantineWorker(worker, error),
         onTimeout: (error: Error): void => this.quarantineWorker(worker, error),

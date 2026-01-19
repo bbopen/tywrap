@@ -19,6 +19,7 @@ import {
   type RpcRequest,
   ensureJsonFallback,
   ensurePythonEncoding,
+  getMaxLineLengthFromEnv,
   getPathKey,
   normalizeEnv,
   validateBridgeInfo,
@@ -30,6 +31,8 @@ export interface NodeBridgeOptions {
   virtualEnv?: string;
   cwd?: string;
   timeoutMs?: number;
+  maxLineLength?: number;
+  inheritProcessEnv?: boolean;
   /**
    * When true, sets TYWRAP_CODEC_FALLBACK=json for the Python process to prefer JSON encoding
    * for rich types (ndarray/dataframe/series). Default: false for fast-fail on Arrow path issues.
@@ -47,6 +50,8 @@ interface ResolvedNodeBridgeOptions {
   virtualEnv?: string;
   cwd: string;
   timeoutMs: number;
+  maxLineLength?: number;
+  inheritProcessEnv: boolean;
   enableJsonFallback: boolean;
   env: Record<string, string | undefined>;
 }
@@ -94,6 +99,8 @@ export class NodeBridge extends RuntimeBridge {
       virtualEnv,
       cwd,
       timeoutMs: options.timeoutMs ?? 30000,
+      maxLineLength: options.maxLineLength,
+      inheritProcessEnv: options.inheritProcessEnv ?? false,
       enableJsonFallback: options.enableJsonFallback ?? false,
       env: options.env ?? {},
     };
@@ -188,6 +195,7 @@ export class NodeBridge extends RuntimeBridge {
       const { spawn } = await import('child_process');
 
       const env = this.buildEnv();
+      const maxLineLength = this.options.maxLineLength ?? getMaxLineLengthFromEnv(env);
 
       let child: ReturnType<typeof spawn>;
       try {
@@ -220,6 +228,7 @@ export class NodeBridge extends RuntimeBridge {
         },
         {
           timeoutMs: this.options.timeoutMs,
+          maxLineLength,
           decodeValue: decodeValueAsync,
           onFatalError: (): void => this.resetProcess(),
         }
@@ -253,13 +262,20 @@ export class NodeBridge extends RuntimeBridge {
     const allowedPrefixes = ['TYWRAP_'];
     const allowedKeys = new Set(['path', 'pythonpath', 'virtual_env', 'pythonhome']);
     const baseEnv: Record<string, string | undefined> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (
-        allowedKeys.has(key.toLowerCase()) ||
-        allowedPrefixes.some(prefix => key.startsWith(prefix))
-      ) {
+    if (this.options.inheritProcessEnv) {
+      for (const [key, value] of Object.entries(process.env)) {
         // eslint-disable-next-line security/detect-object-injection -- env keys are dynamic by design
         baseEnv[key] = value;
+      }
+    } else {
+      for (const [key, value] of Object.entries(process.env)) {
+        if (
+          allowedKeys.has(key.toLowerCase()) ||
+          allowedPrefixes.some(prefix => key.startsWith(prefix))
+        ) {
+          // eslint-disable-next-line security/detect-object-injection -- env keys are dynamic by design
+          baseEnv[key] = value;
+        }
       }
     }
 

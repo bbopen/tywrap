@@ -90,6 +90,8 @@ interface NodeBridgeOptions {
   virtualEnv?: string;
   cwd?: string;
   timeoutMs?: number;
+  maxLineLength?: number;
+  inheritProcessEnv?: boolean;
   enableJsonFallback?: boolean;
   env?: Record<string, string | undefined>;
 }

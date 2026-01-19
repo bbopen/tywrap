@@ -455,9 +455,7 @@ describeNodeOnly('OptimizedNodeBridge - Functional Tests', () => {
 
       const before = bridge.getStats();
 
-      await expect(
-        bridge.call('adversarial_module', 'crash_process', [1])
-      ).rejects.toThrow();
+      await expect(bridge.call('adversarial_module', 'crash_process', [1])).rejects.toThrow();
 
       await waitFor(() => bridge.getStats().processDeaths > before.processDeaths, {
         timeoutMs: 3000,

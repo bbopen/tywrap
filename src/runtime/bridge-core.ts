@@ -353,6 +353,18 @@ export function ensureJsonFallback(env: NodeJS.ProcessEnv, enabled: boolean): vo
   }
 }
 
+export function getMaxLineLengthFromEnv(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env.TYWRAP_CODEC_MAX_BYTES?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return parsed;
+}
+
 export function normalizeEnv(
   baseEnv: Record<string, string | undefined>,
   overrides: Record<string, string | undefined>

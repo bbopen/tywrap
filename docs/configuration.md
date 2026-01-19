@@ -299,6 +299,8 @@ export TYWRAP_CODEC_MAX_BYTES="10485760"  # Max response payload size (bytes)
 export TYWRAP_REQUEST_MAX_BYTES="1048576"  # Max request payload size (bytes)
 export TYWRAP_TORCH_ALLOW_COPY="1"
 
+# Note: NodeBridge uses TYWRAP_CODEC_MAX_BYTES as the default maxLineLength when set.
+
 # Performance tuning
 export TYWRAP_CACHE_DIR="./.tywrap/cache"
 export TYWRAP_MEMORY_LIMIT="1024"

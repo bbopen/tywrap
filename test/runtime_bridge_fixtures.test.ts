@@ -61,7 +61,7 @@ describeNodeOnly('Bridge fixture parity', () => {
       const scriptPath = join(process.cwd(), 'test', 'fixtures', fixture.script);
       if (!existsSync(scriptPath)) return;
 
-      nodeBridge = new NodeBridge({ scriptPath, timeoutMs: 2000 });
+      nodeBridge = new NodeBridge({ scriptPath, timeoutMs: 2000, pythonPath });
       await expect(nodeBridge.call('math', 'sqrt', [4])).rejects.toThrow(fixture.pattern);
     });
 
@@ -75,6 +75,7 @@ describeNodeOnly('Bridge fixture parity', () => {
         minProcesses: 1,
         maxProcesses: 1,
         timeoutMs: 2000,
+        pythonPath,
       });
       await optimizedBridge.init();
       await expect(optimizedBridge.call('math', 'sqrt', [4])).rejects.toThrow(fixture.pattern);
