@@ -46,6 +46,23 @@ interface ProcessPoolOptions {
   warmupCommands?: Array<{ method: string; params: unknown }>; // Commands to warm up processes
 }
 
+interface ResolvedProcessPoolOptions {
+  minProcesses: number;
+  maxProcesses: number;
+  maxIdleTime: number;
+  maxRequestsPerProcess: number;
+  pythonPath: string;
+  scriptPath: string;
+  virtualEnv?: string;
+  cwd: string;
+  timeoutMs: number;
+  maxLineLength?: number;
+  enableJsonFallback: boolean;
+  enableCache: boolean;
+  env: Record<string, string | undefined>;
+  warmupCommands: Array<{ method: string; params: unknown }>;
+}
+
 interface WorkerProcess {
   process: ChildProcess;
   id: string;
@@ -115,7 +132,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   private processPool: WorkerProcess[] = [];
   private roundRobinIndex = 0;
   private cleanupTimer?: NodeJS.Timeout;
-  private options: Required<ProcessPoolOptions>;
+  private options: ResolvedProcessPoolOptions;
   private emitter = new EventEmitter();
   private disposed = false;
 
@@ -136,7 +153,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   constructor(options: ProcessPoolOptions = {}) {
     super();
     const cwd = options.cwd ?? process.cwd();
-    const virtualEnv = options.virtualEnv ? resolve(cwd, options.virtualEnv) : '';
+    const virtualEnv = options.virtualEnv ? resolve(cwd, options.virtualEnv) : undefined;
     const venv = virtualEnv ? resolveVirtualEnv(virtualEnv, cwd) : undefined;
     const scriptPath = options.scriptPath ?? resolveDefaultScriptPath();
     const resolvedScriptPath = isAbsolute(scriptPath) ? scriptPath : resolve(cwd, scriptPath);
