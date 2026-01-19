@@ -54,6 +54,22 @@ class PayloadTooLargeError(ValueError):
         )
 
 
+class RequestMaxBytesParseError(CodecConfigError):
+    """Invalid TYWRAP_REQUEST_MAX_BYTES value."""
+
+    def __init__(self) -> None:
+        super().__init__('TYWRAP_REQUEST_MAX_BYTES must be an integer byte count')
+
+
+class RequestTooLargeError(ValueError):
+    """Request payload exceeds configured size limit."""
+
+    def __init__(self, payload_bytes: int, max_bytes: int) -> None:
+        super().__init__(
+            f'Request payload is {payload_bytes} bytes which exceeds TYWRAP_REQUEST_MAX_BYTES={max_bytes}'
+        )
+
+
 def get_codec_max_bytes():
     """
     Return the optional max payload size (bytes) for JSONL responses.
@@ -80,8 +96,55 @@ def get_codec_max_bytes():
 CODEC_MAX_BYTES = get_codec_max_bytes()
 
 
+def get_request_max_bytes():
+    """
+    Return the optional max payload size (bytes) for JSONL requests.
+
+    Why: cap request sizes to avoid oversized JSON payloads that can exhaust memory or hang
+    downstream parsers. This keeps the bridge failure mode explicit.
+    """
+    raw = os.environ.get('TYWRAP_REQUEST_MAX_BYTES')
+    if raw is None:
+        return None
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except Exception as exc:
+        raise RequestMaxBytesParseError() from exc
+    if value <= 0:
+        return None
+    return value
+
+
+# Why: parse once at startup to avoid per-request env lookups.
+REQUEST_MAX_BYTES = get_request_max_bytes()
+
+
 class ProtocolError(Exception):
     pass
+
+
+_PROTOCOL_DIAGNOSTIC_MAX = 2048
+
+
+def emit_protocol_diagnostic(message: str) -> None:
+    """
+    Write bounded protocol diagnostics to stderr.
+
+    Why: provide context for malformed requests without flooding stderr or breaking the JSONL
+    stream expected by the JS side.
+    """
+    try:
+        msg = str(message)
+        if len(msg) > _PROTOCOL_DIAGNOSTIC_MAX:
+            msg = msg[:_PROTOCOL_DIAGNOSTIC_MAX] + '...'
+        sys.stderr.write(f'[tywrap] Protocol error: {msg}\n')
+        sys.stderr.flush()
+    except Exception:
+        # Avoid raising from diagnostics
+        pass
 
 
 def arrow_available():
@@ -554,10 +617,10 @@ def serialize_stdlib(obj):
 
 
 def handle_call(params):
-    module_name = params.get('module')
-    function_name = params.get('functionName')
-    args = params.get('args') or []
-    kwargs = params.get('kwargs') or {}
+    module_name = require_str(params, 'module')
+    function_name = require_str(params, 'functionName')
+    args = coerce_list(params.get('args'), 'args')
+    kwargs = coerce_dict(params.get('kwargs'), 'kwargs')
     mod = importlib.import_module(module_name)
     func = getattr(mod, function_name)
     res = func(*args, **kwargs)
@@ -565,10 +628,10 @@ def handle_call(params):
 
 
 def handle_instantiate(params):
-    module_name = params.get('module')
-    class_name = params.get('className')
-    args = params.get('args') or []
-    kwargs = params.get('kwargs') or {}
+    module_name = require_str(params, 'module')
+    class_name = require_str(params, 'className')
+    args = coerce_list(params.get('args'), 'args')
+    kwargs = coerce_dict(params.get('kwargs'), 'kwargs')
     mod = importlib.import_module(module_name)
     cls = getattr(mod, class_name)
     obj = cls(*args, **kwargs)
@@ -578,10 +641,10 @@ def handle_instantiate(params):
 
 
 def handle_call_method(params):
-    handle_id = params.get('handle')
-    method_name = params.get('methodName')
-    args = params.get('args') or []
-    kwargs = params.get('kwargs') or {}
+    handle_id = require_str(params, 'handle')
+    method_name = require_str(params, 'methodName')
+    args = coerce_list(params.get('args'), 'args')
+    kwargs = coerce_dict(params.get('kwargs'), 'kwargs')
     if handle_id not in instances:
         raise KeyError(f'Unknown handle: {handle_id}')
     obj = instances[handle_id]
@@ -591,7 +654,7 @@ def handle_call_method(params):
 
 
 def handle_dispose_instance(params):
-    handle_id = params.get('handle')
+    handle_id = require_str(params, 'handle')
     if handle_id not in instances:
         raise KeyError(f'Unknown handle: {handle_id}')
     del instances[handle_id]
@@ -620,6 +683,8 @@ def handle_meta():
 
 
 def require_protocol(msg):
+    if not isinstance(msg, dict):
+        raise ProtocolError('Invalid request payload')
     proto = msg.get('protocol')
     if proto != PROTOCOL:
         raise ProtocolError(f'Invalid protocol: {proto}')
@@ -627,6 +692,44 @@ def require_protocol(msg):
     if not isinstance(mid, int):
         raise ProtocolError(f'Invalid request id: {mid}')
     return mid
+
+
+def require_str(params, key):
+    """
+    Return a required string parameter from a request.
+
+    Why: keep request schema validation centralized and explicit for clearer errors.
+    """
+    value = params.get(key)
+    if not isinstance(value, str) or not value:
+        raise ProtocolError(f'Missing {key}')
+    return value
+
+
+def coerce_list(value, key):
+    """
+    Coerce an optional list parameter into a list.
+
+    Why: normalize args inputs while rejecting invalid shapes early.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ProtocolError(f'Invalid {key}')
+    return value
+
+
+def coerce_dict(value, key):
+    """
+    Coerce an optional dict parameter into a dict.
+
+    Why: normalize kwargs inputs while rejecting invalid shapes early.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ProtocolError(f'Invalid {key}')
+    return value
 
 
 def dispatch_request(msg):
@@ -639,9 +742,7 @@ def dispatch_request(msg):
     method = msg.get('method')
     if not isinstance(method, str):
         raise ProtocolError('Missing method')
-    params = msg.get('params') or {}
-    if not isinstance(params, dict):
-        raise ProtocolError('Invalid params')
+    params = coerce_dict(msg.get('params'), 'params')
     if method == 'call':
         result = handle_call(params)
     elif method == 'instantiate':
@@ -653,7 +754,7 @@ def dispatch_request(msg):
     elif method == 'meta':
         result = handle_meta()
     else:
-        raise ValueError('Unknown method')
+        raise ProtocolError(f'Unknown method: {method}')
     return mid, result
 
 
@@ -686,6 +787,21 @@ def encode_response(out):
     return payload
 
 
+def write_payload(payload: str) -> bool:
+    """
+    Write a JSONL payload to stdout and flush.
+
+    Why: centralize BrokenPipe handling so the main loop can exit cleanly when the
+    parent process goes away.
+    """
+    try:
+        sys.stdout.write(payload + '\n')
+        sys.stdout.flush()
+        return True
+    except BrokenPipeError:
+        return False
+
+
 def main():
     for line in sys.stdin:
         line = line.strip()
@@ -694,25 +810,47 @@ def main():
         mid = None
         out = None
         try:
+            if REQUEST_MAX_BYTES is not None:
+                payload_bytes = len(line.encode('utf-8'))
+                if payload_bytes > REQUEST_MAX_BYTES:
+                    raise RequestTooLargeError(payload_bytes, REQUEST_MAX_BYTES)
             msg = json.loads(line)
+            if isinstance(msg, dict):
+                req_id = msg.get('id')
+                if isinstance(req_id, int):
+                    # Why: preserve request ids even when handlers raise.
+                    mid = req_id
             try:
                 mid, result = dispatch_request(msg)
                 out = { 'id': mid, 'protocol': PROTOCOL, 'result': result }
+            except ProtocolError as e:
+                emit_protocol_diagnostic(str(e))
+                out = build_error_payload(mid, e, include_traceback=False)
             except Exception as e:  # noqa: BLE001
                 # Why: ensure any handler error becomes a protocol-compliant response.
                 out = build_error_payload(mid, e, include_traceback=True)
+        except RequestTooLargeError as e:
+            emit_protocol_diagnostic(str(e))
+            out = build_error_payload(mid, e, include_traceback=False)
+        except json.JSONDecodeError as e:
+            emit_protocol_diagnostic(f'Invalid JSON: {e}')
+            out = build_error_payload(mid, e, include_traceback=False)
         except Exception as e:  # noqa: BLE001
             # Why: catch malformed input without breaking the JSONL protocol.
             out = build_error_payload(mid, e, include_traceback=False)
 
         try:
             payload = encode_response(out)
-            sys.stdout.write(payload + '\n')
+            if not write_payload(payload):
+                return
         except Exception as e:  # noqa: BLE001
             # Why: fallback error keeps responses well-formed even if serialization fails.
             err_out = build_error_payload(mid, e, include_traceback=False)
-            sys.stdout.write(json.dumps(err_out) + '\n')
-        sys.stdout.flush()
+            try:
+                if not write_payload(json.dumps(err_out)):
+                    return
+            except Exception:
+                return
 
 
 if __name__ == '__main__':

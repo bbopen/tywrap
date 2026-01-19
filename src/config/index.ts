@@ -314,6 +314,7 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
     // resolution behave naturally, then clean it up immediately after loading.
     const tmpPath = resolve(dirname(resolved), `.tywrap.config.${randomUUID()}.mjs`);
     try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- temp path is derived from config location
       await writeFile(tmpPath, output.outputText, 'utf-8');
       const mod = (await import(pathToFileURL(tmpPath).href)) as Record<string, unknown>;
       const loaded = mod.default ?? mod;

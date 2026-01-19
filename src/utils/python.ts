@@ -1,7 +1,6 @@
 import {
   detectRuntime,
   pathUtils,
-  isWindows,
   isAbsolutePath,
   getPythonExecutableName,
   getVenvBinDir,

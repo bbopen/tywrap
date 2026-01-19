@@ -1,12 +1,35 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { OptimizedNodeBridge } from '../src/runtime/optimized-node.js';
 import { isNodejs, getPythonExecutableName } from '../src/utils/runtime.js';
+import { BridgeProtocolError } from '../src/runtime/errors.js';
 
 const describeNodeOnly = isNodejs() ? describe : describe.skip;
 const BRIDGE_SCRIPT = 'runtime/python_bridge.py';
+const FIXTURES_ROOT = join(process.cwd(), 'test', 'fixtures', 'python');
+
+const buildPythonPath = (): string => {
+  const current = process.env.PYTHONPATH;
+  return current ? `${FIXTURES_ROOT}${delimiter}${current}` : FIXTURES_ROOT;
+};
+
+const waitFor = async (
+  predicate: () => boolean,
+  options: { timeoutMs?: number; intervalMs?: number } = {}
+): Promise<void> => {
+  const timeoutMs = options.timeoutMs ?? 1500;
+  const intervalMs = options.intervalMs ?? 25;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  throw new Error('Timed out waiting for condition');
+};
 
 const checkPythonAvailable = (): string | null => {
   const candidates = [getPythonExecutableName(), 'python3', 'python'];
@@ -360,6 +383,94 @@ describeNodeOnly('OptimizedNodeBridge - Functional Tests', () => {
     });
   });
 
+  describe('regressions', () => {
+    it('should surface serialization errors without cache key failures', async () => {
+      if (!pythonPath || !existsSync(BRIDGE_SCRIPT)) return;
+
+      bridge = new OptimizedNodeBridge({
+        pythonPath,
+        scriptPath: BRIDGE_SCRIPT,
+        minProcesses: 1,
+        maxProcesses: 1,
+        enableCache: true,
+      });
+
+      await bridge.init();
+
+      const promise = bridge.call('math', 'sqrt', [BigInt(4)]);
+      await expect(promise).rejects.toSatisfy((error: unknown) => {
+        if (!(error instanceof BridgeProtocolError)) {
+          return false;
+        }
+        return /Failed to serialize request/.test(error.message);
+      });
+    });
+
+    it('should drop workers when stdin is not writable', async () => {
+      if (!pythonPath || !existsSync(BRIDGE_SCRIPT)) return;
+
+      bridge = new OptimizedNodeBridge({
+        pythonPath,
+        scriptPath: BRIDGE_SCRIPT,
+        minProcesses: 1,
+        maxProcesses: 1,
+      });
+
+      await bridge.init();
+
+      // Note: Accessing internal processPool for worker lifecycle assertions.
+      const pool = (bridge as unknown as { processPool: Array<{ id: string; process: any }> })
+        .processPool;
+      const worker = pool[0];
+      if (!worker) return;
+
+      worker.process.stdin?.destroy();
+
+      await expect(bridge.call('math', 'sqrt', [4])).rejects.toBeInstanceOf(BridgeProtocolError);
+
+      await waitFor(
+        () => {
+          const poolNow = (
+            bridge as unknown as { processPool: Array<{ id: string; process: any }> }
+          ).processPool;
+          return poolNow.length > 0 && !poolNow.some(entry => entry.id === worker.id);
+        },
+        { timeoutMs: 3000 }
+      );
+    });
+
+    it('should recover after a worker crash', async () => {
+      if (
+        !pythonPath ||
+        !existsSync(BRIDGE_SCRIPT) ||
+        !existsSync(join(FIXTURES_ROOT, 'adversarial_module.py'))
+      ) {
+        return;
+      }
+
+      bridge = new OptimizedNodeBridge({
+        pythonPath,
+        scriptPath: BRIDGE_SCRIPT,
+        minProcesses: 1,
+        maxProcesses: 1,
+        env: { PYTHONPATH: buildPythonPath() },
+      });
+
+      await bridge.init();
+
+      const before = bridge.getStats();
+
+      await expect(bridge.call('adversarial_module', 'crash_process', [1])).rejects.toThrow();
+
+      await waitFor(() => bridge.getStats().processDeaths > before.processDeaths, {
+        timeoutMs: 3000,
+      });
+
+      const result = await bridge.call<number>('math', 'sqrt', [9]);
+      expect(result).toBe(3);
+    });
+  });
+
   describe('timeout handling', () => {
     it('should ignore late responses for timed-out requests', async () => {
       if (!pythonPath || !existsSync(BRIDGE_SCRIPT)) return;
@@ -382,13 +493,13 @@ describeNodeOnly('OptimizedNodeBridge - Functional Tests', () => {
       await new Promise(resolve => setTimeout(resolve, 700));
 
       const mid = bridge.getStats();
-      expect(mid.processDeaths).toBe(before.processDeaths);
+      expect(mid.processDeaths).toBe(before.processDeaths + 1);
 
       const result = await bridge.call<string>('json', 'dumps', [{ a: 1 }]);
       expect(result).toContain('"a"');
 
       const after = bridge.getStats();
-      expect(after.processDeaths).toBe(before.processDeaths);
+      expect(after.processDeaths).toBe(before.processDeaths + 1);
     });
   });
 
