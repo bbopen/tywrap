@@ -398,8 +398,12 @@ describeNodeOnly('OptimizedNodeBridge - Functional Tests', () => {
       await bridge.init();
 
       const promise = bridge.call('math', 'sqrt', [BigInt(4)]);
-      await expect(promise).rejects.toBeInstanceOf(BridgeProtocolError);
-      await expect(promise).rejects.toThrow(/Failed to serialize request/);
+      await expect(promise).rejects.toSatisfy((error: unknown) => {
+        if (!(error instanceof BridgeProtocolError)) {
+          return false;
+        }
+        return /Failed to serialize request/.test(error.message);
+      });
     });
 
     it('should drop workers when stdin is not writable', async () => {
@@ -414,6 +418,7 @@ describeNodeOnly('OptimizedNodeBridge - Functional Tests', () => {
 
       await bridge.init();
 
+      // Note: Accessing internal processPool for worker lifecycle assertions.
       const pool = (bridge as unknown as { processPool: Array<{ id: string; process: any }> })
         .processPool;
       const worker = pool[0];

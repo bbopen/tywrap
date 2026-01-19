@@ -46,7 +46,7 @@ const createBridge = async (
     return null;
   }
   const pythonPath = await resolvePythonForTests();
-  if (!pythonAvailable(pythonPath)) {
+  if (!pythonPath || !pythonAvailable(pythonPath)) {
     return null;
   }
   return new NodeBridge({
@@ -70,7 +70,7 @@ const createFixtureBridge = async (
     return null;
   }
   const pythonPath = await resolvePythonForTests();
-  if (!pythonAvailable(pythonPath)) {
+  if (!pythonPath || !pythonAvailable(pythonPath)) {
     return null;
   }
   return new NodeBridge({
