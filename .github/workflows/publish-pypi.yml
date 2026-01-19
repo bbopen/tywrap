@@ -1,0 +1,141 @@
+name: Publish tywrap-ir to PyPI
+
+on:
+  push:
+    tags:
+      - 'tywrap-ir-v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (skip actual publish)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/tywrap-ir-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/tywrap-ir-v}"
+          else
+            VERSION=$(grep 'version = ' tywrap_ir/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Publishing tywrap-ir version: $VERSION"
+
+      - name: Validate version format
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "Invalid version format: $VERSION"
+            exit 1
+          fi
+
+      - name: Check version matches pyproject.toml
+        if: startsWith(github.ref, 'refs/tags/tywrap-ir-v')
+        run: |
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+          PKG_VERSION=$(grep 'version = ' tywrap_ir/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [[ "$TAG_VERSION" != "$PKG_VERSION" ]]; then
+            echo "Tag version ($TAG_VERSION) does not match pyproject.toml ($PKG_VERSION)"
+            exit 1
+          fi
+
+  test:
+    name: Test
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install tywrap_ir
+        run: |
+          cd tywrap_ir
+          pip install -e .
+
+      - name: Test CLI
+        run: |
+          tywrap-ir --module math --output /tmp/math_ir.json
+          python -c "import json; data = json.load(open('/tmp/math_ir.json')); print(f'Extracted {len(data.get(\"functions\", []))} functions from math module')"
+
+      - name: Test Python API
+        run: |
+          python -c "from tywrap_ir import extract_module_ir, IR_VERSION; print(f'IR_VERSION: {IR_VERSION}')"
+
+  build:
+    name: Build Package
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Build package
+        run: |
+          cd tywrap_ir
+          python -m build
+
+      - name: Check package
+        run: |
+          cd tywrap_ir
+          twine check dist/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: tywrap_ir/dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: [validate, test, build]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish (dry run)
+        if: inputs.dry_run == true
+        run: |
+          echo "Dry run - would publish:"
+          ls -la dist/
+
+      - name: Publish to PyPI
+        if: inputs.dry_run != true
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
