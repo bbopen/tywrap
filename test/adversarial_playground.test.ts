@@ -17,8 +17,7 @@ const moduleName = 'adversarial_module';
 
 const resolvePythonForTests = async (): Promise<string | null> => {
   const explicit =
-    process.env.TYWRAP_ADVERSARIAL_PYTHON?.trim() ||
-    process.env.TYWRAP_CODEC_PYTHON?.trim();
+    process.env.TYWRAP_ADVERSARIAL_PYTHON?.trim() || process.env.TYWRAP_CODEC_PYTHON?.trim();
   if (explicit) {
     return explicit;
   }
@@ -85,8 +84,7 @@ const createFixtureBridge = async (
 const callAdversarial = (bridge: NodeBridge, name: string, args: unknown[]) =>
   bridge.call(moduleName, name, args);
 
-const delay = (ms: number): Promise<void> =>
-  new Promise(resolve => setTimeout(resolve, ms));
+const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 describeAdversarial('Adversarial playground', () => {
   it(
@@ -151,6 +149,97 @@ describeAdversarial('Adversarial playground', () => {
       try {
         await expect(callAdversarial(bridge, 'return_large_payload', [2048])).rejects.toThrow(
           /TYWRAP_CODEC_MAX_BYTES|PayloadTooLargeError/
+        );
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'rejects requests that exceed TYWRAP_REQUEST_MAX_BYTES',
+    async () => {
+      const bridge = await createBridge({
+        env: { TYWRAP_REQUEST_MAX_BYTES: '128' },
+      });
+      if (!bridge) return;
+
+      try {
+        const payload = 'x'.repeat(512);
+        await expect(callAdversarial(bridge, 'echo', [payload])).rejects.toThrow(
+          /TYWRAP_REQUEST_MAX_BYTES|RequestTooLargeError/
+        );
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'rejects invalid args payloads',
+    async () => {
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      const unsafeBridge = bridge as unknown as {
+        call: (module: string, functionName: string, args: unknown) => Promise<unknown>;
+      };
+
+      try {
+        await expect(unsafeBridge.call(moduleName, 'echo', 'not-a-list')).rejects.toThrow(
+          /ProtocolError: Invalid args/
+        );
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'rejects invalid kwargs payloads',
+    async () => {
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      const unsafeBridge = bridge as unknown as {
+        call: (
+          module: string,
+          functionName: string,
+          args: unknown[],
+          kwargs?: unknown
+        ) => Promise<unknown>;
+      };
+
+      try {
+        await expect(unsafeBridge.call(moduleName, 'echo', [], 'not-a-dict')).rejects.toThrow(
+          /ProtocolError: Invalid kwargs/
+        );
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'rejects missing module or function names',
+    async () => {
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      const unsafeBridge = bridge as unknown as {
+        call: (module: string, functionName: string, args: unknown[]) => Promise<unknown>;
+      };
+
+      try {
+        await expect(unsafeBridge.call('', 'echo', [])).rejects.toThrow(
+          /ProtocolError: Missing module/
+        );
+        await expect(unsafeBridge.call(moduleName, '', [])).rejects.toThrow(
+          /ProtocolError: Missing functionName/
         );
       } finally {
         await bridge.dispose();
@@ -241,6 +330,29 @@ describeAdversarial('Adversarial playground', () => {
         const result = await callAdversarial(bridge, 'write_to_stderr', ['note']);
         expect(result).toBe('note');
       } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'includes recent stderr in timeout errors',
+    async () => {
+      const bridge = await createBridge({ timeoutMs: 200 });
+      if (!bridge) return;
+
+      try {
+        await callAdversarial(bridge, 'write_stderr_then_sleep', ['stderr-timeout', 0.5]);
+        throw new Error('Expected timeout did not occur');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        expect(message).toMatch(/Recent stderr from Python/);
+        expect(message).toMatch(/stderr-timeout/);
+      } finally {
+        await delay(600);
+        const result = await callAdversarial(bridge, 'echo', ['post-timeout']);
+        expect(result).toBe('post-timeout');
         await bridge.dispose();
       }
     },

@@ -54,9 +54,18 @@ import { NodeBridge } from 'tywrap/node';
 const bridge = new NodeBridge({
   pythonPath: 'python3',
   virtualEnv: './venv',
-  timeout: 30000
+  timeoutMs: 30000
 });
 ```
+
+NodeBridge is the default, correctness-first bridge. OptimizedNodeBridge is a performance-focused
+prototype (process pooling + optional caching) and is not a drop-in replacement yet. See
+`ROADMAP.md` for the unification plan.
+
+Both bridges share a common JSONL core for protocol validation and timeouts.
+
+You can cap payload sizes with `TYWRAP_CODEC_MAX_BYTES` (responses) and `TYWRAP_REQUEST_MAX_BYTES`
+(requests) to keep JSONL traffic bounded.
 
 ### Browser (Pyodide)
 

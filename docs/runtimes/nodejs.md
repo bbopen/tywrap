@@ -11,6 +11,15 @@ The Node.js runtime:
 - **Development Friendly** - Excellent debugging and error reporting
 - **Production Ready** - Battle-tested with proper error handling and timeouts
 
+## Bridge Selection
+
+- **NodeBridge (default)**: correctness-first, simplest lifecycle, recommended for most users.
+- **OptimizedNodeBridge (experimental)**: process pooling + optional caching for throughput; not a drop-in
+  replacement yet and not part of the public API exports. See `ROADMAP.md` for the unification
+  plan and parity goals.
+
+Both bridges share the same JSONL core for protocol validation, timeouts, and stderr buffering.
+
 ## Basic Setup
 
 ### Installation
@@ -220,6 +229,16 @@ export TYWRAP_CODEC_MAX_BYTES=10485760  # 10 MB cap
 ```
 
 If a response exceeds `TYWRAP_CODEC_MAX_BYTES`, the call fails with an explicit error.
+
+### Request Size Limit
+
+To cap incoming request payloads (JSONL request size in bytes):
+
+```bash
+export TYWRAP_REQUEST_MAX_BYTES=1048576  # 1 MB cap
+```
+
+If a request exceeds `TYWRAP_REQUEST_MAX_BYTES`, the call fails with an explicit error.
 
 ### Torch Tensor Copy Opt-in
 

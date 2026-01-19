@@ -13,28 +13,16 @@ import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 import type { BridgeInfo } from '../types/index.js';
 
 import { RuntimeBridge } from './base.js';
+import { BridgeDisposedError, BridgeProtocolError } from './errors.js';
 import {
-  BridgeDisposedError,
-  BridgeExecutionError,
-  BridgeProtocolError,
-  BridgeTimeoutError,
-} from './errors.js';
-import { TYWRAP_PROTOCOL, TYWRAP_PROTOCOL_VERSION } from './protocol.js';
-import { TimedOutRequestTracker } from './timed-out-request-tracker.js';
-
-interface RpcRequest {
-  id: number;
-  protocol: string;
-  method: 'call' | 'instantiate' | 'call_method' | 'dispose_instance' | 'meta';
-  params: unknown;
-}
-
-interface RpcResponse<T = unknown> {
-  id: number;
-  protocol: string;
-  result?: T;
-  error?: { type: string; message: string; traceback?: string };
-}
+  BridgeCore,
+  type RpcRequest,
+  ensureJsonFallback,
+  ensurePythonEncoding,
+  getPathKey,
+  normalizeEnv,
+  validateBridgeInfo,
+} from './bridge-core.js';
 
 export interface NodeBridgeOptions {
   pythonPath?: string;
@@ -87,16 +75,9 @@ function resolveVirtualEnv(
 
 export class NodeBridge extends RuntimeBridge {
   private child?: import('child_process').ChildProcess;
-  private nextId = 1;
-  private readonly pending = new Map<
-    number,
-    { resolve: (v: unknown) => void; reject: (e: unknown) => void; timer?: NodeJS.Timeout }
-  >();
-  private readonly timedOutRequests: TimedOutRequestTracker;
+  private core?: BridgeCore;
   private readonly options: ResolvedNodeBridgeOptions;
-  private stderrBuffer = '';
   private disposed = false;
-  private protocolError = false;
   private initPromise?: Promise<void>;
   private bridgeInfo?: BridgeInfo;
 
@@ -116,9 +97,6 @@ export class NodeBridge extends RuntimeBridge {
       enableJsonFallback: options.enableJsonFallback ?? false,
       env: options.env ?? {},
     };
-    this.timedOutRequests = new TimedOutRequestTracker({
-      ttlMs: Math.max(1000, this.options.timeoutMs * 2),
-    });
   }
 
   async init(): Promise<void> {
@@ -187,89 +165,18 @@ export class NodeBridge extends RuntimeBridge {
 
   async dispose(): Promise<void> {
     this.disposed = true;
-    this.initPromise = undefined;
-    this.bridgeInfo = undefined;
-    this.timedOutRequests.clear();
-    if (!this.child) {
-      return;
-    }
-    this.child.kill('SIGTERM');
-    this.child = undefined;
+    this.core?.handleProcessExit();
+    this.resetProcess();
   }
 
   private async send<T>(payload: Omit<RpcRequest, 'id' | 'protocol'>): Promise<T> {
     if (this.disposed) {
       throw new BridgeDisposedError('Bridge has been disposed');
     }
-    const id = this.nextId++;
-    const message: RpcRequest = { id, protocol: TYWRAP_PROTOCOL, ...payload } as RpcRequest;
-    const text = `${JSON.stringify(message)}\n`;
-    let timer: NodeJS.Timeout | undefined;
-    const promise = new Promise<T>((resolvePromise, reject) => {
-      timer = setTimeout(() => {
-        this.pending.delete(id);
-        this.markTimedOutRequest(id);
-        const stderrTail = this.stderrBuffer.trim();
-        const msg = stderrTail
-          ? `Python call timed out. Recent stderr from Python:\n${stderrTail}`
-          : 'Python call timed out';
-        reject(new BridgeTimeoutError(msg));
-      }, this.options.timeoutMs);
-      const resolveWrapped = (v: unknown): void => {
-        resolvePromise(v as T);
-      };
-      this.pending.set(id, { resolve: resolveWrapped, reject, timer });
-    });
-    try {
-      if (!this.child?.stdin) {
-        throw new BridgeProtocolError('Python process not available');
-      }
-      this.child.stdin.write(text);
-    } catch (err) {
-      this.pending.delete(id);
-      if (timer) {
-        clearTimeout(timer);
-      }
-      throw new BridgeProtocolError(`IPC failure: ${(err as Error).message}`);
+    if (!this.core) {
+      throw new BridgeProtocolError('Python process not available');
     }
-    return promise;
-  }
-
-  private errorFrom(err: { type: string; message: string; traceback?: string }): Error {
-    const e = new BridgeExecutionError(`${err.type}: ${err.message}`);
-    e.traceback = err.traceback;
-    return e;
-  }
-
-  private handleProtocolError(details: string, line?: string): void {
-    if (this.protocolError) {
-      return;
-    }
-    this.protocolError = true;
-    const snippet = line ? (line.length > 500 ? `${line.slice(0, 500)}…` : line) : undefined;
-    const hint =
-      'Ensure your Python code does not print to stdout and that the bridge outputs only JSON lines.';
-    const msg = snippet
-      ? `Protocol error from Python bridge. ${details}\n${hint}\nOffending line: ${snippet}`
-      : `Protocol error from Python bridge. ${details}\n${hint}`;
-    const error = new BridgeProtocolError(msg);
-    for (const [, p] of this.pending) {
-      p.reject(error);
-    }
-    this.pending.clear();
-    this.timedOutRequests.clear();
-    this.child?.kill('SIGTERM');
-    this.child = undefined;
-    this.initPromise = undefined;
-    this.bridgeInfo = undefined;
-  }
-
-  private markTimedOutRequest(id: number): void {
-    this.timedOutRequests.mark(id);
-  }
-
-  private consumeTimedOutRequest(id: number): boolean {
-    return this.timedOutRequests.consume(id);
+    return this.core.send<T>(payload);
   }
 
   private async startProcess(): Promise<void> {
@@ -279,34 +186,8 @@ export class NodeBridge extends RuntimeBridge {
         loader: () => require('apache-arrow'),
       });
       const { spawn } = await import('child_process');
-      const allowedPrefixes = ['TYWRAP_'];
-      const allowedKeys = new Set(['PATH', 'PYTHONPATH', 'VIRTUAL_ENV', 'PYTHONHOME']);
-      const baseEnv = new Map<string, string | undefined>();
-      for (const [k, v] of Object.entries(process.env)) {
-        if (allowedKeys.has(k) || allowedPrefixes.some(p => k.startsWith(p))) {
-          baseEnv.set(k, v);
-        }
-      }
-      const env: NodeJS.ProcessEnv = {
-        ...(Object.fromEntries(baseEnv) as NodeJS.ProcessEnv),
-        ...this.options.env,
-      };
-      if (this.options.virtualEnv) {
-        const venv = resolveVirtualEnv(this.options.virtualEnv, this.options.cwd);
-        env.VIRTUAL_ENV = venv.venvPath;
-        const currentPath = env.PATH ?? process.env.PATH ?? '';
-        env.PATH = `${venv.binDir}${delimiter}${currentPath}`;
-      }
-      if (!env.PYTHONUTF8) {
-        env.PYTHONUTF8 = '1';
-      }
-      if (!env.PYTHONIOENCODING) {
-        env.PYTHONIOENCODING = 'UTF-8';
-      }
-      // Respect explicit request for JSON fallback only; otherwise fast-fail by default
-      if (this.options.enableJsonFallback && !env.TYWRAP_CODEC_FALLBACK) {
-        env.TYWRAP_CODEC_FALLBACK = 'json';
-      }
+
+      const env = this.buildEnv();
 
       let child: ReturnType<typeof spawn>;
       try {
@@ -328,127 +209,100 @@ export class NodeBridge extends RuntimeBridge {
       }
 
       this.child = child;
-      this.protocolError = false;
-
-      this.child?.on('error', err => {
-        const msg = `Python process error: ${err instanceof Error ? err.message : String(err)}`;
-        for (const [, p] of this.pending) {
-          p.reject(new BridgeProtocolError(msg));
-        }
-        this.pending.clear();
-        this.timedOutRequests.clear();
-        this.child = undefined;
-        this.initPromise = undefined;
-        this.bridgeInfo = undefined;
-      });
-
-      let buffer = '';
-      this.child.stdout?.on('data', (chunk: Buffer): void => {
-        buffer += chunk.toString();
-        let idx: number;
-        while ((idx = buffer.indexOf('\n')) !== -1) {
-          const line = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 1);
-          if (!line.trim()) {
-            continue;
-          }
-          (async (): Promise<void> => {
-            try {
-              const msg = JSON.parse(line) as RpcResponse;
-              if (msg.protocol !== TYWRAP_PROTOCOL) {
-                this.handleProtocolError(
-                  `Invalid protocol. Expected ${TYWRAP_PROTOCOL} but received ${String(
-                    msg.protocol
-                  )}`,
-                  line
-                );
-                return;
-              }
-              if (typeof msg.id !== 'number') {
-                this.handleProtocolError('Invalid response id', line);
-                return;
-              }
-              const pending = this.pending.get(msg.id);
-              if (!pending) {
-                if (this.consumeTimedOutRequest(msg.id)) {
-                  return;
-                }
-                this.handleProtocolError(`Unexpected response id ${msg.id}`, line);
-                return;
-              }
-              this.pending.delete(msg.id);
-              if (pending.timer) {
-                clearTimeout(pending.timer);
-              }
-              if (msg.error) {
-                pending.reject(this.errorFrom(msg.error));
-              } else {
-                try {
-                  const decoded = await decodeValueAsync(msg.result);
-                  pending.resolve(decoded);
-                } catch (err) {
-                  pending.reject(
-                    new BridgeProtocolError(
-                      `Failed to decode Python response: ${
-                        err instanceof Error ? err.message : String(err)
-                      }`
-                    )
-                  );
-                }
-              }
-            } catch (err) {
-              const parseMessage = err instanceof Error ? err.message : String(err);
-              this.handleProtocolError(`Invalid JSON: ${parseMessage}`, line);
+      this.core = new BridgeCore(
+        {
+          write: (data: string): void => {
+            if (!this.child?.stdin) {
+              throw new BridgeProtocolError('Python process not available');
             }
-          })().catch(() => {
-            /* ignore */
-          });
+            this.child.stdin.write(data);
+          },
+        },
+        {
+          timeoutMs: this.options.timeoutMs,
+          decodeValue: decodeValueAsync,
+          onFatalError: (): void => this.resetProcess(),
         }
+      );
+
+      this.child.stdout?.on('data', chunk => {
+        this.core?.handleStdoutData(chunk);
       });
 
-      this.child?.stderr?.on('data', (chunk: Buffer) => {
-        // Buffer stderr for better error diagnostics on failures/exits
-        try {
-          this.stderrBuffer += chunk.toString();
-          // Truncate to last 8KB to avoid unbounded growth
-          const MAX = 8 * 1024;
-          if (this.stderrBuffer.length > MAX) {
-            this.stderrBuffer = this.stderrBuffer.slice(this.stderrBuffer.length - MAX);
-          }
-        } catch {
-          // ignore
-        }
+      this.child.stderr?.on('data', chunk => {
+        this.core?.handleStderrData(chunk);
       });
 
-      this.child?.on('exit', () => {
-        for (const [, p] of this.pending) {
-          const stderrTail = this.stderrBuffer.trim();
-          const msg = stderrTail
-            ? `Python process exited. Stderr:\n${stderrTail}`
-            : 'Python process exited';
-          p.reject(new BridgeProtocolError(msg));
-        }
-        this.pending.clear();
-        this.timedOutRequests.clear();
-        this.child = undefined;
-        this.initPromise = undefined;
-        this.bridgeInfo = undefined;
+      this.child.on('error', err => {
+        this.core?.handleProcessError(err);
+      });
+
+      this.child.on('exit', () => {
+        this.core?.handleProcessExit();
+        this.resetProcess();
       });
 
       await this.refreshBridgeInfo();
     } catch (err) {
-      this.child?.kill('SIGTERM');
-      this.child = undefined;
-      this.initPromise = undefined;
+      this.resetProcess();
       throw err;
     }
   }
 
+  private buildEnv(): NodeJS.ProcessEnv {
+    const allowedPrefixes = ['TYWRAP_'];
+    const allowedKeys = new Set(['path', 'pythonpath', 'virtual_env', 'pythonhome']);
+    const baseEnv: Record<string, string | undefined> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (
+        allowedKeys.has(key.toLowerCase()) ||
+        allowedPrefixes.some(prefix => key.startsWith(prefix))
+      ) {
+        // eslint-disable-next-line security/detect-object-injection -- env keys are dynamic by design
+        baseEnv[key] = value;
+      }
+    }
+
+    let env = normalizeEnv(baseEnv, this.options.env);
+
+    if (this.options.virtualEnv) {
+      const venv = resolveVirtualEnv(this.options.virtualEnv, this.options.cwd);
+      env.VIRTUAL_ENV = venv.venvPath;
+      const pathKey = getPathKey(env);
+      // eslint-disable-next-line security/detect-object-injection -- env keys are dynamic by design
+      const currentPath = env[pathKey] ?? '';
+      // eslint-disable-next-line security/detect-object-injection -- env keys are dynamic by design
+      env[pathKey] = `${venv.binDir}${delimiter}${currentPath}`;
+    }
+
+    ensurePythonEncoding(env);
+    // Respect explicit request for JSON fallback only; otherwise fast-fail by default
+    ensureJsonFallback(env, this.options.enableJsonFallback);
+
+    env = normalizeEnv(env, {});
+    return env;
+  }
+
+  private resetProcess(): void {
+    this.core?.clear();
+    this.core = undefined;
+    if (this.child) {
+      try {
+        if (this.child.exitCode === null) {
+          this.child.kill('SIGTERM');
+        }
+      } catch {
+        // ignore
+      }
+    }
+    this.child = undefined;
+    this.initPromise = undefined;
+    this.bridgeInfo = undefined;
+  }
+
   private async refreshBridgeInfo(): Promise<void> {
     const info = await this.send<BridgeInfo>({ method: 'meta', params: {} });
-    if (info.protocol !== TYWRAP_PROTOCOL || info.protocolVersion !== TYWRAP_PROTOCOL_VERSION) {
-      throw new BridgeProtocolError('Invalid bridge info payload');
-    }
+    validateBridgeInfo(info);
     this.bridgeInfo = info;
   }
 }

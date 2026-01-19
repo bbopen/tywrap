@@ -82,6 +82,17 @@ def write_to_stderr(value: Any) -> Any:
     return value
 
 
+def write_stderr_then_sleep(message: str, delay_s: float) -> str:
+    """Write to stderr and sleep before returning.
+
+    Why: ensure timeout errors surface recent stderr without breaking the bridge.
+    """
+    sys.stderr.write(f"{message}\n")
+    sys.stderr.flush()
+    time.sleep(float(delay_s))
+    return message
+
+
 def raise_error(message: str) -> None:
     """Raise a ValueError with a custom message.
 

@@ -11,7 +11,7 @@ def meta_payload():
     return {
         "protocol": PROTOCOL,
         "protocolVersion": PROTOCOL_VERSION,
-        "bridge": "fixture-wrong-protocol",
+        "bridge": "python-subprocess",
         "pythonVersion": "fixture",
         "pid": 0,
         "codecFallback": "none",
