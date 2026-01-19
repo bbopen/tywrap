@@ -257,8 +257,9 @@ export class BridgeCore {
       clearTimeout(pending.timer);
     }
 
-    if (msg.error) {
-      pending.reject(this.errorFrom(msg.error));
+    if ('error' in msg) {
+      const errorPayload = this.normalizeErrorPayload(msg.error);
+      pending.reject(this.errorFrom(errorPayload));
       return;
     }
 
@@ -277,6 +278,23 @@ export class BridgeCore {
     const error = new BridgeExecutionError(`${err.type}: ${err.message}`);
     error.traceback = err.traceback;
     return error;
+  }
+
+  private normalizeErrorPayload(err: unknown): { type: string; message: string; traceback?: string } {
+    if (err && typeof err === 'object') {
+      const candidate = err as { type?: unknown; message?: unknown; traceback?: unknown };
+      if (typeof candidate.type === 'string' && typeof candidate.message === 'string') {
+        const normalized: { type: string; message: string; traceback?: string } = {
+          type: candidate.type,
+          message: candidate.message,
+        };
+        if (typeof candidate.traceback === 'string') {
+          normalized.traceback = candidate.traceback;
+        }
+        return normalized;
+      }
+    }
+    return { type: 'UnknownError', message: String(err) };
   }
 
   private failRequest(id: number, error: Error): void {
@@ -377,7 +395,10 @@ export function getMaxLineLengthFromEnv(env: NodeJS.ProcessEnv): number | undefi
   if (!raw) {
     return undefined;
   }
-  const parsed = Number.parseInt(raw, 10);
+  if (!/^\d+$/.test(raw)) {
+    return undefined;
+  }
+  const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return undefined;
   }
