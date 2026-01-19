@@ -171,11 +171,12 @@ jobs:
         if: inputs.dry_run == true
         run: npm publish --dry-run
 
-      # With OIDC trusted publishing, no NPM_TOKEN needed
-      # Provenance is automatic with trusted publishing
+      # Use NPM_TOKEN for authentication with provenance for supply chain security
       - name: Publish to npm
         if: inputs.dry_run != true
         run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         if: inputs.dry_run != true && startsWith(github.ref, 'refs/tags/v')
