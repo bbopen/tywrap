@@ -20,6 +20,7 @@ TypeScript wrapper for Python libraries with full type safety.
 
 - Node.js 20+ (or Bun 1.1+ / Deno 1.46+)
 - Python 3.10+ with `tywrap-ir`:
+
   ```bash
   pip install tywrap-ir
   ```

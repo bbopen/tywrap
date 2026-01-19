@@ -81,7 +81,7 @@ jobs:
 
       - name: Test Python API
         run: |
-          python -c "from tywrap_ir import extract_module_ir, IR_VERSION; print(f'IR_VERSION: {IR_VERSION}')"
+          python -c "from tywrap_ir import extract_module_ir, IR_VERSION, __version__; print(f'IR_VERSION: {IR_VERSION}, __version__: {__version__}')"
 
   build:
     name: Build Package
