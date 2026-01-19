@@ -1,6 +1,7 @@
 # tywrap
 
 [![npm version](https://img.shields.io/npm/v/tywrap.svg)](https://www.npmjs.com/package/tywrap)
+[![PyPI version](https://img.shields.io/pypi/v/tywrap-ir.svg)](https://pypi.org/project/tywrap-ir/)
 [![CI](https://github.com/bbopen/tywrap/actions/workflows/ci.yml/badge.svg)](https://github.com/bbopen/tywrap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -18,14 +19,19 @@ TypeScript wrapper for Python libraries with full type safety.
 ## Requirements
 
 - Node.js 20+ (or Bun 1.1+ / Deno 1.46+)
-- Python 3.10+
+- Python 3.10+ with `tywrap-ir`:
+
+  ```bash
+  pip install tywrap-ir
+  ```
 
 ## Quick Start
 
 ```bash
 npm install tywrap
-npx tywrap init      # Create config (and package.json scripts if present)
-npx tywrap generate  # Generate wrappers
+pip install tywrap-ir  # Python component for code generation
+npx tywrap init        # Create config (and package.json scripts if present)
+npx tywrap generate    # Generate wrappers
 ```
 
 For CI (or to verify a dependency upgrade didn’t change the generated surface):
@@ -149,4 +155,5 @@ MIT © [tywrap contributors](LICENSE)
 
 - [GitHub](https://github.com/bbopen/tywrap)
 - [npm](https://www.npmjs.com/package/tywrap)
+- [PyPI](https://pypi.org/project/tywrap-ir/)
 - [Issues](https://github.com/bbopen/tywrap/issues)
