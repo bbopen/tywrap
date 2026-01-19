@@ -32,6 +32,7 @@ def main():
         if msg.get("method") == "meta":
             out = {"id": msg.get("id", -1), "protocol": PROTOCOL, "result": meta_payload()}
         else:
+            # Intentional: respond with a different id to trigger unexpected-id handling.
             req_id = msg.get("id", 0)
             try:
                 next_id = int(req_id) + 1

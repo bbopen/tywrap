@@ -32,6 +32,7 @@ def main():
         if msg.get("method") == "meta":
             out = {"id": msg.get("id", -1), "protocol": PROTOCOL, "result": meta_payload()}
         else:
+            # Intentional: omit id to exercise missing-id handling in the bridge.
             out = {"protocol": PROTOCOL, "result": 1}
         sys.stdout.write(json.dumps(out) + "\n")
         sys.stdout.flush()

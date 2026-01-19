@@ -350,6 +350,7 @@ describeAdversarial('Adversarial playground', () => {
         expect(message).toMatch(/Recent stderr from Python/);
         expect(message).toMatch(/stderr-timeout/);
       } finally {
+        // Why: adversarial test verifies post-timeout recovery even if it masks the original error.
         await delay(600);
         const result = await callAdversarial(bridge, 'echo', ['post-timeout']);
         expect(result).toBe('post-timeout');

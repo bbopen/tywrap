@@ -32,6 +32,7 @@ def main():
         if msg.get("method") == "meta":
             out = {"id": msg.get("id", -1), "protocol": PROTOCOL, "result": meta_payload()}
         else:
+            # Intentional: respond with wrong protocol to trigger protocol validation errors.
             out = {"id": msg.get("id", -1), "protocol": "tywrap/0", "result": 1}
         sys.stdout.write(json.dumps(out) + "\n")
         sys.stdout.flush()

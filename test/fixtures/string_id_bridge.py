@@ -32,6 +32,7 @@ def main():
         if msg.get("method") == "meta":
             out = {"id": msg.get("id", -1), "protocol": PROTOCOL, "result": meta_payload()}
         else:
+            # Intentional: return id as a string to exercise type coercion handling.
             out = {"id": str(msg.get("id", "1")), "protocol": PROTOCOL, "result": 1}
         sys.stdout.write(json.dumps(out) + "\n")
         sys.stdout.flush()

@@ -39,6 +39,7 @@ def main():
         if msg.get("method") == "meta":
             send_response(msg, meta_payload())
             continue
+        # Intentional: leave pending set at EOF to simulate missing responses.
         if pending is None:
             pending = msg
             continue
