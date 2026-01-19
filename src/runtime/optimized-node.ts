@@ -15,29 +15,19 @@ import { getDefaultPythonPath } from '../utils/python.js';
 import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 
 import { RuntimeBridge } from './base.js';
-import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
-import { TYWRAP_PROTOCOL } from './protocol.js';
+import { BridgeProtocolError } from './errors.js';
 import {
-  TimedOutRequestTracker,
-  type TimedOutRequestTrackerOptions,
-} from './timed-out-request-tracker.js';
+  BridgeCore,
+  type RpcRequest,
+  ensureJsonFallback,
+  ensurePythonEncoding,
+  getMaxLineLengthFromEnv,
+  getPathKey,
+  normalizeEnv,
+} from './bridge-core.js';
 import { getComponentLogger } from '../utils/logger.js';
 
 const log = getComponentLogger('OptimizedBridge');
-
-interface RpcRequest {
-  id: number;
-  protocol: string;
-  method: 'call' | 'instantiate' | 'call_method' | 'dispose_instance';
-  params: unknown;
-}
-
-interface RpcResponse<T = unknown> {
-  id: number;
-  protocol: string;
-  result?: T;
-  error?: { type: string; message: string; traceback?: string };
-}
 
 interface ProcessPoolOptions {
   minProcesses?: number;
@@ -49,9 +39,28 @@ interface ProcessPoolOptions {
   virtualEnv?: string | undefined;
   cwd?: string;
   timeoutMs?: number;
+  maxLineLength?: number;
   enableJsonFallback?: boolean;
+  enableCache?: boolean;
   env?: Record<string, string | undefined>;
   warmupCommands?: Array<{ method: string; params: unknown }>; // Commands to warm up processes
+}
+
+interface ResolvedProcessPoolOptions {
+  minProcesses: number;
+  maxProcesses: number;
+  maxIdleTime: number;
+  maxRequestsPerProcess: number;
+  pythonPath: string;
+  scriptPath: string;
+  virtualEnv?: string;
+  cwd: string;
+  timeoutMs: number;
+  maxLineLength?: number;
+  enableJsonFallback: boolean;
+  enableCache: boolean;
+  env: Record<string, string | undefined>;
+  warmupCommands: Array<{ method: string; params: unknown }>;
 }
 
 interface WorkerProcess {
@@ -60,17 +69,8 @@ interface WorkerProcess {
   requestCount: number;
   lastUsed: number;
   busy: boolean;
-  buffer: string;
-  timedOutRequests: TimedOutRequestTracker;
-  pendingRequests: Map<
-    number,
-    {
-      resolve: (value: unknown) => void;
-      reject: (error: unknown) => void;
-      timer?: NodeJS.Timeout;
-      startTime: number;
-    }
-  >;
+  quarantined: boolean;
+  core: BridgeCore;
   stats: {
     totalRequests: number;
     totalTime: number;
@@ -131,12 +131,10 @@ function resolveVirtualEnv(
 export class OptimizedNodeBridge extends RuntimeBridge {
   private processPool: WorkerProcess[] = [];
   private roundRobinIndex = 0;
-  private nextId = 1;
   private cleanupTimer?: NodeJS.Timeout;
-  private options: Required<ProcessPoolOptions>;
+  private options: ResolvedProcessPoolOptions;
   private emitter = new EventEmitter();
   private disposed = false;
-  private readonly timedOutRequestsOptions: TimedOutRequestTrackerOptions;
 
   // Performance monitoring
   private stats: OptimizedBridgeStats = {
@@ -155,7 +153,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   constructor(options: ProcessPoolOptions = {}) {
     super();
     const cwd = options.cwd ?? process.cwd();
-    const virtualEnv = options.virtualEnv ? resolve(cwd, options.virtualEnv) : '';
+    const virtualEnv = options.virtualEnv ? resolve(cwd, options.virtualEnv) : undefined;
     const venv = virtualEnv ? resolveVirtualEnv(virtualEnv, cwd) : undefined;
     const scriptPath = options.scriptPath ?? resolveDefaultScriptPath();
     const resolvedScriptPath = isAbsolute(scriptPath) ? scriptPath : resolve(cwd, scriptPath);
@@ -169,13 +167,11 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       virtualEnv,
       cwd,
       timeoutMs: options.timeoutMs ?? 30000,
+      maxLineLength: options.maxLineLength,
       enableJsonFallback: options.enableJsonFallback ?? false,
+      enableCache: options.enableCache ?? false,
       env: options.env ?? {},
       warmupCommands: options.warmupCommands ?? [],
-    };
-
-    this.timedOutRequestsOptions = {
-      ttlMs: Math.max(1000, this.options.timeoutMs * 2),
     };
 
     // Start with minimum processes
@@ -211,13 +207,17 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   ): Promise<T> {
     const startTime = performance.now();
 
-    // Try cache first for pure functions
-    const cacheKey = globalCache.generateKey('runtime_call', module, functionName, args, kwargs);
-    const cached = await globalCache.get<T>(cacheKey);
-    if (cached !== null) {
-      this.stats.cacheHits++;
-      // Runtime cache HIT for ${module}.${functionName}
-      return cached;
+    const cacheKey = this.options.enableCache
+      ? this.safeCacheKey('runtime_call', module, functionName, args, kwargs)
+      : null;
+    if (cacheKey) {
+      const cached = await globalCache.get<T>(cacheKey);
+      if (cached !== null) {
+        this.stats.cacheHits++;
+        this.updateStats(performance.now() - startTime);
+        // Runtime cache HIT for ${module}.${functionName}
+        return cached;
+      }
     }
 
     try {
@@ -229,7 +229,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       const duration = performance.now() - startTime;
 
       // Cache result for pure functions (simple heuristic)
-      if (this.isPureFunctionCandidate(functionName, args)) {
+      if (cacheKey && this.isPureFunctionCandidate(functionName, args)) {
         await globalCache.set(cacheKey, result, {
           computeTime: duration,
           dependencies: [module],
@@ -322,7 +322,9 @@ export class OptimizedNodeBridge extends RuntimeBridge {
    * Select optimal worker based on load and performance
    */
   private selectOptimalWorker(): WorkerProcess | null {
-    const availableWorkers = this.processPool.filter(w => !w.busy && w.process.exitCode === null);
+    const availableWorkers = this.processPool.filter(
+      w => !w.busy && !w.quarantined && w.process.exitCode === null
+    );
 
     if (availableWorkers.length === 0) {
       return null;
@@ -366,59 +368,49 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     worker: WorkerProcess,
     payload: Omit<RpcRequest, 'id' | 'protocol'>
   ): Promise<T> {
-    const id = this.nextId++;
-    const message: RpcRequest = { id, protocol: TYWRAP_PROTOCOL, ...payload } as RpcRequest;
-    const text = `${JSON.stringify(message)}\n`;
-
     worker.busy = true;
     worker.requestCount++;
     worker.lastUsed = Date.now();
 
-    return new Promise<T>((resolvePromise, reject) => {
-      const startTime = performance.now();
+    const startTime = performance.now();
 
-      const timer = setTimeout(() => {
-        worker.pendingRequests.delete(id);
-        worker.timedOutRequests.mark(id);
-        worker.busy = false;
-        reject(new Error(`Request ${id} timed out after ${this.options.timeoutMs}ms`));
-      }, this.options.timeoutMs);
+    try {
+      const result = await worker.core.send<T>(payload);
+      const duration = performance.now() - startTime;
+      worker.stats.totalTime += duration;
+      worker.stats.totalRequests++;
+      worker.stats.averageTime = worker.stats.totalTime / worker.stats.totalRequests;
+      return result;
+    } catch (error) {
+      worker.stats.errorCount++;
+      throw error;
+    } finally {
+      worker.busy = false;
+    }
+  }
 
-      worker.pendingRequests.set(id, {
-        resolve: (value: unknown) => {
-          const duration = performance.now() - startTime;
-          worker.stats.totalTime += duration;
-          worker.stats.totalRequests++;
-          worker.stats.averageTime = worker.stats.totalTime / worker.stats.totalRequests;
-          worker.busy = false;
-          resolvePromise(value as T);
-        },
-        reject: (error: unknown) => {
-          worker.stats.errorCount++;
-          worker.busy = false;
-          reject(error);
-        },
-        timer,
-        startTime,
+  private quarantineWorker(worker: WorkerProcess, error: Error): void {
+    if (worker.quarantined) {
+      return;
+    }
+    worker.quarantined = true;
+    log.warn('Quarantining worker', { workerId: worker.id, error: String(error) });
+    this.terminateWorker(worker, { force: true })
+      .then(() => {
+        if (!this.disposed && this.processPool.length < this.options.minProcesses) {
+          this.spawnProcess().catch(spawnError => {
+            log.error('Failed to spawn replacement worker after quarantine', {
+              error: String(spawnError),
+            });
+          });
+        }
+      })
+      .catch(terminateError => {
+        log.warn('Failed to terminate quarantined worker', {
+          workerId: worker.id,
+          error: String(terminateError),
+        });
       });
-
-      if (!worker.process.stdin?.writable) {
-        worker.pendingRequests.delete(id);
-        worker.busy = false;
-        clearTimeout(timer);
-        reject(new Error('Worker process stdin not writable'));
-        return;
-      }
-
-      try {
-        worker.process.stdin.write(text);
-      } catch (error) {
-        worker.pendingRequests.delete(id);
-        worker.busy = false;
-        clearTimeout(timer);
-        reject(error);
-      }
-    });
   }
 
   /**
@@ -429,27 +421,24 @@ export class OptimizedNodeBridge extends RuntimeBridge {
 
     const workerId = `worker_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...this.options.env,
-      PYTHONUNBUFFERED: '1', // Ensure immediate output
-      PYTHONDONTWRITEBYTECODE: '1', // Skip .pyc files for faster startup
-    };
-    if (!env.PYTHONUTF8) {
-      env.PYTHONUTF8 = '1';
-    }
-    if (!env.PYTHONIOENCODING) {
-      env.PYTHONIOENCODING = 'UTF-8';
-    }
+    let env = normalizeEnv(process.env as Record<string, string | undefined>, this.options.env);
+    env.PYTHONUNBUFFERED = '1'; // Ensure immediate output
+    env.PYTHONDONTWRITEBYTECODE = '1'; // Skip .pyc files for faster startup
+    ensurePythonEncoding(env);
     if (this.options.virtualEnv) {
       const venv = resolveVirtualEnv(this.options.virtualEnv, this.options.cwd);
       env.VIRTUAL_ENV = venv.venvPath;
-      env.PATH = `${venv.binDir}${delimiter}${env.PATH ?? ''}`;
+      const pathKey = getPathKey(env);
+      // eslint-disable-next-line security/detect-object-injection -- env keys are dynamic by design
+      const currentPath = env[pathKey] ?? '';
+      // eslint-disable-next-line security/detect-object-injection -- env keys are dynamic by design
+      env[pathKey] = `${venv.binDir}${delimiter}${currentPath}`;
     }
 
-    if (this.options.enableJsonFallback && !env.TYWRAP_CODEC_FALLBACK) {
-      env.TYWRAP_CODEC_FALLBACK = 'json';
-    }
+    ensureJsonFallback(env, this.options.enableJsonFallback);
+
+    env = normalizeEnv(env, {});
+    const maxLineLength = this.options.maxLineLength ?? getMaxLineLengthFromEnv(env);
 
     const childProcess = spawn(this.options.pythonPath, [this.options.scriptPath], {
       cwd: this.options.cwd,
@@ -463,9 +452,8 @@ export class OptimizedNodeBridge extends RuntimeBridge {
       requestCount: 0,
       lastUsed: Date.now(),
       busy: false,
-      buffer: '',
-      timedOutRequests: new TimedOutRequestTracker(this.timedOutRequestsOptions),
-      pendingRequests: new Map(),
+      quarantined: false,
+      core: null as unknown as BridgeCore,
       stats: {
         totalRequests: 0,
         totalTime: 0,
@@ -473,6 +461,24 @@ export class OptimizedNodeBridge extends RuntimeBridge {
         errorCount: 0,
       },
     };
+
+    worker.core = new BridgeCore(
+      {
+        write: (data: string): void => {
+          if (!worker.process.stdin?.writable) {
+            throw new BridgeProtocolError('Worker process stdin not writable');
+          }
+          worker.process.stdin.write(data);
+        },
+      },
+      {
+        timeoutMs: this.options.timeoutMs,
+        maxLineLength,
+        decodeValue: decodeValueAsync,
+        onFatalError: (error: Error): void => this.quarantineWorker(worker, error),
+        onTimeout: (error: Error): void => this.quarantineWorker(worker, error),
+      }
+    );
 
     // Setup process event handlers
     this.setupProcessHandlers(worker);
@@ -491,30 +497,12 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   private setupProcessHandlers(worker: WorkerProcess): void {
     const childProcess = worker.process;
 
-    // Handle stdout data with efficient buffering
     childProcess.stdout?.on('data', (chunk: Buffer) => {
-      worker.buffer += chunk.toString();
-
-      let idx: number;
-      while ((idx = worker.buffer.indexOf('\n')) !== -1) {
-        const line = worker.buffer.slice(0, idx).trim();
-        worker.buffer = worker.buffer.slice(idx + 1);
-
-        if (!line) {
-          continue;
-        }
-
-        this.handleWorkerResponse(worker, line).catch(error => {
-          log.error('Error handling worker response', {
-            workerId: worker.id,
-            error: String(error),
-          });
-        });
-      }
+      worker.core.handleStdoutData(chunk);
     });
 
-    // Handle stderr for debugging
     childProcess.stderr?.on('data', (chunk: Buffer) => {
+      worker.core.handleStderrData(chunk);
       const errorText = chunk.toString().trim();
       if (errorText) {
         log.warn('Worker stderr', { workerId: worker.id, output: errorText });
@@ -524,85 +512,27 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     // Handle process exit
     childProcess.on('exit', code => {
       log.warn('Worker exited', { workerId: worker.id, code });
+      worker.core.handleProcessExit();
       this.handleWorkerExit(worker, code);
     });
 
     // Handle process errors
     childProcess.on('error', error => {
       log.error('Worker error', { workerId: worker.id, error: String(error) });
+      worker.core.handleProcessError(error);
       this.handleWorkerExit(worker, -1);
     });
   }
 
   /**
-   * Handle response from worker process
-   */
-  private async handleWorkerResponse(worker: WorkerProcess, line: string): Promise<void> {
-    try {
-      const msg = JSON.parse(line) as RpcResponse;
-      if (msg.protocol !== TYWRAP_PROTOCOL) {
-        this.handleProtocolError(
-          worker,
-          line,
-          new BridgeProtocolError(
-            `Invalid protocol. Expected ${TYWRAP_PROTOCOL} but received ${String(msg.protocol)}`
-          )
-        );
-        return;
-      }
-      if (typeof msg.id !== 'number') {
-        this.handleProtocolError(worker, line, new BridgeProtocolError('Invalid response id'));
-        return;
-      }
-      const pending = worker.pendingRequests.get(msg.id);
-
-      if (!pending) {
-        if (worker.timedOutRequests.consume(msg.id)) {
-          return;
-        }
-        this.handleProtocolError(
-          worker,
-          line,
-          new BridgeProtocolError(`Unexpected response id ${msg.id}`)
-        );
-        return;
-      }
-
-      worker.pendingRequests.delete(msg.id);
-
-      if (pending.timer) {
-        clearTimeout(pending.timer);
-      }
-
-      if (msg.error) {
-        pending.reject(this.errorFrom(msg.error));
-      } else {
-        try {
-          const decoded = await decodeValueAsync(msg.result);
-          pending.resolve(decoded);
-        } catch (decodeError) {
-          pending.reject(new BridgeProtocolError(`Failed to decode response: ${decodeError}`));
-        }
-      }
-    } catch (parseError) {
-      this.handleProtocolError(worker, line, parseError);
-    }
-  }
-
-  /**
    * Handle worker process exit
    */
-  private handleWorkerExit(worker: WorkerProcess, code: number | null): void {
-    // Reject all pending requests
-    for (const [, pending] of worker.pendingRequests) {
-      if (pending.timer) {
-        clearTimeout(pending.timer);
-      }
-      pending.reject(new Error(`Worker process exited with code ${code}`));
+  private handleWorkerExit(worker: WorkerProcess, _code: number | null): void {
+    if (!this.processPool.includes(worker)) {
+      return;
     }
 
-    worker.pendingRequests.clear();
-    worker.timedOutRequests.clear();
+    worker.core.clear();
 
     // Remove from pool
     const index = this.processPool.indexOf(worker);
@@ -638,6 +568,14 @@ export class OptimizedNodeBridge extends RuntimeBridge {
 
     await Promise.all(warmupPromises);
     // Warmed up ${this.processPool.length} worker processes
+  }
+
+  private safeCacheKey(prefix: string, ...inputs: unknown[]): string | null {
+    try {
+      return globalCache.generateKey(prefix, ...inputs);
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -710,7 +648,7 @@ export class OptimizedNodeBridge extends RuntimeBridge {
         averageTime: w.stats.averageTime,
         errorCount: w.stats.errorCount,
         busy: w.busy,
-        pendingRequests: w.pendingRequests.size,
+        pendingRequests: w.core.getPendingCount(),
       })),
     };
   }
@@ -747,22 +685,22 @@ export class OptimizedNodeBridge extends RuntimeBridge {
   /**
    * Gracefully terminate a worker
    */
-  private async terminateWorker(worker: WorkerProcess): Promise<void> {
+  private async terminateWorker(
+    worker: WorkerProcess,
+    options: { force?: boolean } = {}
+  ): Promise<void> {
+    if (worker.busy && !options.force) {
+      return;
+    }
+
     const index = this.processPool.indexOf(worker);
     if (index >= 0) {
       this.processPool.splice(index, 1);
+      this.stats.processDeaths++;
     }
 
-    // Reject pending requests
-    for (const [, pending] of worker.pendingRequests) {
-      if (pending.timer) {
-        clearTimeout(pending.timer);
-      }
-      pending.reject(new Error('Worker process terminated'));
-    }
-
-    worker.pendingRequests.clear();
-    worker.timedOutRequests.clear();
+    worker.core.handleProcessExit();
+    worker.core.clear();
 
     // Graceful termination
     try {
@@ -812,61 +750,14 @@ export class OptimizedNodeBridge extends RuntimeBridge {
     }
 
     // Terminate all workers
-    const terminationPromises = this.processPool.map(worker => this.terminateWorker(worker));
+    const terminationPromises = this.processPool.map(worker =>
+      this.terminateWorker(worker, { force: true })
+    );
     await Promise.all(terminationPromises);
 
     this.processPool.length = 0;
     this.emitter.removeAllListeners();
 
     // Disposed optimized Node.js bridge
-  }
-
-  private errorFrom(err: { type: string; message: string; traceback?: string }): Error {
-    const e = new BridgeExecutionError(`${err.type}: ${err.message}`);
-    e.traceback = err.traceback;
-    return e;
-  }
-
-  private handleProtocolError(worker: WorkerProcess, line: string, error: unknown): void {
-    const snippet = line.length > 500 ? `${line.slice(0, 500)}…` : line;
-    const detail = error instanceof Error ? error.message : String(error);
-    const hint =
-      'Ensure your Python code does not print to stdout and that the bridge outputs only JSON lines.';
-    const msg = `Protocol error from Python bridge. ${detail}\n${hint}\nOffending line: ${snippet}`;
-    const bridgeError = new BridgeProtocolError(msg);
-
-    for (const [, pending] of worker.pendingRequests) {
-      if (pending.timer) {
-        clearTimeout(pending.timer);
-      }
-      pending.reject(bridgeError);
-    }
-    worker.pendingRequests.clear();
-    worker.timedOutRequests.clear();
-
-    try {
-      if (worker.process.exitCode === null) {
-        worker.process.kill('SIGTERM');
-      }
-    } catch (killError) {
-      log.warn('Error terminating worker after protocol error', {
-        workerId: worker.id,
-        error: String(killError),
-      });
-    }
-
-    const index = this.processPool.indexOf(worker);
-    if (index >= 0) {
-      this.processPool.splice(index, 1);
-      this.stats.processDeaths++;
-    }
-
-    if (!this.disposed && this.processPool.length < this.options.minProcesses) {
-      this.spawnProcess().catch(spawnError => {
-        log.error('Failed to spawn replacement worker after protocol error', {
-          error: String(spawnError),
-        });
-      });
-    }
   }
 }

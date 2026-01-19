@@ -67,6 +67,9 @@ setRuntimeBridge(bridge);
 ### `NodeBridge`
 Python subprocess bridge for Node.js.
 
+Note: OptimizedNodeBridge is an experimental, performance-focused bridge and is not part of the
+public API exports yet. NodeBridge remains the default.
+
 ```ts
 import { NodeBridge } from 'tywrap/node';
 
@@ -87,6 +90,8 @@ interface NodeBridgeOptions {
   virtualEnv?: string;
   cwd?: string;
   timeoutMs?: number;
+  maxLineLength?: number;
+  inheritProcessEnv?: boolean;
   enableJsonFallback?: boolean;
   env?: Record<string, string | undefined>;
 }

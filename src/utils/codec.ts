@@ -171,7 +171,7 @@ export async function autoRegisterArrowDecoder(
   const loader: ArrowModuleLoader | undefined =
     options.loader ??
     (isNodeRuntime()
-      ? (async (): Promise<unknown> => {
+      ? async (): Promise<unknown> => {
           try {
             const nodeModule = await import('node:module');
             const require = nodeModule.createRequire(import.meta.url);
@@ -179,7 +179,7 @@ export async function autoRegisterArrowDecoder(
           } catch {
             return await import('apache-arrow');
           }
-        })
+        }
       : undefined);
   if (!loader) {
     return false;
@@ -428,13 +428,17 @@ function decodeEnvelopeCore<T>(
   if (marker === 'sklearn.estimator') {
     const encoding = (value as { encoding?: unknown }).encoding;
     if (encoding !== 'json') {
-      throw new Error(`Invalid sklearn.estimator envelope: unsupported encoding ${String(encoding)}`);
+      throw new Error(
+        `Invalid sklearn.estimator envelope: unsupported encoding ${String(encoding)}`
+      );
     }
     const className = (value as { className?: unknown }).className;
     const module = (value as { module?: unknown }).module;
     const params = (value as { params?: unknown }).params;
     if (typeof className !== 'string' || typeof module !== 'string' || !isObject(params)) {
-      throw new Error('Invalid sklearn.estimator envelope: expected className/module strings + params object');
+      throw new Error(
+        'Invalid sklearn.estimator envelope: expected className/module strings + params object'
+      );
     }
     const versionValue = (value as { version?: unknown }).version;
     if (versionValue !== undefined && typeof versionValue !== 'string') {

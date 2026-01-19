@@ -134,6 +134,7 @@ class LoggerImpl implements Logger {
     if (!this.enabled) {
       return false;
     }
+    // eslint-disable-next-line security/detect-object-injection -- level is constrained to LogLevel
     return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[this.level];
   }
 

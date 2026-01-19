@@ -11,6 +11,15 @@ The Node.js runtime:
 - **Development Friendly** - Excellent debugging and error reporting
 - **Production Ready** - Battle-tested with proper error handling and timeouts
 
+## Bridge Selection
+
+- **NodeBridge (default)**: correctness-first, simplest lifecycle, recommended for most users.
+- **OptimizedNodeBridge (experimental)**: process pooling + optional caching for throughput; not a drop-in
+  replacement yet and not part of the public API exports. See `ROADMAP.md` for the unification
+  plan and parity goals.
+
+Both bridges share the same JSONL core for protocol validation, timeouts, and stderr buffering.
+
 ## Basic Setup
 
 ### Installation
@@ -82,6 +91,8 @@ console.log(info.protocol, info.pythonVersion, info.instances);
       "scriptPath": "./custom_bridge.py",
       "cwd": "./python_src",
       "timeoutMs": 60000,
+      "maxLineLength": 10485760,
+      "inheritProcessEnv": true,
       "enableJsonFallback": true,
       "env": {
         "PYTHONPATH": "./additional_modules",
@@ -101,8 +112,13 @@ console.log(info.protocol, info.pythonVersion, info.instances);
 | `scriptPath` | `string` | Built-in bridge | Custom Python bridge script |
 | `cwd` | `string` | `process.cwd()` | Working directory for Python |
 | `timeoutMs` | `number` | `30000` | Subprocess timeout in milliseconds |
+| `maxLineLength` | `number` | `TYWRAP_CODEC_MAX_BYTES` or `1048576` | Max JSONL response line length |
+| `inheritProcessEnv` | `boolean` | `false` | Inherit full `process.env` into the Python subprocess |
 | `enableJsonFallback` | `boolean` | `false` | Use JSON for data transport fallback |
 | `env` | `Record<string, string>` | `{}` | Additional environment variables |
+
+By default, the subprocess environment is minimal (PATH/PYTHON*/TYWRAP_* only).
+Set `inheritProcessEnv: true` to pass through the full environment when needed.
 
 ## Python Environment Setup
 
@@ -220,6 +236,18 @@ export TYWRAP_CODEC_MAX_BYTES=10485760  # 10 MB cap
 ```
 
 If a response exceeds `TYWRAP_CODEC_MAX_BYTES`, the call fails with an explicit error.
+`maxLineLength` defaults to the same value when set (otherwise 1MB) so the Node
+side and Python side stay aligned.
+
+### Request Size Limit
+
+To cap incoming request payloads (JSONL request size in bytes):
+
+```bash
+export TYWRAP_REQUEST_MAX_BYTES=1048576  # 1 MB cap
+```
+
+If a request exceeds `TYWRAP_REQUEST_MAX_BYTES`, the call fails with an explicit error.
 
 ### Torch Tensor Copy Opt-in
 
