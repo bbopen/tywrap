@@ -106,7 +106,7 @@ export class BridgeCore {
 
   async send<T>(payload: Omit<RpcRequest, 'id' | 'protocol'>): Promise<T> {
     const id = this.nextId++;
-    const message: RpcRequest = { id, protocol: this.options.protocol, ...payload } as RpcRequest;
+    const message: RpcRequest = { ...payload, id, protocol: this.options.protocol } as RpcRequest;
     let text: string;
     try {
       text = JSON.stringify(message);
@@ -218,7 +218,12 @@ export class BridgeCore {
   private handleResponseLine(line: string): void {
     let msg: RpcResponse;
     try {
-      msg = JSON.parse(line) as RpcResponse;
+      const parsed = JSON.parse(line) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        this.handleProtocolError('Invalid response payload', line);
+        return;
+      }
+      msg = parsed as RpcResponse;
     } catch (err) {
       const parseMessage = err instanceof Error ? err.message : String(err);
       this.handleProtocolError(`Invalid JSON: ${parseMessage}`, line);
