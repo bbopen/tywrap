@@ -48,8 +48,11 @@ const DEFAULT_MAX_STDERR_BYTES = 8 * 1024; // 8KB
 
 const defaultDecodeValue = async (value: unknown): Promise<unknown> => value;
 const noop = (): void => {};
-const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
-const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+const ANSI_ESCAPE_RE = new RegExp('\\u001b\\[[0-9;]*[A-Za-z]', 'g');
+const CONTROL_CHARS_RE = new RegExp(
+  '[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F\\u0080-\\u009F]',
+  'g'
+);
 const sanitizeStderr = (value: string): string =>
   value.replace(ANSI_ESCAPE_RE, '').replace(CONTROL_CHARS_RE, '');
 
