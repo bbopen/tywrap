@@ -48,6 +48,10 @@ const DEFAULT_MAX_STDERR_BYTES = 8 * 1024; // 8KB
 
 const defaultDecodeValue = async (value: unknown): Promise<unknown> => value;
 const noop = (): void => {};
+const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
+const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+const sanitizeStderr = (value: string): string =>
+  value.replace(ANSI_ESCAPE_RE, '').replace(CONTROL_CHARS_RE, '');
 
 export class BridgeCore {
   private readonly transport: BridgeCoreTransport;
@@ -182,7 +186,7 @@ export class BridgeCore {
 
   handleStderrData(chunk: Buffer | string): void {
     try {
-      this.stderrBuffer += chunk.toString();
+      this.stderrBuffer += sanitizeStderr(chunk.toString());
       if (this.stderrBuffer.length > this.options.maxStderrBytes) {
         this.stderrBuffer = this.stderrBuffer.slice(
           this.stderrBuffer.length - this.options.maxStderrBytes
@@ -315,12 +319,19 @@ export class BridgeCore {
   }
 }
 
-export function validateBridgeInfo(info: BridgeInfo): void {
-  if (info.protocol !== TYWRAP_PROTOCOL || info.protocolVersion !== TYWRAP_PROTOCOL_VERSION) {
+export function validateBridgeInfo(info: unknown): void {
+  if (!info || typeof info !== 'object') {
     throw new BridgeProtocolError('Invalid bridge info payload');
   }
-  if (info.bridge !== 'python-subprocess') {
-    throw new BridgeProtocolError(`Unexpected bridge identifier: ${info.bridge}`);
+  const candidate = info as BridgeInfo;
+  if (
+    candidate.protocol !== TYWRAP_PROTOCOL ||
+    candidate.protocolVersion !== TYWRAP_PROTOCOL_VERSION
+  ) {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+  if (candidate.bridge !== 'python-subprocess') {
+    throw new BridgeProtocolError(`Unexpected bridge identifier: ${candidate.bridge}`);
   }
 }
 
