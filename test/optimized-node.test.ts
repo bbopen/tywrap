@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vite
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
-import { OptimizedNodeBridge } from '../src/runtime/optimized-node.js';
+// OptimizedNodeBridge is now an alias for NodeBridge with pool configuration
+import { NodeBridge as OptimizedNodeBridge } from '../src/runtime/node.js';
 import { isNodejs, getPythonExecutableName } from '../src/utils/runtime.js';
 import { BridgeProtocolError } from '../src/runtime/errors.js';
 

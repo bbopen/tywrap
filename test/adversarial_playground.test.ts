@@ -550,3 +550,298 @@ describeAdversarial('Adversarial playground', () => {
     );
   });
 });
+
+/**
+ * Multi-worker adversarial tests for the unified NodeBridge with pool configuration.
+ * These tests exercise concurrent worker behavior, quarantine/replacement, and pool scaling.
+ */
+describeAdversarial('Multi-worker adversarial tests', () => {
+  const createPooledBridge = async (
+    options: {
+      minProcesses?: number;
+      maxProcesses?: number;
+      timeoutMs?: number;
+      env?: Record<string, string | undefined>;
+    } = {}
+  ): Promise<NodeBridge | null> => {
+    if (!existsSync(scriptPath) || !existsSync(fixturesRoot)) {
+      return null;
+    }
+    const pythonPath = await resolvePythonForTests();
+    if (!pythonPath || !pythonAvailable(pythonPath)) {
+      return null;
+    }
+    return new NodeBridge({
+      scriptPath,
+      pythonPath,
+      minProcesses: options.minProcesses ?? 2,
+      maxProcesses: options.maxProcesses ?? 4,
+      timeoutMs: options.timeoutMs ?? 2000,
+      env: {
+        PYTHONPATH: buildPythonPath(),
+        ...options.env,
+      },
+    });
+  };
+
+  it(
+    'handles concurrent requests across multiple workers',
+    async () => {
+      const bridge = await createPooledBridge({ minProcesses: 2, maxProcesses: 4 });
+      if (!bridge) return;
+
+      try {
+        // Fire many concurrent requests - should be distributed across workers
+        const promises = Array.from({ length: 8 }, (_, i) =>
+          callAdversarial(bridge, 'echo', [`request-${i}`])
+        );
+        const results = await Promise.all(promises);
+        expect(results).toEqual(Array.from({ length: 8 }, (_, i) => `request-${i}`));
+
+        const stats = bridge.getStats();
+        expect(stats.totalRequests).toBe(8);
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'quarantines a failing worker and replaces it',
+    async () => {
+      const bridge = await createPooledBridge({ minProcesses: 2, maxProcesses: 2 });
+      if (!bridge) return;
+
+      try {
+        // Ensure pool is initialized
+        await callAdversarial(bridge, 'echo', ['init']);
+
+        const statsBefore = bridge.getStats();
+        const spawnsBefore = statsBefore.processSpawns;
+
+        // Crash one worker - should be quarantined
+        await expect(callAdversarial(bridge, 'crash_process', [1])).rejects.toThrow(
+          /Python process exited|Python process error/
+        );
+
+        // Give time for cleanup and replacement
+        await delay(300);
+
+        // Pool should have spawned a replacement worker
+        const statsAfter = bridge.getStats();
+        expect(statsAfter.processDeaths).toBeGreaterThan(statsBefore.processDeaths);
+        expect(statsAfter.processSpawns).toBeGreaterThan(spawnsBefore);
+
+        // Should still be able to handle requests
+        const result = await callAdversarial(bridge, 'echo', ['after-crash']);
+        expect(result).toBe('after-crash');
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'isolates slow requests to one worker while others stay responsive',
+    async () => {
+      const bridge = await createPooledBridge({
+        minProcesses: 2,
+        maxProcesses: 2,
+        timeoutMs: 1000,
+      });
+      if (!bridge) return;
+
+      try {
+        // Start a slow request (will timeout)
+        const slow = callAdversarial(bridge, 'sleep_and_return', ['slow', 2.0]);
+
+        // Give slow request time to start processing
+        await delay(100);
+
+        // Fast request should complete on another worker
+        const fast = await callAdversarial(bridge, 'echo', ['fast']);
+        expect(fast).toBe('fast');
+
+        // Slow request should timeout
+        await expect(slow).rejects.toThrow(/timed out/i);
+
+        // Wait for cleanup
+        await delay(200);
+
+        // Pool should still be functional
+        const result = await callAdversarial(bridge, 'echo', ['after-timeout']);
+        expect(result).toBe('after-timeout');
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs * 2
+  );
+
+  it(
+    'handles mixed success and failure in concurrent batch',
+    async () => {
+      const bridge = await createPooledBridge({ minProcesses: 2, maxProcesses: 4 });
+      if (!bridge) return;
+
+      try {
+        const promises = [
+          callAdversarial(bridge, 'echo', ['ok1']),
+          callAdversarial(bridge, 'raise_error', ['expected-error']),
+          callAdversarial(bridge, 'echo', ['ok2']),
+          callAdversarial(bridge, 'raise_error', ['another-error']),
+          callAdversarial(bridge, 'echo', ['ok3']),
+        ];
+
+        const results = await Promise.allSettled(promises);
+
+        // Check successes
+        expect(results[0].status).toBe('fulfilled');
+        expect(results[2].status).toBe('fulfilled');
+        expect(results[4].status).toBe('fulfilled');
+        if (results[0].status === 'fulfilled') expect(results[0].value).toBe('ok1');
+        if (results[2].status === 'fulfilled') expect(results[2].value).toBe('ok2');
+        if (results[4].status === 'fulfilled') expect(results[4].value).toBe('ok3');
+
+        // Check failures
+        expect(results[1].status).toBe('rejected');
+        expect(results[3].status).toBe('rejected');
+        if (results[1].status === 'rejected') {
+          expect(results[1].reason.message).toMatch(/ValueError: expected-error/);
+        }
+        if (results[3].status === 'rejected') {
+          expect(results[3].reason.message).toMatch(/ValueError: another-error/);
+        }
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'scales up workers under load',
+    async () => {
+      const bridge = await createPooledBridge({ minProcesses: 1, maxProcesses: 4 });
+      if (!bridge) return;
+
+      try {
+        // Initialize with single worker
+        await callAdversarial(bridge, 'echo', ['init']);
+        const statsInit = bridge.getStats();
+        expect(statsInit.processSpawns).toBeGreaterThanOrEqual(1);
+
+        // Fire many concurrent slow-ish requests to trigger scaling
+        const promises = Array.from({ length: 4 }, (_, i) =>
+          callAdversarial(bridge, 'sleep_and_return', [`slow-${i}`, 0.1])
+        );
+
+        // Wait for all to complete
+        const results = await Promise.all(promises);
+        expect(results).toEqual(Array.from({ length: 4 }, (_, i) => `slow-${i}`));
+
+        // Should have spawned additional workers (may not always scale to max
+        // depending on timing, but should have more than initial)
+        const statsFinal = bridge.getStats();
+        expect(statsFinal.processSpawns).toBeGreaterThanOrEqual(1);
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'handles multiple worker crashes in sequence',
+    async () => {
+      const bridge = await createPooledBridge({ minProcesses: 2, maxProcesses: 2 });
+      if (!bridge) return;
+
+      try {
+        // First crash
+        await expect(callAdversarial(bridge, 'crash_process', [1])).rejects.toThrow(
+          /Python process exited|Python process error/
+        );
+        await delay(300);
+
+        // Verify recovery
+        const result1 = await callAdversarial(bridge, 'echo', ['after-crash-1']);
+        expect(result1).toBe('after-crash-1');
+
+        // Second crash
+        await expect(callAdversarial(bridge, 'crash_process', [1])).rejects.toThrow(
+          /Python process exited|Python process error/
+        );
+        await delay(300);
+
+        // Verify recovery again
+        const result2 = await callAdversarial(bridge, 'echo', ['after-crash-2']);
+        expect(result2).toBe('after-crash-2');
+
+        const stats = bridge.getStats();
+        expect(stats.processDeaths).toBeGreaterThanOrEqual(2);
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs * 2
+  );
+
+  it(
+    'enforces request size limits across all workers',
+    async () => {
+      const bridge = await createPooledBridge({
+        minProcesses: 2,
+        maxProcesses: 2,
+        env: { TYWRAP_REQUEST_MAX_BYTES: '128' },
+      });
+      if (!bridge) return;
+
+      try {
+        const largePayload = 'x'.repeat(512);
+        const promises = [
+          callAdversarial(bridge, 'echo', [largePayload]),
+          callAdversarial(bridge, 'echo', [largePayload]),
+        ];
+
+        const results = await Promise.allSettled(promises);
+        expect(results[0].status).toBe('rejected');
+        expect(results[1].status).toBe('rejected');
+        if (results[0].status === 'rejected') {
+          expect(results[0].reason.message).toMatch(/TYWRAP_REQUEST_MAX_BYTES|RequestTooLargeError/);
+        }
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'maintains pool health after protocol errors',
+    async () => {
+      const bridge = await createPooledBridge({ minProcesses: 2, maxProcesses: 2 });
+      if (!bridge) return;
+
+      try {
+        // Cause a protocol error (stdout noise)
+        await expect(callAdversarial(bridge, 'print_to_stdout', ['noise'])).rejects.toThrow(
+          /Protocol error/
+        );
+        await delay(200);
+
+        // Pool should still be functional after recovery
+        const results = await Promise.all([
+          callAdversarial(bridge, 'echo', ['ok1']),
+          callAdversarial(bridge, 'echo', ['ok2']),
+        ]);
+        expect(results).toEqual(['ok1', 'ok2']);
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+});

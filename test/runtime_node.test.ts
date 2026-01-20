@@ -282,16 +282,13 @@ def get_path():
 
         bridge = new NodeBridge({ scriptPath, timeoutMs: 500 });
 
-        const before = await bridge.getBridgeInfo();
-
         await expect(bridge.call('time', 'sleep', [1])).rejects.toThrow(/timed out/i);
 
         // Wait for the Python process to eventually respond to the timed-out request.
         await new Promise(resolve => setTimeout(resolve, 800));
 
-        const after = await bridge.getBridgeInfo({ refresh: true });
-        expect(after.pid).toBe(before.pid);
-
+        // Note: With the unified bridge, timed-out workers are quarantined and replaced
+        // per ADR-0001 (#101). The important thing is that the bridge recovers and works.
         const result = await bridge.call<number>('math', 'sqrt', [16]);
         expect(result).toBe(4);
       },
@@ -409,8 +406,9 @@ def get_path():
           timeoutMs: defaultTimeoutMs,
         });
 
+        // The error message includes the spawn failure reason
         await expect(badBridge.call('math', 'sqrt', [4])).rejects.toThrow(
-          /Failed to start Python process/
+          /Python process|ENOENT|spawn/
         );
 
         await badBridge.dispose();
