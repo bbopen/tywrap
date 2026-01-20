@@ -28,7 +28,7 @@ Introduce **BridgeProtocol**, an abstraction layer that standardizes all boundar
 2. **SafeCodec** (new) - Validation and serialization on both JS and Python sides
 3. **Transport** (new) - Abstract I/O channel with concrete implementations
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              BridgeProtocol                                 │
 │                    (extends BoundedContext)                                 │
@@ -1161,23 +1161,27 @@ export abstract class BridgeProtocol extends BoundedContext {
 ## Migration Path
 
 ### Phase 1: SafeCodec (Week 1)
+
 1. Create `src/runtime/safe-codec.ts`
 2. Create `runtime/safe_codec.py`
 3. Add comprehensive tests
 4. Integrate with existing bridges (non-breaking)
 
 ### Phase 2: Transport (Week 2)
+
 1. Create `src/runtime/transport.ts` interface
 2. Create `src/runtime/process-io.ts`
 3. Create `src/runtime/http-io.ts`
 4. Add tests for each transport
 
 ### Phase 3: WorkerPool (Week 3)
+
 1. Create `src/runtime/worker-pool.ts`
 2. Migrate OptimizedNodeBridge to use WorkerPool
 3. Add concurrency tests
 
 ### Phase 4: BridgeProtocol Integration (Week 4)
+
 1. Create `src/runtime/bridge-protocol.ts`
 2. Refactor NodeBridge to extend BridgeProtocol
 3. Refactor HttpBridge to extend BridgeProtocol
@@ -1185,6 +1189,7 @@ export abstract class BridgeProtocol extends BoundedContext {
 5. Deprecate old bridge implementations
 
 ### Phase 5: Cleanup (Week 5)
+
 1. Remove deprecated code
 2. Update documentation
 3. Close resolved issues
@@ -1192,6 +1197,7 @@ export abstract class BridgeProtocol extends BoundedContext {
 ## Consequences
 
 ### Positive
+
 - **Consistency**: All bridges use the same validation, serialization, and error handling
 - **Reliability**: Stream errors, backpressure, and edge cases are handled uniformly
 - **Testability**: Each layer can be tested independently
@@ -1199,11 +1205,13 @@ export abstract class BridgeProtocol extends BoundedContext {
 - **~30 issues resolved**: One architectural change addresses majority of open issues
 
 ### Negative
+
 - **Migration effort**: Existing bridges need refactoring
 - **Learning curve**: New abstractions to understand
 - **Potential breaking changes**: API signatures may change slightly
 
 ### Neutral
+
 - **Code size**: More abstraction layers, but cleaner separation
 - **Performance**: Minimal overhead from additional validation
 
