@@ -13,7 +13,8 @@ import { join } from 'path';
 
 import { PyAnalyzer } from '../src/core/analyzer.js';
 import { CodeGenerator } from '../src/core/generator.js';
-import { OptimizedNodeBridge } from '../src/runtime/optimized-node.js';
+// OptimizedNodeBridge is now an alias for NodeBridge with pool configuration
+import { NodeBridge as OptimizedNodeBridge } from '../src/runtime/node.js';
 import { IntelligentCache, globalCache } from '../src/utils/cache.js';
 import { MemoryProfiler, globalMemoryProfiler } from '../src/utils/memory-profiler.js';
 import { BundleOptimizer } from '../src/utils/bundle-optimizer.js';
