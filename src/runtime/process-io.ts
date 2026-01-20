@@ -1,0 +1,748 @@
+/**
+ * ProcessIO Transport - Subprocess-based Python communication for Node.js.
+ *
+ * This transport implements the Transport interface for spawning and communicating
+ * with a Python subprocess via stdio streams. It provides:
+ * - JSONL (JSON Lines) protocol for request/response messaging
+ * - Backpressure handling for stdin writes
+ * - Line-based stdout parsing with buffering
+ * - Stderr capture for error diagnostics
+ * - Request timeout management
+ * - Optional process restart after N requests
+ *
+ * @see https://github.com/bbopen/tywrap/issues/149
+ */
+
+import { spawn, type ChildProcess } from 'child_process';
+import { BoundedContext } from './bounded-context.js';
+import {
+  BridgeDisposedError,
+  BridgeProtocolError,
+  BridgeTimeoutError,
+  BridgeExecutionError,
+} from './errors.js';
+import type { Transport } from './transport.js';
+
+// =============================================================================
+// CONSTANTS
+// =============================================================================
+
+/** Default maximum response line length: 100MB */
+const DEFAULT_MAX_LINE_LENGTH = 100 * 1024 * 1024;
+
+/** Maximum stderr bytes to retain for diagnostics: 8KB */
+const MAX_STDERR_BYTES = 8 * 1024;
+
+/** Regex for ANSI escape sequences */
+const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
+
+/** Regex for control characters */
+const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u0080-\u009F]/g;
+
+// =============================================================================
+// TYPES
+// =============================================================================
+
+/**
+ * Options for ProcessIO transport.
+ */
+export interface ProcessIOOptions {
+  /** Python executable path. Default: 'python3' */
+  pythonPath?: string;
+
+  /** Path to the bridge script */
+  bridgeScript: string;
+
+  /** Environment variables to pass to the subprocess */
+  env?: Record<string, string>;
+
+  /** Maximum line length for responses. Default: 100MB */
+  maxLineLength?: number;
+
+  /** Restart process after N requests (0 = never). Default: 0 */
+  restartAfterRequests?: number;
+}
+
+/**
+ * Pending request entry for tracking in-flight requests.
+ */
+interface PendingRequest {
+  resolve: (value: string) => void;
+  reject: (error: Error) => void;
+  timer?: NodeJS.Timeout;
+}
+
+/**
+ * Queued write entry for backpressure handling.
+ */
+interface QueuedWrite {
+  data: string;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
+// =============================================================================
+// UTILITIES
+// =============================================================================
+
+/**
+ * Sanitize stderr output by removing ANSI codes and control characters.
+ */
+function sanitizeStderr(value: string): string {
+  return value.replace(ANSI_ESCAPE_RE, '').replace(CONTROL_CHARS_RE, '');
+}
+
+/**
+ * Extract message ID from a JSON string without full parsing.
+ * Returns null if ID cannot be extracted.
+ */
+function extractMessageId(json: string): string | null {
+  // Look for "id":"..." or "id": "..."
+  const match = json.match(/"id"\s*:\s*"([^"]+)"/);
+  return match?.[1] ?? null;
+}
+
+// =============================================================================
+// PROCESS IO TRANSPORT
+// =============================================================================
+
+/**
+ * Transport implementation for subprocess-based Python communication.
+ *
+ * ProcessIO spawns a Python child process and communicates via stdio:
+ * - Requests are written to stdin as JSON lines
+ * - Responses are read from stdout as JSON lines
+ * - Stderr is captured for diagnostics
+ *
+ * @example
+ * ```typescript
+ * const transport = new ProcessIO({
+ *   bridgeScript: '/path/to/bridge.py',
+ *   pythonPath: 'python3',
+ * });
+ *
+ * await transport.init();
+ *
+ * const response = await transport.send(
+ *   JSON.stringify({ id: '1', type: 'call', module: 'math', args: [16] }),
+ *   5000
+ * );
+ *
+ * await transport.dispose();
+ * ```
+ */
+export class ProcessIO extends BoundedContext implements Transport {
+  // Configuration
+  private readonly pythonPath: string;
+  private readonly bridgeScript: string;
+  private readonly envOverrides: Record<string, string>;
+  private readonly maxLineLength: number;
+  private readonly restartAfterRequests: number;
+
+  // Process state
+  private process: ChildProcess | null = null;
+  private processExited = false;
+  private processError: Error | null = null;
+
+  // Stream buffers
+  private stdoutBuffer = '';
+  private stderrBuffer = '';
+
+  // Request tracking
+  private readonly pending = new Map<string, PendingRequest>();
+  private requestCount = 0;
+
+  // Write queue for backpressure
+  private readonly writeQueue: QueuedWrite[] = [];
+  private draining = false;
+
+  /**
+   * Create a new ProcessIO transport.
+   *
+   * @param options - Transport configuration options
+   */
+  constructor(options: ProcessIOOptions) {
+    super();
+
+    this.pythonPath = options.pythonPath ?? 'python3';
+    this.bridgeScript = options.bridgeScript;
+    this.envOverrides = options.env ?? {};
+    this.maxLineLength = options.maxLineLength ?? DEFAULT_MAX_LINE_LENGTH;
+    this.restartAfterRequests = options.restartAfterRequests ?? 0;
+  }
+
+  // ===========================================================================
+  // TRANSPORT INTERFACE
+  // ===========================================================================
+
+  /**
+   * Send a message and wait for the response.
+   *
+   * @param message - The JSON-encoded protocol message
+   * @param timeoutMs - Timeout in milliseconds (0 = no timeout)
+   * @param signal - Optional AbortSignal for cancellation
+   * @returns The raw JSON response string
+   */
+  async send(message: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+    // Check disposed state
+    if (this.isDisposed) {
+      throw new BridgeDisposedError('Transport has been disposed');
+    }
+
+    // Auto-initialize if needed
+    if (!this.isReady) {
+      await this.init();
+    }
+
+    // Check if process is alive
+    if (this.processExited || !this.process) {
+      const stderrTail = this.getStderrTail();
+      const baseMsg = 'Python process is not running';
+      const msg = stderrTail ? `${baseMsg}. Stderr:\n${stderrTail}` : baseMsg;
+      throw new BridgeProtocolError(msg);
+    }
+
+    // Check if already aborted
+    if (signal?.aborted) {
+      throw new BridgeTimeoutError('Operation aborted');
+    }
+
+    // Extract message ID for response correlation
+    const messageId = extractMessageId(message);
+    if (!messageId) {
+      throw new BridgeProtocolError('Message must contain an "id" field');
+    }
+
+    // Check for restart condition
+    if (this.restartAfterRequests > 0 && this.requestCount >= this.restartAfterRequests) {
+      await this.restartProcess();
+    }
+
+    // Create promise for response
+    return new Promise<string>((resolve, reject) => {
+      // Set up timeout if specified
+      let timer: NodeJS.Timeout | undefined;
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          this.pending.delete(messageId);
+          const stderrTail = this.getStderrTail();
+          const baseMsg = `Operation timed out after ${timeoutMs}ms`;
+          const msg = stderrTail ? `${baseMsg}. Recent stderr:\n${stderrTail}` : baseMsg;
+          reject(new BridgeTimeoutError(msg));
+        }, timeoutMs);
+      }
+
+      // Set up abort handler
+      const abortHandler = (): void => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        this.pending.delete(messageId);
+        reject(new BridgeTimeoutError('Operation aborted'));
+      };
+
+      if (signal) {
+        signal.addEventListener('abort', abortHandler, { once: true });
+      }
+
+      // Wrap resolve/reject to clean up abort listener
+      const wrappedResolve = (value: string): void => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        signal?.removeEventListener('abort', abortHandler);
+        resolve(value);
+      };
+
+      const wrappedReject = (error: Error): void => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        signal?.removeEventListener('abort', abortHandler);
+        reject(error);
+      };
+
+      // Register pending request
+      this.pending.set(messageId, {
+        resolve: wrappedResolve,
+        reject: wrappedReject,
+        timer,
+      });
+
+      // Write message to stdin
+      this.writeToStdin(`${message}\n`).catch(err => {
+        this.pending.delete(messageId);
+        if (timer) {
+          clearTimeout(timer);
+        }
+        signal?.removeEventListener('abort', abortHandler);
+        reject(this.classifyError(err));
+      });
+
+      this.requestCount++;
+    });
+  }
+
+  // ===========================================================================
+  // BOUNDED CONTEXT LIFECYCLE
+  // ===========================================================================
+
+  /**
+   * Initialize the transport by spawning the Python process.
+   */
+  protected async doInit(): Promise<void> {
+    await this.spawnProcess();
+  }
+
+  /**
+   * Dispose the transport by killing the Python process.
+   */
+  protected async doDispose(): Promise<void> {
+    // Reject all pending requests
+    const stderrTail = this.getStderrTail();
+    const msg = stderrTail
+      ? `Transport disposed. Stderr:\n${stderrTail}`
+      : 'Transport disposed';
+    const error = new BridgeDisposedError(msg);
+
+    for (const [, pending] of this.pending) {
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+      }
+      pending.reject(error);
+    }
+    this.pending.clear();
+
+    // Clear write queue
+    for (const queued of this.writeQueue) {
+      queued.reject(error);
+    }
+    this.writeQueue.length = 0;
+
+    // Kill process
+    await this.killProcess();
+
+    // Clear buffers
+    this.stdoutBuffer = '';
+    this.stderrBuffer = '';
+    this.requestCount = 0;
+  }
+
+  // ===========================================================================
+  // ABSTRACT METHOD STUBS (from BoundedContext)
+  // ===========================================================================
+
+  /**
+   * Not implemented - ProcessIO is a transport, not a full bridge.
+   */
+  call<T = unknown>(
+    _module: string,
+    _functionName: string,
+    _args: unknown[],
+    _kwargs?: Record<string, unknown>
+  ): Promise<T> {
+    throw new BridgeExecutionError('ProcessIO is a transport, use BridgeProtocol for operations');
+  }
+
+  /**
+   * Not implemented - ProcessIO is a transport, not a full bridge.
+   */
+  instantiate<T = unknown>(
+    _module: string,
+    _className: string,
+    _args: unknown[],
+    _kwargs?: Record<string, unknown>
+  ): Promise<T> {
+    throw new BridgeExecutionError('ProcessIO is a transport, use BridgeProtocol for operations');
+  }
+
+  /**
+   * Not implemented - ProcessIO is a transport, not a full bridge.
+   */
+  callMethod<T = unknown>(
+    _handle: string,
+    _methodName: string,
+    _args: unknown[],
+    _kwargs?: Record<string, unknown>
+  ): Promise<T> {
+    throw new BridgeExecutionError('ProcessIO is a transport, use BridgeProtocol for operations');
+  }
+
+  /**
+   * Not implemented - ProcessIO is a transport, not a full bridge.
+   */
+  disposeInstance(_handle: string): Promise<void> {
+    throw new BridgeExecutionError('ProcessIO is a transport, use BridgeProtocol for operations');
+  }
+
+  // ===========================================================================
+  // PROCESS MANAGEMENT
+  // ===========================================================================
+
+  /**
+   * Spawn the Python subprocess.
+   */
+  private async spawnProcess(): Promise<void> {
+    // Build environment
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...this.envOverrides,
+      // Ensure Python uses UTF-8
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'UTF-8',
+      // Disable Python buffering
+      PYTHONUNBUFFERED: '1',
+    };
+
+    // Spawn process
+    this.process = spawn(this.pythonPath, [this.bridgeScript], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env,
+    });
+
+    this.processExited = false;
+    this.processError = null;
+
+    // Set up event handlers
+    this.process.on('error', this.handleProcessError.bind(this));
+    this.process.on('exit', this.handleProcessExit.bind(this));
+
+    if (this.process.stdout) {
+      this.process.stdout.on('data', this.handleStdoutData.bind(this));
+    }
+
+    if (this.process.stderr) {
+      this.process.stderr.on('data', this.handleStderrData.bind(this));
+    }
+
+    if (this.process.stdin) {
+      this.process.stdin.on('drain', this.handleStdinDrain.bind(this));
+      this.process.stdin.on('error', this.handleStdinError.bind(this));
+    }
+
+    // Wait for process to be ready (first heartbeat could be here)
+    // For now, just resolve immediately - the process is spawned
+    await Promise.resolve();
+  }
+
+  /**
+   * Kill the Python subprocess.
+   */
+  private async killProcess(): Promise<void> {
+    if (!this.process) {
+      return;
+    }
+
+    const proc = this.process;
+    this.process = null;
+
+    // Remove listeners to prevent callbacks after disposal
+    proc.removeAllListeners();
+    proc.stdout?.removeAllListeners();
+    proc.stderr?.removeAllListeners();
+    proc.stdin?.removeAllListeners();
+
+    // Kill the process
+    if (!proc.killed) {
+      proc.kill('SIGTERM');
+
+      // Wait briefly for graceful exit
+      await new Promise<void>(resolve => {
+        const timeout = setTimeout(() => {
+          if (!proc.killed) {
+            proc.kill('SIGKILL');
+          }
+          resolve();
+        }, 1000);
+
+        proc.once('exit', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+    }
+  }
+
+  /**
+   * Restart the Python process.
+   */
+  private async restartProcess(): Promise<void> {
+    // Kill existing process
+    await this.killProcess();
+
+    // Clear buffers
+    this.stdoutBuffer = '';
+    this.stderrBuffer = '';
+    this.requestCount = 0;
+
+    // Spawn new process
+    await this.spawnProcess();
+  }
+
+  // ===========================================================================
+  // STREAM HANDLERS
+  // ===========================================================================
+
+  /**
+   * Handle stdout data from the Python process.
+   */
+  private handleStdoutData(chunk: Buffer | string): void {
+    this.stdoutBuffer += chunk.toString();
+
+    // Check for excessive line length without newline
+    if (
+      this.stdoutBuffer.length > this.maxLineLength &&
+      !this.stdoutBuffer.includes('\n')
+    ) {
+      const snippet = this.stdoutBuffer.slice(0, 500);
+      this.stdoutBuffer = '';
+      this.handleProtocolError(
+        `Response line exceeded ${this.maxLineLength} bytes`,
+        snippet
+      );
+      return;
+    }
+
+    // Process complete lines
+    let newlineIndex: number;
+    while ((newlineIndex = this.stdoutBuffer.indexOf('\n')) !== -1) {
+      const line = this.stdoutBuffer.slice(0, newlineIndex);
+      this.stdoutBuffer = this.stdoutBuffer.slice(newlineIndex + 1);
+
+      // Skip empty lines
+      if (!line.trim()) {
+        continue;
+      }
+
+      // Check line length
+      if (line.length > this.maxLineLength) {
+        const snippet = line.slice(0, 500);
+        this.handleProtocolError(
+          `Response line exceeded ${this.maxLineLength} bytes`,
+          snippet
+        );
+        return;
+      }
+
+      this.handleResponseLine(line);
+    }
+  }
+
+  /**
+   * Handle a complete response line from stdout.
+   */
+  private handleResponseLine(line: string): void {
+    // Extract ID to find pending request
+    const messageId = extractMessageId(line);
+    if (!messageId) {
+      this.handleProtocolError('Response missing "id" field', line);
+      return;
+    }
+
+    const pending = this.pending.get(messageId);
+    if (!pending) {
+      // Response for unknown request - could be for a timed-out request
+      // Log but don't fail
+      return;
+    }
+
+    // Remove from pending
+    this.pending.delete(messageId);
+
+    // Clear timeout
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+    }
+
+    // Resolve with raw response
+    pending.resolve(line);
+  }
+
+  /**
+   * Handle stderr data from the Python process.
+   */
+  private handleStderrData(chunk: Buffer | string): void {
+    try {
+      this.stderrBuffer += sanitizeStderr(chunk.toString());
+
+      // Keep only the tail
+      if (this.stderrBuffer.length > MAX_STDERR_BYTES) {
+        this.stderrBuffer = this.stderrBuffer.slice(
+          this.stderrBuffer.length - MAX_STDERR_BYTES
+        );
+      }
+    } catch {
+      // Ignore stderr buffering errors
+    }
+  }
+
+  /**
+   * Handle process error event.
+   */
+  private handleProcessError(err: Error): void {
+    this.processError = err;
+    this.processExited = true;
+
+    const msg = `Python process error: ${err.message}`;
+    const error = new BridgeProtocolError(msg);
+
+    this.rejectAllPending(error);
+  }
+
+  /**
+   * Handle process exit event.
+   */
+  private handleProcessExit(code: number | null, signal: string | null): void {
+    this.processExited = true;
+
+    const stderrTail = this.getStderrTail();
+    let msg: string;
+
+    if (signal) {
+      msg = `Python process killed by signal ${signal}`;
+    } else if (code !== null && code !== 0) {
+      msg = `Python process exited with code ${code}`;
+    } else {
+      msg = 'Python process exited';
+    }
+
+    if (stderrTail) {
+      msg += `. Stderr:\n${stderrTail}`;
+    }
+
+    const error = new BridgeProtocolError(msg);
+    this.rejectAllPending(error);
+  }
+
+  /**
+   * Handle stdin drain event (backpressure relief).
+   */
+  private handleStdinDrain(): void {
+    this.draining = false;
+    this.flushWriteQueue();
+  }
+
+  /**
+   * Handle stdin error event.
+   */
+  private handleStdinError(err: Error): void {
+    // EPIPE means process died
+    const error = new BridgeProtocolError(`stdin error: ${err.message}`);
+
+    // Reject all pending writes
+    for (const queued of this.writeQueue) {
+      queued.reject(error);
+    }
+    this.writeQueue.length = 0;
+
+    // Reject all pending requests
+    this.rejectAllPending(error);
+  }
+
+  // ===========================================================================
+  // WRITE MANAGEMENT
+  // ===========================================================================
+
+  /**
+   * Write data to stdin with backpressure handling.
+   */
+  private writeToStdin(data: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (!this.process?.stdin || this.processExited) {
+        reject(new BridgeProtocolError('Process stdin not available'));
+        return;
+      }
+
+      if (this.draining || this.writeQueue.length > 0) {
+        // Queue the write
+        this.writeQueue.push({ data, resolve, reject });
+        return;
+      }
+
+      // Try direct write
+      const canWrite = this.process.stdin.write(data);
+
+      if (canWrite) {
+        resolve();
+      } else {
+        // Backpressure - queue this write and set draining flag
+        this.draining = true;
+        this.writeQueue.push({ data, resolve, reject });
+      }
+    });
+  }
+
+  /**
+   * Flush queued writes when backpressure clears.
+   */
+  private flushWriteQueue(): void {
+    while (this.writeQueue.length > 0 && !this.draining) {
+      if (!this.process?.stdin || this.processExited) {
+        // Process died - reject all queued writes
+        for (const q of this.writeQueue) {
+          q.reject(new BridgeProtocolError('Process stdin not available'));
+        }
+        this.writeQueue.length = 0;
+        return;
+      }
+
+      const queued = this.writeQueue.shift();
+      if (!queued) {
+        return;
+      }
+
+      const canWrite = this.process.stdin.write(queued.data);
+
+      if (canWrite) {
+        queued.resolve();
+      } else {
+        // Still under pressure - put it back
+        this.writeQueue.unshift(queued);
+        this.draining = true;
+        return;
+      }
+    }
+  }
+
+  // ===========================================================================
+  // HELPERS
+  // ===========================================================================
+
+  /**
+   * Get the tail of stderr for diagnostics.
+   */
+  private getStderrTail(): string {
+    return this.stderrBuffer.trim();
+  }
+
+  /**
+   * Handle a protocol error by rejecting all pending requests.
+   */
+  private handleProtocolError(details: string, line?: string): void {
+    const snippet = line
+      ? line.length > 500 ? `${line.slice(0, 500)}...` : line
+      : undefined;
+
+    const hint = 'Ensure Python code does not print to stdout and bridge outputs only JSON lines.';
+
+    const msg = snippet
+      ? `Protocol error: ${details}\n${hint}\nOffending line: ${snippet}`
+      : `Protocol error: ${details}\n${hint}`;
+
+    const error = new BridgeProtocolError(msg);
+    this.rejectAllPending(error);
+  }
+
+  /**
+   * Reject all pending requests with an error.
+   */
+  private rejectAllPending(error: Error): void {
+    for (const [, pending] of this.pending) {
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+      }
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+}

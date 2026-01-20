@@ -11,6 +11,19 @@ export type { TywrapConfig } from './config/index.js';
 export { defineConfig, resolveConfig } from './config/index.js';
 // BoundedContext - unified abstraction for cross-boundary concerns
 export { BoundedContext, type ContextState, type ExecuteOptions } from './runtime/bounded-context.js';
+// BridgeProtocol - unified BoundedContext + SafeCodec + Transport
+export { BridgeProtocol, type BridgeProtocolOptions } from './runtime/bridge-protocol.js';
+// SafeCodec - validation and serialization for JS<->Python boundary
+export { SafeCodec, type CodecOptions } from './runtime/safe-codec.js';
+// Transport - abstract I/O channel interface
+export type { Transport, TransportOptions, ProtocolMessage, ProtocolResponse } from './runtime/transport.js';
+export { isTransport, isProtocolMessage, isProtocolResponse } from './runtime/transport.js';
+// Transport implementations
+export { ProcessIO, type ProcessIOOptions } from './runtime/process-io.js';
+export { HttpIO, type HttpIOOptions } from './runtime/http-io.js';
+export { PyodideIO, type PyodideIOOptions } from './runtime/pyodide-io.js';
+// WorkerPool - concurrent transport management
+export { WorkerPool, type WorkerPoolOptions, type PooledWorker } from './runtime/worker-pool.js';
 export type { Disposable } from './runtime/disposable.js';
 export { isDisposable, safeDispose, disposeAll } from './runtime/disposable.js';
 export {
