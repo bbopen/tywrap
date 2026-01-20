@@ -632,7 +632,7 @@ describe('BoundedContext Bounded Execution', () => {
       expect(attempts).toBe(2);
     });
 
-    it('applies exponential backoff', async () => {
+    it('applies linear backoff', async () => {
       await context.init();
       const timestamps: number[] = [];
 
