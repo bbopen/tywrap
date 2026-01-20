@@ -119,7 +119,8 @@ export abstract class BoundedContext implements RuntimeExecution {
    * @throws BridgeError subclass if initialization fails
    */
   async init(): Promise<void> {
-    if (this._state === 'disposed') {
+    // Guard against disposed or disposing states
+    if (this._state === 'disposed' || this._state === 'disposing') {
       throw new BridgeDisposedError('Context has been disposed');
     }
     if (this._state === 'ready') {
@@ -138,9 +139,12 @@ export abstract class BoundedContext implements RuntimeExecution {
         }
       })
       .catch(err => {
-        // Allow retry by resetting to idle
-        this._state = 'idle';
-        this._initPromise = undefined;
+        // Only allow retry by resetting to idle if still initializing
+        // (don't revive a disposed/disposing context)
+        if (this._state === 'initializing') {
+          this._state = 'idle';
+          this._initPromise = undefined;
+        }
         throw this.classifyError(err);
       });
 

@@ -183,6 +183,46 @@ describe('BoundedContext Lifecycle', () => {
       await expect(context.init()).rejects.toThrow(BridgeDisposedError);
     });
 
+    it('throws BridgeDisposedError if disposing', async () => {
+      // Set up a slow dispose to allow init to be called during disposal
+      const slowContext = new (class extends TestContext {
+        protected async doDispose(): Promise<void> {
+          await new Promise(resolve => setTimeout(resolve, 50));
+          await super.doDispose();
+        }
+      })();
+
+      await slowContext.init();
+
+      // Start dispose (don't await)
+      const disposePromise = slowContext.dispose();
+
+      // Try to init during disposal
+      await expect(slowContext.init()).rejects.toThrow(BridgeDisposedError);
+
+      // Clean up
+      await disposePromise;
+    });
+
+    it('does not revive context if dispose happens during failed init', async () => {
+      context.initDelay = 50;
+      context.shouldFailInit = true;
+
+      const initPromise = context.init();
+      expect(context.state).toBe('initializing');
+
+      // Dispose while init is in flight
+      await context.dispose();
+      expect(context.state).toBe('disposed');
+
+      // Wait for init to reject (it should not reset state to idle)
+      await expect(initPromise).rejects.toThrow();
+
+      // State should remain disposed, not reset to idle
+      expect(context.state).toBe('disposed');
+      expect(context.isDisposed).toBe(true);
+    });
+
     it('classifies init errors', async () => {
       context.shouldFailInit = true;
       context.initError = new Error('timeout occurred');
