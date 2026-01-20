@@ -4,7 +4,8 @@
 
 import { decodeValueAsync } from '../utils/codec.js';
 
-import { RuntimeBridge } from './base.js';
+import { BoundedContext } from './bounded-context.js';
+import { BridgeExecutionError, BridgeTimeoutError } from './errors.js';
 
 export interface HttpBridgeOptions {
   baseURL: string;
@@ -37,7 +38,7 @@ interface HttpDisposePayload {
   handle: string;
 }
 
-export class HttpBridge extends RuntimeBridge {
+export class HttpBridge extends BoundedContext {
   private readonly baseURL: string;
   private readonly headers: Record<string, string>;
   private readonly timeoutMs: number;
@@ -47,6 +48,20 @@ export class HttpBridge extends RuntimeBridge {
     this.baseURL = options.baseURL.replace(/\/$/, '');
     this.headers = { 'content-type': 'application/json', ...(options.headers ?? {}) };
     this.timeoutMs = options.timeoutMs ?? 30000;
+  }
+
+  /**
+   * HttpBridge is stateless, so init is a no-op.
+   */
+  protected async doInit(): Promise<void> {
+    // Stateless - no initialization required
+  }
+
+  /**
+   * HttpBridge is stateless, so dispose is a no-op.
+   */
+  protected async doDispose(): Promise<void> {
+    // Stateless - no cleanup required
   }
 
   async call<T = unknown>(
@@ -87,10 +102,6 @@ export class HttpBridge extends RuntimeBridge {
     await this.post(`${this.baseURL}/dispose_instance`, payload);
   }
 
-  async dispose(): Promise<void> {
-    // stateless
-  }
-
   private async post(url: string, body: unknown): Promise<unknown> {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
     const timer = controller ? setTimeout(() => controller.abort(), this.timeoutMs) : undefined;
@@ -103,7 +114,7 @@ export class HttpBridge extends RuntimeBridge {
       });
       if (!resp.ok) {
         const text = await safeText(resp);
-        throw new Error(`HTTP ${resp.status}: ${text || resp.statusText}`);
+        throw new BridgeExecutionError(`HTTP ${resp.status}: ${text || resp.statusText}`);
       }
       const ct = resp.headers.get('content-type') ?? '';
       if (ct.includes('application/json')) {
@@ -115,6 +126,12 @@ export class HttpBridge extends RuntimeBridge {
       } catch {
         return text as unknown;
       }
+    } catch (error) {
+      // Handle abort/timeout errors
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new BridgeTimeoutError(`Request timed out after ${this.timeoutMs}ms`);
+      }
+      throw error;
     } finally {
       if (timer) {
         clearTimeout(timer);

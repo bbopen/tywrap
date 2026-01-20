@@ -2,7 +2,8 @@
  * Pyodide runtime bridge (browser)
  */
 
-import { RuntimeBridge } from './base.js';
+import { BoundedContext } from './bounded-context.js';
+import { BridgeProtocolError } from './errors.js';
 
 export interface PyodideBridgeOptions {
   indexURL: string;
@@ -19,11 +20,10 @@ interface PyodideInstance {
   loadPackage: (name: string | string[]) => Promise<void>;
 }
 
-export class PyodideBridge extends RuntimeBridge {
+export class PyodideBridge extends BoundedContext {
   private readonly indexURL: string;
   private readonly packages: readonly string[];
   private py?: PyodideInstance;
-  private initPromise?: Promise<void>;
 
   constructor(options: PyodideBridgeOptions = { indexURL: 'https://cdn.jsdelivr.net/pyodide/' }) {
     super();
@@ -31,33 +31,16 @@ export class PyodideBridge extends RuntimeBridge {
     this.packages = [...(options.packages ?? [])];
   }
 
-  private async ensureReady(): Promise<void> {
-    if (this.py) {
-      return;
-    }
-    // If already initializing, wait for that promise
-    if (this.initPromise) {
-      return this.initPromise;
-    }
-    // Start initialization and store the promise to prevent concurrent initialization
-    this.initPromise = this.doInit();
-    return this.initPromise;
-  }
-
-  private async doInit(): Promise<void> {
+  protected async doInit(): Promise<void> {
     const loadPyodideFn: LoadPyodide | undefined = await this.resolveLoadPyodide();
     if (!loadPyodideFn) {
-      throw new Error('Pyodide is not available in this environment');
+      throw new BridgeProtocolError('Pyodide is not available in this environment');
     }
     this.py = await loadPyodideFn({ indexURL: this.indexURL });
     if (this.packages.length > 0) {
       await this.py.loadPackage([...this.packages]);
     }
     await this.bootstrapHelpers();
-  }
-
-  async init(): Promise<void> {
-    await this.ensureReady();
   }
 
   private async resolveLoadPyodide(): Promise<LoadPyodide | undefined> {
@@ -115,14 +98,14 @@ export class PyodideBridge extends RuntimeBridge {
     args: unknown[],
     kwargs?: Record<string, unknown>
   ): Promise<T> {
-    await this.ensureReady();
+    await this.init();
     const py = this.py;
     if (!py) {
-      throw new Error('Pyodide not initialized');
+      throw new BridgeProtocolError('Pyodide not initialized');
     }
     const fn = py.globals.get('__tywrap_call');
     if (!fn) {
-      throw new Error('Pyodide helper not initialized');
+      throw new BridgeProtocolError('Pyodide helper not initialized');
     }
     const invoke = fn as (module: string, f: string, a: unknown, k: unknown) => unknown;
     const pyArgs = py.toPy(args ?? []);
@@ -143,14 +126,14 @@ export class PyodideBridge extends RuntimeBridge {
     args: unknown[],
     kwargs?: Record<string, unknown>
   ): Promise<T> {
-    await this.ensureReady();
+    await this.init();
     const py = this.py;
     if (!py) {
-      throw new Error('Pyodide not initialized');
+      throw new BridgeProtocolError('Pyodide not initialized');
     }
     const fn = py.globals.get('__tywrap_instantiate');
     if (!fn) {
-      throw new Error('Pyodide helper not initialized');
+      throw new BridgeProtocolError('Pyodide helper not initialized');
     }
     const invoke = fn as (module: string, c: string, a: unknown, k: unknown) => unknown;
     const pyArgs = py.toPy(args ?? []);
@@ -171,14 +154,14 @@ export class PyodideBridge extends RuntimeBridge {
     args: unknown[],
     kwargs?: Record<string, unknown>
   ): Promise<T> {
-    await this.ensureReady();
+    await this.init();
     const py = this.py;
     if (!py) {
-      throw new Error('Pyodide not initialized');
+      throw new BridgeProtocolError('Pyodide not initialized');
     }
     const fn = py.globals.get('__tywrap_call_method');
     if (!fn) {
-      throw new Error('Pyodide helper not initialized');
+      throw new BridgeProtocolError('Pyodide helper not initialized');
     }
     const invoke = fn as (h: string, m: string, a: unknown, k: unknown) => unknown;
     const pyArgs = py.toPy(args ?? []);
@@ -194,14 +177,14 @@ export class PyodideBridge extends RuntimeBridge {
   }
 
   async disposeInstance(handle: string): Promise<void> {
-    await this.ensureReady();
+    await this.init();
     const py = this.py;
     if (!py) {
-      throw new Error('Pyodide not initialized');
+      throw new BridgeProtocolError('Pyodide not initialized');
     }
     const fn = py.globals.get('__tywrap_dispose_instance');
     if (!fn) {
-      throw new Error('Pyodide helper not initialized');
+      throw new BridgeProtocolError('Pyodide helper not initialized');
     }
     const invoke = fn as (h: string) => unknown;
     try {
@@ -211,7 +194,7 @@ export class PyodideBridge extends RuntimeBridge {
     }
   }
 
-  async dispose(): Promise<void> {
+  protected async doDispose(): Promise<void> {
     // Pyodide has no explicit dispose for instance; rely on GC
     this.py = undefined;
   }
