@@ -80,6 +80,7 @@ jobs:
           python -c "import json; data = json.load(open('/tmp/math_ir.json')); print(f'Extracted {len(data.get(\"functions\", []))} functions from math module')"
 
       - name: Test Python API
+        working-directory: /tmp
         run: |
           python -c "from tywrap_ir import extract_module_ir, IR_VERSION, __version__; print(f'IR_VERSION: {IR_VERSION}, __version__: {__version__}')"
 
