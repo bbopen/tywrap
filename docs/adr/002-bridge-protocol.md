@@ -2,7 +2,16 @@
 
 ## Status
 
-Proposed
+**In Progress** (Core infrastructure complete, bridge migration pending)
+
+### Implementation Progress
+
+- ✅ Phase 1: SafeCodec (TypeScript + Python)
+- ✅ Phase 2: Transport interface + ProcessIO, HttpIO, PyodideIO
+- ✅ Phase 3: WorkerPool
+- ✅ BridgeProtocol base class
+- ⏳ Phase 4: Bridge migration (NodeBridge, HttpBridge, PyodideBridge)
+- ⏳ Phase 5: Cleanup and deprecations
 
 ## Context
 
