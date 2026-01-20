@@ -522,7 +522,7 @@ export class NodeBridge extends RuntimeBridge {
 
     const workerId = `worker_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    let env = this.buildEnv();
+    const env = this.buildEnv();
     env.PYTHONUNBUFFERED = '1'; // Ensure immediate output
     env.PYTHONDONTWRITEBYTECODE = '1'; // Skip .pyc files for faster startup
     const maxLineLength = this.options.maxLineLength ?? getMaxLineLengthFromEnv(env);
