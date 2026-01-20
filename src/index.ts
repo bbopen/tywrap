@@ -9,7 +9,35 @@ import { tywrap } from './tywrap.js';
 
 export type { TywrapConfig } from './config/index.js';
 export { defineConfig, resolveConfig } from './config/index.js';
+// BoundedContext - unified abstraction for cross-boundary concerns
+export { BoundedContext, type ContextState, type ExecuteOptions } from './runtime/bounded-context.js';
+export type { Disposable } from './runtime/disposable.js';
+export { isDisposable, safeDispose, disposeAll } from './runtime/disposable.js';
+export {
+  ValidationError,
+  isFiniteNumber,
+  isPositiveNumber,
+  isNonNegativeNumber,
+  isNonEmptyString,
+  isPlainObject,
+  assertFiniteNumber,
+  assertPositive,
+  assertNonNegative,
+  assertString,
+  assertNonEmptyString,
+  assertArray,
+  assertObject,
+  containsSpecialFloat,
+  assertNoSpecialFloats,
+  sanitizeForFilename,
+  containsPathTraversal,
+} from './runtime/validators.js';
+
+/**
+ * @deprecated Use BoundedContext instead. RuntimeBridge will be removed in the next major version.
+ */
 export { RuntimeBridge } from './runtime/base.js';
+
 export {
   BridgeError,
   BridgeProtocolError,

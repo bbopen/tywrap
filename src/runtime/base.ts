@@ -1,32 +1,24 @@
 /**
  * Base runtime bridge
+ *
+ * @deprecated Use BoundedContext instead. RuntimeBridge will be removed in the next major version.
  */
 
-import type { RuntimeExecution } from '../types/index.js';
+import { BoundedContext } from './bounded-context.js';
 
-export abstract class RuntimeBridge implements RuntimeExecution {
-  abstract call<T = unknown>(
-    module: string,
-    functionName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T>;
+/**
+ * @deprecated Use BoundedContext instead. RuntimeBridge will be removed in the next major version.
+ *
+ * All bridges now extend BoundedContext which provides:
+ * - Lifecycle management (init/dispose state machine)
+ * - Validation helpers
+ * - Error classification
+ * - Bounded execution (timeout, retry)
+ * - Resource ownership tracking
+ *
+ * @see BoundedContext
+ */
+export abstract class RuntimeBridge extends BoundedContext {}
 
-  abstract instantiate<T = unknown>(
-    module: string,
-    className: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T>;
-
-  abstract callMethod<T = unknown>(
-    handle: string,
-    methodName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T>;
-
-  abstract disposeInstance(handle: string): Promise<void>;
-
-  abstract dispose(): Promise<void>;
-}
+// Re-export BoundedContext for backwards compatibility
+export { BoundedContext };
