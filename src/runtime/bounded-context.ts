@@ -132,7 +132,10 @@ export abstract class BoundedContext implements RuntimeExecution {
     this._state = 'initializing';
     this._initPromise = this.doInit()
       .then(() => {
-        this._state = 'ready';
+        // Guard against dispose() being called during init
+        if (this._state === 'initializing') {
+          this._state = 'ready';
+        }
       })
       .catch(err => {
         // Allow retry by resetting to idle
@@ -434,9 +437,32 @@ export abstract class BoundedContext implements RuntimeExecution {
    * @throws BridgeTimeoutError if the timeout expires
    */
   private async withTimeout<T>(promise: Promise<T>, ms: number, signal?: AbortSignal): Promise<T> {
-    // No timeout if ms is 0 or negative
+    // Check if already aborted
+    if (signal?.aborted) {
+      throw new BridgeTimeoutError('Operation aborted');
+    }
+
+    // No timeout if ms is 0 or negative, but still honor abort signal
     if (ms <= 0 || !Number.isFinite(ms)) {
-      return promise;
+      if (!signal) {
+        return promise;
+      }
+      // Wrap promise to honor abort signal even without timeout
+      return new Promise<T>((resolve, reject) => {
+        const abortHandler = (): void => {
+          reject(new BridgeTimeoutError('Operation aborted'));
+        };
+        signal.addEventListener('abort', abortHandler, { once: true });
+        promise
+          .then(result => {
+            signal.removeEventListener('abort', abortHandler);
+            resolve(result);
+          })
+          .catch(error => {
+            signal.removeEventListener('abort', abortHandler);
+            reject(error);
+          });
+      });
     }
 
     return new Promise<T>((resolve, reject) => {

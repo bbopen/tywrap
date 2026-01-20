@@ -294,6 +294,26 @@ describe('BoundedContext Lifecycle', () => {
 
       expect(states).toEqual(['ready', 'disposed']);
     });
+
+    it('does not revive disposed context if dispose() is called during init()', async () => {
+      // Set up a slow init to allow dispose to be called during initialization
+      context.initDelay = 50;
+
+      const initPromise = context.init();
+      expect(context.state).toBe('initializing');
+
+      // Dispose while init is in flight
+      await context.dispose();
+      expect(context.state).toBe('disposed');
+
+      // Wait for init to complete (it should not change state back to ready)
+      await initPromise;
+
+      // State should remain disposed, not flip back to ready
+      expect(context.state).toBe('disposed');
+      expect(context.isDisposed).toBe(true);
+      expect(context.isReady).toBe(false);
+    });
   });
 });
 
@@ -615,6 +635,30 @@ describe('BoundedContext Bounded Execution', () => {
       setTimeout(() => controller.abort(), 10);
 
       await expect(promise).rejects.toThrow(BridgeTimeoutError);
+    });
+
+    it('honors abort signal even when timeout is disabled (timeoutMs: 0)', async () => {
+      await context.init();
+      const controller = new AbortController();
+
+      const promise = context.testExecute(async () => {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return 'never';
+      }, { signal: controller.signal, timeoutMs: 0 });
+
+      setTimeout(() => controller.abort(), 10);
+
+      await expect(promise).rejects.toThrow(BridgeTimeoutError);
+    });
+
+    it('throws on already-aborted signal even when timeout is disabled', async () => {
+      await context.init();
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        context.testExecute(async () => 'never', { signal: controller.signal, timeoutMs: 0 })
+      ).rejects.toThrow(BridgeTimeoutError);
     });
   });
 
