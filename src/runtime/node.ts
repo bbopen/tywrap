@@ -21,8 +21,8 @@ import { getDefaultPythonPath } from '../utils/python.js';
 import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 import type { BridgeInfo } from '../types/index.js';
 
-import { RuntimeBridge } from './base.js';
-import { BridgeDisposedError, BridgeProtocolError } from './errors.js';
+import { BoundedContext } from './bounded-context.js';
+import { BridgeProtocolError } from './errors.js';
 import {
   BridgeCore,
   type RpcRequest,
@@ -181,15 +181,13 @@ function resolveVirtualEnv(
  * });
  * ```
  */
-export class NodeBridge extends RuntimeBridge {
+export class NodeBridge extends BoundedContext {
   private processPool: WorkerProcess[] = [];
   private roundRobinIndex = 0;
   private cleanupTimer?: NodeJS.Timeout;
   private options: ResolvedOptions;
   private emitter = new EventEmitter();
-  private disposed = false;
   private bridgeInfo?: BridgeInfo;
-  private initPromise?: Promise<void>;
 
   // Performance monitoring
   private stats: BridgeStats = {
@@ -235,21 +233,7 @@ export class NodeBridge extends RuntimeBridge {
     this.startCleanupScheduler();
   }
 
-  async init(): Promise<void> {
-    if (this.disposed) {
-      throw new BridgeDisposedError('Bridge has been disposed');
-    }
-    if (this.processPool.length >= this.options.minProcesses) {
-      return; // Already initialized
-    }
-    if (this.initPromise) {
-      return this.initPromise;
-    }
-    this.initPromise = this.doInit();
-    return this.initPromise;
-  }
-
-  private async doInit(): Promise<void> {
+  protected async doInit(): Promise<void> {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- script path is user-configured
     if (!existsSync(this.options.scriptPath)) {
       throw new BridgeProtocolError(`Python bridge script not found at ${this.options.scriptPath}`);
@@ -498,7 +482,7 @@ export class NodeBridge extends RuntimeBridge {
     log.warn('Quarantining worker', { workerId: worker.id, error: String(error) });
     this.terminateWorker(worker, { force: true })
       .then(() => {
-        if (!this.disposed && this.processPool.length < this.options.minProcesses) {
+        if (!this.isDisposed && this.processPool.length < this.options.minProcesses) {
           this.spawnProcess().catch(spawnError => {
             log.error('Failed to spawn replacement worker after quarantine', {
               error: String(spawnError),
@@ -627,7 +611,7 @@ export class NodeBridge extends RuntimeBridge {
     }
 
     // Spawn replacement if needed and not disposing
-    if (!this.disposed && this.processPool.length < this.options.minProcesses) {
+    if (!this.isDisposed && this.processPool.length < this.options.minProcesses) {
       this.spawnProcess().catch(error => {
         log.error('Failed to spawn replacement worker', { error: String(error) });
       });
@@ -817,15 +801,9 @@ export class NodeBridge extends RuntimeBridge {
   }
 
   /**
-   * Dispose all resources
+   * Dispose all resources (called by BoundedContext.dispose())
    */
-  async dispose(): Promise<void> {
-    if (this.disposed) {
-      return;
-    }
-
-    this.disposed = true;
-
+  protected async doDispose(): Promise<void> {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = undefined;
