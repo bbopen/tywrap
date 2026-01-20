@@ -605,7 +605,7 @@ describe('HttpIO', () => {
       await transport.dispose();
 
       const message = JSON.stringify(createValidMessage());
-      await expect(transport.send(message, 1000)).rejects.toThrow(BridgeExecutionError);
+      await expect(transport.send(message, 1000)).rejects.toThrow(BridgeDisposedError);
       await expect(transport.send(message, 1000)).rejects.toThrow(/disposed/);
     });
 

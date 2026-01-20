@@ -7,7 +7,12 @@
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import { BridgeExecutionError, BridgeProtocolError, BridgeTimeoutError } from './errors.js';
+import {
+  BridgeDisposedError,
+  BridgeExecutionError,
+  BridgeProtocolError,
+  BridgeTimeoutError,
+} from './errors.js';
 import type { Transport } from './transport.js';
 
 // =============================================================================
@@ -114,21 +119,23 @@ export class HttpIO implements Transport {
    * Send a message to the Python server and wait for the response.
    *
    * @param message - The JSON-encoded protocol message to send
-   * @param timeoutMs - Timeout in milliseconds (0 = use default, negative = no timeout)
+   * @param timeoutMs - Timeout in milliseconds (0 = no timeout, negative = use default)
    * @param signal - Optional AbortSignal for external cancellation
    * @returns The raw response string (JSON-encoded ProtocolResponse)
    *
+   * @throws BridgeDisposedError if the transport has been disposed
    * @throws BridgeTimeoutError if the operation times out or is aborted
    * @throws BridgeExecutionError if the server returns a non-2xx status
    * @throws BridgeProtocolError if the response cannot be read
    */
   async send(message: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
     if (this._isDisposed) {
-      throw new BridgeExecutionError('Transport has been disposed');
+      throw new BridgeDisposedError('Transport has been disposed');
     }
 
     // Determine effective timeout
-    const effectiveTimeout = timeoutMs > 0 ? timeoutMs : this.defaultTimeoutMs;
+    // 0 = no timeout (per interface contract), negative = use default
+    const effectiveTimeout = timeoutMs === 0 ? 0 : timeoutMs > 0 ? timeoutMs : this.defaultTimeoutMs;
 
     // Create abort controller for timeout
     const controller = new AbortController();
@@ -203,8 +210,8 @@ export class HttpIO implements Transport {
       }
 
       // Wrap unknown errors
-      const message = error instanceof Error ? error.message : String(error);
-      throw new BridgeExecutionError(`Request failed: ${message}`, {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new BridgeExecutionError(`Request failed: ${errorMessage}`, {
         cause: error instanceof Error ? error : undefined,
       });
     } finally {
