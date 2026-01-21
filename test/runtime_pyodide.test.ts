@@ -110,7 +110,7 @@ describe('Pyodide Runtime Bridge', () => {
       const result = await bridge.call('math', 'sqrt', [16]);
       expect(result).toBe(4);
       expect(mockLoadPyodide).toHaveBeenCalledWith({
-        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/',
+        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
       });
     });
 
@@ -133,7 +133,7 @@ describe('Pyodide Runtime Bridge', () => {
     it('should initialize with pre-loaded packages', async () => {
       const packages = ['numpy', 'pandas'];
       bridge = new PyodideBridge({
-        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/',
+        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
         packages,
       });
 
@@ -675,8 +675,8 @@ describe('Pyodide Runtime Bridge', () => {
   describe('CDN and Loading Configurations', () => {
     it('should handle different CDN URLs', async () => {
       const customCDNs = [
-        'https://cdn.jsdelivr.net/pyodide/v0.24.1/',
-        'https://unpkg.com/pyodide@0.24.1/',
+        'https://cdn.jsdelivr.net/pyodide/v0.28.0/',
+        'https://unpkg.com/pyodide@0.28.0/',
         'https://custom-cdn.example.com/pyodide/',
       ];
 

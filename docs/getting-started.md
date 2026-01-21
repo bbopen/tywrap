@@ -221,7 +221,7 @@ async function demo() {
   },
   "runtime": {
     "pyodide": {
-      "indexURL": "https://cdn.jsdelivr.net/pyodide/",
+      "indexURL": "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/",
       "packages": ["numpy", "scipy"]
     }
   }
