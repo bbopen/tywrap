@@ -98,11 +98,13 @@ def get_codec_max_bytes():
 CODEC_MAX_BYTES = get_codec_max_bytes()
 
 # Why: use SafeCodec for final JSON encoding to reject NaN/Infinity and handle
-# edge cases like numpy scalars. We disable SafeCodec's internal size limit since
-# we use our own CODEC_MAX_BYTES logic with specific error messages.
+# edge cases like numpy scalars. We use sys.maxsize for SafeCodec's internal limit
+# to preserve the original "no limit unless TYWRAP_CODEC_MAX_BYTES is set" behavior.
+# The explicit size check in encode_response() provides the specific error message
+# mentioning the env var name, which is important for debugging.
 _response_codec = SafeCodec(
     allow_nan=False,
-    max_payload_bytes=1024 * 1024 * 1024,  # 1GB, effectively unlimited for SafeCodec
+    max_payload_bytes=sys.maxsize,
 )
 
 
