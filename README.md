@@ -7,7 +7,7 @@
 
 TypeScript wrapper for Python libraries with full type safety.
 
-> **⚠️ Experimental Software (v0.2.0)** - APIs may change between versions. Not recommended for production use until v1.0.0.
+> **⚠️ Experimental Software (v0.2.1)** - APIs may change between versions. Not recommended for production use until v1.0.0.
 
 ## Features
 

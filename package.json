@@ -1,7 +1,7 @@
 {
   "name": "tywrap",
-  "version": "0.2.0",
-  "description": "TypeScript wrapper for Python libraries with full type safety (EXPERIMENTAL - v0.2.0)",
+  "version": "0.2.1",
+  "description": "TypeScript wrapper for Python libraries with full type safety (EXPERIMENTAL - v0.2.1)",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
