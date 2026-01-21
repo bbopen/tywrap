@@ -25,7 +25,7 @@ npm install tywrap pyodide
   },
   "runtime": {
     "pyodide": {
-      "indexURL": "https://cdn.jsdelivr.net/pyodide/",
+      "indexURL": "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/",
       "packages": ["numpy", "matplotlib", "scipy"]
     }
   }
@@ -39,7 +39,7 @@ import { setRuntimeBridge } from 'tywrap/runtime';
 import { array } from './generated/numpy.generated.js';
 
 const bridge = new PyodideBridge({
-  indexURL: 'https://cdn.jsdelivr.net/pyodide/',
+  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
   packages: ['numpy']
 });
 

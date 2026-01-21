@@ -163,7 +163,7 @@ export default defineConfig({
 {
   "runtime": {
     "pyodide": {
-      "indexURL": "https://cdn.jsdelivr.net/pyodide/",
+      "indexURL": "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/",
       "packages": ["numpy", "scipy", "matplotlib"]
     }
   }
@@ -265,8 +265,6 @@ Use presets to opt into richer mappings for common ecosystems.
   }
 }
 ```
-
-### Development Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|

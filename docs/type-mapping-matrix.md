@@ -208,7 +208,33 @@ Enable presets via `types.presets` in your config to opt into additional mapping
 
 | Python Type | TypeScript Type | Notes |
 |-------------|----------------|-------|
-| `torch.Tensor` | `{ data: unknown, shape: number[], dtype?: string, device?: string }` | Tensor metadata + decoded data |
+| `torch.Tensor` | Nested ndarray envelope with tensor metadata | See structure below |
+
+Torch tensors are wrapped in a special envelope containing an ndarray:
+```typescript
+{
+  __tywrap__: 'torch.tensor',
+  encoding: 'ndarray',
+  value: {
+    __tywrap__: 'ndarray',
+    encoding: 'json' | 'arrow',
+    value: number[] | Uint8Array,
+    shape: number[],
+    dtype: string
+  },
+  device: string  // e.g., 'cpu'
+}
+```
+
+### pydantic preset
+
+| Python Type | TypeScript Type | Notes |
+|-------------|----------------|-------|
+| `pydantic.BaseModel` | Serialized dict | Via `model_dump(by_alias=True, mode='json')` |
+| Fields with aliases | Uses alias name | `by_alias=True` default |
+
+Pydantic v2 models are serialized using `model_dump()` with `by_alias=True` and `mode='json'`
+to ensure JSON-safe output. Nested models are recursively serialized.
 
 ### sklearn preset
 
@@ -322,4 +348,4 @@ Planned improvements to the type mapping system:
 
 ---
 
-*This document is automatically updated as the type mapping system evolves. Last updated: 2024.*
+*Last updated: January 2026.*
