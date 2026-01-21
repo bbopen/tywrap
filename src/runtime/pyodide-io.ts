@@ -15,7 +15,7 @@
  */
 
 import { BoundedContext } from './bounded-context.js';
-import { BridgeDisposedError, BridgeExecutionError, BridgeProtocolError } from './errors.js';
+import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import { PROTOCOL_ID, type Transport, type ProtocolMessage, type ProtocolResponse } from './transport.js';
 
 // =============================================================================

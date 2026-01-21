@@ -11,7 +11,7 @@
 import { BoundedContext } from './bounded-context.js';
 import { BridgeDisposedError, BridgeExecutionError } from './errors.js';
 import type { Transport } from './transport.js';
-import { WorkerPool } from './worker-pool.js';
+import { WorkerPool, type PooledWorker } from './worker-pool.js';
 
 // =============================================================================
 // TYPES
@@ -27,11 +27,20 @@ export interface PooledTransportOptions {
   /** Maximum number of workers in the pool. Default: 1 */
   maxWorkers?: number;
 
+  /** Minimum number of workers to pre-spawn during init. Default: 0 (lazy) */
+  minWorkers?: number;
+
   /** Timeout for waiting in queue (ms). Default: 30000 */
   queueTimeoutMs?: number;
 
   /** Maximum concurrent requests per worker. Default: 10 */
   maxConcurrentPerWorker?: number;
+
+  /**
+   * Callback invoked after each worker is created and initialized.
+   * Use this for per-worker warmup (e.g., importing modules, running setup).
+   */
+  onWorkerReady?: (worker: PooledWorker) => Promise<void>;
 }
 
 // =============================================================================
@@ -69,7 +78,9 @@ export interface PooledTransportOptions {
  * ```
  */
 export class PooledTransport extends BoundedContext implements Transport {
-  private readonly poolOptions: Required<PooledTransportOptions>;
+  private readonly poolOptions: Omit<Required<PooledTransportOptions>, 'onWorkerReady'> & {
+    onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+  };
   private pool?: WorkerPool;
 
   /**
@@ -87,8 +98,10 @@ export class PooledTransport extends BoundedContext implements Transport {
     this.poolOptions = {
       createTransport: options.createTransport,
       maxWorkers: options.maxWorkers ?? 1,
+      minWorkers: options.minWorkers ?? 0,
       queueTimeoutMs: options.queueTimeoutMs ?? 30000,
       maxConcurrentPerWorker: options.maxConcurrentPerWorker ?? 10,
+      onWorkerReady: options.onWorkerReady,
     };
   }
 
@@ -100,13 +113,16 @@ export class PooledTransport extends BoundedContext implements Transport {
    * Initialize the pooled transport.
    *
    * Creates and initializes the internal WorkerPool.
+   * If minWorkers > 0, workers are pre-spawned during init.
    */
   protected async doInit(): Promise<void> {
     this.pool = new WorkerPool({
       createTransport: this.poolOptions.createTransport,
       maxWorkers: this.poolOptions.maxWorkers,
+      minWorkers: this.poolOptions.minWorkers,
       queueTimeoutMs: this.poolOptions.queueTimeoutMs,
       maxConcurrentPerWorker: this.poolOptions.maxConcurrentPerWorker,
+      onWorkerReady: this.poolOptions.onWorkerReady,
     });
 
     await this.pool.init();

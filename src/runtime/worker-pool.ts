@@ -25,11 +25,20 @@ export interface WorkerPoolOptions {
   /** Maximum number of workers in the pool */
   maxWorkers: number;
 
+  /** Minimum number of workers to pre-spawn during init. Default: 0 (lazy) */
+  minWorkers?: number;
+
   /** Timeout for waiting in queue (ms). Default: 30000 */
   queueTimeoutMs?: number;
 
   /** Maximum concurrent requests per worker. Default: 1 */
   maxConcurrentPerWorker?: number;
+
+  /**
+   * Callback invoked after each worker is created and initialized.
+   * Use this for per-worker warmup (e.g., importing modules, running setup).
+   */
+  onWorkerReady?: (worker: PooledWorker) => Promise<void>;
 }
 
 /**
@@ -90,7 +99,9 @@ interface QueuedWaiter {
  * ```
  */
 export class WorkerPool extends BoundedContext {
-  private readonly options: Required<WorkerPoolOptions>;
+  private readonly options: Omit<Required<WorkerPoolOptions>, 'onWorkerReady'> & {
+    onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+  };
   private readonly workers: PooledWorker[] = [];
   private readonly waitQueue: QueuedWaiter[] = [];
 
@@ -110,11 +121,18 @@ export class WorkerPool extends BoundedContext {
       throw new BridgeExecutionError('maxWorkers must be a positive number');
     }
 
+    const minWorkers = options.minWorkers ?? 0;
+    if (minWorkers > options.maxWorkers) {
+      throw new BridgeExecutionError('minWorkers cannot exceed maxWorkers');
+    }
+
     this.options = {
       createTransport: options.createTransport,
       maxWorkers: options.maxWorkers,
+      minWorkers,
       queueTimeoutMs: options.queueTimeoutMs ?? 30000,
       maxConcurrentPerWorker: options.maxConcurrentPerWorker ?? 1,
+      onWorkerReady: options.onWorkerReady,
     };
   }
 
@@ -124,10 +142,19 @@ export class WorkerPool extends BoundedContext {
 
   /**
    * Initialize the pool.
-   * Workers are created lazily, so this is a no-op.
+   *
+   * If minWorkers > 0, pre-spawns workers during initialization.
+   * Otherwise, workers are created lazily on demand.
    */
   protected async doInit(): Promise<void> {
-    // Lazy initialization - workers created on demand in acquire()
+    // Pre-spawn minimum workers if configured
+    if (this.options.minWorkers > 0) {
+      const spawns: Promise<PooledWorker>[] = [];
+      for (let i = 0; i < this.options.minWorkers; i++) {
+        spawns.push(this.createWorker());
+      }
+      await Promise.all(spawns);
+    }
   }
 
   /**
@@ -296,6 +323,9 @@ export class WorkerPool extends BoundedContext {
 
   /**
    * Create a new worker and add it to the pool.
+   *
+   * If onWorkerReady is configured, calls it after the transport is initialized.
+   * This is useful for per-worker warmup (importing modules, running setup).
    */
   private async createWorker(): Promise<PooledWorker> {
     const transport = this.options.createTransport();
@@ -309,6 +339,12 @@ export class WorkerPool extends BoundedContext {
     };
 
     this.workers.push(worker);
+
+    // Call onWorkerReady callback if provided
+    if (this.options.onWorkerReady) {
+      await this.options.onWorkerReady(worker);
+    }
+
     return worker;
   }
 

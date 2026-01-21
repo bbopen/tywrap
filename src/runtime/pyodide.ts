@@ -8,7 +8,7 @@
  */
 
 import { BridgeProtocol, type BridgeProtocolOptions } from './bridge-protocol.js';
-import { PyodideIO, type PyodideIOOptions } from './pyodide-io.js';
+import { PyodideIO } from './pyodide-io.js';
 import type { CodecOptions } from './safe-codec.js';
 
 // =============================================================================

@@ -22,6 +22,7 @@ import { BridgeProtocolError } from './errors.js';
 import { ProcessIO } from './process-io.js';
 import { PooledTransport } from './pooled-transport.js';
 import type { CodecOptions } from './safe-codec.js';
+import type { PooledWorker } from './worker-pool.js';
 
 // =============================================================================
 // OPTIONS
@@ -106,6 +107,7 @@ export interface NodeBridgeOptions {
 // =============================================================================
 
 interface ResolvedOptions {
+  minProcesses: number;
   maxProcesses: number;
   maxConcurrentPerProcess: number;
   pythonPath: string;
@@ -221,8 +223,12 @@ export class NodeBridge extends BridgeProtocol {
     const scriptPath = options.scriptPath ?? resolveDefaultScriptPath();
     const resolvedScriptPath = isAbsolute(scriptPath) ? scriptPath : resolve(cwd, scriptPath);
 
+    const maxProcesses = options.maxProcesses ?? 1;
+    const minProcesses = Math.min(options.minProcesses ?? 1, maxProcesses);
+
     const resolvedOptions: ResolvedOptions = {
-      maxProcesses: options.maxProcesses ?? 1,
+      minProcesses,
+      maxProcesses,
       maxConcurrentPerProcess: options.maxConcurrentPerProcess ?? 10,
       pythonPath: options.pythonPath ?? venv?.pythonPath ?? getDefaultPythonPath(),
       scriptPath: resolvedScriptPath,
@@ -240,6 +246,11 @@ export class NodeBridge extends BridgeProtocol {
     // Build environment for ProcessIO
     const processEnv = buildProcessEnv(resolvedOptions);
 
+    // Create warmup callback for per-worker initialization
+    const onWorkerReady = resolvedOptions.warmupCommands.length > 0
+      ? createWarmupCallback(resolvedOptions.warmupCommands, resolvedOptions.timeoutMs)
+      : undefined;
+
     // Create pooled transport with ProcessIO workers
     const transport = new PooledTransport({
       createTransport: () =>
@@ -250,8 +261,10 @@ export class NodeBridge extends BridgeProtocol {
           cwd: resolvedOptions.cwd,
         }),
       maxWorkers: resolvedOptions.maxProcesses,
+      minWorkers: resolvedOptions.minProcesses,
       queueTimeoutMs: resolvedOptions.queueTimeoutMs,
       maxConcurrentPerWorker: resolvedOptions.maxConcurrentPerProcess,
+      onWorkerReady,
     });
 
     // Initialize BridgeProtocol with pooled transport
@@ -275,7 +288,7 @@ export class NodeBridge extends BridgeProtocol {
    * Initialize the bridge.
    *
    * Validates the bridge script exists, registers Arrow decoder,
-   * initializes the transport pool, and runs warmup commands.
+   * and initializes the transport pool (which runs warmup commands per-worker).
    */
   protected override async doInit(): Promise<void> {
     // Validate script exists
@@ -292,13 +305,8 @@ export class NodeBridge extends BridgeProtocol {
       loader: () => require('apache-arrow'),
     });
 
-    // Initialize parent (which initializes transport)
+    // Initialize parent (which initializes transport and runs warmup per-worker)
     await super.doInit();
-
-    // Run warmup commands
-    if (this.resolvedOptions.warmupCommands.length > 0) {
-      await this.runWarmupCommands();
-    }
   }
 
   // ===========================================================================
@@ -402,26 +410,6 @@ export class NodeBridge extends BridgeProtocol {
   // ===========================================================================
 
   /**
-   * Run warmup commands on the first process.
-   */
-  private async runWarmupCommands(): Promise<void> {
-    for (const cmd of this.resolvedOptions.warmupCommands) {
-      try {
-        // Handle both new and legacy warmup command formats
-        if ('module' in cmd && 'functionName' in cmd) {
-          // New format: { module, functionName, args? }
-          await this.call(cmd.module, cmd.functionName, cmd.args ?? []);
-        } else if ('method' in cmd && 'params' in cmd) {
-          // Legacy format: { method, params } - skip, not supported in new architecture
-          // Legacy warmup commands were for the old BridgeCore protocol
-        }
-      } catch {
-        // Ignore warmup errors - they're not critical
-      }
-    }
-  }
-
-  /**
    * Generate a cache key, returning null if generation fails.
    */
   private safeCacheKey(prefix: string, ...inputs: unknown[]): string | null {
@@ -462,6 +450,57 @@ export class NodeBridge extends BridgeProtocol {
 
     return !hasComplexArgs && args.length <= 3;
   }
+}
+
+// =============================================================================
+// WARMUP CALLBACK
+// =============================================================================
+
+/**
+ * Simple request ID generator for warmup commands.
+ */
+let warmupRequestId = 0;
+function generateWarmupId(): string {
+  return `warmup_${++warmupRequestId}_${Date.now()}`;
+}
+
+/**
+ * Create a callback that runs warmup commands on each worker.
+ *
+ * The callback sends warmup commands directly to the worker's transport,
+ * bypassing the pool to ensure each worker gets warmed up individually.
+ */
+function createWarmupCallback(
+  warmupCommands: Array<
+    | { module: string; functionName: string; args?: unknown[] }
+    | { method: string; params: unknown }
+  >,
+  timeoutMs: number
+): (worker: PooledWorker) => Promise<void> {
+  return async (worker: PooledWorker) => {
+    for (const cmd of warmupCommands) {
+      try {
+        // Handle both new and legacy warmup command formats
+        if ('module' in cmd && 'functionName' in cmd) {
+          // Build the protocol message
+          const message = JSON.stringify({
+            id: generateWarmupId(),
+            type: 'call',
+            module: cmd.module,
+            functionName: cmd.functionName,
+            args: cmd.args ?? [],
+            kwargs: {},
+          });
+
+          // Send directly to this worker's transport
+          await worker.transport.send(message, timeoutMs);
+        }
+        // Legacy format { method, params } is ignored as it's not supported
+      } catch {
+        // Ignore warmup errors - they're not critical
+      }
+    }
+  };
 }
 
 // =============================================================================
