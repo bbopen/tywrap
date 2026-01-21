@@ -83,7 +83,7 @@ You can cap payload sizes with `TYWRAP_CODEC_MAX_BYTES` (responses) and `TYWRAP_
 ```typescript
 import { PyodideBridge } from 'tywrap/pyodide';
 const bridge = new PyodideBridge({
-  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/'
+  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/'
 });
 await bridge.init();
 ```

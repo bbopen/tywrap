@@ -137,7 +137,7 @@ describe('Runtime Configuration', () => {
       const indexURL = (transport as any).indexURL;
       const packages = (transport as any).packages;
 
-      expect(indexURL).toBe('https://cdn.jsdelivr.net/pyodide/v0.24.1/full/');
+      expect(indexURL).toBe('https://cdn.jsdelivr.net/pyodide/v0.28.0/full/');
       expect(packages).toEqual([]);
     });
 
@@ -184,7 +184,7 @@ describe('Runtime Configuration', () => {
     it('should validate CDN URLs', () => {
       const validURLs = [
         'https://cdn.jsdelivr.net/pyodide/',
-        'https://unpkg.com/pyodide@0.24.1/',
+        'https://unpkg.com/pyodide@0.28.0/',
         'https://custom-cdn.example.com/pyodide/',
         'http://localhost:8080/pyodide/', // For development
       ];

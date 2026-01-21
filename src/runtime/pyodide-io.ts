@@ -55,7 +55,7 @@ interface PyodideInstance {
 // =============================================================================
 
 /** Default Pyodide CDN URL */
-const DEFAULT_INDEX_URL = 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/';
+const DEFAULT_INDEX_URL = 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/';
 
 /**
  * Bootstrap Python code that sets up the dispatch function.

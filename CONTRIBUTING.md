@@ -3,7 +3,7 @@
 Thanks for your interest in contributing!
 
 - Development setup:
-  - Node 20+ and Python 3.12+
+  - Node 20+ and Python 3.10+ (CI tests 3.10, 3.11, 3.12)
   - npm ci
   - npm run check:all
 - Common tasks:
