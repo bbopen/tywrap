@@ -727,4 +727,12 @@ describe('decodeResponse - Protocol Validation', () => {
     expect(() => codec.decodeResponse(payload)).toThrow(BridgeProtocolError);
     expect(() => codec.decodeResponse(payload)).toThrow(/Invalid protocol version/);
   });
+
+  it('does not validate protocol on non-envelope responses', () => {
+    // User data that happens to contain 'protocol' key should not trigger validation
+    // Only responses with 'id' field are treated as protocol envelopes
+    const payload = JSON.stringify({ protocol: 'http', url: 'https://example.com' });
+    const result = codec.decodeResponse<{ protocol: string; url: string }>(payload);
+    expect(result).toEqual({ protocol: 'http', url: 'https://example.com' });
+  });
 });

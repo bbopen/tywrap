@@ -164,6 +164,7 @@ function isProtocolResultResponse(value: unknown): value is ProtocolResultRespon
 
 /**
  * Validate the protocol version in a response.
+ * Only validates when the response looks like a protocol envelope (has 'id' field).
  * Throws if protocol is present but doesn't match expected version.
  * Allows missing protocol for backwards compatibility.
  */
@@ -172,6 +173,11 @@ function validateProtocolVersion(value: unknown): void {
     return;
   }
   const obj = value as Record<string, unknown>;
+  // Only validate protocol on protocol envelopes (responses with 'id' field)
+  // This avoids false positives on user data that happens to contain 'protocol' key
+  if (!('id' in obj)) {
+    return;
+  }
   if ('protocol' in obj && obj.protocol !== PROTOCOL_ID) {
     throw new BridgeProtocolError(
       `Invalid protocol version: expected "${PROTOCOL_ID}", got "${obj.protocol}"`
