@@ -11,6 +11,8 @@ import decimal
 import uuid
 from pathlib import Path, PurePath
 
+from safe_codec import SafeCodec, CodecError
+
 # Ensure the working directory is importable so local modules can be resolved when
 # the bridge is launched as a script from a different directory.
 try:
@@ -94,6 +96,14 @@ def get_codec_max_bytes():
 
 # Why: parse once at startup to avoid per-response env lookups.
 CODEC_MAX_BYTES = get_codec_max_bytes()
+
+# Why: use SafeCodec for final JSON encoding to reject NaN/Infinity and handle
+# edge cases like numpy scalars. We disable SafeCodec's internal size limit since
+# we use our own CODEC_MAX_BYTES logic with specific error messages.
+_response_codec = SafeCodec(
+    allow_nan=False,
+    max_payload_bytes=1024 * 1024 * 1024,  # 1GB, effectively unlimited for SafeCodec
+)
 
 
 def get_request_max_bytes():
@@ -779,8 +789,13 @@ def encode_response(out):
     Serialize the response and enforce size limits.
 
     Why: keep payload size checks outside the main loop for clarity and lint compliance.
+    Uses SafeCodec to reject NaN/Infinity and handle edge cases like numpy scalars.
     """
-    payload = json.dumps(out)
+    try:
+        payload = _response_codec.encode(out)
+    except CodecError as exc:
+        # Convert CodecError to ValueError for consistent error handling
+        raise ValueError(str(exc)) from exc
     payload_bytes = len(payload.encode('utf-8'))
     if CODEC_MAX_BYTES is not None and payload_bytes > CODEC_MAX_BYTES:
         raise PayloadTooLargeError(payload_bytes, CODEC_MAX_BYTES)
