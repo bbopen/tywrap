@@ -41,8 +41,10 @@ def return_unserializable() -> Any:
     """Return a non-JSON-serializable value.
 
     Why: ensure serialization failures surface as explicit errors.
+    Note: sets are now serialized as lists, so we return a function which
+    cannot be JSON serialized.
     """
-    return {1, 2, 3}
+    return lambda x: x
 
 
 def return_circular_reference() -> list:

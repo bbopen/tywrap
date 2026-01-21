@@ -290,7 +290,7 @@ describeAdversarial('Adversarial playground', () => {
 
       try {
         await expect(callAdversarial(bridge, 'return_nan_payload', [])).rejects.toThrow(
-          /Protocol error|Invalid JSON|JSON parse failed/
+          /Protocol error|Invalid JSON|JSON parse failed|Cannot serialize NaN|NaN.*not allowed/
         );
       } finally {
         await bridge.dispose();
