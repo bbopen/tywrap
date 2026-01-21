@@ -275,8 +275,12 @@ function typedArrayToPlain(arr: unknown): unknown[] {
     }
     return result;
   }
-  // Fallback: try to convert to array
-  return Array.from(arr as Iterable<unknown>);
+  // Fallback: check if iterable before converting
+  if (arr != null && typeof arr === 'object' && Symbol.iterator in arr) {
+    return Array.from(arr as Iterable<unknown>);
+  }
+  // Non-iterable: return empty array (shouldn't happen with valid Arrow data)
+  return [];
 }
 
 /**
@@ -428,16 +432,18 @@ function decodeEnvelopeCore<T>(
       const bytes = fromBase64(b64);
       const decoded = decodeArrow(bytes);
 
-      // Extract values from Arrow table and reshape if multi-dimensional
+      // Extract values from Arrow table and reshape if needed
       // Arrow only handles 1D arrays, so we flatten on encode and reshape here
+      // Reshape for: scalars (shape.length === 0) and multi-dim (shape.length > 1)
+      // Skip reshape for: 1D arrays (shape.length === 1) - return as-is
       if (isPromiseLike(decoded)) {
         return decoded.then(data => {
           const values = extractArrowValues(data);
           if (!values) {
             return data; // Fallback: return raw data if extraction fails
           }
-          // Reshape if multi-dimensional, otherwise return flat array
-          if (shape && shape.length > 1) {
+          // Reshape scalars and multi-dimensional arrays, but not 1D
+          if (shape && shape.length !== 1) {
             return reshapeArray(values, shape);
           }
           return values;
@@ -447,8 +453,8 @@ function decodeEnvelopeCore<T>(
       if (!values) {
         return decoded; // Fallback: return raw data if extraction fails
       }
-      // Reshape if multi-dimensional, otherwise return flat array
-      if (shape && shape.length > 1) {
+      // Reshape scalars and multi-dimensional arrays, but not 1D
+      if (shape && shape.length !== 1) {
         return reshapeArray(values, shape);
       }
       return values;
