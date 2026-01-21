@@ -8,7 +8,7 @@
  */
 
 import { BoundedContext } from './bounded-context.js';
-import { BridgeTimeoutError, BridgeExecutionError } from './errors.js';
+import { BridgeTimeoutError, BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import type { Transport } from './transport.js';
 
 // =============================================================================
@@ -104,6 +104,8 @@ export class WorkerPool extends BoundedContext {
   };
   private readonly workers: PooledWorker[] = [];
   private readonly waitQueue: QueuedWaiter[] = [];
+  /** Tracks workers being created to prevent race condition in acquire() */
+  private pendingCreations = 0;
 
   /**
    * Create a new WorkerPool.
@@ -222,10 +224,18 @@ export class WorkerPool extends BoundedContext {
     }
 
     // Create a new worker if under the limit
-    if (this.workers.length < this.options.maxWorkers) {
-      const newWorker = await this.createWorker();
-      newWorker.inFlightCount++;
-      return newWorker;
+    // Include pendingCreations to prevent race condition where multiple
+    // concurrent acquire() calls all pass the length check before any
+    // worker is actually added to the array
+    if (this.workers.length + this.pendingCreations < this.options.maxWorkers) {
+      this.pendingCreations++;
+      try {
+        const newWorker = await this.createWorker();
+        newWorker.inFlightCount++;
+        return newWorker;
+      } finally {
+        this.pendingCreations--;
+      }
     }
 
     // All workers at capacity - wait in queue
@@ -278,10 +288,65 @@ export class WorkerPool extends BoundedContext {
    */
   async withWorker<T>(fn: (worker: PooledWorker) => Promise<T>): Promise<T> {
     const worker = await this.acquire();
+    let workerRemoved = false;
+
     try {
       return await fn(worker);
+    } catch (error) {
+      // If this is a fatal error indicating the worker is dead, remove it from the pool
+      if (this.isFatalWorkerError(error)) {
+        this.removeWorker(worker);
+        workerRemoved = true;
+      }
+      throw error;
     } finally {
-      this.release(worker);
+      // Only release if worker wasn't removed due to fatal error
+      if (!workerRemoved) {
+        this.release(worker);
+      }
+    }
+  }
+
+  // ===========================================================================
+  // WORKER HEALTH
+  // ===========================================================================
+
+  /**
+   * Check if an error indicates the worker is dead and should be removed.
+   *
+   * Fatal errors include:
+   * - Process not running
+   * - Process exited unexpectedly
+   * - Pipe errors (EPIPE)
+   * - Connection reset errors (ECONNRESET)
+   */
+  private isFatalWorkerError(error: unknown): boolean {
+    if (error instanceof BridgeProtocolError) {
+      const msg = error.message.toLowerCase();
+      return (
+        msg.includes('not running') ||
+        msg.includes('process exited') ||
+        msg.includes('epipe') ||
+        msg.includes('econnreset')
+      );
+    }
+    return false;
+  }
+
+  /**
+   * Remove a worker from the pool.
+   *
+   * This is called when a worker is detected as dead (crashed, pipe error, etc.).
+   * The worker's transport is disposed in the background.
+   */
+  private removeWorker(worker: PooledWorker): void {
+    const index = this.workers.indexOf(worker);
+    if (index !== -1) {
+      this.workers.splice(index, 1);
+      // Dispose transport in background - don't await to avoid blocking
+      worker.transport.dispose().catch(() => {
+        // Ignore disposal errors for dead workers
+      });
     }
   }
 
