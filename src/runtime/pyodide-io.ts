@@ -15,8 +15,8 @@
  */
 
 import { BoundedContext } from './bounded-context.js';
-import { BridgeDisposedError, BridgeExecutionError, BridgeProtocolError } from './errors.js';
-import type { Transport, ProtocolMessage, ProtocolResponse } from './transport.js';
+import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
+import { PROTOCOL_ID, type Transport, type ProtocolMessage, type ProtocolResponse } from './transport.js';
 
 // =============================================================================
 // TYPES
@@ -164,6 +164,7 @@ def __tywrap_dispatch(message_json):
 export class PyodideIO extends BoundedContext implements Transport {
   private readonly indexURL: string;
   private readonly packages: readonly string[];
+  private requestId = 0;
   private py?: PyodideInstance;
 
   /**
@@ -261,8 +262,8 @@ export class PyodideIO extends BoundedContext implements Transport {
         }
 
         // Validate required fields
-        if (!parsed.id || !parsed.type) {
-          throw new BridgeProtocolError('Message missing required fields: id, type');
+        if (!parsed.id || !parsed.method) {
+          throw new BridgeProtocolError('Message missing required fields: id, method');
         }
 
         // Get the dispatch function
@@ -313,11 +314,14 @@ export class PyodideIO extends BoundedContext implements Transport {
   ): Promise<T> {
     const message: ProtocolMessage = {
       id: this.generateId(),
-      type: 'call',
-      module,
-      functionName,
-      args: args ?? [],
-      kwargs,
+      protocol: PROTOCOL_ID,
+      method: 'call',
+      params: {
+        module,
+        functionName,
+        args: args ?? [],
+        kwargs,
+      },
     };
 
     const responseJson = await this.send(JSON.stringify(message), 30000);
@@ -337,11 +341,14 @@ export class PyodideIO extends BoundedContext implements Transport {
   ): Promise<T> {
     const message: ProtocolMessage = {
       id: this.generateId(),
-      type: 'instantiate',
-      module,
-      className,
-      args: args ?? [],
-      kwargs,
+      protocol: PROTOCOL_ID,
+      method: 'instantiate',
+      params: {
+        module,
+        className,
+        args: args ?? [],
+        kwargs,
+      },
     };
 
     const responseJson = await this.send(JSON.stringify(message), 30000);
@@ -361,11 +368,14 @@ export class PyodideIO extends BoundedContext implements Transport {
   ): Promise<T> {
     const message: ProtocolMessage = {
       id: this.generateId(),
-      type: 'call_method',
-      handle,
-      methodName,
-      args: args ?? [],
-      kwargs,
+      protocol: PROTOCOL_ID,
+      method: 'call_method',
+      params: {
+        handle,
+        methodName,
+        args: args ?? [],
+        kwargs,
+      },
     };
 
     const responseJson = await this.send(JSON.stringify(message), 30000);
@@ -380,9 +390,11 @@ export class PyodideIO extends BoundedContext implements Transport {
   async disposeInstance(handle: string): Promise<void> {
     const message: ProtocolMessage = {
       id: this.generateId(),
-      type: 'dispose_instance',
-      handle,
-      args: [],
+      protocol: PROTOCOL_ID,
+      method: 'dispose_instance',
+      params: {
+        handle,
+      },
     };
 
     const responseJson = await this.send(JSON.stringify(message), 30000);
@@ -451,8 +463,8 @@ export class PyodideIO extends BoundedContext implements Transport {
   /**
    * Generate a unique message ID.
    */
-  private generateId(): string {
-    return `pyodide-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  private generateId(): number {
+    return ++this.requestId;
   }
 
   /**

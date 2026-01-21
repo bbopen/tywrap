@@ -18,7 +18,7 @@
 
 import { BoundedContext, type ExecuteOptions } from './bounded-context.js';
 import { SafeCodec, type CodecOptions } from './safe-codec.js';
-import type { Transport, ProtocolMessage } from './transport.js';
+import { PROTOCOL_ID, type Transport, type ProtocolMessage } from './transport.js';
 
 // =============================================================================
 // TYPES
@@ -143,12 +143,13 @@ export class BridgeProtocol extends BoundedContext {
    * @throws BridgeTimeoutError if the operation times out
    */
   protected async sendMessage<T>(
-    message: Omit<ProtocolMessage, 'id'>,
+    message: Omit<ProtocolMessage, 'id' | 'protocol'>,
     options?: ExecuteOptions<T>
   ): Promise<T> {
     const fullMessage: ProtocolMessage = {
       ...message,
       id: this.generateId(),
+      protocol: PROTOCOL_ID,
     };
 
     return this.execute(async () => {
@@ -182,12 +183,13 @@ export class BridgeProtocol extends BoundedContext {
    * @throws BridgeTimeoutError if the operation times out
    */
   protected async sendMessageAsync<T>(
-    message: Omit<ProtocolMessage, 'id'>,
+    message: Omit<ProtocolMessage, 'id' | 'protocol'>,
     options?: ExecuteOptions<T>
   ): Promise<T> {
     const fullMessage: ProtocolMessage = {
       ...message,
       id: this.generateId(),
+      protocol: PROTOCOL_ID,
     };
 
     return this.execute(async () => {
@@ -209,12 +211,11 @@ export class BridgeProtocol extends BoundedContext {
   /**
    * Generate a unique request ID.
    *
-   * Format: req_{timestamp}_{counter}
-   * The combination of timestamp and monotonically increasing counter
-   * ensures uniqueness within a process lifetime.
+   * Returns a monotonically increasing integer that ensures uniqueness
+   * within a process lifetime.
    */
-  private generateId(): string {
-    return `req_${Date.now()}_${++this.requestId}`;
+  private generateId(): number {
+    return ++this.requestId;
   }
 
   // ===========================================================================
@@ -237,11 +238,13 @@ export class BridgeProtocol extends BoundedContext {
     kwargs?: Record<string, unknown>
   ): Promise<T> {
     return this.sendMessageAsync<T>({
-      type: 'call',
-      module,
-      functionName,
-      args,
-      kwargs,
+      method: 'call',
+      params: {
+        module,
+        functionName,
+        args,
+        kwargs,
+      },
     });
   }
 
@@ -261,11 +264,13 @@ export class BridgeProtocol extends BoundedContext {
     kwargs?: Record<string, unknown>
   ): Promise<T> {
     return this.sendMessageAsync<T>({
-      type: 'instantiate',
-      module,
-      className,
-      args,
-      kwargs,
+      method: 'instantiate',
+      params: {
+        module,
+        className,
+        args,
+        kwargs,
+      },
     });
   }
 
@@ -285,11 +290,13 @@ export class BridgeProtocol extends BoundedContext {
     kwargs?: Record<string, unknown>
   ): Promise<T> {
     return this.sendMessageAsync<T>({
-      type: 'call_method',
-      handle,
-      methodName,
-      args,
-      kwargs,
+      method: 'call_method',
+      params: {
+        handle,
+        methodName,
+        args,
+        kwargs,
+      },
     });
   }
 
@@ -303,9 +310,10 @@ export class BridgeProtocol extends BoundedContext {
    */
   async disposeInstance(handle: string): Promise<void> {
     await this.sendMessageAsync<void>({
-      type: 'dispose_instance',
-      handle,
-      args: [],
+      method: 'dispose_instance',
+      params: {
+        handle,
+      },
     });
   }
 }

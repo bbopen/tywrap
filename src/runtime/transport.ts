@@ -13,45 +13,59 @@
 import type { Disposable } from './disposable.js';
 
 // =============================================================================
+// PROTOCOL CONSTANTS
+// =============================================================================
+
+/** Protocol identifier for tywrap communication */
+export const PROTOCOL_ID = 'tywrap/1';
+
+// =============================================================================
 // PROTOCOL TYPES
 // =============================================================================
 
 /**
  * Protocol message format for all transports.
  *
- * Each message type corresponds to a BridgeProtocol operation:
+ * Each method corresponds to a BridgeProtocol operation:
  * - `call`: Invoke a module-level function
  * - `instantiate`: Create a new class instance
  * - `call_method`: Invoke a method on an existing instance
  * - `dispose_instance`: Release an instance handle
+ * - `meta`: Get bridge metadata
  */
 export interface ProtocolMessage {
   /** Unique message identifier for request-response correlation */
-  id: string;
+  id: number;
 
-  /** The operation type to perform */
-  type: 'call' | 'instantiate' | 'call_method' | 'dispose_instance';
+  /** Protocol identifier (must be 'tywrap/1') */
+  protocol: typeof PROTOCOL_ID;
 
-  /** Python module path (for call and instantiate) */
-  module?: string;
+  /** The method to invoke */
+  method: 'call' | 'instantiate' | 'call_method' | 'dispose_instance' | 'meta';
 
-  /** Function name (for call) */
-  functionName?: string;
+  /** Method parameters */
+  params: {
+    /** Python module path (for call and instantiate) */
+    module?: string;
 
-  /** Class name (for instantiate) */
-  className?: string;
+    /** Function name (for call) */
+    functionName?: string;
 
-  /** Instance handle (for call_method and dispose_instance) */
-  handle?: string;
+    /** Class name (for instantiate) */
+    className?: string;
 
-  /** Method name (for call_method) */
-  methodName?: string;
+    /** Instance handle (for call_method and dispose_instance) */
+    handle?: string;
 
-  /** Positional arguments */
-  args: unknown[];
+    /** Method name (for call_method) */
+    methodName?: string;
 
-  /** Keyword arguments */
-  kwargs?: Record<string, unknown>;
+    /** Positional arguments */
+    args?: unknown[];
+
+    /** Keyword arguments */
+    kwargs?: Record<string, unknown>;
+  };
 }
 
 /**
@@ -62,7 +76,10 @@ export interface ProtocolMessage {
  */
 export interface ProtocolResponse {
   /** Message identifier matching the originating request */
-  id: string;
+  id: number;
+
+  /** Protocol identifier (echoed back from request) */
+  protocol?: string;
 
   /** Successful result value (undefined if error occurred) */
   result?: unknown;
@@ -217,10 +234,12 @@ export function isProtocolMessage(value: unknown): value is ProtocolMessage {
   const msg = value as ProtocolMessage;
 
   return (
-    typeof msg.id === 'string' &&
-    typeof msg.type === 'string' &&
-    ['call', 'instantiate', 'call_method', 'dispose_instance'].includes(msg.type) &&
-    Array.isArray(msg.args)
+    typeof msg.id === 'number' &&
+    msg.protocol === PROTOCOL_ID &&
+    typeof msg.method === 'string' &&
+    ['call', 'instantiate', 'call_method', 'dispose_instance', 'meta'].includes(msg.method) &&
+    typeof msg.params === 'object' &&
+    msg.params !== null
   );
 }
 
@@ -237,7 +256,7 @@ export function isProtocolResponse(value: unknown): value is ProtocolResponse {
 
   const resp = value as ProtocolResponse;
 
-  if (typeof resp.id !== 'string') {
+  if (typeof resp.id !== 'number') {
     return false;
   }
 

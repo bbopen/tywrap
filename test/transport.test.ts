@@ -10,6 +10,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
+  PROTOCOL_ID,
   isTransport,
   isProtocolMessage,
   isProtocolResponse,
@@ -67,11 +68,14 @@ function createValidMessage(
   overrides: Partial<ProtocolMessage> = {}
 ): ProtocolMessage {
   return {
-    id: 'test-1',
-    type: 'call',
-    module: 'math',
-    functionName: 'sqrt',
-    args: [16],
+    id: 1,
+    protocol: PROTOCOL_ID,
+    method: 'call',
+    params: {
+      module: 'math',
+      functionName: 'sqrt',
+      args: [16],
+    },
     ...overrides,
   };
 }
@@ -83,7 +87,7 @@ function createValidResponse(
   overrides: Partial<ProtocolResponse> = {}
 ): ProtocolResponse {
   return {
-    id: 'test-1',
+    id: 1,
     result: 4,
     ...overrides,
   };
@@ -199,25 +203,34 @@ describe('Transport Interface', () => {
 
     it('returns true for valid instantiate message', () => {
       const msg = createValidMessage({
-        type: 'instantiate',
-        className: 'MyClass',
+        method: 'instantiate',
+        params: {
+          module: 'mymodule',
+          className: 'MyClass',
+          args: [],
+        },
       });
       expect(isProtocolMessage(msg)).toBe(true);
     });
 
     it('returns true for valid call_method message', () => {
       const msg = createValidMessage({
-        type: 'call_method',
-        handle: 'handle-123',
-        methodName: 'myMethod',
+        method: 'call_method',
+        params: {
+          handle: 'handle-123',
+          methodName: 'myMethod',
+          args: [],
+        },
       });
       expect(isProtocolMessage(msg)).toBe(true);
     });
 
     it('returns true for valid dispose_instance message', () => {
       const msg = createValidMessage({
-        type: 'dispose_instance',
-        handle: 'handle-123',
+        method: 'dispose_instance',
+        params: {
+          handle: 'handle-123',
+        },
       });
       expect(isProtocolMessage(msg)).toBe(true);
     });
@@ -240,38 +253,48 @@ describe('Transport Interface', () => {
       expect(isProtocolMessage(msg)).toBe(false);
     });
 
-    it('returns false for message with non-string id', () => {
-      const msg = { id: 123, type: 'call', args: [] };
+    it('returns false for message with non-number id', () => {
+      const msg = { id: 'string-id', protocol: PROTOCOL_ID, method: 'call', params: {} };
       expect(isProtocolMessage(msg)).toBe(false);
     });
 
-    it('returns false for message missing type', () => {
-      const msg = { id: 'test', args: [] };
+    it('returns false for message missing protocol', () => {
+      const msg = { id: 1, method: 'call', params: {} };
       expect(isProtocolMessage(msg)).toBe(false);
     });
 
-    it('returns false for message with invalid type', () => {
-      const msg = { id: 'test', type: 'invalid_type', args: [] };
+    it('returns false for message with wrong protocol', () => {
+      const msg = { id: 1, protocol: 'wrong/1', method: 'call', params: {} };
       expect(isProtocolMessage(msg)).toBe(false);
     });
 
-    it('returns false for message missing args', () => {
-      const msg = { id: 'test', type: 'call' };
+    it('returns false for message missing method', () => {
+      const msg = { id: 1, protocol: PROTOCOL_ID, params: {} };
       expect(isProtocolMessage(msg)).toBe(false);
     });
 
-    it('returns false for message with non-array args', () => {
-      const msg = { id: 'test', type: 'call', args: {} };
+    it('returns false for message with invalid method', () => {
+      const msg = { id: 1, protocol: PROTOCOL_ID, method: 'invalid_method', params: {} };
       expect(isProtocolMessage(msg)).toBe(false);
     });
 
-    it('returns true for message with empty args array', () => {
-      const msg = { id: 'test', type: 'call', args: [] };
+    it('returns false for message missing params', () => {
+      const msg = { id: 1, protocol: PROTOCOL_ID, method: 'call' };
+      expect(isProtocolMessage(msg)).toBe(false);
+    });
+
+    it('returns false for message with non-object params', () => {
+      const msg = { id: 1, protocol: PROTOCOL_ID, method: 'call', params: 'string' };
+      expect(isProtocolMessage(msg)).toBe(false);
+    });
+
+    it('returns true for message with empty params object', () => {
+      const msg = { id: 1, protocol: PROTOCOL_ID, method: 'call', params: {} };
       expect(isProtocolMessage(msg)).toBe(true);
     });
 
-    it('returns true for message with kwargs', () => {
-      const msg = { id: 'test', type: 'call', args: [], kwargs: { key: 'value' } };
+    it('returns true for message with full params', () => {
+      const msg = { id: 1, protocol: PROTOCOL_ID, method: 'call', params: { module: 'math', functionName: 'sqrt', args: [16], kwargs: { key: 'value' } } };
       expect(isProtocolMessage(msg)).toBe(true);
     });
   });
@@ -288,13 +311,13 @@ describe('Transport Interface', () => {
     });
 
     it('returns true for response with undefined result (void return)', () => {
-      const resp: ProtocolResponse = { id: 'test' };
+      const resp: ProtocolResponse = { id: 1 };
       expect(isProtocolResponse(resp)).toBe(true);
     });
 
     it('returns true for valid error response', () => {
       const resp: ProtocolResponse = {
-        id: 'test',
+        id: 1,
         error: {
           type: 'ValueError',
           message: 'invalid argument',
@@ -305,7 +328,7 @@ describe('Transport Interface', () => {
 
     it('returns true for error response with traceback', () => {
       const resp: ProtocolResponse = {
-        id: 'test',
+        id: 1,
         error: {
           type: 'RuntimeError',
           message: 'something failed',
@@ -333,38 +356,38 @@ describe('Transport Interface', () => {
       expect(isProtocolResponse(resp)).toBe(false);
     });
 
-    it('returns false for response with non-string id', () => {
-      const resp = { id: 123, result: 'value' };
+    it('returns false for response with non-number id', () => {
+      const resp = { id: 'string-id', result: 'value' };
       expect(isProtocolResponse(resp)).toBe(false);
     });
 
     it('returns false for response with null error', () => {
-      const resp = { id: 'test', error: null };
+      const resp = { id: 1, error: null };
       expect(isProtocolResponse(resp)).toBe(false);
     });
 
     it('returns false for response with non-object error', () => {
-      const resp = { id: 'test', error: 'string error' };
+      const resp = { id: 1, error: 'string error' };
       expect(isProtocolResponse(resp)).toBe(false);
     });
 
     it('returns false for error missing type', () => {
-      const resp = { id: 'test', error: { message: 'oops' } };
+      const resp = { id: 1, error: { message: 'oops' } };
       expect(isProtocolResponse(resp)).toBe(false);
     });
 
     it('returns false for error missing message', () => {
-      const resp = { id: 'test', error: { type: 'Error' } };
+      const resp = { id: 1, error: { type: 'Error' } };
       expect(isProtocolResponse(resp)).toBe(false);
     });
 
     it('returns false for error with non-string type', () => {
-      const resp = { id: 'test', error: { type: 123, message: 'oops' } };
+      const resp = { id: 1, error: { type: 123, message: 'oops' } };
       expect(isProtocolResponse(resp)).toBe(false);
     });
 
     it('returns false for error with non-string message', () => {
-      const resp = { id: 'test', error: { type: 'Error', message: 123 } };
+      const resp = { id: 1, error: { type: 'Error', message: 123 } };
       expect(isProtocolResponse(resp)).toBe(false);
     });
   });
@@ -1104,7 +1127,7 @@ describe('PyodideIO', () => {
       expect(result).toBe(4);
 
       expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"type":"call"')
+        expect.stringContaining('"method":"call"')
       );
       expect(mockDispatch).toHaveBeenCalledWith(
         expect.stringContaining('"module":"math"')
@@ -1135,7 +1158,7 @@ describe('PyodideIO', () => {
       expect(result).toBe('handle-123');
 
       expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"type":"instantiate"')
+        expect.stringContaining('"method":"instantiate"')
       );
       expect(mockDispatch).toHaveBeenCalledWith(
         expect.stringContaining('"className":"MyClass"')
@@ -1163,7 +1186,7 @@ describe('PyodideIO', () => {
       expect(result).toBe('method result');
 
       expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"type":"call_method"')
+        expect.stringContaining('"method":"call_method"')
       );
       expect(mockDispatch).toHaveBeenCalledWith(
         expect.stringContaining('"handle":"handle-123"')
@@ -1193,7 +1216,7 @@ describe('PyodideIO', () => {
       await transport.disposeInstance('handle-123');
 
       expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"type":"dispose_instance"')
+        expect.stringContaining('"method":"dispose_instance"')
       );
       expect(mockDispatch).toHaveBeenCalledWith(
         expect.stringContaining('"handle":"handle-123"')
@@ -1261,10 +1284,10 @@ describe('PyodideIO', () => {
       expect(new Set(capturedIds).size).toBe(3); // All unique
     });
 
-    it('ID format includes pyodide prefix', async () => {
+    it('ID format is sequential integers', async () => {
       const transport = new PyodideIO();
 
-      let capturedId = '';
+      let capturedId: number = 0;
       const mockDispatch = vi.fn().mockImplementation((msg: string) => {
         const parsed = JSON.parse(msg);
         capturedId = parsed.id;
@@ -1282,7 +1305,8 @@ describe('PyodideIO', () => {
 
       await transport.call('m', 'f', []);
 
-      expect(capturedId).toMatch(/^pyodide-\d+-[a-z0-9]+$/);
+      expect(typeof capturedId).toBe('number');
+      expect(capturedId).toBeGreaterThan(0);
     });
   });
 });

@@ -89,11 +89,13 @@ describeNodeOnly('Scientific Codecs', () => {
       const pythonPath = await resolvePythonForTests();
       if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
       if (!pythonPath || !hasModule(pythonPath, 'torch')) return;
+      // Torch tensor serialization requires pyarrow for Arrow encoding of ndarrays
+      if (!hasModule(pythonPath, 'pyarrow')) return;
 
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
-        enableJsonFallback: true,
+        // Use Arrow encoding (pyarrow required), no fallback
         timeoutMs: bridgeTimeoutMs,
       });
 

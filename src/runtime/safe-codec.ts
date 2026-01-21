@@ -143,6 +143,25 @@ function isPythonErrorResponse(value: unknown): value is PythonErrorResponse {
 }
 
 /**
+ * Type guard for protocol result response.
+ * Checks if the value is an object with an id and result field.
+ * The protocol field is optional as Python may not always include it.
+ */
+interface ProtocolResultResponse {
+  id: number;
+  protocol?: string;
+  result: unknown;
+}
+
+function isProtocolResultResponse(value: unknown): value is ProtocolResultResponse {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  return typeof obj.id === 'number' && 'result' in obj;
+}
+
+/**
  * Find the path to a special float in a value structure.
  * Returns undefined if no special float is found.
  */
@@ -304,15 +323,18 @@ export class SafeCodec {
       throw error;
     }
 
+    // Extract the result field from the response envelope
+    const result = isProtocolResultResponse(parsed) ? parsed.result : parsed;
+
     // Post-decode validation for special floats if enabled
-    if (this.rejectSpecialFloats && containsSpecialFloat(parsed)) {
-      const floatPath = findSpecialFloatPath(parsed);
+    if (this.rejectSpecialFloats && containsSpecialFloat(result)) {
+      const floatPath = findSpecialFloatPath(result);
       throw new BridgeProtocolError(
         `Response contains non-finite number (NaN or Infinity) at ${floatPath}`
       );
     }
 
-    return parsed as T;
+    return result as T;
   }
 
   /**
@@ -351,20 +373,22 @@ export class SafeCodec {
       throw error;
     }
 
-    // Apply Arrow decoding
+    // Extract the result field from the response envelope
+    const result = isProtocolResultResponse(parsed) ? parsed.result : parsed;
+
+    // Apply Arrow decoding to the result
     let decoded: unknown;
     try {
-      decoded = await decodeArrowValue(parsed);
+      decoded = await decodeArrowValue(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       throw new BridgeProtocolError(`Arrow decoding failed: ${message}`);
     }
 
     // Post-decode validation for special floats if enabled
-    // Note: We check the original parsed value since Arrow tables may have
-    // different semantics for special floats
-    if (this.rejectSpecialFloats && containsSpecialFloat(parsed)) {
-      const floatPath = findSpecialFloatPath(parsed);
+    // Note: We check the result value since that's what we're returning
+    if (this.rejectSpecialFloats && containsSpecialFloat(result)) {
+      const floatPath = findSpecialFloatPath(result);
       throw new BridgeProtocolError(
         `Response contains non-finite number (NaN or Infinity) at ${floatPath}`
       );

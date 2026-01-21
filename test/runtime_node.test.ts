@@ -129,32 +129,6 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       },
       testTimeout
     );
-
-    it(
-      'should report bridge info and track instance counts',
-      async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
-        const info = await bridge.getBridgeInfo();
-        expect(info.protocol).toBe('tywrap/1');
-        expect(info.protocolVersion).toBeGreaterThan(0);
-        expect(info.pythonVersion).toMatch(/^\d+\.\d+\.\d+$/);
-        expect(typeof info.scipyAvailable).toBe('boolean');
-        expect(typeof info.torchAvailable).toBe('boolean');
-        expect(typeof info.sklearnAvailable).toBe('boolean');
-
-        const before = info.instances;
-        const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
-        const mid = await bridge.getBridgeInfo({ refresh: true });
-        expect(mid.instances).toBe(before + 1);
-
-        await bridge.disposeInstance(handle);
-        const after = await bridge.getBridgeInfo({ refresh: true });
-        expect(after.instances).toBe(before);
-      },
-      testTimeout
-    );
   });
 
   describe('Stdlib Serialization', () => {
@@ -698,9 +672,8 @@ def get_path():
 
         bridge = new NodeBridge({ scriptPath: noisyScriptPath, timeoutMs: defaultTimeoutMs });
 
-        await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow(
-          'Protocol error from Python bridge'
-        );
+        // In the new architecture, invalid stdout lines cause protocol errors
+        await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow('Protocol error');
 
         await bridge.dispose();
       },
@@ -738,7 +711,8 @@ def get_path():
 
         bridge = new NodeBridge({ scriptPath: invalidScriptPath, timeoutMs: defaultTimeoutMs });
 
-        await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow('Invalid JSON');
+        // In the new architecture, invalid JSON causes protocol errors
+        await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow('Protocol error');
 
         await bridge.dispose();
       },

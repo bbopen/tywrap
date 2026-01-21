@@ -27,7 +27,6 @@ import {
   CustomType,
   Parameter,
   AnalysisResult,
-  BridgeInfo,
   TywrapOptions,
   RuntimeStrategy,
   
@@ -225,8 +224,7 @@ expectType<AnalysisResult>(analysisResult);
 // Runtime bridges should be constructible
 expectType<NodeBridge>(new NodeBridge());
 expectType<PyodideBridge>(new PyodideBridge());
-expectType<HttpBridge>(new HttpBridge());
-expectType<Promise<BridgeInfo>>(new NodeBridge().getBridgeInfo());
+expectType<HttpBridge>(new HttpBridge({ baseURL: 'http://localhost:8000' }));
 
 setRuntimeBridge(new NodeBridge());
 expectAssignable<ReturnType<typeof getRuntimeBridge>>(new NodeBridge());
