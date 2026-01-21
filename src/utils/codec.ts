@@ -276,7 +276,7 @@ function typedArrayToPlain(arr: unknown): unknown[] {
     return result;
   }
   // Fallback: check if iterable before converting
-  if (arr != null && typeof arr === 'object' && Symbol.iterator in arr) {
+  if (arr !== null && arr !== undefined && typeof arr === 'object' && Symbol.iterator in arr) {
     return Array.from(arr as Iterable<unknown>);
   }
   // Non-iterable: return empty array (shouldn't happen with valid Arrow data)
