@@ -90,6 +90,8 @@ interface QueuedWrite {
   reject: (error: Error) => void;
   /** Timestamp when the write was queued */
   queuedAt: number;
+  /** Timeout handle for write queue timeout */
+  timeoutHandle?: NodeJS.Timeout;
 }
 
 // =============================================================================
@@ -164,6 +166,7 @@ export class ProcessIO extends BoundedContext implements Transport {
   // Request tracking
   private readonly pending = new Map<number, PendingRequest>();
   private requestCount = 0;
+  private needsRestart = false;
 
   // Write queue for backpressure
   private readonly writeQueue: QueuedWrite[] = [];
@@ -228,8 +231,8 @@ export class ProcessIO extends BoundedContext implements Transport {
       throw new BridgeProtocolError('Message must contain an "id" field');
     }
 
-    // Check for restart condition
-    if (this.restartAfterRequests > 0 && this.requestCount >= this.restartAfterRequests) {
+    // Check for restart condition (either scheduled restart or forced by stream error)
+    if (this.needsRestart || (this.restartAfterRequests > 0 && this.requestCount >= this.restartAfterRequests)) {
       await this.restartProcess();
     }
 
@@ -330,6 +333,7 @@ export class ProcessIO extends BoundedContext implements Transport {
 
     // Clear write queue
     for (const queued of this.writeQueue) {
+      this.clearQueuedWriteTimeout(queued);
       queued.reject(error);
     }
     this.writeQueue.length = 0;
@@ -505,10 +509,11 @@ export class ProcessIO extends BoundedContext implements Transport {
     // Kill existing process
     await this.killProcess();
 
-    // Clear buffers
+    // Clear buffers and restart flags
     this.stdoutBuffer = '';
     this.stderrBuffer = '';
     this.requestCount = 0;
+    this.needsRestart = false;
 
     // Spawn new process
     await this.spawnProcess();
@@ -517,12 +522,10 @@ export class ProcessIO extends BoundedContext implements Transport {
   /**
    * Mark the process for restart on the next send.
    * This is called after stream errors to ensure the next request uses a fresh process.
+   * Works independently of restartAfterRequests setting.
    */
   private markForRestart(): void {
-    if (this.restartAfterRequests > 0) {
-      // Set requestCount to trigger restart on next send
-      this.requestCount = this.restartAfterRequests;
-    }
+    this.needsRestart = true;
   }
 
   // ===========================================================================
@@ -677,6 +680,7 @@ export class ProcessIO extends BoundedContext implements Transport {
 
     // Reject all pending writes
     for (const queued of this.writeQueue) {
+      this.clearQueuedWriteTimeout(queued);
       queued.reject(error);
     }
     this.writeQueue.length = 0;
@@ -714,6 +718,46 @@ export class ProcessIO extends BoundedContext implements Transport {
   // ===========================================================================
 
   /**
+   * Create a queued write entry with a timeout timer.
+   * The timer fires if the drain event never comes.
+   */
+  private createQueuedWrite(
+    data: string,
+    resolve: () => void,
+    reject: (error: Error) => void
+  ): QueuedWrite {
+    const queuedAt = Date.now();
+    const entry: QueuedWrite = { data, resolve, reject, queuedAt };
+
+    // Set up timeout timer that fires if drain never happens
+    entry.timeoutHandle = setTimeout(() => {
+      // Remove this entry from the queue
+      const index = this.writeQueue.indexOf(entry);
+      if (index !== -1) {
+        this.writeQueue.splice(index, 1);
+        reject(new BridgeTimeoutError(
+          `Write queue timeout: entry waited ${this.writeQueueTimeoutMs}ms without drain`
+        ));
+      }
+    }, this.writeQueueTimeoutMs);
+
+    // Unref the timer so it doesn't keep the process alive
+    entry.timeoutHandle.unref();
+
+    return entry;
+  }
+
+  /**
+   * Clear the timeout for a queued write entry.
+   */
+  private clearQueuedWriteTimeout(entry: QueuedWrite): void {
+    if (entry.timeoutHandle) {
+      clearTimeout(entry.timeoutHandle);
+      entry.timeoutHandle = undefined;
+    }
+  }
+
+  /**
    * Write data to stdin with backpressure handling.
    */
   private writeToStdin(data: string): Promise<void> {
@@ -724,8 +768,8 @@ export class ProcessIO extends BoundedContext implements Transport {
       }
 
       if (this.draining || this.writeQueue.length > 0) {
-        // Queue the write with timestamp
-        this.writeQueue.push({ data, resolve, reject, queuedAt: Date.now() });
+        // Queue the write with timestamp and timeout timer
+        this.writeQueue.push(this.createQueuedWrite(data, resolve, reject));
         return;
       }
 
@@ -738,7 +782,7 @@ export class ProcessIO extends BoundedContext implements Transport {
         } else {
           // Backpressure - queue this write and set draining flag
           this.draining = true;
-          this.writeQueue.push({ data, resolve, reject, queuedAt: Date.now() });
+          this.writeQueue.push(this.createQueuedWrite(data, resolve, reject));
         }
       } catch (err) {
         // Synchronous write error (e.g., EPIPE)
@@ -758,6 +802,7 @@ export class ProcessIO extends BoundedContext implements Transport {
       if (!this.process?.stdin || this.processExited) {
         // Process died - reject all queued writes
         for (const q of this.writeQueue) {
+          this.clearQueuedWriteTimeout(q);
           q.reject(new BridgeProtocolError('Process stdin not available'));
         }
         this.writeQueue.length = 0;
@@ -770,7 +815,10 @@ export class ProcessIO extends BoundedContext implements Transport {
         return;
       }
 
-      // Check for write queue timeout
+      // Clear the timeout since we're processing this entry now
+      this.clearQueuedWriteTimeout(queued);
+
+      // Check for write queue timeout (fallback check, timer should have handled this)
       if (now - queued.queuedAt > this.writeQueueTimeoutMs) {
         queued.reject(new BridgeTimeoutError(
           `Write queue timeout: entry waited ${now - queued.queuedAt}ms (limit: ${this.writeQueueTimeoutMs}ms)`
@@ -784,8 +832,12 @@ export class ProcessIO extends BoundedContext implements Transport {
         if (canWrite) {
           queued.resolve();
         } else {
-          // Still under pressure - put it back
-          this.writeQueue.unshift(queued);
+          // Still under pressure - put it back with a new timeout
+          this.writeQueue.unshift(this.createQueuedWrite(
+            queued.data,
+            queued.resolve,
+            queued.reject
+          ));
           this.draining = true;
           return;
         }
@@ -796,6 +848,7 @@ export class ProcessIO extends BoundedContext implements Transport {
         );
         queued.reject(error);
         for (const q of this.writeQueue) {
+          this.clearQueuedWriteTimeout(q);
           q.reject(error);
         }
         this.writeQueue.length = 0;
