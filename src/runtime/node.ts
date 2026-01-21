@@ -19,8 +19,8 @@ import { globalCache } from '../utils/cache.js';
 
 import { BridgeProtocol, type BridgeProtocolOptions } from './bridge-protocol.js';
 import { BridgeProtocolError } from './errors.js';
-import { ProcessIO, type ProcessIOOptions } from './process-io.js';
-import { PooledTransport, type PooledTransportOptions } from './pooled-transport.js';
+import { ProcessIO } from './process-io.js';
+import { PooledTransport } from './pooled-transport.js';
 import type { CodecOptions } from './safe-codec.js';
 
 // =============================================================================
@@ -247,6 +247,7 @@ export class NodeBridge extends BridgeProtocol {
           pythonPath: resolvedOptions.pythonPath,
           bridgeScript: resolvedOptions.scriptPath,
           env: processEnv,
+          cwd: resolvedOptions.cwd,
         }),
       maxWorkers: resolvedOptions.maxProcesses,
       queueTimeoutMs: resolvedOptions.queueTimeoutMs,

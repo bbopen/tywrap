@@ -8,7 +8,7 @@
  */
 
 import { BridgeProtocol, type BridgeProtocolOptions } from './bridge-protocol.js';
-import { HttpIO, type HttpIOOptions } from './http-io.js';
+import { HttpIO } from './http-io.js';
 import type { CodecOptions } from './safe-codec.js';
 
 // =============================================================================

@@ -56,6 +56,9 @@ export interface ProcessIOOptions {
   /** Environment variables to pass to the subprocess */
   env?: Record<string, string>;
 
+  /** Working directory for the subprocess. Default: process.cwd() */
+  cwd?: string;
+
   /** Maximum line length for responses. Default: 100MB */
   maxLineLength?: number;
 
@@ -136,6 +139,7 @@ export class ProcessIO extends BoundedContext implements Transport {
   private readonly pythonPath: string;
   private readonly bridgeScript: string;
   private readonly envOverrides: Record<string, string>;
+  private readonly cwd: string | undefined;
   private readonly maxLineLength: number;
   private readonly restartAfterRequests: number;
 
@@ -167,6 +171,7 @@ export class ProcessIO extends BoundedContext implements Transport {
     this.pythonPath = options.pythonPath ?? 'python3';
     this.bridgeScript = options.bridgeScript;
     this.envOverrides = options.env ?? {};
+    this.cwd = options.cwd;
     this.maxLineLength = options.maxLineLength ?? DEFAULT_MAX_LINE_LENGTH;
     this.restartAfterRequests = options.restartAfterRequests ?? 0;
   }
@@ -400,6 +405,7 @@ export class ProcessIO extends BoundedContext implements Transport {
     this.process = spawn(this.pythonPath, [this.bridgeScript], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
+      cwd: this.cwd,
     });
 
     this.processExited = false;

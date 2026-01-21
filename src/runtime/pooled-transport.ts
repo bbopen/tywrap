@@ -11,7 +11,7 @@
 import { BoundedContext } from './bounded-context.js';
 import { BridgeDisposedError, BridgeExecutionError } from './errors.js';
 import type { Transport } from './transport.js';
-import { WorkerPool, type WorkerPoolOptions } from './worker-pool.js';
+import { WorkerPool } from './worker-pool.js';
 
 // =============================================================================
 // TYPES
