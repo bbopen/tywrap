@@ -509,6 +509,14 @@ function buildProcessEnv(options: ResolvedOptions): Record<string, string> {
     env[pathKey] = `${venv.binDir}${delimiter}${currentPath}`;
   }
 
+  // Add cwd to PYTHONPATH so Python can find modules in the working directory
+  if (options.cwd) {
+    const currentPythonPath = env.PYTHONPATH ?? '';
+    env.PYTHONPATH = currentPythonPath
+      ? `${options.cwd}${delimiter}${currentPythonPath}`
+      : options.cwd;
+  }
+
   // Ensure Python uses UTF-8
   env.PYTHONUTF8 = '1';
   env.PYTHONIOENCODING = 'UTF-8';
