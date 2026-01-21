@@ -244,6 +244,67 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
 }
 
 /**
+ * Convert a typed array (Int32Array, Float64Array, BigInt64Array, etc.) to a plain JS array.
+ *
+ * Why: Arrow's column.toArray() returns typed arrays, but we need plain arrays for
+ * JSON-compatible output and proper nested array reshaping.
+ *
+ * @param arr - Typed array or plain array
+ * @returns Plain JavaScript array with values converted (BigInt → Number where safe)
+ */
+function typedArrayToPlain(arr: unknown): unknown[] {
+  if (Array.isArray(arr)) {
+    return arr;
+  }
+  // Handle typed arrays (Int32Array, Float64Array, BigInt64Array, etc.)
+  if (ArrayBuffer.isView(arr) && 'length' in arr) {
+    const typedArr = arr as unknown as { length: number; [index: number]: unknown };
+    const result: unknown[] = [];
+    for (let i = 0; i < typedArr.length; i++) {
+      const val = typedArr[i];
+      // Convert BigInt to Number if within safe integer range
+      if (typeof val === 'bigint') {
+        if (val >= BigInt(Number.MIN_SAFE_INTEGER) && val <= BigInt(Number.MAX_SAFE_INTEGER)) {
+          result.push(Number(val));
+        } else {
+          result.push(val); // Keep as BigInt if too large
+        }
+      } else {
+        result.push(val);
+      }
+    }
+    return result;
+  }
+  // Fallback: check if iterable before converting
+  if (arr !== null && arr !== undefined && typeof arr === 'object' && Symbol.iterator in arr) {
+    return Array.from(arr as Iterable<unknown>);
+  }
+  // Non-iterable: return empty array (shouldn't happen with valid Arrow data)
+  return [];
+}
+
+/**
+ * Extract values from an Arrow table as a plain JavaScript array.
+ *
+ * Why: Arrow decoding returns Table objects, not raw arrays. We need to extract
+ * the column values and convert any typed arrays to plain arrays.
+ */
+function extractArrowValues(data: unknown): unknown[] | null {
+  if (Array.isArray(data)) {
+    return data;
+  }
+  // Arrow table - extract values from first column
+  const table = data as ArrowTable & { getChildAt?: (i: number) => { toArray?: () => unknown } };
+  if (typeof table.getChildAt === 'function') {
+    const column = table.getChildAt(0);
+    if (column && typeof column.toArray === 'function') {
+      return typedArrayToPlain(column.toArray());
+    }
+  }
+  return null;
+}
+
+/**
  * Reshape a flat array into a multi-dimensional nested array.
  *
  * Why: PyArrow's pa.array() only handles 1D arrays, so we flatten multi-dimensional
@@ -251,7 +312,7 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
  * binary efficiency while working with current arrow-js (which doesn't yet support
  * FixedShapeTensorArray). See: https://github.com/apache/arrow-js/issues/115
  *
- * @param flat - Flat array of values
+ * @param flat - Flat array of values (must be a plain array, not typed array)
  * @param shape - Target shape, e.g., [2, 3] for a 2x3 matrix
  * @returns Nested array with the specified shape
  */
@@ -371,37 +432,32 @@ function decodeEnvelopeCore<T>(
       const bytes = fromBase64(b64);
       const decoded = decodeArrow(bytes);
 
-      // Reshape if multi-dimensional (Arrow only handles 1D, so we flatten on encode)
-      if (shape && shape.length > 1) {
-        if (isPromiseLike(decoded)) {
-          return decoded.then(data => {
-            if (Array.isArray(data)) {
-              return reshapeArray(data, shape);
-            }
-            // Arrow table - extract values and reshape
-            const table = data as ArrowTable & { getChildAt?: (i: number) => { toArray?: () => unknown[] } };
-            if (typeof table.getChildAt === 'function') {
-              const column = table.getChildAt(0);
-              if (column && typeof column.toArray === 'function') {
-                return reshapeArray(column.toArray(), shape);
-              }
-            }
-            return data;
-          });
-        }
-        if (Array.isArray(decoded)) {
-          return reshapeArray(decoded, shape);
-        }
-        // Arrow table - extract values and reshape
-        const table = decoded as ArrowTable & { getChildAt?: (i: number) => { toArray?: () => unknown[] } };
-        if (typeof table.getChildAt === 'function') {
-          const column = table.getChildAt(0);
-          if (column && typeof column.toArray === 'function') {
-            return reshapeArray(column.toArray(), shape);
+      // Extract values from Arrow table and reshape if needed
+      // Arrow only handles 1D arrays, so we flatten on encode and reshape here
+      // Reshape for: scalars (shape.length === 0) and multi-dim (shape.length > 1)
+      // Skip reshape for: 1D arrays (shape.length === 1) - return as-is
+      if (isPromiseLike(decoded)) {
+        return decoded.then(data => {
+          const values = extractArrowValues(data);
+          if (!values) {
+            return data; // Fallback: return raw data if extraction fails
           }
-        }
+          // Reshape scalars and multi-dimensional arrays, but not 1D
+          if (shape && shape.length !== 1) {
+            return reshapeArray(values, shape);
+          }
+          return values;
+        });
       }
-      return decoded;
+      const values = extractArrowValues(decoded);
+      if (!values) {
+        return decoded; // Fallback: return raw data if extraction fails
+      }
+      // Reshape scalars and multi-dimensional arrays, but not 1D
+      if (shape && shape.length !== 1) {
+        return reshapeArray(values, shape);
+      }
+      return values;
     }
     if (encoding === 'json') {
       if (!('data' in (value as object))) {
