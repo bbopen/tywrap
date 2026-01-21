@@ -681,3 +681,50 @@ describe('Edge Cases', () => {
     expect(decoded.text).toBe('line1\nline2\ttab\r\nwindows');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DECODE RESPONSE - PROTOCOL VALIDATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('decodeResponse - Protocol Validation', () => {
+  let codec: SafeCodec;
+
+  beforeEach(() => {
+    codec = new SafeCodec();
+  });
+
+  it('accepts response without protocol field (backwards compatibility)', () => {
+    const payload = JSON.stringify({ id: 1, result: 42 });
+    const result = codec.decodeResponse<number>(payload);
+    expect(result).toBe(42);
+  });
+
+  it('accepts response with correct protocol version', () => {
+    const payload = JSON.stringify({ id: 1, protocol: 'tywrap/1', result: { data: 'test' } });
+    const result = codec.decodeResponse<{ data: string }>(payload);
+    expect(result).toEqual({ data: 'test' });
+  });
+
+  it('rejects response with wrong protocol version', () => {
+    const payload = JSON.stringify({ id: 1, protocol: 'tywrap/0', result: 42 });
+    expect(() => codec.decodeResponse(payload)).toThrow(BridgeProtocolError);
+    expect(() => codec.decodeResponse(payload)).toThrow(/Invalid protocol version/);
+  });
+
+  it('rejects response with unknown protocol', () => {
+    const payload = JSON.stringify({ id: 1, protocol: 'unknown/1', result: 42 });
+    expect(() => codec.decodeResponse(payload)).toThrow(BridgeProtocolError);
+    expect(() => codec.decodeResponse(payload)).toThrow(/expected "tywrap\/1"/);
+  });
+
+  it('validates protocol before extracting error response', () => {
+    // If protocol is wrong, we should reject before checking for Python errors
+    const payload = JSON.stringify({
+      id: 1,
+      protocol: 'wrong/1',
+      error: { type: 'ValueError', message: 'test' },
+    });
+    expect(() => codec.decodeResponse(payload)).toThrow(BridgeProtocolError);
+    expect(() => codec.decodeResponse(payload)).toThrow(/Invalid protocol version/);
+  });
+});

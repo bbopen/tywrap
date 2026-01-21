@@ -11,6 +11,7 @@
 import { BridgeProtocolError, BridgeExecutionError } from './errors.js';
 import { containsSpecialFloat } from './validators.js';
 import { decodeValueAsync as decodeArrowValue } from '../utils/codec.js';
+import { PROTOCOL_ID } from './transport.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -159,6 +160,23 @@ function isProtocolResultResponse(value: unknown): value is ProtocolResultRespon
   }
   const obj = value as Record<string, unknown>;
   return typeof obj.id === 'number' && 'result' in obj;
+}
+
+/**
+ * Validate the protocol version in a response.
+ * Throws if protocol is present but doesn't match expected version.
+ * Allows missing protocol for backwards compatibility.
+ */
+function validateProtocolVersion(value: unknown): void {
+  if (value === null || typeof value !== 'object') {
+    return;
+  }
+  const obj = value as Record<string, unknown>;
+  if ('protocol' in obj && obj.protocol !== PROTOCOL_ID) {
+    throw new BridgeProtocolError(
+      `Invalid protocol version: expected "${PROTOCOL_ID}", got "${obj.protocol}"`
+    );
+  }
 }
 
 /**
@@ -314,6 +332,9 @@ export class SafeCodec {
       throw new BridgeProtocolError(`JSON parse failed: ${message}`);
     }
 
+    // Validate protocol version (if present)
+    validateProtocolVersion(parsed);
+
     // Check for Python error response
     if (isPythonErrorResponse(parsed)) {
       const error = new BridgeExecutionError(
@@ -363,6 +384,9 @@ export class SafeCodec {
       const message = err instanceof Error ? err.message : String(err);
       throw new BridgeProtocolError(`JSON parse failed: ${message}`);
     }
+
+    // Validate protocol version (if present)
+    validateProtocolVersion(parsed);
 
     // Check for Python error response
     if (isPythonErrorResponse(parsed)) {

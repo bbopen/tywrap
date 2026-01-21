@@ -485,11 +485,9 @@ describeAdversarial('Adversarial playground', () => {
   describe('Protocol contract violations', () => {
     const fixtureCases: Array<{ script: string; pattern: RegExp; skip?: boolean }> = [
       {
-        // New architecture doesn't validate protocol version field in responses
-        // This test is skipped as protocol version validation is not implemented
+        // Protocol version validation implemented in SafeCodec
         script: 'wrong_protocol_bridge.py',
         pattern: /Invalid protocol/,
-        skip: true,
       },
       {
         script: 'missing_id_bridge.py',
