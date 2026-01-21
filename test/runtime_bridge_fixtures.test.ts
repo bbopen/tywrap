@@ -47,20 +47,21 @@ describeNodeOnly('Bridge fixture parity', () => {
   });
 
   // Protocol error fixtures - both bridges should reject with similar error patterns
+  // In the new BridgeProtocol architecture, these all surface as protocol errors
   const errorFixtures = [
     {
       script: 'invalid_json_bridge.py',
-      pattern: /Invalid JSON/,
+      pattern: /Protocol error/,
       description: 'truncated JSON response',
     },
     {
       script: 'oversized_line_bridge.py',
-      pattern: /Response line exceeded/,
+      pattern: /Protocol error|Response line exceeded/,
       description: 'line exceeding maxLineLength',
     },
     {
       script: 'noisy_bridge.py',
-      pattern: /Invalid JSON/,
+      pattern: /Protocol error/,
       description: 'non-JSON noise on stdout',
     },
   ];
@@ -194,7 +195,8 @@ describeNodeOnly('Bridge behavior parity', () => {
     });
   });
 
-  describe('getBridgeInfo parity', () => {
+  // Skipped: getBridgeInfo was removed in the BridgeProtocol architecture
+  describe.skip('getBridgeInfo parity', () => {
     it('Both bridges return consistent BridgeInfo structure', async () => {
       if (!pythonPath) return;
 

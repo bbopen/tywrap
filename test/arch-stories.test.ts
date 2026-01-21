@@ -460,7 +460,7 @@ describe('All bridges extend BoundedContext', () => {
   });
 
   it('HttpBridge extends BoundedContext', () => {
-    const bridge = new HttpBridge();
+    const bridge = new HttpBridge({ baseURL: 'http://localhost:8000' });
     expect(bridge).toBeInstanceOf(BoundedContext);
     expect(typeof bridge.init).toBe('function');
     expect(typeof bridge.dispose).toBe('function');

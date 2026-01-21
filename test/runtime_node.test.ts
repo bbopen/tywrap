@@ -130,13 +130,15 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       testTimeout
     );
 
-    it(
+    // Skipped: getBridgeInfo was removed in the BridgeProtocol architecture
+    // The new architecture doesn't track instance counts on the TypeScript side
+    it.skip(
       'should report bridge info and track instance counts',
       async () => {
         const pythonAvailable = await isPythonAvailable();
         if (!pythonAvailable || !isBridgeScriptAvailable()) return;
 
-        const info = await bridge.getBridgeInfo();
+        const info = await (bridge as any).getBridgeInfo();
         expect(info.protocol).toBe('tywrap/1');
         expect(info.protocolVersion).toBeGreaterThan(0);
         expect(info.pythonVersion).toMatch(/^\d+\.\d+\.\d+$/);
@@ -146,11 +148,11 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
 
         const before = info.instances;
         const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
-        const mid = await bridge.getBridgeInfo({ refresh: true });
+        const mid = await (bridge as any).getBridgeInfo({ refresh: true });
         expect(mid.instances).toBe(before + 1);
 
         await bridge.disposeInstance(handle);
-        const after = await bridge.getBridgeInfo({ refresh: true });
+        const after = await (bridge as any).getBridgeInfo({ refresh: true });
         expect(after.instances).toBe(before);
       },
       testTimeout
@@ -698,9 +700,8 @@ def get_path():
 
         bridge = new NodeBridge({ scriptPath: noisyScriptPath, timeoutMs: defaultTimeoutMs });
 
-        await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow(
-          'Protocol error from Python bridge'
-        );
+        // In the new architecture, invalid stdout lines cause protocol errors
+        await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow('Protocol error');
 
         await bridge.dispose();
       },
@@ -738,7 +739,8 @@ def get_path():
 
         bridge = new NodeBridge({ scriptPath: invalidScriptPath, timeoutMs: defaultTimeoutMs });
 
-        await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow('Invalid JSON');
+        // In the new architecture, invalid JSON causes protocol errors
+        await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow('Protocol error');
 
         await bridge.dispose();
       },

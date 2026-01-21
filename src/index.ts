@@ -17,13 +17,15 @@ export { BridgeProtocol, type BridgeProtocolOptions } from './runtime/bridge-pro
 export { SafeCodec, type CodecOptions } from './runtime/safe-codec.js';
 // Transport - abstract I/O channel interface
 export type { Transport, TransportOptions, ProtocolMessage, ProtocolResponse } from './runtime/transport.js';
-export { isTransport, isProtocolMessage, isProtocolResponse } from './runtime/transport.js';
+export { PROTOCOL_ID, isTransport, isProtocolMessage, isProtocolResponse } from './runtime/transport.js';
 // Transport implementations
 export { ProcessIO, type ProcessIOOptions } from './runtime/process-io.js';
 export { HttpIO, type HttpIOOptions } from './runtime/http-io.js';
 export { PyodideIO, type PyodideIOOptions } from './runtime/pyodide-io.js';
 // WorkerPool - concurrent transport management
 export { WorkerPool, type WorkerPoolOptions, type PooledWorker } from './runtime/worker-pool.js';
+// PooledTransport - Transport adapter that wraps WorkerPool
+export { PooledTransport, type PooledTransportOptions } from './runtime/pooled-transport.js';
 export type { Disposable } from './runtime/disposable.js';
 export { isDisposable, safeDispose, disposeAll } from './runtime/disposable.js';
 export {
@@ -60,10 +62,10 @@ export {
 } from './runtime/errors.js';
 export { getRuntimeBridge, setRuntimeBridge, clearRuntimeBridge } from './runtime/index.js';
 
-// Runtime-specific exports
-export { NodeBridge } from './runtime/node.js';
-export { PyodideBridge } from './runtime/pyodide.js';
-export { HttpBridge } from './runtime/http.js';
+// Runtime-specific exports (Bridges using new BridgeProtocol architecture)
+export { NodeBridge, type NodeBridgeOptions } from './runtime/node.js';
+export { PyodideBridge, type PyodideBridgeOptions } from './runtime/pyodide.js';
+export { HttpBridge, type HttpBridgeOptions } from './runtime/http.js';
 
 // Core types
 export type {
