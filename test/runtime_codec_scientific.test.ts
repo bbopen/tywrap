@@ -90,12 +90,13 @@ describeNodeOnly('Scientific Codecs', () => {
       if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
       if (!pythonPath || !hasModule(pythonPath, 'torch')) return;
       // Torch tensor serialization requires pyarrow for Arrow encoding of ndarrays
+      // Multi-dimensional arrays are flattened on encode and reshaped on decode
       if (!hasModule(pythonPath, 'pyarrow')) return;
 
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
-        // Use Arrow encoding (pyarrow required), no fallback
+        // Use Arrow encoding (pyarrow required) - flatten+reshape handles multi-dim arrays
         timeoutMs: bridgeTimeoutMs,
       });
 
