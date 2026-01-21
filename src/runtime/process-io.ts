@@ -56,6 +56,9 @@ export interface ProcessIOOptions {
   /** Environment variables to pass to the subprocess */
   env?: Record<string, string>;
 
+  /** Working directory for the subprocess. Default: process.cwd() */
+  cwd?: string;
+
   /** Maximum line length for responses. Default: 100MB */
   maxLineLength?: number;
 
@@ -96,10 +99,10 @@ function sanitizeStderr(value: string): string {
  * Extract message ID from a JSON string without full parsing.
  * Returns null if ID cannot be extracted.
  */
-function extractMessageId(json: string): string | null {
-  // Look for "id":"..." or "id": "..."
-  const match = json.match(/"id"\s*:\s*"([^"]+)"/);
-  return match?.[1] ?? null;
+function extractMessageId(json: string): number | null {
+  // Look for "id": <number> (integer IDs)
+  const match = json.match(/"id"\s*:\s*(-?\d+)/);
+  return match?.[1] ? parseInt(match[1], 10) : null;
 }
 
 // =============================================================================
@@ -136,6 +139,7 @@ export class ProcessIO extends BoundedContext implements Transport {
   private readonly pythonPath: string;
   private readonly bridgeScript: string;
   private readonly envOverrides: Record<string, string>;
+  private readonly cwd: string | undefined;
   private readonly maxLineLength: number;
   private readonly restartAfterRequests: number;
 
@@ -149,7 +153,7 @@ export class ProcessIO extends BoundedContext implements Transport {
   private stderrBuffer = '';
 
   // Request tracking
-  private readonly pending = new Map<string, PendingRequest>();
+  private readonly pending = new Map<number, PendingRequest>();
   private requestCount = 0;
 
   // Write queue for backpressure
@@ -167,6 +171,7 @@ export class ProcessIO extends BoundedContext implements Transport {
     this.pythonPath = options.pythonPath ?? 'python3';
     this.bridgeScript = options.bridgeScript;
     this.envOverrides = options.env ?? {};
+    this.cwd = options.cwd;
     this.maxLineLength = options.maxLineLength ?? DEFAULT_MAX_LINE_LENGTH;
     this.restartAfterRequests = options.restartAfterRequests ?? 0;
   }
@@ -383,10 +388,12 @@ export class ProcessIO extends BoundedContext implements Transport {
    * Spawn the Python subprocess.
    */
   private async spawnProcess(): Promise<void> {
-    // Build environment
+    // Build environment - use provided env or inherit from process.env
+    // If env is provided, it should be the complete environment (already filtered by NodeBridge)
+    // We only add Python-specific variables on top
+    const baseEnv = Object.keys(this.envOverrides).length > 0 ? this.envOverrides : process.env;
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...this.envOverrides,
+      ...baseEnv,
       // Ensure Python uses UTF-8
       PYTHONUTF8: '1',
       PYTHONIOENCODING: 'UTF-8',
@@ -398,6 +405,7 @@ export class ProcessIO extends BoundedContext implements Transport {
     this.process = spawn(this.pythonPath, [this.bridgeScript], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
+      cwd: this.cwd,
     });
 
     this.processExited = false;
@@ -436,11 +444,26 @@ export class ProcessIO extends BoundedContext implements Transport {
     const proc = this.process;
     this.process = null;
 
-    // Remove listeners to prevent callbacks after disposal
-    proc.removeAllListeners();
+    // Add a catch-all error handler to prevent uncaught exceptions during shutdown
+    // This must be added BEFORE removing other listeners and ending stdin
+    const noopErrorHandler = (): void => {
+      // Ignore errors during shutdown (e.g., EPIPE)
+    };
+    proc.stdin?.on('error', noopErrorHandler);
+    proc.on('error', noopErrorHandler);
+
+    // Gracefully end stdin to prevent EPIPE on pending writes
+    try {
+      proc.stdin?.end();
+    } catch {
+      // Ignore errors ending stdin
+    }
+
+    // Remove other listeners to prevent callbacks after disposal
+    proc.removeAllListeners('exit');
+    proc.removeAllListeners('close');
     proc.stdout?.removeAllListeners();
     proc.stderr?.removeAllListeners();
-    proc.stdin?.removeAllListeners();
 
     // Kill the process
     if (!proc.killed) {
@@ -659,15 +682,20 @@ export class ProcessIO extends BoundedContext implements Transport {
         return;
       }
 
-      // Try direct write
-      const canWrite = this.process.stdin.write(data);
+      // Try direct write (wrap in try-catch for synchronous EPIPE errors)
+      try {
+        const canWrite = this.process.stdin.write(data);
 
-      if (canWrite) {
-        resolve();
-      } else {
-        // Backpressure - queue this write and set draining flag
-        this.draining = true;
-        this.writeQueue.push({ data, resolve, reject });
+        if (canWrite) {
+          resolve();
+        } else {
+          // Backpressure - queue this write and set draining flag
+          this.draining = true;
+          this.writeQueue.push({ data, resolve, reject });
+        }
+      } catch (err) {
+        // Synchronous write error (e.g., EPIPE)
+        reject(new BridgeProtocolError(`Write error: ${err instanceof Error ? err.message : 'unknown'}`));
       }
     });
   }
@@ -691,14 +719,27 @@ export class ProcessIO extends BoundedContext implements Transport {
         return;
       }
 
-      const canWrite = this.process.stdin.write(queued.data);
+      try {
+        const canWrite = this.process.stdin.write(queued.data);
 
-      if (canWrite) {
-        queued.resolve();
-      } else {
-        // Still under pressure - put it back
-        this.writeQueue.unshift(queued);
-        this.draining = true;
+        if (canWrite) {
+          queued.resolve();
+        } else {
+          // Still under pressure - put it back
+          this.writeQueue.unshift(queued);
+          this.draining = true;
+          return;
+        }
+      } catch (err) {
+        // Synchronous write error (e.g., EPIPE) - reject this and all remaining writes
+        const error = new BridgeProtocolError(
+          `Write error: ${err instanceof Error ? err.message : 'unknown'}`
+        );
+        queued.reject(error);
+        for (const q of this.writeQueue) {
+          q.reject(error);
+        }
+        this.writeQueue.length = 0;
         return;
       }
     }

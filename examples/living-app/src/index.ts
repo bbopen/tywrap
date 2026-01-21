@@ -124,14 +124,7 @@ async function main(): Promise<void> {
   setRuntimeBridge(bridge);
 
   if (codec === 'arrow') {
-    const info = await bridge.getBridgeInfo();
-    if (!info.arrowAvailable) {
-      // Why: fail fast with a clear message; otherwise the bridge will emit Arrow envelopes and the
-      // caller will see confusing decode errors.
-      throw new Error(
-        'Arrow mode requested but pyarrow is not installed in the Python environment. Install pyarrow or run with --json.'
-      );
-    }
+    // Enable Arrow decoder - will fail at decode time if pyarrow is not installed
     await enableArrowDecoder();
   }
 

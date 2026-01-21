@@ -1,149 +1,86 @@
 /**
- * HTTP runtime bridge
+ * HTTP runtime bridge for BridgeProtocol.
+ *
+ * HttpBridge extends BridgeProtocol and uses HttpIO transport for
+ * stateless HTTP POST-based communication with a Python server.
+ *
+ * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import { decodeValueAsync } from '../utils/codec.js';
+import { BridgeProtocol, type BridgeProtocolOptions } from './bridge-protocol.js';
+import { HttpIO } from './http-io.js';
+import type { CodecOptions } from './safe-codec.js';
 
-import { BoundedContext } from './bounded-context.js';
-import { BridgeExecutionError, BridgeTimeoutError } from './errors.js';
+// =============================================================================
+// OPTIONS
+// =============================================================================
 
+/**
+ * Configuration options for HttpBridge.
+ */
 export interface HttpBridgeOptions {
+  /** Base URL for the Python server (e.g., 'http://localhost:8000') */
   baseURL: string;
+
+  /** Additional headers to include in each request */
   headers?: Record<string, string>;
+
+  /** Timeout in ms for requests. Default: 30000 (30 seconds) */
   timeoutMs?: number;
+
+  /** Codec options for validation/serialization */
+  codec?: CodecOptions;
 }
 
-interface HttpCallPayload {
-  module: string;
-  functionName: string;
-  args: unknown[];
-  kwargs?: Record<string, unknown>;
-}
+// =============================================================================
+// HTTP BRIDGE
+// =============================================================================
 
-interface HttpInstantiatePayload {
-  module: string;
-  className: string;
-  args: unknown[];
-  kwargs?: Record<string, unknown>;
-}
-
-interface HttpCallMethodPayload {
-  handle: string;
-  methodName: string;
-  args: unknown[];
-  kwargs?: Record<string, unknown>;
-}
-
-interface HttpDisposePayload {
-  handle: string;
-}
-
-export class HttpBridge extends BoundedContext {
-  private readonly baseURL: string;
-  private readonly headers: Record<string, string>;
-  private readonly timeoutMs: number;
-
-  constructor(options: HttpBridgeOptions = { baseURL: 'http://localhost:8000' }) {
-    super();
-    this.baseURL = options.baseURL.replace(/\/$/, '');
-    this.headers = { 'content-type': 'application/json', ...(options.headers ?? {}) };
-    this.timeoutMs = options.timeoutMs ?? 30000;
-  }
-
+/**
+ * HTTP-based runtime bridge for executing Python code.
+ *
+ * HttpBridge provides a stateless HTTP transport for communication with
+ * a Python server. Each request is independent - no connection state is
+ * maintained between calls.
+ *
+ * Features:
+ * - Stateless HTTP POST communication
+ * - Timeout handling via AbortController
+ * - Full SafeCodec validation (NaN/Infinity rejection, key validation)
+ * - Automatic Arrow decoding for DataFrames/ndarrays
+ *
+ * @example
+ * ```typescript
+ * const bridge = new HttpBridge({ baseURL: 'http://localhost:8000' });
+ * await bridge.init();
+ *
+ * const result = await bridge.call('math', 'sqrt', [16]);
+ * console.log(result); // 4.0
+ *
+ * await bridge.dispose();
+ * ```
+ */
+export class HttpBridge extends BridgeProtocol {
   /**
-   * HttpBridge is stateless, so init is a no-op.
+   * Create a new HttpBridge instance.
+   *
+   * @param options - Configuration options for the bridge
    */
-  protected async doInit(): Promise<void> {
-    // Stateless - no initialization required
-  }
+  constructor(options: HttpBridgeOptions) {
+    // Create HTTP transport
+    const transport = new HttpIO({
+      baseURL: options.baseURL,
+      headers: options.headers,
+      defaultTimeoutMs: options.timeoutMs,
+    });
 
-  /**
-   * HttpBridge is stateless, so dispose is a no-op.
-   */
-  protected async doDispose(): Promise<void> {
-    // Stateless - no cleanup required
-  }
+    // Initialize BridgeProtocol with transport and codec options
+    const protocolOptions: BridgeProtocolOptions = {
+      transport,
+      codec: options.codec,
+      defaultTimeoutMs: options.timeoutMs,
+    };
 
-  async call<T = unknown>(
-    module: string,
-    functionName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    const payload: HttpCallPayload = { module, functionName, args, kwargs };
-    const res = await this.post(`${this.baseURL}/call`, payload);
-    return (await decodeValueAsync(res)) as T;
-  }
-
-  async instantiate<T = unknown>(
-    module: string,
-    className: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    const payload: HttpInstantiatePayload = { module, className, args, kwargs };
-    const res = await this.post(`${this.baseURL}/instantiate`, payload);
-    return (await decodeValueAsync(res)) as T;
-  }
-
-  async callMethod<T = unknown>(
-    handle: string,
-    methodName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    const payload: HttpCallMethodPayload = { handle, methodName, args, kwargs };
-    const res = await this.post(`${this.baseURL}/call_method`, payload);
-    return (await decodeValueAsync(res)) as T;
-  }
-
-  async disposeInstance(handle: string): Promise<void> {
-    const payload: HttpDisposePayload = { handle };
-    await this.post(`${this.baseURL}/dispose_instance`, payload);
-  }
-
-  private async post(url: string, body: unknown): Promise<unknown> {
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
-    const timer = controller ? setTimeout(() => controller.abort(), this.timeoutMs) : undefined;
-    try {
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify(body),
-        signal: controller?.signal,
-      });
-      if (!resp.ok) {
-        const text = await safeText(resp);
-        throw new BridgeExecutionError(`HTTP ${resp.status}: ${text || resp.statusText}`);
-      }
-      const ct = resp.headers.get('content-type') ?? '';
-      if (ct.includes('application/json')) {
-        return (await resp.json()) as unknown;
-      }
-      const text = await resp.text();
-      try {
-        return JSON.parse(text) as unknown;
-      } catch {
-        return text as unknown;
-      }
-    } catch (error) {
-      // Handle abort/timeout errors
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new BridgeTimeoutError(`Request timed out after ${this.timeoutMs}ms`);
-      }
-      throw error;
-    } finally {
-      if (timer) {
-        clearTimeout(timer);
-      }
-    }
-  }
-}
-
-async function safeText(resp: Response): Promise<string> {
-  try {
-    return await resp.text();
-  } catch {
-    return '';
+    super(protocolOptions);
   }
 }

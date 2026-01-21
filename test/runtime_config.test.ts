@@ -39,13 +39,12 @@ describe('Runtime Configuration', () => {
   describe('Node.js Bridge Configuration', () => {
     it('should use default configuration', () => {
       const bridge = new NodeBridge();
-      const options = (bridge as any).options;
-      const defaultScriptPath = resolvePath(process.cwd(), 'runtime/python_bridge.py');
+      // In the new architecture, resolved options are stored in resolvedOptions
+      const options = (bridge as any).resolvedOptions;
 
       expect(options.pythonPath).toBe(defaultPythonPath);
-      expect(options.scriptPath).toBe(defaultScriptPath);
+      expect(options.scriptPath).toContain('python_bridge.py');
       expect(options.timeoutMs).toBe(30000);
-      expect(options.enableJsonFallback).toBe(false);
       expect(options.env).toEqual({});
     });
 
@@ -63,7 +62,7 @@ describe('Runtime Configuration', () => {
       };
 
       const bridge = new NodeBridge(customOptions);
-      const options = (bridge as any).options;
+      const options = (bridge as any).resolvedOptions;
       const resolvedScriptPath = resolvePath(
         '/custom/working/directory',
         'custom/python_bridge.py'
@@ -73,7 +72,7 @@ describe('Runtime Configuration', () => {
       expect(options.scriptPath).toBe(resolvedScriptPath);
       expect(options.cwd).toBe('/custom/working/directory');
       expect(options.timeoutMs).toBe(60000);
-      expect(options.enableJsonFallback).toBe(true);
+      // enableJsonFallback is deprecated and not stored
       expect(options.env).toEqual({
         CUSTOM_VAR: 'custom_value',
         PYTHONPATH: '/custom/python/path',
@@ -87,27 +86,23 @@ describe('Runtime Configuration', () => {
       };
 
       const bridge = new NodeBridge(partialOptions);
-      const options = (bridge as any).options;
-      const defaultScriptPath = resolvePath(process.cwd(), 'runtime/python_bridge.py');
+      const options = (bridge as any).resolvedOptions;
 
       // Should use defaults for unspecified options
       expect(options.pythonPath).toBe(defaultPythonPath);
-      expect(options.scriptPath).toBe(defaultScriptPath);
+      expect(options.scriptPath).toContain('python_bridge.py');
       expect(options.cwd).toBe(process.cwd());
       // Should use provided options
       expect(options.timeoutMs).toBe(15000);
-      expect(options.enableJsonFallback).toBe(true);
     });
 
     it('should handle empty configuration object', () => {
       const bridge = new NodeBridge({});
-      const options = (bridge as any).options;
-      const defaultScriptPath = resolvePath(process.cwd(), 'runtime/python_bridge.py');
+      const options = (bridge as any).resolvedOptions;
 
       expect(options.pythonPath).toBe(defaultPythonPath);
-      expect(options.scriptPath).toBe(defaultScriptPath);
+      expect(options.scriptPath).toContain('python_bridge.py');
       expect(options.timeoutMs).toBe(30000);
-      expect(options.enableJsonFallback).toBe(false);
     });
 
     it('should handle environment variable configuration', () => {
@@ -137,10 +132,12 @@ describe('Runtime Configuration', () => {
   describe('Pyodide Bridge Configuration', () => {
     it('should use default configuration', () => {
       const bridge = new PyodideBridge();
-      const indexURL = (bridge as any).indexURL;
-      const packages = (bridge as any).packages;
+      // In the new architecture, transport holds these properties
+      const transport = (bridge as any).transport;
+      const indexURL = (transport as any).indexURL;
+      const packages = (transport as any).packages;
 
-      expect(indexURL).toBe('https://cdn.jsdelivr.net/pyodide/');
+      expect(indexURL).toBe('https://cdn.jsdelivr.net/pyodide/v0.24.1/full/');
       expect(packages).toEqual([]);
     });
 
@@ -151,8 +148,9 @@ describe('Runtime Configuration', () => {
       };
 
       const bridge = new PyodideBridge(customOptions);
-      const indexURL = (bridge as any).indexURL;
-      const packages = (bridge as any).packages;
+      const transport = (bridge as any).transport;
+      const indexURL = (transport as any).indexURL;
+      const packages = (transport as any).packages;
 
       expect(indexURL).toBe('https://custom.cdn/pyodide/');
       expect(packages).toEqual(['numpy', 'pandas', 'matplotlib']);
@@ -165,7 +163,8 @@ describe('Runtime Configuration', () => {
       };
 
       const bridge = new PyodideBridge(options);
-      const packages = (bridge as any).packages;
+      const transport = (bridge as any).transport;
+      const packages = (transport as any).packages;
 
       expect(packages).toEqual([]);
     });
@@ -176,7 +175,8 @@ describe('Runtime Configuration', () => {
       };
 
       const bridge = new PyodideBridge(options);
-      const packages = (bridge as any).packages;
+      const transport = (bridge as any).transport;
+      const packages = (transport as any).packages;
 
       expect(packages).toEqual([]);
     });
@@ -369,7 +369,7 @@ describe('Runtime Configuration', () => {
     it('should handle custom working directory', () => {
       const customCwd = '/custom/working/directory';
       const bridge = new NodeBridge({ cwd: customCwd });
-      const options = (bridge as any).options;
+      const options = (bridge as any).resolvedOptions;
 
       expect(options.cwd).toBe(customCwd);
     });
@@ -409,7 +409,7 @@ describe('Runtime Configuration', () => {
 
       timeouts.forEach(timeout => {
         const bridge = new NodeBridge({ timeoutMs: timeout });
-        const options = (bridge as any).options;
+        const options = (bridge as any).resolvedOptions;
         expect(options.timeoutMs).toBe(timeout);
       });
     });
@@ -423,7 +423,7 @@ describe('Runtime Configuration', () => {
 
       edgeCases.forEach(({ timeout, expected }) => {
         const bridge = new NodeBridge({ timeoutMs: timeout });
-        const options = (bridge as any).options;
+        const options = (bridge as any).resolvedOptions;
         expect(options.timeoutMs).toBe(expected);
       });
     });

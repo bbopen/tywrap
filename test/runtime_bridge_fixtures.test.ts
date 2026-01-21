@@ -47,20 +47,21 @@ describeNodeOnly('Bridge fixture parity', () => {
   });
 
   // Protocol error fixtures - both bridges should reject with similar error patterns
+  // In the new BridgeProtocol architecture, these all surface as protocol errors
   const errorFixtures = [
     {
       script: 'invalid_json_bridge.py',
-      pattern: /Invalid JSON/,
+      pattern: /Protocol error/,
       description: 'truncated JSON response',
     },
     {
       script: 'oversized_line_bridge.py',
-      pattern: /Response line exceeded/,
+      pattern: /Protocol error|Response line exceeded/,
       description: 'line exceeding maxLineLength',
     },
     {
       script: 'noisy_bridge.py',
-      pattern: /Invalid JSON/,
+      pattern: /Protocol error/,
       description: 'non-JSON noise on stdout',
     },
   ];
@@ -191,76 +192,6 @@ describeNodeOnly('Bridge behavior parity', () => {
       await optimizedBridge.call('math', 'sqrt', [4]);
       await optimizedBridge.dispose();
       await expect(optimizedBridge.dispose()).resolves.toBeUndefined();
-    });
-  });
-
-  describe('getBridgeInfo parity', () => {
-    it('Both bridges return consistent BridgeInfo structure', async () => {
-      if (!pythonPath) return;
-
-      const nodeBridge = new NodeBridge({ scriptPath: defaultScriptPath, pythonPath });
-      const optimizedBridge = new OptimizedNodeBridge({
-        scriptPath: defaultScriptPath,
-        minProcesses: 1,
-        maxProcesses: 1,
-        pythonPath,
-      });
-
-      try {
-        const nodeInfo = await nodeBridge.getBridgeInfo();
-        const optimizedInfo = await optimizedBridge.getBridgeInfo();
-
-        // Both should have the same protocol structure
-        expect(nodeInfo.protocol).toBe(optimizedInfo.protocol);
-        expect(nodeInfo.protocolVersion).toBe(optimizedInfo.protocolVersion);
-        expect(nodeInfo.bridge).toBe(optimizedInfo.bridge);
-
-        // Both should have Python version info
-        expect(typeof nodeInfo.pythonVersion).toBe('string');
-        expect(typeof optimizedInfo.pythonVersion).toBe('string');
-
-        // Both should have PID (positive integer)
-        expect(nodeInfo.pid).toBeGreaterThan(0);
-        expect(optimizedInfo.pid).toBeGreaterThan(0);
-      } finally {
-        await nodeBridge.dispose();
-        await optimizedBridge.dispose();
-      }
-    });
-
-    it('getBridgeInfo refresh option works for both bridges', async () => {
-      if (!pythonPath) return;
-
-      const nodeBridge = new NodeBridge({ scriptPath: defaultScriptPath, pythonPath });
-      const optimizedBridge = new OptimizedNodeBridge({
-        scriptPath: defaultScriptPath,
-        minProcesses: 1,
-        maxProcesses: 1,
-        pythonPath,
-      });
-
-      try {
-        // Get initial info
-        const nodeInfo1 = await nodeBridge.getBridgeInfo();
-        const optimizedInfo1 = await optimizedBridge.getBridgeInfo();
-
-        // Get cached info (should be same)
-        const nodeInfo2 = await nodeBridge.getBridgeInfo();
-        const optimizedInfo2 = await optimizedBridge.getBridgeInfo();
-
-        expect(nodeInfo1.pid).toBe(nodeInfo2.pid);
-        expect(optimizedInfo1.pid).toBe(optimizedInfo2.pid);
-
-        // Refresh should still work (same process, same info)
-        const nodeInfo3 = await nodeBridge.getBridgeInfo({ refresh: true });
-        const optimizedInfo3 = await optimizedBridge.getBridgeInfo({ refresh: true });
-
-        expect(nodeInfo3.protocol).toBe(nodeInfo1.protocol);
-        expect(optimizedInfo3.protocol).toBe(optimizedInfo1.protocol);
-      } finally {
-        await nodeBridge.dispose();
-        await optimizedBridge.dispose();
-      }
     });
   });
 

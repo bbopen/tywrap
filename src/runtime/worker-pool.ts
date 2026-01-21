@@ -8,7 +8,7 @@
  */
 
 import { BoundedContext } from './bounded-context.js';
-import { BridgeTimeoutError, BridgeExecutionError } from './errors.js';
+import { BridgeTimeoutError, BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import type { Transport } from './transport.js';
 
 // =============================================================================
@@ -25,11 +25,20 @@ export interface WorkerPoolOptions {
   /** Maximum number of workers in the pool */
   maxWorkers: number;
 
+  /** Minimum number of workers to pre-spawn during init. Default: 0 (lazy) */
+  minWorkers?: number;
+
   /** Timeout for waiting in queue (ms). Default: 30000 */
   queueTimeoutMs?: number;
 
   /** Maximum concurrent requests per worker. Default: 1 */
   maxConcurrentPerWorker?: number;
+
+  /**
+   * Callback invoked after each worker is created and initialized.
+   * Use this for per-worker warmup (e.g., importing modules, running setup).
+   */
+  onWorkerReady?: (worker: PooledWorker) => Promise<void>;
 }
 
 /**
@@ -90,9 +99,13 @@ interface QueuedWaiter {
  * ```
  */
 export class WorkerPool extends BoundedContext {
-  private readonly options: Required<WorkerPoolOptions>;
+  private readonly options: Omit<Required<WorkerPoolOptions>, 'onWorkerReady'> & {
+    onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+  };
   private readonly workers: PooledWorker[] = [];
   private readonly waitQueue: QueuedWaiter[] = [];
+  /** Tracks workers being created to prevent race condition in acquire() */
+  private pendingCreations = 0;
 
   /**
    * Create a new WorkerPool.
@@ -110,11 +123,18 @@ export class WorkerPool extends BoundedContext {
       throw new BridgeExecutionError('maxWorkers must be a positive number');
     }
 
+    const minWorkers = options.minWorkers ?? 0;
+    if (minWorkers > options.maxWorkers) {
+      throw new BridgeExecutionError('minWorkers cannot exceed maxWorkers');
+    }
+
     this.options = {
       createTransport: options.createTransport,
       maxWorkers: options.maxWorkers,
+      minWorkers,
       queueTimeoutMs: options.queueTimeoutMs ?? 30000,
       maxConcurrentPerWorker: options.maxConcurrentPerWorker ?? 1,
+      onWorkerReady: options.onWorkerReady,
     };
   }
 
@@ -124,10 +144,19 @@ export class WorkerPool extends BoundedContext {
 
   /**
    * Initialize the pool.
-   * Workers are created lazily, so this is a no-op.
+   *
+   * If minWorkers > 0, pre-spawns workers during initialization.
+   * Otherwise, workers are created lazily on demand.
    */
   protected async doInit(): Promise<void> {
-    // Lazy initialization - workers created on demand in acquire()
+    // Pre-spawn minimum workers if configured
+    if (this.options.minWorkers > 0) {
+      const spawns: Promise<PooledWorker>[] = [];
+      for (let i = 0; i < this.options.minWorkers; i++) {
+        spawns.push(this.createWorker());
+      }
+      await Promise.all(spawns);
+    }
   }
 
   /**
@@ -195,10 +224,18 @@ export class WorkerPool extends BoundedContext {
     }
 
     // Create a new worker if under the limit
-    if (this.workers.length < this.options.maxWorkers) {
-      const newWorker = await this.createWorker();
-      newWorker.inFlightCount++;
-      return newWorker;
+    // Include pendingCreations to prevent race condition where multiple
+    // concurrent acquire() calls all pass the length check before any
+    // worker is actually added to the array
+    if (this.workers.length + this.pendingCreations < this.options.maxWorkers) {
+      this.pendingCreations++;
+      try {
+        const newWorker = await this.createWorker();
+        newWorker.inFlightCount++;
+        return newWorker;
+      } finally {
+        this.pendingCreations--;
+      }
     }
 
     // All workers at capacity - wait in queue
@@ -251,10 +288,65 @@ export class WorkerPool extends BoundedContext {
    */
   async withWorker<T>(fn: (worker: PooledWorker) => Promise<T>): Promise<T> {
     const worker = await this.acquire();
+    let workerRemoved = false;
+
     try {
       return await fn(worker);
+    } catch (error) {
+      // If this is a fatal error indicating the worker is dead, remove it from the pool
+      if (this.isFatalWorkerError(error)) {
+        this.removeWorker(worker);
+        workerRemoved = true;
+      }
+      throw error;
     } finally {
-      this.release(worker);
+      // Only release if worker wasn't removed due to fatal error
+      if (!workerRemoved) {
+        this.release(worker);
+      }
+    }
+  }
+
+  // ===========================================================================
+  // WORKER HEALTH
+  // ===========================================================================
+
+  /**
+   * Check if an error indicates the worker is dead and should be removed.
+   *
+   * Fatal errors include:
+   * - Process not running
+   * - Process exited unexpectedly
+   * - Pipe errors (EPIPE)
+   * - Connection reset errors (ECONNRESET)
+   */
+  private isFatalWorkerError(error: unknown): boolean {
+    if (error instanceof BridgeProtocolError) {
+      const msg = error.message.toLowerCase();
+      return (
+        msg.includes('not running') ||
+        msg.includes('process exited') ||
+        msg.includes('epipe') ||
+        msg.includes('econnreset')
+      );
+    }
+    return false;
+  }
+
+  /**
+   * Remove a worker from the pool.
+   *
+   * This is called when a worker is detected as dead (crashed, pipe error, etc.).
+   * The worker's transport is disposed in the background.
+   */
+  private removeWorker(worker: PooledWorker): void {
+    const index = this.workers.indexOf(worker);
+    if (index !== -1) {
+      this.workers.splice(index, 1);
+      // Dispose transport in background - don't await to avoid blocking
+      worker.transport.dispose().catch(() => {
+        // Ignore disposal errors for dead workers
+      });
     }
   }
 
@@ -296,6 +388,9 @@ export class WorkerPool extends BoundedContext {
 
   /**
    * Create a new worker and add it to the pool.
+   *
+   * If onWorkerReady is configured, calls it after the transport is initialized.
+   * This is useful for per-worker warmup (importing modules, running setup).
    */
   private async createWorker(): Promise<PooledWorker> {
     const transport = this.options.createTransport();
@@ -309,6 +404,12 @@ export class WorkerPool extends BoundedContext {
     };
 
     this.workers.push(worker);
+
+    // Call onWorkerReady callback if provided
+    if (this.options.onWorkerReady) {
+      await this.options.onWorkerReady(worker);
+    }
+
     return worker;
   }
 

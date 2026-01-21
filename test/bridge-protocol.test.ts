@@ -333,18 +333,20 @@ describe('BridgeProtocol', () => {
       transport.setDynamicResponse(msg => 'success');
 
       await protocol.testSendMessage<ProtocolResponse>({
-        type: 'call',
-        module: 'test',
-        functionName: 'func',
-        args: [1, 2, 3],
+        method: 'call',
+        params: {
+          module: 'test',
+          functionName: 'func',
+          args: [1, 2, 3],
+        },
       });
 
       expect(transport.lastMessage).toBeDefined();
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.type).toBe('call');
-      expect(parsed.module).toBe('test');
-      expect(parsed.functionName).toBe('func');
-      expect(parsed.args).toEqual([1, 2, 3]);
+      expect(parsed.method).toBe('call');
+      expect(parsed.params.module).toBe('test');
+      expect(parsed.params.functionName).toBe('func');
+      expect(parsed.params.args).toEqual([1, 2, 3]);
       expect(parsed.id).toBeDefined();
     });
 
@@ -352,31 +354,33 @@ describe('BridgeProtocol', () => {
       transport.setDynamicResponse(() => 42);
 
       await protocol.testSendMessage<ProtocolResponse>({
-        type: 'call',
-        module: 'math',
-        functionName: 'sqrt',
-        args: [16],
+        method: 'call',
+        params: {
+          module: 'math',
+          functionName: 'sqrt',
+          args: [16],
+        },
       });
 
       expect(transport.lastMessage).toBeDefined();
-      expect(transport.lastMessage).toContain('"type":"call"');
+      expect(transport.lastMessage).toContain('"method":"call"');
       expect(transport.lastMessage).toContain('"module":"math"');
     });
 
     it('decodes response via SafeCodec', async () => {
       transport.setDynamicResponse(() => ({ value: 42, nested: { data: 'test' } }));
 
-      const result = await protocol.testSendMessage<ProtocolResponse>({
-        type: 'call',
-        module: 'test',
-        functionName: 'getData',
-        args: [],
+      const result = await protocol.testSendMessage<{ value: number; nested: { data: string } }>({
+        method: 'call',
+        params: {
+          module: 'test',
+          functionName: 'getData',
+          args: [],
+        },
       });
 
-      // SafeCodec returns the full ProtocolResponse object
-      expect(result).toHaveProperty('id');
-      expect(result).toHaveProperty('result');
-      expect(result.result).toEqual({ value: 42, nested: { data: 'test' } });
+      // SafeCodec extracts the result field from the response
+      expect(result).toEqual({ value: 42, nested: { data: 'test' } });
     });
 
     it('handles errors from transport', async () => {
@@ -385,10 +389,12 @@ describe('BridgeProtocol', () => {
 
       await expect(
         protocol.testSendMessage({
-          type: 'call',
-          module: 'test',
-          functionName: 'func',
-          args: [],
+          method: 'call',
+          params: {
+            module: 'test',
+            functionName: 'func',
+            args: [],
+          },
         })
       ).rejects.toThrow('Network failure');
     });
@@ -397,10 +403,12 @@ describe('BridgeProtocol', () => {
       // Protocol is created with default codec (rejectSpecialFloats: true)
       await expect(
         protocol.testSendMessage({
-          type: 'call',
-          module: 'test',
-          functionName: 'func',
-          args: [NaN],
+          method: 'call',
+          params: {
+            module: 'test',
+            functionName: 'func',
+            args: [NaN],
+          },
         })
       ).rejects.toThrow(BridgeProtocolError);
     });
@@ -411,25 +419,27 @@ describe('BridgeProtocol', () => {
 
       await expect(
         protocol.testSendMessage({
-          type: 'call',
-          module: 'test',
-          functionName: 'func',
-          args: [],
+          method: 'call',
+          params: {
+            module: 'test',
+            functionName: 'func',
+            args: [],
+          },
         })
       ).rejects.toThrow(BridgeProtocolError);
     });
 
     it('generates unique request IDs', async () => {
-      const capturedIds: string[] = [];
+      const capturedIds: number[] = [];
       transport.send = async (message: string) => {
         const parsed = JSON.parse(message);
         capturedIds.push(parsed.id);
         return JSON.stringify({ id: parsed.id, result: null });
       };
 
-      await protocol.testSendMessage({ type: 'call', module: 'm', functionName: 'f', args: [] });
-      await protocol.testSendMessage({ type: 'call', module: 'm', functionName: 'f', args: [] });
-      await protocol.testSendMessage({ type: 'call', module: 'm', functionName: 'f', args: [] });
+      await protocol.testSendMessage({ method: 'call', params: { module: 'm', functionName: 'f', args: [] } });
+      await protocol.testSendMessage({ method: 'call', params: { module: 'm', functionName: 'f', args: [] } });
+      await protocol.testSendMessage({ method: 'call', params: { module: 'm', functionName: 'f', args: [] } });
 
       expect(capturedIds.length).toBe(3);
       expect(new Set(capturedIds).size).toBe(3); // All unique
@@ -459,17 +469,16 @@ describe('BridgeProtocol', () => {
     it('call() sends correct message type', async () => {
       transport.setDynamicResponse(() => 4);
 
-      // call() returns the full decoded response (ProtocolResponse format)
-      const result = await protocol.call<ProtocolResponse>('math', 'sqrt', [16]);
+      // call() returns the extracted result (SafeCodec extracts from response envelope)
+      const result = await protocol.call<number>('math', 'sqrt', [16]);
 
-      expect(result).toHaveProperty('id');
-      expect(result).toHaveProperty('result', 4);
+      expect(result).toBe(4);
 
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.type).toBe('call');
-      expect(parsed.module).toBe('math');
-      expect(parsed.functionName).toBe('sqrt');
-      expect(parsed.args).toEqual([16]);
+      expect(parsed.method).toBe('call');
+      expect(parsed.params.module).toBe('math');
+      expect(parsed.params.functionName).toBe('sqrt');
+      expect(parsed.params.args).toEqual([16]);
     });
 
     it('call() supports kwargs', async () => {
@@ -478,22 +487,21 @@ describe('BridgeProtocol', () => {
       await protocol.call('module', 'func', [1, 2], { key: 'value' });
 
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.kwargs).toEqual({ key: 'value' });
+      expect(parsed.params.kwargs).toEqual({ key: 'value' });
     });
 
     it('instantiate() sends correct message type', async () => {
       transport.setDynamicResponse(() => 'handle-123');
 
-      const result = await protocol.instantiate<ProtocolResponse>('mymodule', 'MyClass', [1, 'arg']);
+      const result = await protocol.instantiate<string>('mymodule', 'MyClass', [1, 'arg']);
 
-      expect(result).toHaveProperty('id');
-      expect(result).toHaveProperty('result', 'handle-123');
+      expect(result).toBe('handle-123');
 
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.type).toBe('instantiate');
-      expect(parsed.module).toBe('mymodule');
-      expect(parsed.className).toBe('MyClass');
-      expect(parsed.args).toEqual([1, 'arg']);
+      expect(parsed.method).toBe('instantiate');
+      expect(parsed.params.module).toBe('mymodule');
+      expect(parsed.params.className).toBe('MyClass');
+      expect(parsed.params.args).toEqual([1, 'arg']);
     });
 
     it('instantiate() supports kwargs', async () => {
@@ -502,22 +510,21 @@ describe('BridgeProtocol', () => {
       await protocol.instantiate('mod', 'Class', [], { init: true });
 
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.kwargs).toEqual({ init: true });
+      expect(parsed.params.kwargs).toEqual({ init: true });
     });
 
     it('callMethod() sends correct message type', async () => {
       transport.setDynamicResponse(() => 'method result');
 
-      const result = await protocol.callMethod<ProtocolResponse>('handle-123', 'myMethod', ['arg1']);
+      const result = await protocol.callMethod<string>('handle-123', 'myMethod', ['arg1']);
 
-      expect(result).toHaveProperty('id');
-      expect(result).toHaveProperty('result', 'method result');
+      expect(result).toBe('method result');
 
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.type).toBe('call_method');
-      expect(parsed.handle).toBe('handle-123');
-      expect(parsed.methodName).toBe('myMethod');
-      expect(parsed.args).toEqual(['arg1']);
+      expect(parsed.method).toBe('call_method');
+      expect(parsed.params.handle).toBe('handle-123');
+      expect(parsed.params.methodName).toBe('myMethod');
+      expect(parsed.params.args).toEqual(['arg1']);
     });
 
     it('callMethod() supports kwargs', async () => {
@@ -526,7 +533,7 @@ describe('BridgeProtocol', () => {
       await protocol.callMethod('handle', 'method', [], { option: 123 });
 
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.kwargs).toEqual({ option: 123 });
+      expect(parsed.params.kwargs).toEqual({ option: 123 });
     });
 
     it('disposeInstance() sends correct message type', async () => {
@@ -535,9 +542,8 @@ describe('BridgeProtocol', () => {
       await protocol.disposeInstance('handle-789');
 
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.type).toBe('dispose_instance');
-      expect(parsed.handle).toBe('handle-789');
-      expect(parsed.args).toEqual([]);
+      expect(parsed.method).toBe('dispose_instance');
+      expect(parsed.params.handle).toBe('handle-789');
     });
   });
 });
@@ -587,10 +593,9 @@ describe('BridgeProtocol Integration', () => {
     it('response decoding validates result', async () => {
       transport.setDynamicResponse(() => ({ a: 1, b: 'test' }));
 
-      const result = await protocol.call<ProtocolResponse>('m', 'f', []);
+      const result = await protocol.call<{ a: number; b: string }>('m', 'f', []);
 
-      expect(result).toHaveProperty('id');
-      expect(result.result).toEqual({ a: 1, b: 'test' });
+      expect(result).toEqual({ a: 1, b: 'test' });
     });
 
     it('error responses are properly converted to BridgeExecutionError', async () => {
@@ -617,16 +622,15 @@ describe('BridgeProtocol Integration', () => {
 
     it('binary data is encoded as base64 with marker', async () => {
       transport.setDynamicResponse(msg => {
-        const parsed = msg as { args: unknown[] };
-        return parsed.args[0];
+        return (msg.params?.args as unknown[])?.[0];
       });
 
       const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
       await protocol.call('module', 'func', [bytes]);
 
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.args[0].__tywrap_bytes__).toBe(true);
-      expect(parsed.args[0].b64).toBe('SGVsbG8=');
+      expect(parsed.params.args[0].__tywrap_bytes__).toBe(true);
+      expect(parsed.params.args[0].b64).toBe('SGVsbG8=');
     });
 
     it('payload size limits are enforced', async () => {
@@ -645,7 +649,7 @@ describe('BridgeProtocol Integration', () => {
 
     it('response size limits are enforced', async () => {
       const smallCodecTransport = new MockTransport();
-      smallCodecTransport.send = async () => JSON.stringify({ id: 'x', result: 'y'.repeat(200) });
+      smallCodecTransport.send = async () => JSON.stringify({ id: 1, result: 'y'.repeat(200) });
 
       const smallCodecProtocol = new TestBridgeProtocol({
         transport: smallCodecTransport,
@@ -698,12 +702,12 @@ describe('BridgeProtocol Integration', () => {
       const results: string[] = [];
 
       await pool.withWorker(async worker => {
-        const response = await worker.transport.send('{"id":"1","type":"call","args":[]}', 1000);
+        const response = await worker.transport.send('{"id":1,"protocol":"tywrap/1","method":"call","params":{}}', 1000);
         results.push(response);
       });
 
       await pool.withWorker(async worker => {
-        const response = await worker.transport.send('{"id":"2","type":"call","args":[]}', 1000);
+        const response = await worker.transport.send('{"id":2,"protocol":"tywrap/1","method":"call","params":{}}', 1000);
         results.push(response);
       });
 
@@ -721,13 +725,13 @@ describe('BridgeProtocol Integration', () => {
 
       const promises = [
         pool.withWorker(async worker =>
-          worker.transport.send('{"id":"a","type":"call","args":[]}', 1000)
+          worker.transport.send('{"id":1,"protocol":"tywrap/1","method":"call","params":{}}', 1000)
         ),
         pool.withWorker(async worker =>
-          worker.transport.send('{"id":"b","type":"call","args":[]}', 1000)
+          worker.transport.send('{"id":2,"protocol":"tywrap/1","method":"call","params":{}}', 1000)
         ),
         pool.withWorker(async worker =>
-          worker.transport.send('{"id":"c","type":"call","args":[]}', 1000)
+          worker.transport.send('{"id":3,"protocol":"tywrap/1","method":"call","params":{}}', 1000)
         ),
       ];
 
@@ -779,7 +783,7 @@ describe('BridgeProtocol Integration', () => {
       // Use the pool to execute requests
       const result = await pool.withWorker(async worker => {
         const response = await worker.transport.send(
-          JSON.stringify({ id: 'test', type: 'call', module: 'math', functionName: 'sqrt', args: [16] }),
+          JSON.stringify({ id: 1, protocol: 'tywrap/1', method: 'call', params: { module: 'math', functionName: 'sqrt', args: [16] } }),
           1000
         );
         return JSON.parse(response);
@@ -806,8 +810,8 @@ describe('BridgeProtocol Integration', () => {
       const createProtocolTransport = (): Transport => {
         const transport = new MockTransport();
         transport.setDynamicResponse(msg => {
-          if (msg.functionName === 'sqrt') {
-            const num = msg.args[0] as number;
+          if (msg.params?.functionName === 'sqrt') {
+            const num = (msg.params?.args as number[])?.[0] as number;
             return Math.sqrt(num);
           }
           return null;
@@ -828,19 +832,22 @@ describe('BridgeProtocol Integration', () => {
 
         // Encode request
         const request = codec.encodeRequest({
-          id: 'test-1',
-          type: 'call',
-          module: 'math',
-          functionName: 'sqrt',
-          args: [16],
+          id: 1,
+          protocol: 'tywrap/1',
+          method: 'call',
+          params: {
+            module: 'math',
+            functionName: 'sqrt',
+            args: [16],
+          },
         });
 
         // Send through transport
         const responseStr = await worker.transport.send(request, 5000);
 
-        // Decode response (returns full ProtocolResponse)
-        const response = codec.decodeResponse<ProtocolResponse>(responseStr);
-        return response.result;
+        // Decode response (SafeCodec extracts the result)
+        const response = codec.decodeResponse<number>(responseStr);
+        return response;
       });
 
       expect(result).toBe(4);
@@ -863,11 +870,14 @@ describe('BridgeProtocol Integration', () => {
         pool.withWorker(async worker => {
           const codec = new SafeCodec();
           const request = codec.encodeRequest({
-            id: 'error-test',
-            type: 'call',
-            module: 'test',
-            functionName: 'fail',
-            args: [],
+            id: 1,
+            protocol: 'tywrap/1',
+            method: 'call',
+            params: {
+              module: 'test',
+              functionName: 'fail',
+              args: [],
+            },
           });
           const responseStr = await worker.transport.send(request, 5000);
           return codec.decodeResponse(responseStr);
@@ -896,7 +906,7 @@ describe('BridgeProtocol Integration', () => {
         pool.withWorker(async worker => {
           const codec = new SafeCodec({ rejectSpecialFloats: true });
           // This should throw before reaching transport
-          codec.encodeRequest({ id: 'x', type: 'call', args: [NaN] });
+          codec.encodeRequest({ id: 1, protocol: 'tywrap/1', method: 'call', params: { args: [NaN] } });
         })
       ).rejects.toThrow(BridgeProtocolError);
 
@@ -907,13 +917,14 @@ describe('BridgeProtocol Integration', () => {
       const createMathTransport = (): Transport => {
         const transport = new MockTransport();
         transport.setDynamicResponse(msg => {
-          switch (msg.functionName) {
+          const args = msg.params?.args as number[] | undefined;
+          switch (msg.params?.functionName) {
             case 'add':
-              return (msg.args[0] as number) + (msg.args[1] as number);
+              return (args?.[0] ?? 0) + (args?.[1] ?? 0);
             case 'multiply':
-              return (msg.args[0] as number) * (msg.args[1] as number);
+              return (args?.[0] ?? 0) * (args?.[1] ?? 0);
             case 'sqrt':
-              return Math.sqrt(msg.args[0] as number);
+              return Math.sqrt(args?.[0] ?? 0);
             default:
               return null;
           }
@@ -931,24 +942,21 @@ describe('BridgeProtocol Integration', () => {
       const operations = [
         pool.withWorker(async worker => {
           const codec = new SafeCodec();
-          const req = codec.encodeRequest({ id: '1', type: 'call', module: 'm', functionName: 'add', args: [1, 2] });
+          const req = codec.encodeRequest({ id: 1, protocol: 'tywrap/1', method: 'call', params: { module: 'm', functionName: 'add', args: [1, 2] } });
           const res = await worker.transport.send(req, 1000);
-          const response = codec.decodeResponse<ProtocolResponse>(res);
-          return response.result as number;
+          return codec.decodeResponse<number>(res);
         }),
         pool.withWorker(async worker => {
           const codec = new SafeCodec();
-          const req = codec.encodeRequest({ id: '2', type: 'call', module: 'm', functionName: 'multiply', args: [3, 4] });
+          const req = codec.encodeRequest({ id: 2, protocol: 'tywrap/1', method: 'call', params: { module: 'm', functionName: 'multiply', args: [3, 4] } });
           const res = await worker.transport.send(req, 1000);
-          const response = codec.decodeResponse<ProtocolResponse>(res);
-          return response.result as number;
+          return codec.decodeResponse<number>(res);
         }),
         pool.withWorker(async worker => {
           const codec = new SafeCodec();
-          const req = codec.encodeRequest({ id: '3', type: 'call', module: 'm', functionName: 'sqrt', args: [25] });
+          const req = codec.encodeRequest({ id: 3, protocol: 'tywrap/1', method: 'call', params: { module: 'm', functionName: 'sqrt', args: [25] } });
           const res = await worker.transport.send(req, 1000);
-          const response = codec.decodeResponse<ProtocolResponse>(res);
-          return response.result as number;
+          return codec.decodeResponse<number>(res);
         }),
       ];
 
@@ -988,13 +996,13 @@ describe('BridgeProtocol Integration', () => {
       // First attempt should fail
       await expect(
         pool.withWorker(async worker => {
-          return worker.transport.send('{"id":"1","type":"call","args":[]}', 1000);
+          return worker.transport.send('{"id":1,"protocol":"tywrap/1","method":"call","params":{}}', 1000);
         })
       ).rejects.toThrow('Connection lost');
 
       // Second attempt should succeed (same transport, but send now works)
       const result = await pool.withWorker(async worker => {
-        return worker.transport.send('{"id":"2","type":"call","args":[]}', 1000);
+        return worker.transport.send('{"id":2,"protocol":"tywrap/1","method":"call","params":{}}', 1000);
       });
 
       expect(result).toContain('recovered');
@@ -1026,9 +1034,9 @@ describe('BridgeProtocol Integration', () => {
 
       // Send 3 concurrent requests
       const results = await Promise.all([
-        pool.withWorker(w => w.transport.send('{"id":"a"}', 1000)),
-        pool.withWorker(w => w.transport.send('{"id":"b"}', 1000)),
-        pool.withWorker(w => w.transport.send('{"id":"c"}', 1000)),
+        pool.withWorker(w => w.transport.send('{"id":1,"protocol":"tywrap/1","method":"call","params":{}}', 1000)),
+        pool.withWorker(w => w.transport.send('{"id":2,"protocol":"tywrap/1","method":"call","params":{}}', 1000)),
+        pool.withWorker(w => w.transport.send('{"id":3,"protocol":"tywrap/1","method":"call","params":{}}', 1000)),
       ]);
 
       // Should have used 3 different transports
@@ -1050,11 +1058,11 @@ describe('BridgeProtocol Integration', () => {
       const protocol = new TestBridgeProtocol({ transport });
       await protocol.init();
 
-      const result = await protocol.call<ProtocolResponse>('module', 'noArgs', []);
+      const result = await protocol.call<string>('module', 'noArgs', []);
 
-      expect(result.result).toBe('no-args-result');
+      expect(result).toBe('no-args-result');
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.args).toEqual([]);
+      expect(parsed.params.args).toEqual([]);
 
       await protocol.dispose();
     });
@@ -1066,9 +1074,9 @@ describe('BridgeProtocol Integration', () => {
       const protocol = new TestBridgeProtocol({ transport });
       await protocol.init();
 
-      const result = await protocol.call<ProtocolResponse>('module', 'returnNull', []);
+      const result = await protocol.call<null>('module', 'returnNull', []);
 
-      expect(result.result).toBeNull();
+      expect(result).toBeNull();
 
       await protocol.dispose();
     });
@@ -1083,14 +1091,14 @@ describe('BridgeProtocol Integration', () => {
       await protocol.call('module', 'func', [1, 2]);
 
       const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.kwargs).toBeUndefined();
+      expect(parsed.params.kwargs).toBeUndefined();
 
       await protocol.dispose();
     });
 
     it('handles complex nested data structures', async () => {
       const transport = new MockTransport();
-      transport.setDynamicResponse(msg => msg.args[0]);
+      transport.setDynamicResponse(msg => (msg.params?.args as unknown[])?.[0]);
 
       const protocol = new TestBridgeProtocol({ transport });
       await protocol.init();
@@ -1107,16 +1115,16 @@ describe('BridgeProtocol Integration', () => {
         },
       };
 
-      const result = await protocol.call<ProtocolResponse>('module', 'echo', [complexData]);
+      const result = await protocol.call<typeof complexData>('module', 'echo', [complexData]);
 
-      expect(result.result).toEqual(complexData);
+      expect(result).toEqual(complexData);
 
       await protocol.dispose();
     });
 
     it('handles unicode in strings', async () => {
       const transport = new MockTransport();
-      transport.setDynamicResponse(msg => msg.args[0]);
+      transport.setDynamicResponse(msg => (msg.params?.args as unknown[])?.[0]);
 
       const protocol = new TestBridgeProtocol({ transport });
       await protocol.init();
@@ -1127,32 +1135,31 @@ describe('BridgeProtocol Integration', () => {
         arabic: '\u0627\u0644\u0639\u0631\u0628\u064A\u0629',
       };
 
-      const result = await protocol.call<ProtocolResponse>('module', 'echo', [unicodeData]);
+      const result = await protocol.call<typeof unicodeData>('module', 'echo', [unicodeData]);
 
-      expect(result.result).toEqual(unicodeData);
+      expect(result).toEqual(unicodeData);
 
       await protocol.dispose();
     });
 
     it('handles very large numbers', async () => {
       const transport = new MockTransport();
-      transport.setDynamicResponse(msg => msg.args);
+      transport.setDynamicResponse(msg => msg.params?.args);
 
       const protocol = new TestBridgeProtocol({ transport });
       await protocol.init();
 
-      const result = await protocol.call<ProtocolResponse>('module', 'func', [
+      const result = await protocol.call<number[]>('module', 'func', [
         Number.MAX_SAFE_INTEGER,
         Number.MIN_SAFE_INTEGER,
         Number.MAX_VALUE,
         Number.MIN_VALUE,
       ]);
 
-      const resultArray = result.result as number[];
-      expect(resultArray[0]).toBe(Number.MAX_SAFE_INTEGER);
-      expect(resultArray[1]).toBe(Number.MIN_SAFE_INTEGER);
-      expect(resultArray[2]).toBe(Number.MAX_VALUE);
-      expect(resultArray[3]).toBe(Number.MIN_VALUE);
+      expect(result[0]).toBe(Number.MAX_SAFE_INTEGER);
+      expect(result[1]).toBe(Number.MIN_SAFE_INTEGER);
+      expect(result[2]).toBe(Number.MAX_VALUE);
+      expect(result[3]).toBe(Number.MIN_VALUE);
 
       await protocol.dispose();
     });
