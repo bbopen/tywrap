@@ -279,6 +279,11 @@ def serialize_ndarray(obj):
     Why: Arrow IPC gives a compact, lossless binary payload that the JS side can decode as a
     Table. If JSON fallback is explicitly requested, honor it even when pyarrow is installed so
     callers don't unexpectedly need an Arrow decoder on the TypeScript side.
+
+    Note: PyArrow's pa.array() only handles 1D arrays. For multi-dimensional arrays, we flatten
+    before encoding and include shape metadata for reconstruction on the JS side. This maintains
+    Arrow's binary efficiency while working with the current arrow-js implementation (which
+    doesn't yet support FixedShapeTensorArray). See: https://github.com/apache/arrow-js/issues/115
     """
     if FALLBACK_JSON:
         return serialize_ndarray_json(obj)
@@ -289,7 +294,11 @@ def serialize_ndarray(obj):
             'Arrow encoding unavailable for ndarray; install pyarrow or set TYWRAP_CODEC_FALLBACK=json to enable JSON fallback'
         ) from exc
     try:
-        arr = pa.array(obj)
+        # Flatten multi-dimensional arrays for Arrow compatibility
+        # pa.array() only handles 1D arrays; we preserve shape for JS-side reconstruction
+        original_shape = list(obj.shape) if hasattr(obj, 'shape') else None
+        flat = obj.flatten() if hasattr(obj, 'ndim') and obj.ndim > 1 else obj
+        arr = pa.array(flat)
         table = pa.Table.from_arrays([arr], names=['value'])
         sink = pa.BufferOutputStream()
         with pa.ipc.new_stream(sink, table.schema) as writer:
@@ -301,7 +310,8 @@ def serialize_ndarray(obj):
             'codecVersion': CODEC_VERSION,
             'encoding': 'arrow',
             'b64': b64,
-            'shape': getattr(obj, 'shape', None),
+            'shape': original_shape,
+            'dtype': str(obj.dtype) if hasattr(obj, 'dtype') else None,
         }
     except Exception as exc:
         if FALLBACK_JSON:
