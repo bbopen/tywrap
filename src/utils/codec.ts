@@ -243,6 +243,40 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   );
 }
 
+/**
+ * Reshape a flat array into a multi-dimensional nested array.
+ *
+ * Why: PyArrow's pa.array() only handles 1D arrays, so we flatten multi-dimensional
+ * arrays before Arrow encoding and reshape after decoding. This maintains Arrow's
+ * binary efficiency while working with current arrow-js (which doesn't yet support
+ * FixedShapeTensorArray). See: https://github.com/apache/arrow-js/issues/115
+ *
+ * @param flat - Flat array of values
+ * @param shape - Target shape, e.g., [2, 3] for a 2x3 matrix
+ * @returns Nested array with the specified shape
+ */
+function reshapeArray(flat: unknown[], shape: readonly number[]): unknown {
+  if (shape.length === 0) {
+    return flat[0];
+  }
+  if (shape.length === 1) {
+    return flat;
+  }
+
+  // shape.length >= 2, so first is always defined
+  const first = shape[0]!;
+  const rest = shape.slice(1);
+  const chunkSize = rest.reduce((a, b) => a * b, 1);
+  const result: unknown[] = [];
+
+  for (let i = 0; i < first; i++) {
+    const chunk = flat.slice(i * chunkSize, (i + 1) * chunkSize);
+    result.push(reshapeArray(chunk, rest));
+  }
+
+  return result;
+}
+
 // Why: decoding needs to reject incompatible envelopes before we attempt to interpret payloads.
 const CODEC_VERSION = 1;
 
@@ -326,13 +360,48 @@ function decodeEnvelopeCore<T>(
 
   if (marker === 'ndarray') {
     const encoding = (value as { encoding?: unknown }).encoding;
+    const shapeValue = (value as { shape?: unknown }).shape;
+    const shape = isNumberArray(shapeValue) ? shapeValue : undefined;
+
     if (encoding === 'arrow') {
       const b64 = (value as { b64?: unknown }).b64;
       if (typeof b64 !== 'string') {
         throw new Error('Invalid ndarray envelope: missing b64');
       }
       const bytes = fromBase64(b64);
-      return decodeArrow(bytes);
+      const decoded = decodeArrow(bytes);
+
+      // Reshape if multi-dimensional (Arrow only handles 1D, so we flatten on encode)
+      if (shape && shape.length > 1) {
+        if (isPromiseLike(decoded)) {
+          return decoded.then(data => {
+            if (Array.isArray(data)) {
+              return reshapeArray(data, shape);
+            }
+            // Arrow table - extract values and reshape
+            const table = data as ArrowTable & { getChildAt?: (i: number) => { toArray?: () => unknown[] } };
+            if (typeof table.getChildAt === 'function') {
+              const column = table.getChildAt(0);
+              if (column && typeof column.toArray === 'function') {
+                return reshapeArray(column.toArray(), shape);
+              }
+            }
+            return data;
+          });
+        }
+        if (Array.isArray(decoded)) {
+          return reshapeArray(decoded, shape);
+        }
+        // Arrow table - extract values and reshape
+        const table = decoded as ArrowTable & { getChildAt?: (i: number) => { toArray?: () => unknown[] } };
+        if (typeof table.getChildAt === 'function') {
+          const column = table.getChildAt(0);
+          if (column && typeof column.toArray === 'function') {
+            return reshapeArray(column.toArray(), shape);
+          }
+        }
+      }
+      return decoded;
     }
     if (encoding === 'json') {
       if (!('data' in (value as object))) {
