@@ -33,6 +33,9 @@ const DEFAULT_MAX_LINE_LENGTH = 100 * 1024 * 1024;
 /** Maximum stderr bytes to retain for diagnostics: 8KB */
 const MAX_STDERR_BYTES = 8 * 1024;
 
+/** Default write queue timeout: 30 seconds */
+const DEFAULT_WRITE_QUEUE_TIMEOUT_MS = 30_000;
+
 /** Regex for ANSI escape sequences */
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
 
@@ -64,6 +67,9 @@ export interface ProcessIOOptions {
 
   /** Restart process after N requests (0 = never). Default: 0 */
   restartAfterRequests?: number;
+
+  /** Write queue timeout in milliseconds. Default: 30000ms */
+  writeQueueTimeoutMs?: number;
 }
 
 /**
@@ -82,6 +88,8 @@ interface QueuedWrite {
   data: string;
   resolve: () => void;
   reject: (error: Error) => void;
+  /** Timestamp when the write was queued */
+  queuedAt: number;
 }
 
 // =============================================================================
@@ -142,6 +150,7 @@ export class ProcessIO extends BoundedContext implements Transport {
   private readonly cwd: string | undefined;
   private readonly maxLineLength: number;
   private readonly restartAfterRequests: number;
+  private readonly writeQueueTimeoutMs: number;
 
   // Process state
   private process: ChildProcess | null = null;
@@ -174,6 +183,7 @@ export class ProcessIO extends BoundedContext implements Transport {
     this.cwd = options.cwd;
     this.maxLineLength = options.maxLineLength ?? DEFAULT_MAX_LINE_LENGTH;
     this.restartAfterRequests = options.restartAfterRequests ?? 0;
+    this.writeQueueTimeoutMs = options.writeQueueTimeoutMs ?? DEFAULT_WRITE_QUEUE_TIMEOUT_MS;
   }
 
   // ===========================================================================
@@ -417,10 +427,12 @@ export class ProcessIO extends BoundedContext implements Transport {
 
     if (this.process.stdout) {
       this.process.stdout.on('data', this.handleStdoutData.bind(this));
+      this.process.stdout.on('error', this.handleStdoutError.bind(this));
     }
 
     if (this.process.stderr) {
       this.process.stderr.on('data', this.handleStderrData.bind(this));
+      this.process.stderr.on('error', this.handleStderrError.bind(this));
     }
 
     if (this.process.stdin) {
@@ -500,6 +512,17 @@ export class ProcessIO extends BoundedContext implements Transport {
 
     // Spawn new process
     await this.spawnProcess();
+  }
+
+  /**
+   * Mark the process for restart on the next send.
+   * This is called after stream errors to ensure the next request uses a fresh process.
+   */
+  private markForRestart(): void {
+    if (this.restartAfterRequests > 0) {
+      // Set requestCount to trigger restart on next send
+      this.requestCount = this.restartAfterRequests;
+    }
   }
 
   // ===========================================================================
@@ -660,6 +683,30 @@ export class ProcessIO extends BoundedContext implements Transport {
 
     // Reject all pending requests
     this.rejectAllPending(error);
+
+    // Mark for restart on next send
+    this.markForRestart();
+  }
+
+  /**
+   * Handle stdout error event.
+   * This can occur during pipe errors or when the process crashes.
+   */
+  private handleStdoutError(err: Error): void {
+    const error = new BridgeProtocolError(`stdout error: ${err.message}`);
+    this.rejectAllPending(error);
+    this.markForRestart();
+  }
+
+  /**
+   * Handle stderr error event.
+   * This can occur during pipe errors or when the process crashes.
+   */
+  private handleStderrError(err: Error): void {
+    // Stderr errors are less critical but still indicate process health issues
+    const error = new BridgeProtocolError(`stderr error: ${err.message}`);
+    this.rejectAllPending(error);
+    this.markForRestart();
   }
 
   // ===========================================================================
@@ -677,8 +724,8 @@ export class ProcessIO extends BoundedContext implements Transport {
       }
 
       if (this.draining || this.writeQueue.length > 0) {
-        // Queue the write
-        this.writeQueue.push({ data, resolve, reject });
+        // Queue the write with timestamp
+        this.writeQueue.push({ data, resolve, reject, queuedAt: Date.now() });
         return;
       }
 
@@ -691,10 +738,11 @@ export class ProcessIO extends BoundedContext implements Transport {
         } else {
           // Backpressure - queue this write and set draining flag
           this.draining = true;
-          this.writeQueue.push({ data, resolve, reject });
+          this.writeQueue.push({ data, resolve, reject, queuedAt: Date.now() });
         }
       } catch (err) {
         // Synchronous write error (e.g., EPIPE)
+        this.markForRestart();
         reject(new BridgeProtocolError(`Write error: ${err instanceof Error ? err.message : 'unknown'}`));
       }
     });
@@ -704,6 +752,8 @@ export class ProcessIO extends BoundedContext implements Transport {
    * Flush queued writes when backpressure clears.
    */
   private flushWriteQueue(): void {
+    const now = Date.now();
+
     while (this.writeQueue.length > 0 && !this.draining) {
       if (!this.process?.stdin || this.processExited) {
         // Process died - reject all queued writes
@@ -711,12 +761,21 @@ export class ProcessIO extends BoundedContext implements Transport {
           q.reject(new BridgeProtocolError('Process stdin not available'));
         }
         this.writeQueue.length = 0;
+        this.markForRestart();
         return;
       }
 
       const queued = this.writeQueue.shift();
       if (!queued) {
         return;
+      }
+
+      // Check for write queue timeout
+      if (now - queued.queuedAt > this.writeQueueTimeoutMs) {
+        queued.reject(new BridgeTimeoutError(
+          `Write queue timeout: entry waited ${now - queued.queuedAt}ms (limit: ${this.writeQueueTimeoutMs}ms)`
+        ));
+        continue; // Process next entry
       }
 
       try {
@@ -740,6 +799,7 @@ export class ProcessIO extends BoundedContext implements Transport {
           q.reject(error);
         }
         this.writeQueue.length = 0;
+        this.markForRestart();
         return;
       }
     }
