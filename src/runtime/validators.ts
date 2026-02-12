@@ -183,17 +183,28 @@ export function assertObject(value: unknown, name: string): Record<string, unkno
  * @param value - The value to check
  * @returns True if the value contains NaN or Infinity anywhere
  */
-export function containsSpecialFloat(value: unknown): boolean {
+function containsSpecialFloatRecursive(value: unknown, visited: WeakSet<object>): boolean {
   if (typeof value === 'number') {
     return !Number.isFinite(value);
   }
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+  if (visited.has(value)) {
+    return false;
+  }
+  visited.add(value);
   if (Array.isArray(value)) {
-    return value.some(containsSpecialFloat);
+    return value.some(item => containsSpecialFloatRecursive(item, visited));
   }
   if (isPlainObject(value)) {
-    return Object.values(value).some(containsSpecialFloat);
+    return Object.values(value).some(item => containsSpecialFloatRecursive(item, visited));
   }
   return false;
+}
+
+export function containsSpecialFloat(value: unknown): boolean {
+  return containsSpecialFloatRecursive(value, new WeakSet<object>());
 }
 
 /**
