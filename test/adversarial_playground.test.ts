@@ -34,6 +34,22 @@ const pythonAvailable = (pythonPath: string | null): boolean => {
   return res.status === 0;
 };
 
+const pythonModuleAvailable = async (moduleId: string): Promise<boolean> => {
+  const pythonPath = await resolvePythonForTests();
+  if (!pythonPath || !pythonAvailable(pythonPath)) {
+    return false;
+  }
+  const check = spawnSync(
+    pythonPath,
+    [
+      '-c',
+      `import importlib.util, sys; sys.exit(0 if importlib.util.find_spec(${JSON.stringify(moduleId)}) else 1)`,
+    ],
+    { encoding: 'utf-8' }
+  );
+  return check.status === 0;
+};
+
 const buildPythonPath = (): string => {
   const current = process.env.PYTHONPATH;
   return current ? `${fixturesRoot}${delimiter}${current}` : fixturesRoot;
@@ -189,6 +205,65 @@ describeAdversarial('Adversarial playground', () => {
         await expect(callAdversarial(bridge, 'echo', [payload])).rejects.toThrow(
           /TYWRAP_REQUEST_MAX_BYTES|RequestTooLargeError/
         );
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'surfaces explicit torch copy errors for non-contiguous tensors',
+    async () => {
+      if (!(await pythonModuleAvailable('torch'))) return;
+
+      const bridge = await createBridge({
+        env: { TYWRAP_TORCH_ALLOW_COPY: '0' },
+      });
+      if (!bridge) return;
+
+      try {
+        await expect(callAdversarial(bridge, 'return_torch_non_contiguous_tensor', [])).rejects.toThrow(
+          /Torch tensor is not contiguous|TYWRAP_TORCH_ALLOW_COPY/
+        );
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'surfaces explicit scipy complex sparse dtype errors',
+    async () => {
+      if (!(await pythonModuleAvailable('scipy'))) return;
+
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      try {
+        await expect(callAdversarial(bridge, 'return_scipy_complex_sparse', [])).rejects.toThrow(
+          /Complex sparse matrices are not supported/
+        );
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'surfaces explicit sklearn non-serializable params errors',
+    async () => {
+      if (!(await pythonModuleAvailable('sklearn'))) return;
+
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      try {
+        await expect(
+          callAdversarial(bridge, 'return_sklearn_unserializable_estimator', [])
+        ).rejects.toThrow(/scikit-learn estimator params are not JSON-serializable/);
       } finally {
         await bridge.dispose();
       }
