@@ -60,7 +60,7 @@ interface ProtocolEnvelope {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const DEFAULT_MAX_PAYLOAD_BYTES = 10 * 1024 * 1024; // 10MB
-const ERROR_PAYLOAD_SNIPPET_BYTES = 200;
+const ERROR_PAYLOAD_SNIPPET_LENGTH = 200;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
@@ -224,10 +224,10 @@ function summarizePayloadForError(payload: string): string {
   if (!trimmed) {
     return '[empty payload]';
   }
-  if (trimmed.length <= ERROR_PAYLOAD_SNIPPET_BYTES) {
+  if (trimmed.length <= ERROR_PAYLOAD_SNIPPET_LENGTH) {
     return trimmed;
   }
-  return `${trimmed.slice(0, ERROR_PAYLOAD_SNIPPET_BYTES)}...`;
+  return `${trimmed.slice(0, ERROR_PAYLOAD_SNIPPET_LENGTH)}...`;
 }
 
 /**

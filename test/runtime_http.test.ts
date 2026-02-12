@@ -172,13 +172,16 @@ describe('HttpBridge runtime error handling', () => {
 
   it('surfaces consistent timeout errors with context', async () => {
     await withHttpFixture((_, res) => {
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (!res.writableEnded) {
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ id: 1, result: 4 }));
         }
       }, 200);
+      res.on('close', () => {
+        clearTimeout(timer);
+      });
     }, async baseURL => {
       const bridge = new HttpBridge({ baseURL, timeoutMs: 50 });
       try {
