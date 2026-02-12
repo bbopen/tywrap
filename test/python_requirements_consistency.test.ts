@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'vitest';
 
@@ -42,11 +42,11 @@ function parsePinnedRequirements(filePath: string): RequirementPin[] {
 describe('python suite requirement pins', () => {
   it('are internally consistent when installing full suite', () => {
     const repoRoot = process.cwd();
-    const files = [
-      join(repoRoot, 'test', 'python', 'requirements-suite-core.txt'),
-      join(repoRoot, 'test', 'python', 'requirements-suite-data.txt'),
-      join(repoRoot, 'test', 'python', 'requirements-suite-ml.txt'),
-    ];
+    const suiteRequirementsDir = join(repoRoot, 'test', 'python');
+    const files = readdirSync(suiteRequirementsDir)
+      .filter(fileName => /^requirements-suite-.*\.txt$/.test(fileName))
+      .map(fileName => join(suiteRequirementsDir, fileName))
+      .sort();
 
     const byName = new Map<string, RequirementPin[]>();
     for (const filePath of files) {
