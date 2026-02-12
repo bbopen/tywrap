@@ -258,22 +258,19 @@ function typedArrayToPlain(arr: unknown): unknown[] {
   }
   // Handle typed arrays (Int32Array, Float64Array, BigInt64Array, etc.)
   if (ArrayBuffer.isView(arr) && 'length' in arr) {
-    const typedArr = arr as unknown as { length: number; [index: number]: unknown };
-    const result: unknown[] = [];
-    for (let i = 0; i < typedArr.length; i++) {
-      const val = typedArr[i];
+    const values = Array.from(arr as unknown as ArrayLike<unknown>);
+    return values.map(value => {
       // Convert BigInt to Number if within safe integer range
-      if (typeof val === 'bigint') {
-        if (val >= BigInt(Number.MIN_SAFE_INTEGER) && val <= BigInt(Number.MAX_SAFE_INTEGER)) {
-          result.push(Number(val));
-        } else {
-          result.push(val); // Keep as BigInt if too large
+      if (typeof value === 'bigint') {
+        if (
+          value >= BigInt(Number.MIN_SAFE_INTEGER) &&
+          value <= BigInt(Number.MAX_SAFE_INTEGER)
+        ) {
+          return Number(value);
         }
-      } else {
-        result.push(val);
       }
-    }
-    return result;
+      return value; // Keep BigInt when too large (or preserve non-BigInt values)
+    });
   }
   // Fallback: check if iterable before converting
   if (arr !== null && arr !== undefined && typeof arr === 'object' && Symbol.iterator in arr) {
@@ -324,8 +321,10 @@ function reshapeArray(flat: unknown[], shape: readonly number[]): unknown {
     return flat;
   }
 
-  // shape.length >= 2, so first is always defined
-  const first = shape[0]!;
+  const first = shape[0];
+  if (first === undefined) {
+    return [];
+  }
   const rest = shape.slice(1);
   const chunkSize = rest.reduce((a, b) => a * b, 1);
   const result: unknown[] = [];
