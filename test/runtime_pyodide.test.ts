@@ -499,6 +499,52 @@ describe('Pyodide Runtime Bridge', () => {
     });
   });
 
+  describe('Initialization Retry', () => {
+    it('should retry initialization after loadPyodide failure', async () => {
+      bridge = new PyodideBridge();
+
+      const mockPyodide = createMockPyodide();
+      mockLoadPyodide.mockRejectedValueOnce(new Error('Network error'));
+      mockLoadPyodide.mockResolvedValueOnce(mockPyodide);
+
+      setMockDispatchHandler((msg: string) => {
+        const parsed = JSON.parse(msg);
+        return JSON.stringify({ id: parsed.id, result: 4 });
+      });
+
+      await expect(bridge.call('math', 'sqrt', [16])).rejects.toThrow('Network error');
+
+      const result = await bridge.call('math', 'sqrt', [16]);
+      expect(result).toBe(4);
+      expect(mockLoadPyodide).toHaveBeenCalledTimes(2);
+    });
+
+    it('should retry initialization after package loading failure', async () => {
+      const packages = ['numpy'];
+      bridge = new PyodideBridge({ packages });
+
+      const mockPyodide = createMockPyodide();
+      const loadPackageSpy = vi.spyOn(mockPyodide, 'loadPackage');
+      loadPackageSpy.mockRejectedValueOnce(new Error('Package not found'));
+      loadPackageSpy.mockResolvedValueOnce(undefined);
+      mockLoadPyodide.mockResolvedValue(mockPyodide);
+
+      setMockDispatchHandler((msg: string) => {
+        const parsed = JSON.parse(msg);
+        return JSON.stringify({ id: parsed.id, result: 9 });
+      });
+
+      await expect(bridge.call('math', 'sqrt', [81])).rejects.toThrow('Package not found');
+
+      const result = await bridge.call('math', 'sqrt', [81]);
+      expect(result).toBe(9);
+      expect(mockLoadPyodide).toHaveBeenCalledTimes(2);
+      expect(loadPackageSpy).toHaveBeenCalledTimes(2);
+      expect(loadPackageSpy).toHaveBeenNthCalledWith(1, packages);
+      expect(loadPackageSpy).toHaveBeenNthCalledWith(2, packages);
+    });
+  });
+
   describe('Error Handling', () => {
     beforeEach(async () => {
       bridge = new PyodideBridge();
