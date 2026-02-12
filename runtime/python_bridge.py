@@ -138,6 +138,10 @@ class ProtocolError(Exception):
     pass
 
 
+class InstanceHandleError(ValueError):
+    """Raised when an instance handle is unknown or no longer valid."""
+
+
 _PROTOCOL_DIAGNOSTIC_MAX = 2048
 
 
@@ -668,7 +672,7 @@ def handle_call_method(params):
     args = coerce_list(params.get('args'), 'args')
     kwargs = coerce_dict(params.get('kwargs'), 'kwargs')
     if handle_id not in instances:
-        raise KeyError(f'Unknown handle: {handle_id}')
+        raise InstanceHandleError(f'Unknown instance handle: {handle_id}')
     obj = instances[handle_id]
     func = getattr(obj, method_name)
     res = func(*args, **kwargs)
@@ -678,7 +682,7 @@ def handle_call_method(params):
 def handle_dispose_instance(params):
     handle_id = require_str(params, 'handle')
     if handle_id not in instances:
-        raise KeyError(f'Unknown handle: {handle_id}')
+        return False
     del instances[handle_id]
     return True
 

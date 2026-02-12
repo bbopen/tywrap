@@ -428,6 +428,46 @@ describeAdversarial('Adversarial playground', () => {
     testTimeoutMs
   );
 
+  it(
+    'surfaces missing instance handles with a stable execution error',
+    async () => {
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      try {
+        const handle = await bridge.instantiate<string>('builtins', 'list', []);
+        await bridge.disposeInstance(handle);
+
+        await expect(bridge.callMethod(handle, 'append', [1])).rejects.toThrow(
+          /InstanceHandleError: Unknown instance handle:/
+        );
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
+    'handles double-dispose of instance handles safely',
+    async () => {
+      const bridge = await createBridge();
+      if (!bridge) return;
+
+      try {
+        const handle = await bridge.instantiate<string>('builtins', 'list', []);
+        await bridge.disposeInstance(handle);
+        await expect(bridge.disposeInstance(handle)).resolves.toBeUndefined();
+
+        const result = await callAdversarial(bridge, 'echo', ['still-alive']);
+        expect(result).toBe('still-alive');
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
   describe('Decoder validation failures', () => {
     const cases: Array<{ name: string; pattern: RegExp }> = [
       {
