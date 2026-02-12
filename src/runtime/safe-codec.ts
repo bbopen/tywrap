@@ -90,10 +90,18 @@ function buildPath(basePath: string, key: string | number): string {
  * Recursively check for non-string keys in objects and Maps.
  * Throws BridgeProtocolError with path indication if found.
  */
-function assertStringKeys(value: unknown, path: string = ''): void {
+function assertStringKeys(
+  value: unknown,
+  path: string = '',
+  visited: WeakSet<object> = new WeakSet<object>()
+): void {
   if (value === null || typeof value !== 'object') {
     return;
   }
+  if (visited.has(value)) {
+    return;
+  }
+  visited.add(value);
 
   // Check Map instances for non-string keys
   if (value instanceof Map) {
@@ -108,7 +116,7 @@ function assertStringKeys(value: unknown, path: string = ''): void {
     }
     // Recurse into Map values
     for (const [key, val] of value.entries()) {
-      assertStringKeys(val, buildPath(path, key));
+      assertStringKeys(val, buildPath(path, key), visited);
     }
     return;
   }
@@ -116,7 +124,7 @@ function assertStringKeys(value: unknown, path: string = ''): void {
   // Check arrays
   if (Array.isArray(value)) {
     for (const [index, item] of value.entries()) {
-      assertStringKeys(item, buildPath(path, index));
+      assertStringKeys(item, buildPath(path, index), visited);
     }
     return;
   }
@@ -136,7 +144,7 @@ function assertStringKeys(value: unknown, path: string = ''): void {
 
     // Recurse into object values
     for (const [key, item] of Object.entries(value)) {
-      assertStringKeys(item, buildPath(path, key));
+      assertStringKeys(item, buildPath(path, key), visited);
     }
   }
 }
@@ -237,13 +245,24 @@ function validateProtocolVersion(value: unknown): void {
  * Find the path to a special float in a value structure.
  * Returns undefined if no special float is found.
  */
-function findSpecialFloatPath(value: unknown, path: string = ''): string | undefined {
+function findSpecialFloatPath(
+  value: unknown,
+  path: string = '',
+  visited: WeakSet<object> = new WeakSet<object>()
+): string | undefined {
   if (typeof value === 'number' && !Number.isFinite(value)) {
     return path || 'root';
   }
+  if (value === null || typeof value !== 'object') {
+    return undefined;
+  }
+  if (visited.has(value)) {
+    return undefined;
+  }
+  visited.add(value);
   if (Array.isArray(value)) {
     for (const [index, item] of value.entries()) {
-      const result = findSpecialFloatPath(item, buildPath(path, index));
+      const result = findSpecialFloatPath(item, buildPath(path, index), visited);
       if (result !== undefined) {
         return result;
       }
@@ -251,7 +270,7 @@ function findSpecialFloatPath(value: unknown, path: string = ''): string | undef
   }
   if (isPlainObject(value)) {
     for (const [key, item] of Object.entries(value)) {
-      const result = findSpecialFloatPath(item, buildPath(path, key));
+      const result = findSpecialFloatPath(item, buildPath(path, key), visited);
       if (result !== undefined) {
         return result;
       }
