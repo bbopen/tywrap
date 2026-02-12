@@ -66,3 +66,49 @@ describe('BridgeCore line buffering', () => {
     await expect(pending).rejects.toBeInstanceOf(BridgeProtocolError);
   });
 });
+
+describe('BridgeCore response validation', () => {
+  it('rejects malformed string error payloads as protocol errors', async () => {
+    const transport = new TestTransport();
+    const core = new BridgeCore(transport, { timeoutMs: 50, maxLineLength: 256 });
+
+    const pending = core.send({
+      method: 'call',
+      params: { module: 'math', functionName: 'sqrt', args: [4] },
+    });
+
+    core.handleStdoutData('{"id":1,"protocol":"tywrap/1","error":"oops"}\n');
+
+    await expect(pending).rejects.toThrow(/Invalid response "error" payload/);
+  });
+
+  it('rejects malformed object error payloads as protocol errors', async () => {
+    const transport = new TestTransport();
+    const core = new BridgeCore(transport, { timeoutMs: 50, maxLineLength: 256 });
+
+    const pending = core.send({
+      method: 'call',
+      params: { module: 'math', functionName: 'sqrt', args: [4] },
+    });
+
+    core.handleStdoutData('{"id":1,"protocol":"tywrap/1","error":{}}\n');
+
+    await expect(pending).rejects.toThrow(/"type" must be a string/);
+  });
+
+  it('rejects responses that include both result and error', async () => {
+    const transport = new TestTransport();
+    const core = new BridgeCore(transport, { timeoutMs: 50, maxLineLength: 256 });
+
+    const pending = core.send({
+      method: 'call',
+      params: { module: 'math', functionName: 'sqrt', args: [4] },
+    });
+
+    core.handleStdoutData(
+      '{"id":1,"protocol":"tywrap/1","result":2,"error":{"type":"ValueError","message":"oops"}}\n'
+    );
+
+    await expect(pending).rejects.toThrow(/both "result" and "error"/);
+  });
+});

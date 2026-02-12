@@ -42,6 +42,19 @@ interface PythonErrorResponse {
   };
 }
 
+interface NormalizedPythonError {
+  type: string;
+  message: string;
+  traceback?: string;
+}
+
+interface ProtocolEnvelope {
+  id: number;
+  protocol?: string;
+  result?: unknown;
+  error?: unknown;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -144,22 +157,57 @@ function isPythonErrorResponse(value: unknown): value is PythonErrorResponse {
 }
 
 /**
- * Type guard for protocol result response.
- * Checks if the value is an object with an id and result field.
- * The protocol field is optional as Python may not always include it.
+ * Type guard for protocol response envelope.
+ * Envelopes must include a numeric id.
  */
-interface ProtocolResultResponse {
-  id: number;
-  protocol?: string;
-  result: unknown;
-}
-
-function isProtocolResultResponse(value: unknown): value is ProtocolResultResponse {
+function isProtocolEnvelope(value: unknown): value is ProtocolEnvelope {
   if (value === null || typeof value !== 'object') {
     return false;
   }
   const obj = value as Record<string, unknown>;
-  return typeof obj.id === 'number' && 'result' in obj;
+  return typeof obj.id === 'number';
+}
+
+function hasOwnKey(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function normalizeErrorPayload(err: unknown): NormalizedPythonError | null {
+  if (!err || typeof err !== 'object' || Array.isArray(err)) {
+    return null;
+  }
+  const candidate = err as Record<string, unknown>;
+  if (typeof candidate.type !== 'string' || typeof candidate.message !== 'string') {
+    return null;
+  }
+  if (hasOwnKey(candidate, 'traceback') && typeof candidate.traceback !== 'string') {
+    return null;
+  }
+  const normalized: NormalizedPythonError = {
+    type: candidate.type,
+    message: candidate.message,
+  };
+  if (typeof candidate.traceback === 'string') {
+    normalized.traceback = candidate.traceback;
+  }
+  return normalized;
+}
+
+function describeInvalidErrorPayload(err: unknown): string {
+  if (!err || typeof err !== 'object' || Array.isArray(err)) {
+    return 'expected an object with string "type" and "message" fields';
+  }
+  const candidate = err as Record<string, unknown>;
+  if (typeof candidate.type !== 'string') {
+    return '"type" must be a string';
+  }
+  if (typeof candidate.message !== 'string') {
+    return '"message" must be a string';
+  }
+  if (hasOwnKey(candidate, 'traceback') && typeof candidate.traceback !== 'string') {
+    return '"traceback" must be a string when provided';
+  }
+  return 'expected an object with string "type" and "message" fields';
 }
 
 /**
@@ -245,6 +293,45 @@ export class SafeCodec {
     this.rejectNonStringKeys = options.rejectNonStringKeys ?? true;
     this.maxPayloadBytes = options.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES;
     this.bytesHandling = options.bytesHandling ?? 'base64';
+  }
+
+  private toBridgeExecutionError(error: NormalizedPythonError): BridgeExecutionError {
+    const bridgeError = new BridgeExecutionError(`${error.type}: ${error.message}`);
+    bridgeError.traceback = error.traceback;
+    return bridgeError;
+  }
+
+  private extractResultFromResponseEnvelope(parsed: unknown): unknown {
+    if (isProtocolEnvelope(parsed)) {
+      const envelope = parsed;
+      const hasResult = hasOwnKey(envelope, 'result');
+      const hasError = hasOwnKey(envelope, 'error');
+
+      if (hasResult && hasError) {
+        throw new BridgeProtocolError('Protocol response cannot include both "result" and "error"');
+      }
+
+      if (hasError) {
+        const normalizedError = normalizeErrorPayload(envelope.error);
+        if (!normalizedError) {
+          const details = describeInvalidErrorPayload(envelope.error);
+          throw new BridgeProtocolError(`Invalid response "error" payload: ${details}`);
+        }
+        throw this.toBridgeExecutionError(normalizedError);
+      }
+
+      if (!hasResult) {
+        throw new BridgeProtocolError('Protocol response missing "result" or "error" field');
+      }
+
+      return envelope.result;
+    }
+
+    if (isPythonErrorResponse(parsed)) {
+      throw this.toBridgeExecutionError(parsed.error);
+    }
+
+    return parsed;
   }
 
   /**
@@ -341,17 +428,7 @@ export class SafeCodec {
     // Validate protocol version (if present)
     validateProtocolVersion(parsed);
 
-    // Check for Python error response
-    if (isPythonErrorResponse(parsed)) {
-      const error = new BridgeExecutionError(
-        `${parsed.error.type}: ${parsed.error.message}`
-      );
-      error.traceback = parsed.error.traceback;
-      throw error;
-    }
-
-    // Extract the result field from the response envelope
-    const result = isProtocolResultResponse(parsed) ? parsed.result : parsed;
+    const result = this.extractResultFromResponseEnvelope(parsed);
 
     // Post-decode validation for special floats if enabled
     if (this.rejectSpecialFloats && containsSpecialFloat(result)) {
@@ -394,17 +471,7 @@ export class SafeCodec {
     // Validate protocol version (if present)
     validateProtocolVersion(parsed);
 
-    // Check for Python error response
-    if (isPythonErrorResponse(parsed)) {
-      const error = new BridgeExecutionError(
-        `${parsed.error.type}: ${parsed.error.message}`
-      );
-      error.traceback = parsed.error.traceback;
-      throw error;
-    }
-
-    // Extract the result field from the response envelope
-    const result = isProtocolResultResponse(parsed) ? parsed.result : parsed;
+    const result = this.extractResultFromResponseEnvelope(parsed);
 
     // Apply Arrow decoding to the result
     let decoded: unknown;
