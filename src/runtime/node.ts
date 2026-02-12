@@ -166,6 +166,34 @@ function getPathKey(env: Record<string, string | undefined>): string {
   return 'PATH';
 }
 
+const DANGEROUS_ENV_OVERRIDE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
+function createNullPrototypeEnv(): Record<string, string> {
+  return Object.create(null) as Record<string, string>;
+}
+
+function setEnvValue(env: Record<string, string>, key: string, value: string): void {
+  Object.defineProperty(env, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
+function getEnvValue(env: Record<string, string>, key: string): string | undefined {
+  const value = Reflect.get(env, key);
+  return typeof value === 'string' ? value : undefined;
+}
+
+function assertSafeEnvOverrideKey(key: string): void {
+  if (DANGEROUS_ENV_OVERRIDE_KEYS.has(key)) {
+    throw new BridgeProtocolError(
+      `Invalid environment override key "${key}" in options.env`
+    );
+  }
+}
+
 // =============================================================================
 // NODE BRIDGE
 // =============================================================================
@@ -253,7 +281,7 @@ export class NodeBridge extends BridgeProtocol {
 
     // Create pooled transport with ProcessIO workers
     const transport = new PooledTransport({
-      createTransport: () =>
+      createTransport: (): ProcessIO =>
         new ProcessIO({
           pythonPath: resolvedOptions.pythonPath,
           bridgeScript: resolvedOptions.scriptPath,
@@ -513,13 +541,13 @@ function createWarmupCallback(
 function buildProcessEnv(options: ResolvedOptions): Record<string, string> {
   const allowedPrefixes = ['TYWRAP_'];
   const allowedKeys = new Set(['path', 'pythonpath', 'virtual_env', 'pythonhome']);
-  const env: Record<string, string> = {};
+  const env = createNullPrototypeEnv();
 
   // Copy allowed env vars from process.env
   if (options.inheritProcessEnv) {
     for (const [key, value] of Object.entries(process.env)) {
       if (value !== undefined) {
-        env[key] = value;
+        setEnvValue(env, key, value);
       }
     }
   } else {
@@ -528,15 +556,16 @@ function buildProcessEnv(options: ResolvedOptions): Record<string, string> {
         value !== undefined &&
         (allowedKeys.has(key.toLowerCase()) || allowedPrefixes.some(p => key.startsWith(p)))
       ) {
-        env[key] = value;
+        setEnvValue(env, key, value);
       }
     }
   }
 
   // Apply user overrides
   for (const [key, value] of Object.entries(options.env)) {
+    assertSafeEnvOverrideKey(key);
     if (value !== undefined) {
-      env[key] = value;
+      setEnvValue(env, key, value);
     }
   }
 
@@ -545,8 +574,8 @@ function buildProcessEnv(options: ResolvedOptions): Record<string, string> {
     const venv = resolveVirtualEnv(options.virtualEnv, options.cwd);
     env.VIRTUAL_ENV = venv.venvPath;
     const pathKey = getPathKey(env);
-    const currentPath = env[pathKey] ?? '';
-    env[pathKey] = `${venv.binDir}${delimiter}${currentPath}`;
+    const currentPath = getEnvValue(env, pathKey) ?? '';
+    setEnvValue(env, pathKey, `${venv.binDir}${delimiter}${currentPath}`);
   }
 
   // Add cwd to PYTHONPATH so Python can find modules in the working directory
