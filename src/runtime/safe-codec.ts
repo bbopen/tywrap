@@ -168,7 +168,7 @@ function isProtocolEnvelope(value: unknown): value is ProtocolEnvelope {
   return typeof obj.id === 'number';
 }
 
-function hasOwnKey(value: Record<string, unknown>, key: string): boolean {
+function hasOwnKey(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
@@ -303,7 +303,7 @@ export class SafeCodec {
 
   private extractResultFromResponseEnvelope(parsed: unknown): unknown {
     if (isProtocolEnvelope(parsed)) {
-      const envelope = parsed as Record<string, unknown>;
+      const envelope = parsed;
       const hasResult = hasOwnKey(envelope, 'result');
       const hasError = hasOwnKey(envelope, 'error');
 
