@@ -102,8 +102,8 @@ function assertStringKeys(value: unknown, path: string = ''): void {
 
   // Check arrays
   if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      assertStringKeys(value[i], buildPath(path, i));
+    for (const [index, item] of value.entries()) {
+      assertStringKeys(item, buildPath(path, index));
     }
     return;
   }
@@ -122,8 +122,8 @@ function assertStringKeys(value: unknown, path: string = ''): void {
     }
 
     // Recurse into object values
-    for (const key of Object.keys(value)) {
-      assertStringKeys(value[key], buildPath(path, key));
+    for (const [key, item] of Object.entries(value)) {
+      assertStringKeys(item, buildPath(path, key));
     }
   }
 }
@@ -194,16 +194,16 @@ function findSpecialFloatPath(value: unknown, path: string = ''): string | undef
     return path || 'root';
   }
   if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      const result = findSpecialFloatPath(value[i], buildPath(path, i));
+    for (const [index, item] of value.entries()) {
+      const result = findSpecialFloatPath(item, buildPath(path, index));
       if (result !== undefined) {
         return result;
       }
     }
   }
   if (isPlainObject(value)) {
-    for (const key of Object.keys(value)) {
-      const result = findSpecialFloatPath(value[key], buildPath(path, key));
+    for (const [key, item] of Object.entries(value)) {
+      const result = findSpecialFloatPath(item, buildPath(path, key));
       if (result !== undefined) {
         return result;
       }
@@ -296,8 +296,8 @@ export class SafeCodec {
       if (err instanceof BridgeProtocolError) {
         throw err;
       }
-      const message = err instanceof Error ? err.message : String(err);
-      throw new BridgeProtocolError(`JSON serialization failed: ${message}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      throw new BridgeProtocolError(`JSON serialization failed: ${errorMessage}`);
     }
 
     // Check payload size
@@ -334,8 +334,8 @@ export class SafeCodec {
     try {
       parsed = JSON.parse(payload);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new BridgeProtocolError(`JSON parse failed: ${message}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      throw new BridgeProtocolError(`JSON parse failed: ${errorMessage}`);
     }
 
     // Validate protocol version (if present)
@@ -387,8 +387,8 @@ export class SafeCodec {
     try {
       parsed = JSON.parse(payload);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new BridgeProtocolError(`JSON parse failed: ${message}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      throw new BridgeProtocolError(`JSON parse failed: ${errorMessage}`);
     }
 
     // Validate protocol version (if present)
@@ -411,8 +411,8 @@ export class SafeCodec {
     try {
       decoded = await decodeArrowValue(result);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new BridgeProtocolError(`Arrow decoding failed: ${message}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      throw new BridgeProtocolError(`Arrow decoding failed: ${errorMessage}`);
     }
 
     // Post-decode validation for special floats if enabled
