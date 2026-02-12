@@ -315,6 +315,19 @@ describe('containsSpecialFloat', () => {
     expect(containsSpecialFloat({ arr: [1, Infinity], obj: { x: 3 } })).toBe(true);
     expect(containsSpecialFloat([{ a: 1 }, { b: NaN }])).toBe(true);
   });
+
+  it('handles circular object references without recursion overflow', () => {
+    const circular: { value: number; self?: unknown } = { value: 1 };
+    circular.self = circular;
+    expect(containsSpecialFloat(circular)).toBe(false);
+  });
+
+  it('detects special floats inside circular structures', () => {
+    const child: { value: number; parent?: unknown } = { value: NaN };
+    const root: { child: typeof child } = { child };
+    child.parent = root;
+    expect(containsSpecialFloat(root)).toBe(true);
+  });
 });
 
 describe('assertNoSpecialFloats', () => {
@@ -333,6 +346,13 @@ describe('assertNoSpecialFloats', () => {
     expect(() => assertNoSpecialFloats({ deep: { value: Infinity } }, 'data')).toThrow(
       ValidationError
     );
+  });
+
+  it('throws ValidationError for special floats in circular structures', () => {
+    const child: { value: number; parent?: unknown } = { value: Infinity };
+    const root: { child: typeof child } = { child };
+    child.parent = root;
+    expect(() => assertNoSpecialFloats(root, 'data')).toThrow(ValidationError);
   });
 });
 

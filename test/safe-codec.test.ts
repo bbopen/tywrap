@@ -248,20 +248,15 @@ describe('encodeRequest - Size Limits', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('encodeRequest - Serialization Errors', () => {
-  it('circular references throw an error', () => {
-    // Use rejectSpecialFloats: false to avoid stack overflow during float validation
-    // The error will be caught during JSON.stringify instead
-    const codec = new SafeCodec({ rejectSpecialFloats: false });
+  it('circular references throw BridgeProtocolError by default', () => {
+    const codec = new SafeCodec();
     const circular: Record<string, unknown> = { a: 1 };
     circular.self = circular;
-    // Circular references will throw either RangeError (stack overflow during validation)
-    // or BridgeProtocolError (caught during JSON.stringify)
-    expect(() => codec.encodeRequest(circular)).toThrow();
+    expect(() => codec.encodeRequest(circular)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(circular)).toThrow(/JSON serialization failed/);
   });
 
-  it('circular references throw BridgeProtocolError when skipping float validation', () => {
-    // When rejectSpecialFloats is false, we skip the recursive float check
-    // and the error will be caught during JSON.stringify, wrapped in BridgeProtocolError
+  it('circular references throw BridgeProtocolError when validation guardrails are disabled', () => {
     const codec = new SafeCodec({ rejectSpecialFloats: false, rejectNonStringKeys: false });
     const circular: Record<string, unknown> = { a: 1 };
     circular.self = circular;
