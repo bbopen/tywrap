@@ -676,7 +676,9 @@ export class ProcessIO extends BoundedContext implements Transport {
    */
   private handleStdinError(err: Error): void {
     // EPIPE means process died
-    const error = new BridgeProtocolError(`stdin error: ${err.message}`);
+    const error = new BridgeProtocolError(
+      this.withStderrTail(`stdin error: ${err.message}`)
+    );
 
     // Reject all pending writes
     for (const queued of this.writeQueue) {
@@ -697,7 +699,9 @@ export class ProcessIO extends BoundedContext implements Transport {
    * This can occur during pipe errors or when the process crashes.
    */
   private handleStdoutError(err: Error): void {
-    const error = new BridgeProtocolError(`stdout error: ${err.message}`);
+    const error = new BridgeProtocolError(
+      this.withStderrTail(`stdout error: ${err.message}`)
+    );
     this.rejectAllPending(error);
     this.markForRestart();
   }
@@ -708,7 +712,9 @@ export class ProcessIO extends BoundedContext implements Transport {
    */
   private handleStderrError(err: Error): void {
     // Stderr errors are less critical but still indicate process health issues
-    const error = new BridgeProtocolError(`stderr error: ${err.message}`);
+    const error = new BridgeProtocolError(
+      this.withStderrTail(`stderr error: ${err.message}`)
+    );
     this.rejectAllPending(error);
     this.markForRestart();
   }
@@ -763,7 +769,7 @@ export class ProcessIO extends BoundedContext implements Transport {
   private writeToStdin(data: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       if (!this.process?.stdin || this.processExited) {
-        reject(new BridgeProtocolError('Process stdin not available'));
+        reject(new BridgeProtocolError(this.withStderrTail('Process stdin not available')));
         return;
       }
 
@@ -788,7 +794,8 @@ export class ProcessIO extends BoundedContext implements Transport {
       } catch (err) {
         // Synchronous write error (e.g., EPIPE)
         this.markForRestart();
-        reject(new BridgeProtocolError(`Write error: ${err instanceof Error ? err.message : 'unknown'}`));
+        const errorMessage = err instanceof Error ? err.message : 'unknown';
+        reject(new BridgeProtocolError(this.withStderrTail(`Write error: ${errorMessage}`)));
       }
     });
   }
@@ -804,7 +811,7 @@ export class ProcessIO extends BoundedContext implements Transport {
         // Process died - reject all queued writes
         for (const q of this.writeQueue) {
           this.clearQueuedWriteTimeout(q);
-          q.reject(new BridgeProtocolError('Process stdin not available'));
+          q.reject(new BridgeProtocolError(this.withStderrTail('Process stdin not available')));
         }
         this.writeQueue.length = 0;
         this.markForRestart();
@@ -841,8 +848,9 @@ export class ProcessIO extends BoundedContext implements Transport {
         }
       } catch (err) {
         // Synchronous write error (e.g., EPIPE) - reject this and all remaining writes
+        const errorMessage = err instanceof Error ? err.message : 'unknown';
         const error = new BridgeProtocolError(
-          `Write error: ${err instanceof Error ? err.message : 'unknown'}`
+          this.withStderrTail(`Write error: ${errorMessage}`)
         );
         queued.reject(error);
         for (const q of this.writeQueue) {
@@ -865,6 +873,14 @@ export class ProcessIO extends BoundedContext implements Transport {
    */
   private getStderrTail(): string {
     return this.stderrBuffer.trim();
+  }
+
+  /**
+   * Append stderr context when available.
+   */
+  private withStderrTail(message: string): string {
+    const stderrTail = this.getStderrTail();
+    return stderrTail ? `${message}. Stderr:\n${stderrTail}` : message;
   }
 
   /**

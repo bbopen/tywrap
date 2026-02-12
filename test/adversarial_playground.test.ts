@@ -158,6 +158,25 @@ describeAdversarial('Adversarial playground', () => {
   );
 
   it(
+    'surfaces invalid TYWRAP_CODEC_MAX_BYTES as an explicit startup error',
+    async () => {
+      const bridge = await createBridge({
+        env: { TYWRAP_CODEC_MAX_BYTES: 'not-a-number' },
+      });
+      if (!bridge) return;
+
+      try {
+        await expect(callAdversarial(bridge, 'echo', ['value'])).rejects.toThrow(
+          /TYWRAP_CODEC_MAX_BYTES/
+        );
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    testTimeoutMs
+  );
+
+  it(
     'rejects requests that exceed TYWRAP_REQUEST_MAX_BYTES',
     async () => {
       const bridge = await createBridge({
