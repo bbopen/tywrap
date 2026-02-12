@@ -780,9 +780,10 @@ export class ProcessIO extends BoundedContext implements Transport {
         if (canWrite) {
           resolve();
         } else {
-          // Backpressure - queue this write and set draining flag
+          // Backpressure - current write is accepted by Node's stream buffer.
+          // We only pause subsequent writes until "drain".
           this.draining = true;
-          this.writeQueue.push(this.createQueuedWrite(data, resolve, reject));
+          resolve();
         }
       } catch (err) {
         // Synchronous write error (e.g., EPIPE)
@@ -832,12 +833,9 @@ export class ProcessIO extends BoundedContext implements Transport {
         if (canWrite) {
           queued.resolve();
         } else {
-          // Still under pressure - put it back with a new timeout
-          this.writeQueue.unshift(this.createQueuedWrite(
-            queued.data,
-            queued.resolve,
-            queued.reject
-          ));
+          // Backpressure - this write has been accepted by stream buffer.
+          // Pause further queued writes until the next "drain" event.
+          queued.resolve();
           this.draining = true;
           return;
         }
