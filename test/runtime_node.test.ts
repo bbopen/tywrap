@@ -323,7 +323,23 @@ def get_path():
         const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
         await bridge.disposeInstance(handle);
 
-        await expect(bridge.callMethod(handle, 'most_common', [1])).rejects.toThrow();
+        await expect(bridge.callMethod(handle, 'most_common', [1])).rejects.toThrow(
+          /InstanceHandleError: Unknown instance handle:/
+        );
+      },
+      testTimeout
+    );
+
+    it(
+      'should allow disposing the same instance handle twice',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
+        await bridge.disposeInstance(handle);
+
+        await expect(bridge.disposeInstance(handle)).resolves.toBeUndefined();
       },
       testTimeout
     );
