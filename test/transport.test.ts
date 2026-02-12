@@ -401,6 +401,14 @@ describe('ProcessIO', () => {
   // Skip tests if Python is not available
   let pythonAvailable: boolean;
 
+  interface ProcessIOInternals {
+    _state: string;
+    processExited: boolean;
+    process: { stdin: { write: (data: string) => boolean } } | null;
+    handleStdinDrain: () => void;
+    handleResponseLine: (line: string) => void;
+  }
+
   beforeEach(async () => {
     pythonAvailable = await isPythonAvailable();
   });
@@ -497,6 +505,83 @@ describe('ProcessIO', () => {
       (transport as any)._state = 'idle';
       (transport as any).process = null;
       await transport.dispose();
+    });
+
+    it('does not duplicate a write when backpressure starts', async () => {
+      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const writes: string[] = [];
+      let firstWrite = true;
+
+      const internals = transport as unknown as ProcessIOInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = {
+        stdin: {
+          write: (data: string): boolean => {
+            writes.push(data);
+            if (firstWrite) {
+              firstWrite = false;
+              return false;
+            }
+            return true;
+          },
+        },
+      };
+
+      const messageId = 101;
+      const message = JSON.stringify(createValidMessage({ id: messageId }));
+      const pending = transport.send(message, 1000);
+
+      expect(writes).toHaveLength(1);
+
+      internals.handleStdinDrain();
+      expect(writes).toHaveLength(1);
+
+      internals.handleResponseLine(JSON.stringify({ id: messageId, result: 4 }));
+      await expect(pending).resolves.toContain(`"id":${messageId}`);
+    });
+
+    it('does not replay queued writes when drain write returns false', async () => {
+      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const writes: string[] = [];
+      let writeCount = 0;
+
+      const internals = transport as unknown as ProcessIOInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = {
+        stdin: {
+          write: (data: string): boolean => {
+            writes.push(data);
+            writeCount += 1;
+            return writeCount >= 3;
+          },
+        },
+      };
+
+      const firstId = 201;
+      const secondId = 202;
+      const firstPending = transport.send(JSON.stringify(createValidMessage({ id: firstId })), 1000);
+      const secondPending = transport.send(
+        JSON.stringify(createValidMessage({ id: secondId })),
+        1000
+      );
+
+      expect(writes).toHaveLength(1);
+
+      // First drain flushes the queued second message. Its write() still returns false,
+      // but that write must not be replayed.
+      internals.handleStdinDrain();
+      expect(writes).toHaveLength(2);
+
+      // Additional drain should not replay already accepted writes.
+      internals.handleStdinDrain();
+      expect(writes).toHaveLength(2);
+
+      internals.handleResponseLine(JSON.stringify({ id: firstId, result: 1 }));
+      internals.handleResponseLine(JSON.stringify({ id: secondId, result: 2 }));
+      await expect(firstPending).resolves.toContain(`"id":${firstId}`);
+      await expect(secondPending).resolves.toContain(`"id":${secondId}`);
     });
   });
 
