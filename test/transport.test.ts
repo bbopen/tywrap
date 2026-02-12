@@ -404,6 +404,7 @@ describe('ProcessIO', () => {
   interface ProcessIOInternals {
     _state: string;
     processExited: boolean;
+    stderrBuffer: string;
     process: { stdin: { write: (data: string) => boolean } } | null;
     handleStdinDrain: () => void;
     handleResponseLine: (line: string) => void;
@@ -582,6 +583,26 @@ describe('ProcessIO', () => {
       internals.handleResponseLine(JSON.stringify({ id: secondId, result: 2 }));
       await expect(firstPending).resolves.toContain(`"id":${firstId}`);
       await expect(secondPending).resolves.toContain(`"id":${secondId}`);
+    });
+
+    it('includes stderr diagnostics when stdin write fails', async () => {
+      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+
+      const internals = transport as unknown as ProcessIOInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.stderrBuffer =
+        'CodecMaxBytesParseError: TYWRAP_CODEC_MAX_BYTES must be an integer byte count';
+      internals.process = {
+        stdin: {
+          write: (): boolean => {
+            throw new Error('write EPIPE');
+          },
+        },
+      };
+
+      const message = JSON.stringify(createValidMessage({ id: 303 }));
+      await expect(transport.send(message, 1000)).rejects.toThrow(/TYWRAP_CODEC_MAX_BYTES/);
     });
   });
 
