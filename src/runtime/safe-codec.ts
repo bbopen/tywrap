@@ -60,6 +60,7 @@ interface ProtocolEnvelope {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const DEFAULT_MAX_PAYLOAD_BYTES = 10 * 1024 * 1024; // 10MB
+const ERROR_PAYLOAD_SNIPPET_LENGTH = 200;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
@@ -216,6 +217,17 @@ function describeInvalidErrorPayload(err: unknown): string {
     return '"traceback" must be a string when provided';
   }
   return 'expected an object with string "type" and "message" fields';
+}
+
+function summarizePayloadForError(payload: string): string {
+  const trimmed = payload.trim();
+  if (!trimmed) {
+    return '[empty payload]';
+  }
+  if (trimmed.length <= ERROR_PAYLOAD_SNIPPET_LENGTH) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, ERROR_PAYLOAD_SNIPPET_LENGTH)}...`;
 }
 
 /**
@@ -441,7 +453,9 @@ export class SafeCodec {
       parsed = JSON.parse(payload);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      throw new BridgeProtocolError(`JSON parse failed: ${errorMessage}`);
+      throw new BridgeProtocolError(
+        `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`
+      );
     }
 
     // Validate protocol version (if present)
@@ -484,7 +498,9 @@ export class SafeCodec {
       parsed = JSON.parse(payload);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      throw new BridgeProtocolError(`JSON parse failed: ${errorMessage}`);
+      throw new BridgeProtocolError(
+        `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`
+      );
     }
 
     // Validate protocol version (if present)
