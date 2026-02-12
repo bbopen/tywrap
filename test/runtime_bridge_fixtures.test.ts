@@ -64,6 +64,21 @@ describeNodeOnly('Bridge fixture parity', () => {
       pattern: /Protocol error/,
       description: 'non-JSON noise on stdout',
     },
+    {
+      script: 'string_error_payload_bridge.py',
+      pattern: /Invalid response "error" payload/,
+      description: 'non-object error payload',
+    },
+    {
+      script: 'empty_error_payload_bridge.py',
+      pattern: /Invalid response "error" payload/,
+      description: 'missing error type/message fields',
+    },
+    {
+      script: 'result_and_error_bridge.py',
+      pattern: /both "result" and "error"/,
+      description: 'ambiguous result and error response',
+    },
   ];
 
   for (const fixture of errorFixtures) {
