@@ -252,15 +252,32 @@ export class BridgeCore {
       return;
     }
 
+    const hasResult = Object.prototype.hasOwnProperty.call(msg, 'result');
+    const hasError = Object.prototype.hasOwnProperty.call(msg, 'error');
+
+    if (hasResult && hasError) {
+      this.handleProtocolError('Response cannot include both "result" and "error"', line);
+      return;
+    }
+
+    if (hasError) {
+      const errorPayload = this.normalizeErrorPayload(msg.error);
+      if (!errorPayload) {
+        const reason = this.describeInvalidErrorPayload(msg.error);
+        this.handleProtocolError(`Invalid response "error" payload: ${reason}`, line);
+        return;
+      }
+      this.pending.delete(msg.id);
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+      }
+      pending.reject(this.errorFrom(errorPayload));
+      return;
+    }
+
     this.pending.delete(msg.id);
     if (pending.timer) {
       clearTimeout(pending.timer);
-    }
-
-    if ('error' in msg) {
-      const errorPayload = this.normalizeErrorPayload(msg.error);
-      pending.reject(this.errorFrom(errorPayload));
-      return;
     }
 
     Promise.resolve(this.options.decodeValue(msg.result))
@@ -280,21 +297,44 @@ export class BridgeCore {
     return error;
   }
 
-  private normalizeErrorPayload(err: unknown): { type: string; message: string; traceback?: string } {
-    if (err && typeof err === 'object') {
-      const candidate = err as { type?: unknown; message?: unknown; traceback?: unknown };
-      if (typeof candidate.type === 'string' && typeof candidate.message === 'string') {
-        const normalized: { type: string; message: string; traceback?: string } = {
-          type: candidate.type,
-          message: candidate.message,
-        };
-        if (typeof candidate.traceback === 'string') {
-          normalized.traceback = candidate.traceback;
-        }
-        return normalized;
-      }
+  private normalizeErrorPayload(
+    err: unknown
+  ): { type: string; message: string; traceback?: string } | null {
+    if (!err || typeof err !== 'object' || Array.isArray(err)) {
+      return null;
     }
-    return { type: 'UnknownError', message: String(err) };
+    const candidate = err as { type?: unknown; message?: unknown; traceback?: unknown };
+    if (typeof candidate.type !== 'string' || typeof candidate.message !== 'string') {
+      return null;
+    }
+    if (candidate.traceback !== undefined && typeof candidate.traceback !== 'string') {
+      return null;
+    }
+    const normalized: { type: string; message: string; traceback?: string } = {
+      type: candidate.type,
+      message: candidate.message,
+    };
+    if (typeof candidate.traceback === 'string') {
+      normalized.traceback = candidate.traceback;
+    }
+    return normalized;
+  }
+
+  private describeInvalidErrorPayload(err: unknown): string {
+    if (!err || typeof err !== 'object' || Array.isArray(err)) {
+      return 'expected an object with string "type" and "message" fields';
+    }
+    const candidate = err as { type?: unknown; message?: unknown; traceback?: unknown };
+    if (typeof candidate.type !== 'string') {
+      return '"type" must be a string';
+    }
+    if (typeof candidate.message !== 'string') {
+      return '"message" must be a string';
+    }
+    if (candidate.traceback !== undefined && typeof candidate.traceback !== 'string') {
+      return '"traceback" must be a string when provided';
+    }
+    return 'expected an object with string "type" and "message" fields';
   }
 
   private failRequest(id: number, error: Error): void {

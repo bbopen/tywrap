@@ -551,6 +551,18 @@ describe('decodeResponseAsync - Arrow Integration', () => {
     }
   });
 
+  it('rejects malformed envelope error payloads in async decode', async () => {
+    const payload = JSON.stringify({
+      id: 1,
+      protocol: 'tywrap/1',
+      error: {},
+    });
+    await expect(codec.decodeResponseAsync(payload)).rejects.toThrow(BridgeProtocolError);
+    await expect(codec.decodeResponseAsync(payload)).rejects.toThrow(
+      /Invalid response "error" payload/
+    );
+  });
+
   // NOTE: Full Arrow decoding tests would require mocking the Arrow decoder
   // or having apache-arrow installed. The decodeValueAsync function from
   // codec.ts handles the actual Arrow decoding.
@@ -725,6 +737,39 @@ describe('decodeResponse - Protocol Validation', () => {
     });
     expect(() => codec.decodeResponse(payload)).toThrow(BridgeProtocolError);
     expect(() => codec.decodeResponse(payload)).toThrow(/Invalid protocol version/);
+  });
+
+  it('rejects malformed envelope error payloads', () => {
+    const nonObjectErrorPayload = JSON.stringify({
+      id: 1,
+      protocol: 'tywrap/1',
+      error: 'oops',
+    });
+    expect(() => codec.decodeResponse(nonObjectErrorPayload)).toThrow(BridgeProtocolError);
+    expect(() => codec.decodeResponse(nonObjectErrorPayload)).toThrow(
+      /Invalid response "error" payload/
+    );
+
+    const missingFieldsPayload = JSON.stringify({
+      id: 1,
+      protocol: 'tywrap/1',
+      error: {},
+    });
+    expect(() => codec.decodeResponse(missingFieldsPayload)).toThrow(BridgeProtocolError);
+    expect(() => codec.decodeResponse(missingFieldsPayload)).toThrow(
+      /Invalid response "error" payload/
+    );
+  });
+
+  it('rejects envelopes that contain both result and error', () => {
+    const payload = JSON.stringify({
+      id: 1,
+      protocol: 'tywrap/1',
+      result: 42,
+      error: { type: 'ValueError', message: 'oops' },
+    });
+    expect(() => codec.decodeResponse(payload)).toThrow(BridgeProtocolError);
+    expect(() => codec.decodeResponse(payload)).toThrow(/both "result" and "error"/);
   });
 
   it('does not validate protocol on non-envelope responses', () => {

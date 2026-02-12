@@ -510,6 +510,18 @@ describeAdversarial('Adversarial playground', () => {
         script: 'noisy_bridge.py',
         pattern: /Protocol error|Response missing/,
       },
+      {
+        script: 'string_error_payload_bridge.py',
+        pattern: /Invalid response "error" payload/,
+      },
+      {
+        script: 'empty_error_payload_bridge.py',
+        pattern: /Invalid response "error" payload/,
+      },
+      {
+        script: 'result_and_error_bridge.py',
+        pattern: /both "result" and "error"/,
+      },
     ];
 
     for (const { script, pattern, skip } of fixtureCases) {
