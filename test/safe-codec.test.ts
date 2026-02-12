@@ -644,7 +644,6 @@ describe('Edge Cases', () => {
   });
 
   it('handles arrays with holes correctly', () => {
-    // eslint-disable-next-line no-sparse-arrays
     const sparse = [1, , 3]; // sparse array with hole
     const encoded = codec.encodeRequest(sparse);
     const decoded = codec.decodeResponse<(number | null)[]>(encoded);
