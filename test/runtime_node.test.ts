@@ -10,6 +10,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'path';
 import { NodeBridge } from '../src/runtime/node.js';
+import { BridgeProtocolError } from '../src/runtime/errors.js';
 import { getDefaultPythonPath, resolvePythonExecutable } from '../src/utils/python.js';
 import { isNodejs, getVenvBinDir } from '../src/utils/runtime.js';
 
@@ -457,6 +458,29 @@ def get_path():
         await customBridge.dispose();
       },
       testTimeout
+    );
+
+    it.each(['__proto__', 'prototype', 'constructor'])(
+      'should reject dangerous environment override key %s',
+      (dangerousKey) => {
+        const envOverrides = Object.create(null) as Record<string, string | undefined>;
+        Object.defineProperty(envOverrides, dangerousKey, {
+          value: 'blocked',
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+
+        const createBridge = (): NodeBridge =>
+          new NodeBridge({
+            scriptPath,
+            env: envOverrides,
+            timeoutMs: defaultTimeoutMs,
+          });
+
+        expect(createBridge).toThrow(BridgeProtocolError);
+        expect(createBridge).toThrow(`"${dangerousKey}"`);
+      }
     );
 
     it(
