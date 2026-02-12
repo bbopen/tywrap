@@ -219,3 +219,43 @@ def return_invalid_sklearn_payload() -> dict[str, Any]:
         "module": "sklearn.linear_model",
         "params": [],
     }
+
+
+def return_torch_non_contiguous_tensor() -> Any:
+    """Return a non-contiguous torch tensor.
+
+    Why: exercise explicit failure mode when TYWRAP_TORCH_ALLOW_COPY=0.
+    """
+    try:
+        import torch
+    except Exception as exc:
+        raise RuntimeError("torch is not available") from exc
+
+    tensor = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+    return tensor.transpose(0, 1)
+
+
+def return_scipy_complex_sparse() -> Any:
+    """Return a SciPy sparse matrix with complex dtype.
+
+    Why: complex sparse matrices must fail explicitly in JSON codec mode.
+    """
+    try:
+        import scipy.sparse as sp
+    except Exception as exc:
+        raise RuntimeError("scipy is not available") from exc
+
+    return sp.csr_matrix([[1 + 2j, 0], [0, 3 + 4j]])
+
+
+def return_sklearn_unserializable_estimator() -> Any:
+    """Return a sklearn estimator with non-JSON-serializable params.
+
+    Why: estimator metadata serialization should fail with an explicit message.
+    """
+    try:
+        from sklearn.preprocessing import FunctionTransformer
+    except Exception as exc:
+        raise RuntimeError("scikit-learn is not available") from exc
+
+    return FunctionTransformer(func=lambda x: x)
