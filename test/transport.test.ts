@@ -485,11 +485,8 @@ describe('ProcessIO', () => {
       const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
 
       // Mock the state to ready but process exited
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).process = null;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).processExited = true;
 
       const message = JSON.stringify(createValidMessage());
@@ -497,9 +494,7 @@ describe('ProcessIO', () => {
       await expect(transport.send(message, 1000)).rejects.toThrow(/not running/);
 
       // Reset state so dispose works
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'idle';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).process = null;
       await transport.dispose();
     });
@@ -929,9 +924,7 @@ describe('PyodideIO', () => {
       const transport = new PyodideIO();
 
       // Manually set the state to ready and inject a mock Pyodide
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => null,
@@ -949,9 +942,7 @@ describe('PyodideIO', () => {
     it('validates message has required fields', async () => {
       const transport = new PyodideIO();
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => null,
@@ -970,9 +961,7 @@ describe('PyodideIO', () => {
     it('rejects when Pyodide not initialized', async () => {
       const transport = new PyodideIO();
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = undefined;
 
       const message = JSON.stringify(createValidMessage());
@@ -983,9 +972,7 @@ describe('PyodideIO', () => {
     it('rejects when dispatch function not found', async () => {
       const transport = new PyodideIO();
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => null, // Returns null - dispatch function not found
@@ -1005,9 +992,7 @@ describe('PyodideIO', () => {
       const expectedResponse = JSON.stringify(createValidResponse());
       const mockDispatch = vi.fn().mockReturnValue(expectedResponse);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: (key: string) => {
@@ -1035,9 +1020,7 @@ describe('PyodideIO', () => {
         { destroy: mockDestroy }
       );
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => mockDispatch,
@@ -1062,9 +1045,7 @@ describe('PyodideIO', () => {
       });
       const mockDispatch = vi.fn().mockReturnValue(errorResponse);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => mockDispatch,
@@ -1083,9 +1064,7 @@ describe('PyodideIO', () => {
 
       const mockDispatch = vi.fn().mockReturnValue('not valid json');
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => mockDispatch,
@@ -1108,9 +1087,7 @@ describe('PyodideIO', () => {
         .fn()
         .mockReturnValue(JSON.stringify({ id: expect.any(String), result: 4 }));
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => mockDispatch,
@@ -1145,9 +1122,7 @@ describe('PyodideIO', () => {
         return JSON.stringify({ id: parsed.id, result: 'handle-123' });
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => mockDispatch,
@@ -1173,9 +1148,7 @@ describe('PyodideIO', () => {
         return JSON.stringify({ id: parsed.id, result: 'method result' });
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => mockDispatch,
@@ -1204,9 +1177,7 @@ describe('PyodideIO', () => {
         return JSON.stringify({ id: parsed.id, result: null });
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => mockDispatch,
@@ -1238,9 +1209,7 @@ describe('PyodideIO', () => {
         });
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => mockDispatch,
@@ -1267,9 +1236,7 @@ describe('PyodideIO', () => {
         return JSON.stringify({ id: parsed.id, result: null });
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => mockDispatch,
@@ -1294,9 +1261,7 @@ describe('PyodideIO', () => {
         return JSON.stringify({ id: parsed.id, result: null });
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any)._state = 'ready';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (transport as any).py = {
         globals: {
           get: () => mockDispatch,
