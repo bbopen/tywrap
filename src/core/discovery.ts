@@ -26,6 +26,7 @@ export interface DiscoveryOptions {
   searchPaths?: string[];
   excludePatterns?: string[];
   includeStdLib?: boolean;
+  timeoutMs?: number;
 }
 
 export class ModuleDiscovery {
@@ -89,10 +90,14 @@ export class ModuleDiscovery {
     if (processUtils.isAvailable()) {
       try {
         const pythonPath = await this.getPythonExecutable();
-        const result = await processUtils.exec(pythonPath, [
-          '-c',
-          `import ${moduleName}; print(${moduleName}.__file__ if hasattr(${moduleName}, '__file__') else '${moduleName}.__path__[0]' if hasattr(${moduleName}, '__path__') else 'builtin')`,
-        ]);
+        const result = await processUtils.exec(
+          pythonPath,
+          [
+            '-c',
+            `import ${moduleName}; print(${moduleName}.__file__ if hasattr(${moduleName}, '__file__') else '${moduleName}.__path__[0]' if hasattr(${moduleName}, '__path__') else 'builtin')`,
+          ],
+          { timeoutMs: this.options.timeoutMs }
+        );
 
         if (result.code === 0 && result.stdout.trim() !== 'builtin') {
           const modulePath = result.stdout.trim();
@@ -297,10 +302,11 @@ export class ModuleDiscovery {
     if (processUtils.isAvailable()) {
       try {
         const pythonPath = await this.getPythonExecutable();
-        const result = await processUtils.exec(pythonPath, [
-          '-c',
-          'import sys; print("\\n".join(sys.path))',
-        ]);
+        const result = await processUtils.exec(
+          pythonPath,
+          ['-c', 'import sys; print("\\n".join(sys.path))'],
+          { timeoutMs: this.options.timeoutMs }
+        );
 
         if (result.code === 0) {
           const sysPaths = result.stdout
@@ -376,10 +382,11 @@ export class ModuleDiscovery {
 
     try {
       const pythonPath = await this.getPythonExecutable();
-      const result = await processUtils.exec(pythonPath, [
-        '-c',
-        `import ${moduleName}; print(getattr(${moduleName}, '__version__', 'unknown'))`,
-      ]);
+      const result = await processUtils.exec(
+        pythonPath,
+        ['-c', `import ${moduleName}; print(getattr(${moduleName}, '__version__', 'unknown'))`],
+        { timeoutMs: this.options.timeoutMs }
+      );
 
       if (result.code === 0 && result.stdout.trim() !== 'unknown') {
         return result.stdout.trim();
