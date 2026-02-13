@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { loadConfigFile } from '../src/config/index.js';
@@ -32,4 +32,22 @@ export default defineConfig({ debug: true });
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('loads a .ts config from a read-only directory', async () => {
+    const dir = await mkdtemp(join(process.cwd(), '.tmp-tywrap-config-ro-'));
+    const configPath = join(dir, 'tywrap.config.ts');
+
+    await writeFile(configPath, `export default { debug: true };
+`, 'utf-8');
+    await chmod(dir, 0o555);
+
+    try {
+      const cfg = await loadConfigFile(configPath);
+      expect(cfg).toEqual({ debug: true });
+    } finally {
+      await chmod(dir, 0o755);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
 });

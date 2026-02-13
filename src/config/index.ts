@@ -7,7 +7,8 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { readFile, rm, writeFile, mkdtemp, symlink } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, extname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -272,6 +273,20 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
       fileName: resolved,
     });
 
+    let transpiledOutput = output.outputText;
+    if (!emitCommonJs) {
+      try {
+        // Preserve support for `import { defineConfig } from 'tywrap'` when ESM config
+        // is evaluated from an OS temp directory outside the package scope.
+        const tywrapEntryHref = await import.meta.resolve('tywrap');
+        transpiledOutput = transpiledOutput
+          .replaceAll("'tywrap'", `'${tywrapEntryHref}'`)
+          .replaceAll('\"tywrap\"', `\"${tywrapEntryHref}\"`);
+      } catch {
+        // Best-effort: leave source as-is when tywrap cannot be resolved.
+      }
+    }
+
     if (emitCommonJs) {
       // Why: `.cts` is explicitly CommonJS. We evaluate the transpiled output in-memory using
       // Node's Module internals (`Module._compile` / `_nodeModulePaths`) to avoid writing an extra
@@ -309,18 +324,31 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
       return ensureConfigObject(loaded ?? {}, resolved);
     }
 
-    // Why: Node can't import ESM from a string without a custom loader. We write the transpiled
-    // output to a temporary `.mjs` file next to the source config so relative imports and Node
-    // resolution behave naturally, then clean it up immediately after loading.
-    const tmpPath = resolve(dirname(resolved), `.tywrap.config.${randomUUID()}.mjs`);
+    // Why: Node can't import ESM from a string without a custom loader. We write transpiled
+    // output to a temporary `.mjs` file under the OS temp directory (not next to user config),
+    // then clean up both file and temporary directory after loading.
+    const tempDir = await mkdtemp(resolve(tmpdir(), 'tywrap-config-'));
+    const tmpPath = resolve(tempDir, `.tywrap.config.${randomUUID()}.mjs`);
     try {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- temp path is derived from config location
-      await writeFile(tmpPath, output.outputText, 'utf-8');
+      const localNodeModules = resolve(process.cwd(), 'node_modules');
+      if (safeExists(localNodeModules)) {
+        const tempNodeModules = resolve(tempDir, 'node_modules');
+        try {
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- temp path is derived from OS temp directory
+          await symlink(localNodeModules, tempNodeModules, 'dir');
+        } catch {
+          // Best-effort only; regular resolution may still succeed without a symlink.
+        }
+      }
+
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- temp path is derived from OS temp directory
+      await writeFile(tmpPath, transpiledOutput, 'utf-8');
       const mod = (await import(pathToFileURL(tmpPath).href)) as Record<string, unknown>;
       const loaded = mod.default ?? mod;
       return ensureConfigObject(loaded ?? {}, resolved);
     } finally {
       await rm(tmpPath, { force: true });
+      await rm(tempDir, { recursive: true, force: true });
     }
   }
 

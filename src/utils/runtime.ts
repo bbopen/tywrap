@@ -432,7 +432,8 @@ export const processUtils = {
    */
   async exec(
     command: string,
-    args: string[] = []
+    args: string[] = [],
+    options: { timeoutMs?: number; env?: Record<string, string | undefined>; cwd?: string } = {}
   ): Promise<{ stdout: string; stderr: string; code: number }> {
     const runtime = detectRuntime();
 
@@ -477,14 +478,49 @@ export const processUtils = {
 
       return new Promise((resolve, reject) => {
         const extraPyPath = pathUtils.join(process.cwd(), 'tywrap_ir');
-        const existingPyPath = process.env.PYTHONPATH;
-        const env = {
-          ...process.env,
-          PYTHONPATH: existingPyPath ? `${extraPyPath}${delimiter}${existingPyPath}` : extraPyPath,
-        };
-        const child = spawn(command, args, { env });
+        const env: Record<string, string> = Object.create(null) as Record<string, string>;
+        Object.entries(process.env).forEach(([key, value]) => {
+          if (value !== undefined) {
+            // eslint-disable-next-line security/detect-object-injection -- environment variable keys are user/runtime supplied
+            env[key] = value;
+          }
+        });
+        Object.entries(options.env ?? {}).forEach(([key, value]) => {
+          if (value === undefined) {
+            // eslint-disable-next-line security/detect-object-injection -- environment variable keys are user/runtime supplied
+            delete env[key];
+            return;
+          }
+          // eslint-disable-next-line security/detect-object-injection -- environment variable keys are user/runtime supplied
+          env[key] = value;
+        });
+        const existingPyPath = env.PYTHONPATH;
+        env.PYTHONPATH = existingPyPath
+          ? `${extraPyPath}${delimiter}${existingPyPath}`
+          : extraPyPath;
+        const child = spawn(command, args, { env, cwd: options.cwd });
         let stdout = '';
         let stderr = '';
+        let settled = false;
+        let timedOut = false;
+        const timeout =
+          typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+            ? setTimeout(() => {
+                timedOut = true;
+                child.kill('SIGKILL');
+              }, options.timeoutMs)
+            : undefined;
+
+        const finish = (fn: () => void): void => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          if (timeout) {
+            clearTimeout(timeout);
+          }
+          fn();
+        };
 
         child.stdout?.on('data', data => {
           stdout += data.toString();
@@ -495,10 +531,16 @@ export const processUtils = {
         });
 
         child.on('close', code => {
-          resolve({ code: code ?? 0, stdout, stderr });
+          if (timedOut) {
+            finish(() => reject(new Error(`Command "${command}" timed out after ${options.timeoutMs}ms`)));
+            return;
+          }
+          finish(() => resolve({ code: code ?? 0, stdout, stderr }));
         });
 
-        child.on('error', reject);
+        child.on('error', error => {
+          finish(() => reject(error));
+        });
       });
     }
 

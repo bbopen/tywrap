@@ -153,7 +153,7 @@ export async function generate(
       }
     }
     if (!ir) {
-      const fetchResult = await fetchPythonIr(moduleKey, pythonPath);
+      const fetchResult = await fetchPythonIr(moduleKey, pythonPath, resolvedOptions.runtime?.node?.timeout);
       ir = fetchResult.ir;
       irError = fetchResult.error;
       if (ir && caching && fsUtils.isAvailable() && !checkMode) {
@@ -253,19 +253,18 @@ export async function generate(
  */
 async function fetchPythonIr(
   moduleName: string,
-  pythonPath: string
+  pythonPath: string,
+  timeoutMs?: number
 ): Promise<{ ir: unknown | null; error?: string }> {
   if (!processUtils.isAvailable()) {
     return { ir: null, error: 'Subprocess operations not available in this runtime' };
   }
   try {
-    const result = await processUtils.exec(pythonPath, [
-      '-m',
-      'tywrap_ir',
-      '--module',
-      moduleName,
-      '--no-pretty',
-    ]);
+    const result = await processUtils.exec(
+      pythonPath,
+      ['-m', 'tywrap_ir', '--module', moduleName, '--no-pretty'],
+      { timeoutMs }
+    );
     if (result.code === 0) {
       try {
         return { ir: JSON.parse(result.stdout) };
@@ -279,12 +278,11 @@ async function fetchPythonIr(
 
     // Fallback to invoking local __main__.py
     const localMain = pathUtils.join(process.cwd(), 'tywrap_ir', 'tywrap_ir', '__main__.py');
-    const fallback = await processUtils.exec(pythonPath, [
-      localMain,
-      '--module',
-      moduleName,
-      '--no-pretty',
-    ]);
+    const fallback = await processUtils.exec(
+      pythonPath,
+      [localMain, '--module', moduleName, '--no-pretty'],
+      { timeoutMs }
+    );
     if (fallback.code !== 0) {
       return {
         ir: null,
