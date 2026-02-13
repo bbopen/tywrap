@@ -130,6 +130,33 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       },
       testTimeout
     );
+
+    it(
+      'should report bridge info and track instance counts',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        const info = await bridge.getBridgeInfo();
+        expect(info.protocol).toBe('tywrap/1');
+        expect(info.protocolVersion).toBeGreaterThan(0);
+        expect(info.bridge).toBe('python-subprocess');
+        expect(info.pythonVersion).toMatch(/^\d+\.\d+\.\d+$/);
+        expect(typeof info.scipyAvailable).toBe('boolean');
+        expect(typeof info.torchAvailable).toBe('boolean');
+        expect(typeof info.sklearnAvailable).toBe('boolean');
+
+        const before = info.instances;
+        const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
+        const mid = await bridge.getBridgeInfo({ refresh: true });
+        expect(mid.instances).toBe(before + 1);
+
+        await bridge.disposeInstance(handle);
+        const after = await bridge.getBridgeInfo({ refresh: true });
+        expect(after.instances).toBe(before);
+      },
+      testTimeout
+    );
   });
 
   describe('Stdlib Serialization', () => {
@@ -478,7 +505,7 @@ def get_path():
 
     it.each(['__proto__', 'prototype', 'constructor'])(
       'should reject dangerous environment override key %s',
-      (dangerousKey) => {
+      dangerousKey => {
         const envOverrides = Object.create(null) as Record<string, string | undefined>;
         Object.defineProperty(envOverrides, dangerousKey, {
           value: 'blocked',

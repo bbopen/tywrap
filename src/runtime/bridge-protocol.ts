@@ -16,13 +16,25 @@
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
+import type { BridgeInfo } from '../types/index.js';
+
 import { BoundedContext, type ExecuteOptions } from './bounded-context.js';
+import { BridgeProtocolError } from './errors.js';
 import { SafeCodec, type CodecOptions } from './safe-codec.js';
+import { TYWRAP_PROTOCOL_VERSION } from './protocol.js';
 import { PROTOCOL_ID, type Transport, type ProtocolMessage } from './transport.js';
 
 // =============================================================================
 // TYPES
 // =============================================================================
+
+export interface GetBridgeInfoOptions {
+  /**
+   * If true, bypasses the cached info and queries the bridge again.
+   * This is useful when you want up-to-date instance counts or diagnostics.
+   */
+  refresh?: boolean;
+}
 
 /**
  * Configuration options for BridgeProtocol.
@@ -36,6 +48,48 @@ export interface BridgeProtocolOptions {
 
   /** Default timeout for operations in ms. Default: 30000 (30s) */
   defaultTimeoutMs?: number;
+}
+
+function validateBridgeInfoPayload(value: unknown): BridgeInfo {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+
+  const candidate = value as BridgeInfo;
+  if (candidate.protocol !== PROTOCOL_ID || candidate.protocolVersion !== TYWRAP_PROTOCOL_VERSION) {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+
+  if (candidate.bridge !== 'python-subprocess') {
+    throw new BridgeProtocolError(`Unexpected bridge identifier: ${candidate.bridge}`);
+  }
+
+  if (typeof candidate.pythonVersion !== 'string' || candidate.pythonVersion.length === 0) {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+  if (typeof candidate.pid !== 'number' || !Number.isFinite(candidate.pid)) {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+  if (candidate.codecFallback !== 'json' && candidate.codecFallback !== 'none') {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+  if (typeof candidate.arrowAvailable !== 'boolean') {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+  if (typeof candidate.scipyAvailable !== 'boolean') {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+  if (typeof candidate.torchAvailable !== 'boolean') {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+  if (typeof candidate.sklearnAvailable !== 'boolean') {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+  if (typeof candidate.instances !== 'number' || !Number.isFinite(candidate.instances)) {
+    throw new BridgeProtocolError('Invalid bridge info payload');
+  }
+
+  return candidate;
 }
 
 // =============================================================================
@@ -79,6 +133,9 @@ export class BridgeProtocol extends BoundedContext {
 
   /** Counter for generating unique request IDs */
   private requestId = 0;
+
+  /** Cached bridge diagnostics info (populated by getBridgeInfo). */
+  private bridgeInfoCache?: BridgeInfo;
 
   /**
    * Create a new BridgeProtocol instance.
@@ -315,5 +372,30 @@ export class BridgeProtocol extends BoundedContext {
         handle,
       },
     });
+  }
+
+  /**
+   * Fetch bridge diagnostics and feature availability.
+   *
+   * The Python bridge supports a `meta` method that returns protocol and environment info
+   * (including optional codec availability and current instance count).
+   */
+  async getBridgeInfo(options: GetBridgeInfoOptions = {}): Promise<BridgeInfo> {
+    if (!options.refresh && this.bridgeInfoCache) {
+      return this.bridgeInfoCache;
+    }
+
+    const info = await this.sendMessage<BridgeInfo>(
+      {
+        method: 'meta',
+        params: {},
+      },
+      {
+        validate: validateBridgeInfoPayload,
+      }
+    );
+
+    this.bridgeInfoCache = info;
+    return info;
   }
 }
