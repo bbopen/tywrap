@@ -40,6 +40,8 @@ export class ModuleDiscovery {
       includeStdLib: false,
       excludePatterns: ['__pycache__', '*.pyc', '.git', '.svn'],
       ...options,
+      // Avoid "no timeout by default" for subprocess discovery paths.
+      timeoutMs: typeof options.timeoutMs === 'number' ? options.timeoutMs : 30000,
     };
   }
 

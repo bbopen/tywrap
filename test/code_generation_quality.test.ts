@@ -709,7 +709,7 @@ Returns:
       // Should correctly type the parameters
       expect(generatedCode).toMatch(/data: string\[\] \| Record<string, string>/);
       expect(generatedCode).toMatch(/options\?: Record<string, string>/);
-      expect(generatedCode).toMatch(/\.\.\.args: unknown\[\]/);
+      expect(generatedCode).toMatch(/args\?: unknown\[\]/);
       expect(generatedCode).toMatch(/kwargs\?: Record<string, unknown>/);
     });
 
@@ -1123,14 +1123,14 @@ Example:
       const generatedCode = result.typescript;
 
       // Should handle varargs and kwargs properly
-      expect(generatedCode).toMatch(/\.\.\.args: unknown\[\]/);
+      expect(generatedCode).toMatch(/args\?: unknown\[\]/);
       expect(generatedCode).toMatch(/kwargs\?: Record<string, unknown>/);
 
       // Should pass them correctly to bridge call
-      expect(generatedCode).toContain('...args');
+      expect(generatedCode).toContain('...(args ?? [])');
       expect(generatedCode).toContain('kwargs');
-      expect(generatedCode).toMatch(
-        /getRuntimeBridge\(\)\.call\('test', 'variadic_function', \[base, \.\.\.args\], kwargs\)/
+      expect(generatedCode).toContain(
+        "getRuntimeBridge().call('test', 'variadic_function', [base, ...(args ?? [])], kwargs)"
       );
     });
 

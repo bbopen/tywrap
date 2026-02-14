@@ -141,7 +141,7 @@ export class PyAnalyzer {
   async extractFunctions(node: SyntaxNode): Promise<PythonFunction[]> {
     const functions: PythonFunction[] = [];
 
-    const functionNodes = this.findNodesByType(node, 'function_definition');
+    const functionNodes = this.findDirectDefinitions(node, 'function_definition');
 
     for (const funcNode of functionNodes) {
       try {
@@ -161,7 +161,7 @@ export class PyAnalyzer {
   async extractClasses(node: SyntaxNode): Promise<PythonClass[]> {
     const classes: PythonClass[] = [];
 
-    const classNodes = this.findNodesByType(node, 'class_definition');
+    const classNodes = this.findDirectDefinitions(node, 'class_definition');
 
     for (const classNode of classNodes) {
       try {
@@ -238,7 +238,7 @@ export class PyAnalyzer {
     const properties: Property[] = [];
 
     if (bodyNode) {
-      const methodNodes = this.findNodesByType(bodyNode, 'function_definition');
+      const methodNodes = this.findDirectDefinitions(bodyNode, 'function_definition');
       for (const methodNode of methodNodes) {
         try {
           const method = await this.extractFunction(methodNode);
@@ -249,9 +249,18 @@ export class PyAnalyzer {
       }
 
       // Extract properties (assignments with type annotations or @property decorators)
-      const assignmentNodes = this.findNodesByType(bodyNode, 'assignment');
-      for (const assignNode of assignmentNodes) {
-        const prop = this.extractProperty(assignNode);
+      for (const stmt of bodyNode.namedChildren) {
+        // Only consider class-body statements, never descend into method bodies.
+        const assignmentNode =
+          stmt.type === 'assignment'
+            ? stmt
+            : stmt.type === 'expression_statement'
+              ? (stmt.namedChildren.find(c => c.type === 'assignment') ?? null)
+              : null;
+        if (!assignmentNode) {
+          continue;
+        }
+        const prop = this.extractProperty(assignmentNode);
         if (prop) {
           properties.push(prop);
         }
@@ -641,19 +650,43 @@ export class PyAnalyzer {
    */
   private findNodesByType(node: SyntaxNode, type: string): SyntaxNode[] {
     const results: SyntaxNode[] = [];
-
-    const traverse = (n: SyntaxNode): void => {
+    const stack: SyntaxNode[] = [node];
+    while (stack.length > 0) {
+      const n = stack.pop();
+      if (!n) {
+        break;
+      }
       if (n.type === type) {
         results.push(n);
       }
-
-      for (const child of n.children) {
-        traverse(child);
+      for (let i = n.children.length - 1; i >= 0; i--) {
+        const child = n.children[i];
+        if (child) {
+          stack.push(child);
+        }
       }
-    };
-
-    traverse(node);
+    }
     return results;
+  }
+
+  private findDirectDefinitions(
+    node: SyntaxNode,
+    type: 'function_definition' | 'class_definition'
+  ): SyntaxNode[] {
+    const out: SyntaxNode[] = [];
+    for (const child of node.namedChildren) {
+      if (child.type === type) {
+        out.push(child);
+        continue;
+      }
+      if (child.type === 'decorated_definition') {
+        const def = child.namedChildren.find(c => c.type === type) ?? null;
+        if (def) {
+          out.push(def);
+        }
+      }
+    }
+    return out;
   }
 
   private extractModuleName(path?: string): string {
@@ -683,6 +716,8 @@ export class PyAnalyzer {
       const expr = firstChild.child(0);
       if (expr?.type === 'string') {
         let docstring = expr.text;
+        // Strip docstring prefixes like r/u/f/b and combos (rf/fr/br/...).
+        docstring = docstring.replace(/^(?:[rRuUbBfF]{1,3})(?=(\"\"\"|'''|\"|'))/, '');
         // Remove outer quotes and any remaining inner quotes
         if (docstring.startsWith('"""') && docstring.endsWith('"""')) {
           docstring = docstring.slice(3, -3);

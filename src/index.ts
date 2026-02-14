@@ -10,14 +10,28 @@ import { tywrap } from './tywrap.js';
 export type { TywrapConfig } from './config/index.js';
 export { defineConfig, resolveConfig } from './config/index.js';
 // BoundedContext - unified abstraction for cross-boundary concerns
-export { BoundedContext, type ContextState, type ExecuteOptions } from './runtime/bounded-context.js';
+export {
+  BoundedContext,
+  type ContextState,
+  type ExecuteOptions,
+} from './runtime/bounded-context.js';
 // BridgeProtocol - unified BoundedContext + SafeCodec + Transport
 export { BridgeProtocol, type BridgeProtocolOptions } from './runtime/bridge-protocol.js';
 // SafeCodec - validation and serialization for JS<->Python boundary
 export { SafeCodec, type CodecOptions } from './runtime/safe-codec.js';
 // Transport - abstract I/O channel interface
-export type { Transport, TransportOptions, ProtocolMessage, ProtocolResponse } from './runtime/transport.js';
-export { PROTOCOL_ID, isTransport, isProtocolMessage, isProtocolResponse } from './runtime/transport.js';
+export type {
+  Transport,
+  TransportOptions,
+  ProtocolMessage,
+  ProtocolResponse,
+} from './runtime/transport.js';
+export {
+  PROTOCOL_ID,
+  isTransport,
+  isProtocolMessage,
+  isProtocolResponse,
+} from './runtime/transport.js';
 // Transport implementations
 export { ProcessIO, type ProcessIOOptions } from './runtime/process-io.js';
 export { HttpIO, type HttpIOOptions } from './runtime/http-io.js';

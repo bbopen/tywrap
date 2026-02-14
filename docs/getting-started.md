@@ -142,6 +142,7 @@ Update your `tywrap.config.ts`:
 
 ```json
 {
+  "pythonImportPath": [],
   "pythonModules": {
     "my_utils": { 
       "runtime": "node", 
@@ -158,6 +159,18 @@ Update your `tywrap.config.ts`:
   "development": {
     "hotReload": true,
     "validation": "runtime"
+  }
+}
+```
+
+If `my_utils` is not importable from your current working directory or your Python environment,
+add the directory that contains it to `pythonImportPath`:
+
+```json
+{
+  "pythonImportPath": ["./python"],
+  "pythonModules": {
+    "my_utils": { "runtime": "node", "typeHints": "strict" }
   }
 }
 ```

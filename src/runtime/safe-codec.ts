@@ -8,7 +8,7 @@
  * - Binary data handling
  */
 
-import { BridgeProtocolError, BridgeExecutionError } from './errors.js';
+import { BridgeCodecError, BridgeProtocolError, BridgeExecutionError } from './errors.js';
 import { containsSpecialFloat } from './validators.js';
 import { decodeValueAsync as decodeArrowValue } from '../utils/codec.js';
 import { PROTOCOL_ID } from './transport.js';
@@ -89,7 +89,7 @@ function buildPath(basePath: string, key: string | number): string {
 
 /**
  * Recursively check for non-string keys in objects and Maps.
- * Throws BridgeProtocolError with path indication if found.
+ * Throws BridgeCodecError with path indication if found.
  */
 function assertStringKeys(
   value: unknown,
@@ -110,8 +110,9 @@ function assertStringKeys(
       if (typeof key !== 'string') {
         const keyDesc = typeof key === 'symbol' ? key.toString() : String(key);
         const location = path ? ` at ${path}` : '';
-        throw new BridgeProtocolError(
-          `Non-string key found in Map${location}: ${keyDesc} (${typeof key})`
+        throw new BridgeCodecError(
+          `Non-string key found in Map${location}: ${keyDesc} (${typeof key})`,
+          { codecPhase: 'encode' }
         );
       }
     }
@@ -138,9 +139,9 @@ function assertStringKeys(
     if (firstSymbol !== undefined) {
       const symbolDesc = firstSymbol.toString();
       const location = path ? ` at ${path}` : '';
-      throw new BridgeProtocolError(
-        `Symbol key found in object${location}: ${symbolDesc}`
-      );
+      throw new BridgeCodecError(`Symbol key found in object${location}: ${symbolDesc}`, {
+        codecPhase: 'encode',
+      });
     }
 
     // Recurse into object values
@@ -377,8 +378,9 @@ export class SafeCodec {
     // Validate special floats if enabled
     if (this.rejectSpecialFloats && containsSpecialFloat(message)) {
       const floatPath = findSpecialFloatPath(message);
-      throw new BridgeProtocolError(
-        `Cannot encode request: contains non-finite number (NaN or Infinity) at ${floatPath}`
+      throw new BridgeCodecError(
+        `Cannot encode request: contains non-finite number (NaN or Infinity) at ${floatPath}`,
+        { codecPhase: 'encode', valueType: 'number' }
       );
     }
 
@@ -395,8 +397,9 @@ export class SafeCodec {
         if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
           switch (this.bytesHandling) {
             case 'reject':
-              throw new BridgeProtocolError(
-                `Cannot encode request: binary data found at ${key || 'root'} (bytesHandling: reject)`
+              throw new BridgeCodecError(
+                `Cannot encode request: binary data found at ${key || 'root'} (bytesHandling: reject)`,
+                { codecPhase: 'encode', valueType: 'bytes' }
               );
             case 'base64': {
               const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : value;
@@ -411,18 +414,24 @@ export class SafeCodec {
         return value;
       });
     } catch (err) {
+      if (err instanceof BridgeCodecError) {
+        throw err;
+      }
       if (err instanceof BridgeProtocolError) {
         throw err;
       }
       const errorMessage = err instanceof Error ? err.message : String(err);
-      throw new BridgeProtocolError(`JSON serialization failed: ${errorMessage}`);
+      throw new BridgeCodecError(`JSON serialization failed: ${errorMessage}`, {
+        codecPhase: 'encode',
+      });
     }
 
     // Check payload size
     const payloadBytes = new TextEncoder().encode(payload).length;
     if (payloadBytes > this.maxPayloadBytes) {
-      throw new BridgeProtocolError(
-        `Payload size ${payloadBytes} bytes exceeds maximum ${this.maxPayloadBytes} bytes`
+      throw new BridgeCodecError(
+        `Payload size ${payloadBytes} bytes exceeds maximum ${this.maxPayloadBytes} bytes`,
+        { codecPhase: 'encode', valueType: 'payload' }
       );
     }
 
@@ -442,8 +451,9 @@ export class SafeCodec {
     // Check payload size first
     const payloadBytes = new TextEncoder().encode(payload).length;
     if (payloadBytes > this.maxPayloadBytes) {
-      throw new BridgeProtocolError(
-        `Response payload size ${payloadBytes} bytes exceeds maximum ${this.maxPayloadBytes} bytes`
+      throw new BridgeCodecError(
+        `Response payload size ${payloadBytes} bytes exceeds maximum ${this.maxPayloadBytes} bytes`,
+        { codecPhase: 'decode', valueType: 'payload' }
       );
     }
 
@@ -453,8 +463,9 @@ export class SafeCodec {
       parsed = JSON.parse(payload);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      throw new BridgeProtocolError(
-        `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`
+      throw new BridgeCodecError(
+        `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`,
+        { codecPhase: 'decode', valueType: 'json' }
       );
     }
 
@@ -466,8 +477,9 @@ export class SafeCodec {
     // Post-decode validation for special floats if enabled
     if (this.rejectSpecialFloats && containsSpecialFloat(result)) {
       const floatPath = findSpecialFloatPath(result);
-      throw new BridgeProtocolError(
-        `Response contains non-finite number (NaN or Infinity) at ${floatPath}`
+      throw new BridgeCodecError(
+        `Response contains non-finite number (NaN or Infinity) at ${floatPath}`,
+        { codecPhase: 'decode', valueType: 'number' }
       );
     }
 
@@ -487,8 +499,9 @@ export class SafeCodec {
     // Check payload size first
     const payloadBytes = new TextEncoder().encode(payload).length;
     if (payloadBytes > this.maxPayloadBytes) {
-      throw new BridgeProtocolError(
-        `Response payload size ${payloadBytes} bytes exceeds maximum ${this.maxPayloadBytes} bytes`
+      throw new BridgeCodecError(
+        `Response payload size ${payloadBytes} bytes exceeds maximum ${this.maxPayloadBytes} bytes`,
+        { codecPhase: 'decode', valueType: 'payload' }
       );
     }
 
@@ -498,8 +511,9 @@ export class SafeCodec {
       parsed = JSON.parse(payload);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      throw new BridgeProtocolError(
-        `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`
+      throw new BridgeCodecError(
+        `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`,
+        { codecPhase: 'decode', valueType: 'json' }
       );
     }
 
@@ -514,15 +528,19 @@ export class SafeCodec {
       decoded = await decodeArrowValue(result);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      throw new BridgeProtocolError(`Arrow decoding failed: ${errorMessage}`);
+      throw new BridgeCodecError(`Arrow decoding failed: ${errorMessage}`, {
+        codecPhase: 'decode',
+        valueType: 'arrow',
+      });
     }
 
     // Post-decode validation for special floats if enabled
     // Note: We check the result value since that's what we're returning
     if (this.rejectSpecialFloats && containsSpecialFloat(result)) {
       const floatPath = findSpecialFloatPath(result);
-      throw new BridgeProtocolError(
-        `Response contains non-finite number (NaN or Infinity) at ${floatPath}`
+      throw new BridgeCodecError(
+        `Response contains non-finite number (NaN or Infinity) at ${floatPath}`,
+        { codecPhase: 'decode', valueType: 'number' }
       );
     }
 
@@ -540,6 +558,9 @@ export class SafeCodec {
       const binary = String.fromCharCode(...bytes);
       return globalThis.btoa(binary);
     }
-    throw new BridgeProtocolError('Base64 encoding is not available in this runtime');
+    throw new BridgeCodecError('Base64 encoding is not available in this runtime', {
+      codecPhase: 'encode',
+      valueType: 'bytes',
+    });
   }
 }

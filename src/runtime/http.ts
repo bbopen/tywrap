@@ -10,6 +10,7 @@
 import { BridgeProtocol, type BridgeProtocolOptions } from './bridge-protocol.js';
 import { HttpIO } from './http-io.js';
 import type { CodecOptions } from './safe-codec.js';
+import { autoRegisterArrowDecoder } from '../utils/codec.js';
 
 // =============================================================================
 // OPTIONS
@@ -82,5 +83,11 @@ export class HttpBridge extends BridgeProtocol {
     };
 
     super(protocolOptions);
+  }
+
+  protected async doInit(): Promise<void> {
+    // Best-effort: keep apache-arrow optional and avoid breaking non-Node runtimes.
+    await autoRegisterArrowDecoder();
+    await super.doInit();
   }
 }

@@ -16,7 +16,12 @@
 
 import { BoundedContext } from './bounded-context.js';
 import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
-import { PROTOCOL_ID, type Transport, type ProtocolMessage, type ProtocolResponse } from './transport.js';
+import {
+  PROTOCOL_ID,
+  type Transport,
+  type ProtocolMessage,
+  type ProtocolResponse,
+} from './transport.js';
 
 // =============================================================================
 // TYPES
@@ -449,10 +454,9 @@ export class PyodideIO extends BoundedContext implements Transport {
     const response = JSON.parse(responseJson) as ProtocolResponse;
 
     if (response.error) {
-      const err = new BridgeExecutionError(
-        `${response.error.type}: ${response.error.message}`,
-        { code: response.error.type }
-      );
+      const err = new BridgeExecutionError(`${response.error.type}: ${response.error.message}`, {
+        code: response.error.type,
+      });
       err.traceback = response.error.traceback;
       throw err;
     }

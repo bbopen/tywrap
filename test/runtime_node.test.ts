@@ -10,7 +10,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'path';
 import { NodeBridge } from '../src/runtime/node.js';
-import { BridgeProtocolError } from '../src/runtime/errors.js';
+import { BridgeExecutionError, BridgeProtocolError } from '../src/runtime/errors.js';
 import { TYWRAP_PROTOCOL_VERSION } from '../src/runtime/protocol.js';
 import { getDefaultPythonPath, resolvePythonExecutable } from '../src/utils/python.js';
 import { isNodejs, getVenvBinDir } from '../src/utils/runtime.js';
@@ -40,6 +40,19 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       const resolvedPython = pythonPath ?? (await resolvePythonExecutable());
       await execAsync(`${resolvedPython} --version`);
       return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const isPythonExprTruthy = async (expr: string): Promise<boolean> => {
+    try {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const resolvedPython = await resolvePythonExecutable();
+      const execFileAsync = promisify(execFile);
+      const { stdout } = await execFileAsync(resolvedPython, ['-c', expr], { encoding: 'utf-8' });
+      return String(stdout).trim() === '1';
     } catch {
       return false;
     }
@@ -232,6 +245,63 @@ def get_path():
 
           const path = await bridge.call<string>(moduleName, 'get_path', []);
           expect(path).toBe(join('some', 'path'));
+        } finally {
+          await bridge?.dispose();
+          if (tempDir) {
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+          }
+        }
+      },
+      testTimeout
+    );
+  });
+
+  describe('Pydantic Serialization', () => {
+    it(
+      'surfaces model_dump failures explicitly',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        // Only applies to pydantic v2 (BaseModel.model_dump).
+        const pydanticV2Available = await isPythonExprTruthy(
+          "import pydantic; from pydantic import BaseModel; print('1' if hasattr(BaseModel, 'model_dump') else '0')"
+        );
+        if (!pydanticV2Available) return;
+
+        let tempDir: string | undefined;
+        try {
+          tempDir = await mkdtemp(join(tmpdir(), 'tywrap-pydantic-'));
+          const moduleName = 'pydantic_fixture';
+          const modulePath = join(tempDir, `${moduleName}.py`);
+          const content = `from pydantic import BaseModel
+
+class Bad(BaseModel):
+    x: int
+
+    def model_dump(self, *args, **kwargs):
+        raise RuntimeError("boom")
+
+def get_bad():
+    return Bad(x=1)
+`;
+          await writeFile(modulePath, content, 'utf-8');
+
+          const existingPyPath = process.env.PYTHONPATH;
+          const mergedPyPath = existingPyPath ? `${tempDir}${delimiter}${existingPyPath}` : tempDir;
+
+          bridge = new NodeBridge({
+            scriptPath,
+            env: { PYTHONPATH: mergedPyPath },
+            timeoutMs: defaultTimeoutMs,
+          });
+
+          await expect(bridge.call(moduleName, 'get_bad', [])).rejects.toThrow(
+            BridgeExecutionError
+          );
+          await expect(bridge.call(moduleName, 'get_bad', [])).rejects.toThrow(
+            /model_dump failed/i
+          );
         } finally {
           await bridge?.dispose();
           if (tempDir) {
