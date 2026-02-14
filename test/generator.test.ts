@@ -360,9 +360,95 @@ describe('CodeGenerator', () => {
 
     // Rest parameters can't precede kwargs; this should be an array param.
     expect(code.typescript).not.toContain('...args: unknown[]');
+    // When `kwargs` is required in overloads, allow `undefined` as a placeholder for omitted varargs.
+    expect(code.typescript).toMatch(
+      /export function g\(args: unknown\[\]\s*\|\s*undefined, kwargs: \{ "c": number; \}\): Promise<number>;/
+    );
     expect(code.typescript).toMatch(
       /export async function g\(args\?: unknown\[], kwargs\?: \{ "c": number; \}\): Promise<number>/
     );
+  });
+
+  it('requires kwargs in class wrappers when keyword-only params are required', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'C',
+        bases: [],
+        methods: [
+          {
+            name: '__init__',
+            signature: {
+              parameters: [],
+              returnType: { kind: 'primitive', name: 'None' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'None' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'c',
+                type: { kind: 'primitive', name: 'int' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+                keywordOnly: true,
+              },
+            ],
+          },
+          {
+            name: 'm',
+            signature: {
+              parameters: [],
+              returnType: { kind: 'primitive', name: 'int' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'int' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'k',
+                type: { kind: 'primitive', name: 'int' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+                keywordOnly: true,
+              },
+            ],
+          },
+        ],
+        properties: [],
+        docstring: undefined,
+        decorators: [],
+      } as any,
+      'm'
+    );
+
+    expect(code.typescript).toMatch(/static create\(kwargs: \{ "c": number; \}\): Promise<C>;/);
+
+    expect(code.typescript).toMatch(/m\(kwargs: \{ "k": number; \}\): Promise<number>;/);
+    expect(code.typescript).toMatch(/async m\(kwargs\?: \{ "k": number; \}\): Promise<number>/);
   });
 
   it('generates constructor typing from __init__ and sorts members', () => {

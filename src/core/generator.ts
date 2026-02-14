@@ -216,7 +216,18 @@ export class CodeGenerator {
       for (let i = requiredPosCount; i <= positionalParams.length; i++) {
         const head = positionalParams.slice(0, i).map(p => renderPositionalParam(p, true));
         const rest: string[] = [];
-        const v = renderVarArgsParam(true);
+        const v = (() => {
+          if (!varArgsParam) {
+            return null;
+          }
+          const pname = this.escapeIdentifier(varArgsParam.name);
+          if (!needsVarArgsArray) {
+            return `...${pname}: unknown[]`;
+          }
+          // In overloads where `kwargs` is required, keep the `args` surrogate parameter required,
+          // but allow `undefined` as a placeholder so callers can omit varargs while still passing kwargs.
+          return `${pname}: unknown[] | undefined`;
+        })();
         if (v) {
           rest.push(v);
         }
@@ -359,6 +370,7 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
       const ts = `${jsdoc}export type ${cname} = { ${props} }\n`;
       return this.wrap(ts, [cls.name]);
     }
+    const cname = this.escapeIdentifier(cls.name);
     const sortedMethods = [...cls.methods].sort((a, b) => a.name.localeCompare(b.name));
     const tsValueType = (p: (typeof cls.methods)[number]['parameters'][number]): string =>
       this.typeToTs(this.mapper.mapPythonType(p.type, 'value'));
@@ -376,6 +388,15 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
         const needsVarArgsArray = Boolean(varArgsParam) && needsKwargsParam;
         const positionalParams = fparams.filter(p => !p.keywordOnly && !p.varArgs && !p.kwArgs);
 
+        const renderPositionalParam = (
+          p: (typeof positionalParams)[number],
+          forceRequired = false
+        ): string => {
+          const pname = this.escapeIdentifier(p.name);
+          const opt = !forceRequired && p.optional ? '?' : '';
+          return `${pname}${opt}: ${tsValueType(p)}`;
+        };
+
         const kwargsType = (() => {
           if (!needsKwargsParam) {
             return '';
@@ -392,9 +413,7 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
 
         const paramsDeclParts: string[] = [];
         for (const p of positionalParams) {
-          paramsDeclParts.push(
-            `${this.escapeIdentifier(p.name)}${p.optional ? '?' : ''}: ${tsValueType(p)}`
-          );
+          paramsDeclParts.push(renderPositionalParam(p));
         }
         if (varArgsParam) {
           const vname = this.escapeIdentifier(varArgsParam.name);
@@ -415,6 +434,28 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
         const callArgsArray = `[${callArgParts.join(', ')}]`;
 
         const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
+        const returnType = this.typeToTs(this.mapper.mapPythonType(m.returnType, 'return'));
+        const mname = this.escapeIdentifier(m.name);
+
+        const overloads: string[] = [];
+        if (needsKwargsParam && requiredKwOnlyNames.length > 0) {
+          const firstOptionalIndex = positionalParams.findIndex(p => p.optional);
+          const requiredPosCount =
+            firstOptionalIndex >= 0 ? firstOptionalIndex : positionalParams.length;
+          for (let i = requiredPosCount; i <= positionalParams.length; i++) {
+            const head = positionalParams.slice(0, i).map(p => renderPositionalParam(p, true));
+            const rest: string[] = [];
+            if (varArgsParam) {
+              const vname = this.escapeIdentifier(varArgsParam.name);
+              rest.push(
+                needsVarArgsArray ? `${vname}: unknown[] | undefined` : `...${vname}: unknown[]`
+              );
+            }
+            rest.push(`kwargs: ${kwargsType}`);
+            overloads.push(`  ${mname}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`);
+          }
+        }
+        const overloadDecl = overloads.length > 0 ? `${overloads.join('\n')}\n` : '';
         const guardLines: string[] = [];
         if (needsKwargsParam && positionalOnlyNames.length > 0) {
           guardLines.push(
@@ -450,12 +491,11 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
         }
         const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
 
-        const returnType = this.typeToTs(this.mapper.mapPythonType(m.returnType, 'return'));
-        return `  async ${this.escapeIdentifier(m.name)}(${paramsDecl}): Promise<${returnType}> {
-${guards}    return getRuntimeBridge().callMethod(this.__handle, '${m.name}', ${callArgsArray}${
-          needsKwargsParam ? ', kwargs' : ''
-        });
-  }`;
+        return `${overloadDecl}  async ${mname}(${paramsDecl}): Promise<${returnType}> {
+	${guards}    return getRuntimeBridge().callMethod(this.__handle, '${m.name}', ${callArgsArray}${
+    needsKwargsParam ? ', kwargs' : ''
+  });
+	  }`;
       })
       .join('\n');
 
@@ -464,6 +504,7 @@ ${guards}    return getRuntimeBridge().callMethod(this.__handle, '${m.name}', ${
     const ctorSpec = (() => {
       if (!init) {
         return {
+          overloadDecl: '',
           paramsDecl: `...args: unknown[]`,
           callArgsArray: `[...args]`,
           hasKwargs: false,
@@ -479,6 +520,15 @@ ${guards}    return getRuntimeBridge().callMethod(this.__handle, '${m.name}', ${
       const varArgsParam = fparams.find(p => p.varArgs);
       const needsVarArgsArray = Boolean(varArgsParam) && needsKwargsParam;
       const positionalParams = fparams.filter(p => !p.keywordOnly && !p.varArgs && !p.kwArgs);
+
+      const renderPositionalParam = (
+        p: (typeof positionalParams)[number],
+        forceRequired = false
+      ): string => {
+        const pname = this.escapeIdentifier(p.name);
+        const opt = !forceRequired && p.optional ? '?' : '';
+        return `${pname}${opt}: ${tsValueType(p)}`;
+      };
 
       const kwargsType = (() => {
         if (!needsKwargsParam) {
@@ -496,9 +546,7 @@ ${guards}    return getRuntimeBridge().callMethod(this.__handle, '${m.name}', ${
 
       const paramsDeclParts: string[] = [];
       for (const p of positionalParams) {
-        paramsDeclParts.push(
-          `${this.escapeIdentifier(p.name)}${p.optional ? '?' : ''}: ${tsValueType(p)}`
-        );
+        paramsDeclParts.push(renderPositionalParam(p));
       }
       if (varArgsParam) {
         const vname = this.escapeIdentifier(varArgsParam.name);
@@ -517,6 +565,25 @@ ${guards}    return getRuntimeBridge().callMethod(this.__handle, '${m.name}', ${
       const callArgsArray = `[${callArgParts.join(', ')}]`;
 
       const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
+      const overloads: string[] = [];
+      if (needsKwargsParam && requiredKwOnlyNames.length > 0) {
+        const firstOptionalIndex = positionalParams.findIndex(p => p.optional);
+        const requiredPosCount =
+          firstOptionalIndex >= 0 ? firstOptionalIndex : positionalParams.length;
+        for (let i = requiredPosCount; i <= positionalParams.length; i++) {
+          const head = positionalParams.slice(0, i).map(p => renderPositionalParam(p, true));
+          const rest: string[] = [];
+          if (varArgsParam) {
+            const vname = this.escapeIdentifier(varArgsParam.name);
+            rest.push(
+              needsVarArgsArray ? `${vname}: unknown[] | undefined` : `...${vname}: unknown[]`
+            );
+          }
+          rest.push(`kwargs: ${kwargsType}`);
+          overloads.push(`  static create(${[...head, ...rest].join(', ')}): Promise<${cname}>;`);
+        }
+      }
+      const overloadDecl = overloads.length > 0 ? `${overloads.join('\n')}\n` : '';
       const guardLines: string[] = [];
       if (needsKwargsParam && positionalOnlyNames.length > 0) {
         guardLines.push(
@@ -549,21 +616,20 @@ ${guards}    return getRuntimeBridge().callMethod(this.__handle, '${m.name}', ${
         guardLines.push(`    }`);
       }
 
-      return { paramsDecl, callArgsArray, hasKwargs: needsKwargsParam, guardLines };
+      return { overloadDecl, paramsDecl, callArgsArray, hasKwargs: needsKwargsParam, guardLines };
     })();
 
-    const cname = this.escapeIdentifier(cls.name);
     const moduleId = moduleName ?? '__main__';
     const methodsSection = methodBodies ? `\n${methodBodies}\n` : '\n';
     const ctorGuards = ctorSpec.guardLines.length > 0 ? `${ctorSpec.guardLines.join('\n')}\n` : '';
     const ts = `${jsdoc}export class ${cname} {
-  private readonly __handle: string;
-  private constructor(handle: string) { this.__handle = handle; }
-  static async create(${ctorSpec.paramsDecl}): Promise<${cname}> {
+	  private readonly __handle: string;
+	  private constructor(handle: string) { this.__handle = handle; }
+	${ctorSpec.overloadDecl}  static async create(${ctorSpec.paramsDecl}): Promise<${cname}> {
 ${ctorGuards}    const handle = await getRuntimeBridge().instantiate<string>('${moduleId}', '${cls.name}', ${ctorSpec.callArgsArray}${
       ctorSpec.hasKwargs ? ', kwargs' : ''
     });
-    return new ${cname}(handle);
+	    return new ${cname}(handle);
   }
   static fromHandle(handle: string): ${cname} { return new ${cname}(handle); }${methodsSection}  async disposeHandle(): Promise<void> { await getRuntimeBridge().disposeInstance(this.__handle); }
 }
