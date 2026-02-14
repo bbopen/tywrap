@@ -69,6 +69,7 @@ export { RuntimeBridge } from './runtime/base.js';
 
 export {
   BridgeError,
+  BridgeCodecError,
   BridgeProtocolError,
   BridgeTimeoutError,
   BridgeDisposedError,

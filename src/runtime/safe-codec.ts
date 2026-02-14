@@ -372,7 +372,7 @@ export class SafeCodec {
    *
    * @param message - The message to encode
    * @returns JSON string ready to send
-   * @throws BridgeProtocolError if validation fails or encoding fails
+   * @throws BridgeCodecError if validation fails or encoding fails
    */
   encodeRequest(message: unknown): string {
     // Validate special floats if enabled
@@ -444,7 +444,8 @@ export class SafeCodec {
    *
    * @param payload - The JSON string received from Python
    * @returns Decoded and validated result
-   * @throws BridgeProtocolError if payload is invalid
+   * @throws BridgeCodecError if payload is invalid or decoding fails
+   * @throws BridgeProtocolError if protocol envelope is invalid
    * @throws BridgeExecutionError if response contains a Python error
    */
   decodeResponse<T>(payload: string): T {
@@ -492,7 +493,8 @@ export class SafeCodec {
    *
    * @param payload - The JSON string received from Python
    * @returns Decoded and validated result with Arrow decoding applied
-   * @throws BridgeProtocolError if payload is invalid
+   * @throws BridgeCodecError if payload is invalid or decoding fails
+   * @throws BridgeProtocolError if protocol envelope is invalid
    * @throws BridgeExecutionError if response contains a Python error
    */
   async decodeResponseAsync<T>(payload: string): Promise<T> {
@@ -535,9 +537,9 @@ export class SafeCodec {
     }
 
     // Post-decode validation for special floats if enabled
-    // Note: We check the result value since that's what we're returning
-    if (this.rejectSpecialFloats && containsSpecialFloat(result)) {
-      const floatPath = findSpecialFloatPath(result);
+    // Note: Arrow decoders can introduce NaN/Infinity from binary representations.
+    if (this.rejectSpecialFloats && containsSpecialFloat(decoded)) {
+      const floatPath = findSpecialFloatPath(decoded);
       throw new BridgeCodecError(
         `Response contains non-finite number (NaN or Infinity) at ${floatPath}`,
         { codecPhase: 'decode', valueType: 'number' }
