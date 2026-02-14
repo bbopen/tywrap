@@ -143,9 +143,15 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
         expect(info.protocolVersion).toBe(TYWRAP_PROTOCOL_VERSION);
         expect(info.bridge).toBe('python-subprocess');
         expect(info.pythonVersion).toMatch(/^\d+\.\d+\.\d+$/);
+        expect(['json', 'none']).toContain(info.codecFallback);
+        expect(typeof info.arrowAvailable).toBe('boolean');
+        expect(Number.isInteger(info.pid)).toBe(true);
+        expect(info.pid).toBeGreaterThan(0);
         expect(typeof info.scipyAvailable).toBe('boolean');
         expect(typeof info.torchAvailable).toBe('boolean');
         expect(typeof info.sklearnAvailable).toBe('boolean');
+        expect(Number.isInteger(info.instances)).toBe(true);
+        expect(info.instances).toBeGreaterThanOrEqual(0);
 
         const cached = await bridge.getBridgeInfo();
         expect(cached).toBe(info);
@@ -286,9 +292,10 @@ def get_path():
         const pythonAvailable = await isPythonAvailable();
         if (!pythonAvailable || !isBridgeScriptAvailable()) return;
 
-        bridge = new NodeBridge({ scriptPath, timeoutMs: 500 });
+        // Give the bridge enough time to recover (worker quarantine/replacement) after a timeout.
+        bridge = new NodeBridge({ scriptPath, timeoutMs: 1000 });
 
-        await expect(bridge.call('time', 'sleep', [1])).rejects.toThrow(/timed out/i);
+        await expect(bridge.call('time', 'sleep', [1.5])).rejects.toThrow(/timed out/i);
 
         // Wait for the Python process to eventually respond to the timed-out request.
         await new Promise(resolve => setTimeout(resolve, 800));
