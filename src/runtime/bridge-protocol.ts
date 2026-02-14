@@ -110,9 +110,9 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
   }
 
   const pid = obj.pid;
-  if (typeof pid !== 'number' || !Number.isFinite(pid)) {
+  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
     throw new BridgeProtocolError(
-      `Invalid bridge info payload: pid expected finite number, got ${formatValue(pid)}`
+      `Invalid bridge info payload: pid expected positive integer, got ${formatValue(pid)}`
     );
   }
 
@@ -152,9 +152,9 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
   }
 
   const instances = obj.instances;
-  if (typeof instances !== 'number' || !Number.isFinite(instances)) {
+  if (typeof instances !== 'number' || !Number.isInteger(instances) || instances < 0) {
     throw new BridgeProtocolError(
-      `Invalid bridge info payload: instances expected finite number, got ${formatValue(instances)}`
+      `Invalid bridge info payload: instances expected non-negative integer, got ${formatValue(instances)}`
     );
   }
 
@@ -255,6 +255,7 @@ export class BridgeProtocol extends BoundedContext {
    * but should not need to dispose the transport manually.
    */
   protected async doDispose(): Promise<void> {
+    this.bridgeInfoCache = undefined;
     // Transport is tracked and will be disposed by BoundedContext
     // Subclasses can override to add additional cleanup
   }
