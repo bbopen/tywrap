@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'path';
 import { NodeBridge } from '../src/runtime/node.js';
 import { BridgeProtocolError } from '../src/runtime/errors.js';
+import { TYWRAP_PROTOCOL_VERSION } from '../src/runtime/protocol.js';
 import { getDefaultPythonPath, resolvePythonExecutable } from '../src/utils/python.js';
 import { isNodejs, getVenvBinDir } from '../src/utils/runtime.js';
 
@@ -139,12 +140,15 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
 
         const info = await bridge.getBridgeInfo();
         expect(info.protocol).toBe('tywrap/1');
-        expect(info.protocolVersion).toBeGreaterThan(0);
+        expect(info.protocolVersion).toBe(TYWRAP_PROTOCOL_VERSION);
         expect(info.bridge).toBe('python-subprocess');
         expect(info.pythonVersion).toMatch(/^\d+\.\d+\.\d+$/);
         expect(typeof info.scipyAvailable).toBe('boolean');
         expect(typeof info.torchAvailable).toBe('boolean');
         expect(typeof info.sklearnAvailable).toBe('boolean');
+
+        const cached = await bridge.getBridgeInfo();
+        expect(cached).toBe(info);
 
         const before = info.instances;
         const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);

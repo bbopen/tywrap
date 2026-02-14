@@ -52,44 +52,125 @@ export interface BridgeProtocolOptions {
 
 function validateBridgeInfoPayload(value: unknown): BridgeInfo {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new BridgeProtocolError('Invalid bridge info payload');
+    const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+    throw new BridgeProtocolError(`Invalid bridge info payload: expected object, got ${kind}`);
   }
 
-  const candidate = value as BridgeInfo;
-  if (candidate.protocol !== PROTOCOL_ID || candidate.protocolVersion !== TYWRAP_PROTOCOL_VERSION) {
-    throw new BridgeProtocolError('Invalid bridge info payload');
+  interface BridgeInfoWire {
+    protocol?: unknown;
+    protocolVersion?: unknown;
+    bridge?: unknown;
+    pythonVersion?: unknown;
+    pid?: unknown;
+    codecFallback?: unknown;
+    arrowAvailable?: unknown;
+    scipyAvailable?: unknown;
+    torchAvailable?: unknown;
+    sklearnAvailable?: unknown;
+    instances?: unknown;
   }
 
-  if (candidate.bridge !== 'python-subprocess') {
-    throw new BridgeProtocolError(`Unexpected bridge identifier: ${candidate.bridge}`);
+  const formatValue = (val: unknown): string => {
+    try {
+      const serialized = JSON.stringify(val);
+      return serialized ?? String(val);
+    } catch {
+      return String(val);
+    }
+  };
+
+  const obj = value as BridgeInfoWire;
+
+  const protocol = obj.protocol;
+  if (protocol !== PROTOCOL_ID) {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: protocol expected "${PROTOCOL_ID}", got ${formatValue(protocol)}`
+    );
   }
 
-  if (typeof candidate.pythonVersion !== 'string' || candidate.pythonVersion.length === 0) {
-    throw new BridgeProtocolError('Invalid bridge info payload');
-  }
-  if (typeof candidate.pid !== 'number' || !Number.isFinite(candidate.pid)) {
-    throw new BridgeProtocolError('Invalid bridge info payload');
-  }
-  if (candidate.codecFallback !== 'json' && candidate.codecFallback !== 'none') {
-    throw new BridgeProtocolError('Invalid bridge info payload');
-  }
-  if (typeof candidate.arrowAvailable !== 'boolean') {
-    throw new BridgeProtocolError('Invalid bridge info payload');
-  }
-  if (typeof candidate.scipyAvailable !== 'boolean') {
-    throw new BridgeProtocolError('Invalid bridge info payload');
-  }
-  if (typeof candidate.torchAvailable !== 'boolean') {
-    throw new BridgeProtocolError('Invalid bridge info payload');
-  }
-  if (typeof candidate.sklearnAvailable !== 'boolean') {
-    throw new BridgeProtocolError('Invalid bridge info payload');
-  }
-  if (typeof candidate.instances !== 'number' || !Number.isFinite(candidate.instances)) {
-    throw new BridgeProtocolError('Invalid bridge info payload');
+  const protocolVersion = obj.protocolVersion;
+  if (protocolVersion !== TYWRAP_PROTOCOL_VERSION) {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: protocolVersion expected ${TYWRAP_PROTOCOL_VERSION}, got ${formatValue(protocolVersion)}`
+    );
   }
 
-  return candidate;
+  const bridge = obj.bridge;
+  if (bridge !== 'python-subprocess') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: bridge expected "python-subprocess", got ${formatValue(bridge)}`
+    );
+  }
+
+  const pythonVersion = obj.pythonVersion;
+  if (typeof pythonVersion !== 'string' || pythonVersion.length === 0) {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: pythonVersion expected non-empty string, got ${formatValue(pythonVersion)}`
+    );
+  }
+
+  const pid = obj.pid;
+  if (typeof pid !== 'number' || !Number.isFinite(pid)) {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: pid expected finite number, got ${formatValue(pid)}`
+    );
+  }
+
+  const codecFallback = obj.codecFallback;
+  if (codecFallback !== 'json' && codecFallback !== 'none') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: codecFallback expected "json" or "none", got ${formatValue(codecFallback)}`
+    );
+  }
+
+  const arrowAvailable = obj.arrowAvailable;
+  if (typeof arrowAvailable !== 'boolean') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: arrowAvailable expected boolean, got ${formatValue(arrowAvailable)}`
+    );
+  }
+
+  const scipyAvailable = obj.scipyAvailable;
+  if (typeof scipyAvailable !== 'boolean') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: scipyAvailable expected boolean, got ${formatValue(scipyAvailable)}`
+    );
+  }
+
+  const torchAvailable = obj.torchAvailable;
+  if (typeof torchAvailable !== 'boolean') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: torchAvailable expected boolean, got ${formatValue(torchAvailable)}`
+    );
+  }
+
+  const sklearnAvailable = obj.sklearnAvailable;
+  if (typeof sklearnAvailable !== 'boolean') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: sklearnAvailable expected boolean, got ${formatValue(sklearnAvailable)}`
+    );
+  }
+
+  const instances = obj.instances;
+  if (typeof instances !== 'number' || !Number.isFinite(instances)) {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: instances expected finite number, got ${formatValue(instances)}`
+    );
+  }
+
+  return {
+    protocol: PROTOCOL_ID,
+    protocolVersion: TYWRAP_PROTOCOL_VERSION,
+    bridge: 'python-subprocess',
+    pythonVersion,
+    pid,
+    codecFallback,
+    arrowAvailable,
+    scipyAvailable,
+    torchAvailable,
+    sklearnAvailable,
+    instances,
+  };
 }
 
 // =============================================================================
