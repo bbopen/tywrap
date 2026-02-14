@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'path';
 import { NodeBridge } from '../src/runtime/node.js';
 import { BridgeProtocolError } from '../src/runtime/errors.js';
+import { TYWRAP_PROTOCOL_VERSION } from '../src/runtime/protocol.js';
 import { getDefaultPythonPath, resolvePythonExecutable } from '../src/utils/python.js';
 import { isNodejs, getVenvBinDir } from '../src/utils/runtime.js';
 
@@ -127,6 +128,36 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
         expect(mostCommon[0]?.[1]).toBe(2);
 
         await bridge.disposeInstance(counterHandle);
+      },
+      testTimeout
+    );
+
+    it(
+      'should report bridge info and track instance counts',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        const info = await bridge.getBridgeInfo();
+        expect(info.protocol).toBe('tywrap/1');
+        expect(info.protocolVersion).toBe(TYWRAP_PROTOCOL_VERSION);
+        expect(info.bridge).toBe('python-subprocess');
+        expect(info.pythonVersion).toMatch(/^\d+\.\d+\.\d+$/);
+        expect(typeof info.scipyAvailable).toBe('boolean');
+        expect(typeof info.torchAvailable).toBe('boolean');
+        expect(typeof info.sklearnAvailable).toBe('boolean');
+
+        const cached = await bridge.getBridgeInfo();
+        expect(cached).toBe(info);
+
+        const before = info.instances;
+        const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
+        const mid = await bridge.getBridgeInfo({ refresh: true });
+        expect(mid.instances).toBe(before + 1);
+
+        await bridge.disposeInstance(handle);
+        const after = await bridge.getBridgeInfo({ refresh: true });
+        expect(after.instances).toBe(before);
       },
       testTimeout
     );
@@ -478,7 +509,7 @@ def get_path():
 
     it.each(['__proto__', 'prototype', 'constructor'])(
       'should reject dangerous environment override key %s',
-      (dangerousKey) => {
+      dangerousKey => {
         const envOverrides = Object.create(null) as Record<string, string | undefined>;
         Object.defineProperty(envOverrides, dangerousKey, {
           value: 'blocked',
