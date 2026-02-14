@@ -717,7 +717,7 @@ export class PyAnalyzer {
       if (expr?.type === 'string') {
         let docstring = expr.text;
         // Strip docstring prefixes like r/u/f/b and combos (rf/fr/br/...).
-        docstring = docstring.replace(/^(?:[rRuUbBfF]{1,3})(?=(\"\"\"|'''|\"|'))/, '');
+        docstring = docstring.replace(/^(?:[rRuUbBfF]{1,2})(?=(\"\"\"|'''|\"|'))/, '');
         // Remove outer quotes and any remaining inner quotes
         if (docstring.startsWith('"""') && docstring.endsWith('"""')) {
           docstring = docstring.slice(3, -3);

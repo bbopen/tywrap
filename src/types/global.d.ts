@@ -52,7 +52,7 @@ declare namespace BunTypes {
       stderr: ReadableStream;
       exitCode?: number;
       exited: Promise<void>;
-      kill(signal?: string): void;
+      kill(signal?: number | string): void;
     };
   }
 }

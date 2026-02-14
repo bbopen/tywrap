@@ -194,8 +194,24 @@ export class IntelligentCache {
         continue;
       }
 
+      if (typeof input === 'symbol') {
+        hash.update('sym:');
+        hash.update(input.toString());
+        hash.update('\0');
+        continue;
+      }
+
       hash.update('json:');
-      hash.update(JSON.stringify(input));
+      let json: string;
+      try {
+        json =
+          JSON.stringify(input, (_key, value) =>
+            typeof value === 'symbol' ? value.toString() : value
+          ) ?? 'undefined';
+      } catch {
+        json = String(input);
+      }
+      hash.update(json);
       hash.update('\0');
     }
 

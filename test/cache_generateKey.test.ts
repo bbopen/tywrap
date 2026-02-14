@@ -12,4 +12,11 @@ describe('IntelligentCache.generateKey', () => {
     expect(cache.generateKey('x', 'false')).not.toBe(cache.generateKey('x', false));
     expect(cache.generateKey('x', undefined)).not.toBe(cache.generateKey('x', null));
   });
+
+  it('handles Symbol inputs deterministically', () => {
+    const cache = new IntelligentCache({ persistToDisk: false, cleanupInterval: 0 });
+
+    const sym = Symbol('a');
+    expect(cache.generateKey('x', sym)).toBe(cache.generateKey('x', sym));
+  });
 });
