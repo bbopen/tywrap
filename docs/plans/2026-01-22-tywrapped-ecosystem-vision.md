@@ -93,9 +93,9 @@ Examples:
 - Scoped under org we control - prevents squatting
 - Follows `@types/*` precedent (DefinitelyTyped)
 - Clear this is community wrapper, not official
-- Nominative fair use for library names
+- Package naming, trademark strategy, and disclaimers must be reviewed by legal counsel before any public launch
 
-**Required disclaimer in each package**:
+**Required disclaimer in each package (draft, subject to legal review)**:
 > This is a community-maintained wrapper and is not affiliated with or endorsed by [upstream project].
 
 ---
@@ -150,17 +150,17 @@ Releases triggered by **either**:
 
 ### Pipeline Flow
 
-```
+```text
 1. Trigger (Dependabot or tywrap release)
-        ↓
+	        ↓
 2. CI regenerates wrappers
-        ↓
+	        ↓
 3. Run test suite (based on health tier)
-        ↓
+	        ↓
 4. If tests pass → Create PR / request approval
-        ↓
+	        ↓
 5. Library maintainer reviews/approves
-        ↓
+	        ↓
 6. Publish to npm
 ```
 
@@ -195,7 +195,8 @@ Two separate badge systems for orthogonal concerns:
 ### Display Format
 
 README example:
-```
+
+```markdown
 @tywrapped/numpy
 Quality: 🥇 Gold | Support: upstream (1.24+) | Runtimes: node, browser
 ```
@@ -220,12 +221,17 @@ Quality: 🥇 Gold | Support: upstream (1.24+) | Runtimes: node, browser
 - Node.js environment → Subprocess runtime (safest, no native deps)
 
 **Override for power users:**
+
 ```typescript
 import { setRuntime, InProcessBridge } from '@tywrapped/numpy';
 setRuntime(new InProcessBridge()); // Use node-calls-python for speed
 ```
 
 ### Runtime Packages
+
+Scope policy:
+- `@tywrapped/*` are public library wrappers (e.g., `@tywrapped/numpy`, exports `setRuntime` and `InProcessBridge`)
+- `@tywrap/*` are runtime and infrastructure packages (e.g., `@tywrap/runtime-subprocess`, `@tywrap/runtime-inprocess`, `@tywrap/runtime-pyodide`)
 
 - `@tywrap/runtime-subprocess` - Bundled by default, no native dependencies
 - `@tywrap/runtime-inprocess` - Optional, requires node-calls-python native addon
@@ -302,19 +308,20 @@ Criteria for selection:
 
 The tywrap codebase already has a clean transport abstraction:
 
-```
+```text
 ┌─────────────────────────────────────────┐
 │         Transport Interface             │
 │  init() | send() | dispose() | isReady  │
 └─────────────────┬───────────────────────┘
-                  │ implements
-      ┌───────────┼───────────┐
-      ▼           ▼           ▼
+	                  │ implements
+	      ┌───────────┼───────────┐
+	      ▼           ▼           ▼
  ProcessIO    HttpIO    PyodideIO
  (subprocess) (HTTP)    (WASM)
 ```
 
 **Key interface** (`src/runtime/transport.ts`):
+
 ```typescript
 interface Transport extends Disposable {
   init(): Promise<void>;
@@ -342,7 +349,9 @@ interface Transport extends Disposable {
 | Bridge adapter for node-calls-python | 1 day |
 | Integration tests | 1-2 days |
 | Documentation | 0.5 day |
-| **Total** | **~1 week** |
+| **Total** | **~1-2 weeks (best-case)** |
+
+Best-case assumes a stable `Transport` interface and no first-time runtime-integration surprises; budget extra buffer for native addon quirks, OS differences, and CI iteration.
 
 ### Conclusion
 
@@ -353,26 +362,31 @@ interface Transport extends Disposable {
 ## Next Steps
 
 ### Phase 1: Foundation (before launch)
+
 1. Register "tywrapped" trademark
 2. Set up GitHub org (`tywrapped`) and npm org (`@tywrapped`)
 3. Create Open Collective account
 4. Secure domain (tywrapped.org or similar)
 
 ### Phase 2: Template & Tooling
-5. Create template repository with standardized CI/CD
-6. Build badge generation tooling for health indicators
-7. Document governance charter and contribution guidelines
+
+1. Create template repository with standardized CI/CD
+2. Build badge generation tooling for health indicators
+3. Document governance charter and contribution guidelines
 
 ### Phase 3: Proof of Concept
-8. Build `@tywrapped/numpy` as first package
-9. Validate CI/CD pipeline with real upstream updates
-10. Gather feedback, iterate on template
+
+1. Build `@tywrapped/numpy` as first package
+2. Validate CI/CD pipeline with real upstream updates
+3. Gather feedback, iterate on template
 
 ### Phase 4: Expansion
-11. Add 2-3 more high-priority packages (scipy, scikit-learn)
-12. Recruit initial maintainers
-13. Announce publicly, begin community building
+
+1. Add 2-3 more high-priority packages (scipy, scikit-learn)
+2. Recruit initial maintainers
+3. Announce publicly, begin community building
 
 ### Optional (parallel track)
+
 - Prototype `NodeCallsPythonIO` transport for performance optimization
 - Explore LLM-assisted test porting from Python to TypeScript
