@@ -282,13 +282,12 @@ Quality: 🥇 Gold | Support: upstream (1.24+) | Runtimes: node, browser
 - Browser environment → Pyodide runtime
 - Node.js environment → Subprocess runtime (safest, no native deps)
 
-**Override for power users:**
+**Override for power users (current tywrap API):**
 
 ```typescript
-import { setRuntime } from '@tywrapped/numpy';
-import { InProcessBridge } from '@tywrap/runtime-inprocess';
+import { setRuntimeBridge, NodeBridge } from 'tywrap';
 
-setRuntime(new InProcessBridge()); // Use node-calls-python for speed
+setRuntimeBridge(new NodeBridge()); // Explicit Node.js subprocess runtime
 ```
 
 ### Runtime Packages
@@ -418,8 +417,8 @@ interface Transport extends Disposable {
 The current `Transport` interface is string-based, which is great for simplicity but has practical limits for multi-GB tensors/DataFrames.
 
 High-level strategies (future work):
-- Binary channel: add optional `sendBinary(...)` support (or extend `send(...)` to accept `ArrayBuffer`) and use Transferables where available.
-- Out-of-band transfer: for very large payloads, send references (file paths, HTTP URLs, object-store URIs) instead of inlining data in the message.
+- Binary channel: add optional `sendBinary(...)` support (or extend `send(...)` to accept `ArrayBuffer`) and use `Transferable` objects where available.
+- Out-of-band transfer: for large payloads, send references (file paths, HTTP URLs, object-store URIs) instead of inlining data.
 - Streaming/chunking: add `streamStart`/`streamChunk`/`streamEnd` semantics with backpressure and `AbortSignal`.
 - Capability negotiation: have transports advertise features (binary/streaming) via a meta call (e.g., `getBridgeInfo()` capabilities).
 
