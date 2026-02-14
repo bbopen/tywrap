@@ -16,13 +16,25 @@
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
+import type { BridgeInfo } from '../types/index.js';
+
 import { BoundedContext, type ExecuteOptions } from './bounded-context.js';
+import { BridgeProtocolError } from './errors.js';
 import { SafeCodec, type CodecOptions } from './safe-codec.js';
+import { TYWRAP_PROTOCOL_VERSION } from './protocol.js';
 import { PROTOCOL_ID, type Transport, type ProtocolMessage } from './transport.js';
 
 // =============================================================================
 // TYPES
 // =============================================================================
+
+export interface GetBridgeInfoOptions {
+  /**
+   * If true, bypasses the cached info and queries the bridge again.
+   * This is useful when you want up-to-date instance counts or diagnostics.
+   */
+  refresh?: boolean;
+}
 
 /**
  * Configuration options for BridgeProtocol.
@@ -36,6 +48,129 @@ export interface BridgeProtocolOptions {
 
   /** Default timeout for operations in ms. Default: 30000 (30s) */
   defaultTimeoutMs?: number;
+}
+
+function validateBridgeInfoPayload(value: unknown): BridgeInfo {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+    throw new BridgeProtocolError(`Invalid bridge info payload: expected object, got ${kind}`);
+  }
+
+  interface BridgeInfoWire {
+    protocol?: unknown;
+    protocolVersion?: unknown;
+    bridge?: unknown;
+    pythonVersion?: unknown;
+    pid?: unknown;
+    codecFallback?: unknown;
+    arrowAvailable?: unknown;
+    scipyAvailable?: unknown;
+    torchAvailable?: unknown;
+    sklearnAvailable?: unknown;
+    instances?: unknown;
+  }
+
+  const formatValue = (val: unknown): string => {
+    try {
+      const serialized = JSON.stringify(val);
+      return serialized ?? String(val);
+    } catch {
+      return String(val);
+    }
+  };
+
+  const obj = value as BridgeInfoWire;
+
+  const protocol = obj.protocol;
+  if (protocol !== PROTOCOL_ID) {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: protocol expected "${PROTOCOL_ID}", got ${formatValue(protocol)}`
+    );
+  }
+
+  const protocolVersion = obj.protocolVersion;
+  if (protocolVersion !== TYWRAP_PROTOCOL_VERSION) {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: protocolVersion expected ${TYWRAP_PROTOCOL_VERSION}, got ${formatValue(protocolVersion)}`
+    );
+  }
+
+  const bridge = obj.bridge;
+  if (bridge !== 'python-subprocess') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: bridge expected "python-subprocess", got ${formatValue(bridge)}`
+    );
+  }
+
+  const pythonVersion = obj.pythonVersion;
+  if (typeof pythonVersion !== 'string' || pythonVersion.length === 0) {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: pythonVersion expected non-empty string, got ${formatValue(pythonVersion)}`
+    );
+  }
+
+  const pid = obj.pid;
+  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: pid expected positive integer, got ${formatValue(pid)}`
+    );
+  }
+
+  const codecFallback = obj.codecFallback;
+  if (codecFallback !== 'json' && codecFallback !== 'none') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: codecFallback expected "json" or "none", got ${formatValue(codecFallback)}`
+    );
+  }
+
+  const arrowAvailable = obj.arrowAvailable;
+  if (typeof arrowAvailable !== 'boolean') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: arrowAvailable expected boolean, got ${formatValue(arrowAvailable)}`
+    );
+  }
+
+  const scipyAvailable = obj.scipyAvailable;
+  if (typeof scipyAvailable !== 'boolean') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: scipyAvailable expected boolean, got ${formatValue(scipyAvailable)}`
+    );
+  }
+
+  const torchAvailable = obj.torchAvailable;
+  if (typeof torchAvailable !== 'boolean') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: torchAvailable expected boolean, got ${formatValue(torchAvailable)}`
+    );
+  }
+
+  const sklearnAvailable = obj.sklearnAvailable;
+  if (typeof sklearnAvailable !== 'boolean') {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: sklearnAvailable expected boolean, got ${formatValue(sklearnAvailable)}`
+    );
+  }
+
+  const instances = obj.instances;
+  if (typeof instances !== 'number' || !Number.isInteger(instances) || instances < 0) {
+    throw new BridgeProtocolError(
+      `Invalid bridge info payload: instances expected non-negative integer, got ${formatValue(instances)}`
+    );
+  }
+
+  return {
+    protocol: PROTOCOL_ID,
+    protocolVersion: TYWRAP_PROTOCOL_VERSION,
+    bridge: 'python-subprocess',
+    pythonVersion,
+    pid,
+    codecFallback,
+    arrowAvailable,
+    scipyAvailable,
+    torchAvailable,
+    sklearnAvailable,
+    instances,
+  };
 }
 
 // =============================================================================
@@ -80,6 +215,9 @@ export class BridgeProtocol extends BoundedContext {
   /** Counter for generating unique request IDs */
   private requestId = 0;
 
+  /** Cached bridge diagnostics info (populated by getBridgeInfo). */
+  private bridgeInfoCache?: BridgeInfo;
+
   /**
    * Create a new BridgeProtocol instance.
    *
@@ -117,6 +255,7 @@ export class BridgeProtocol extends BoundedContext {
    * but should not need to dispose the transport manually.
    */
   protected async doDispose(): Promise<void> {
+    this.bridgeInfoCache = undefined;
     // Transport is tracked and will be disposed by BoundedContext
     // Subclasses can override to add additional cleanup
   }
@@ -315,5 +454,30 @@ export class BridgeProtocol extends BoundedContext {
         handle,
       },
     });
+  }
+
+  /**
+   * Fetch bridge diagnostics and feature availability.
+   *
+   * The Python bridge supports a `meta` method that returns protocol and environment info
+   * (including optional codec availability and current instance count).
+   */
+  async getBridgeInfo(options: GetBridgeInfoOptions = {}): Promise<BridgeInfo> {
+    if (!options.refresh && this.bridgeInfoCache) {
+      return this.bridgeInfoCache;
+    }
+
+    const info = await this.sendMessage<BridgeInfo>(
+      {
+        method: 'meta',
+        params: {},
+      },
+      {
+        validate: validateBridgeInfoPayload,
+      }
+    );
+
+    this.bridgeInfoCache = info;
+    return info;
   }
 }
