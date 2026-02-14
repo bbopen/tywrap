@@ -15,6 +15,12 @@ describe('annotation parser', () => {
     expect((t as any).value).toBe('x|y');
   });
 
+  it('parses Literal strings containing spaced pipes', () => {
+    const t = parseAnnotationToPythonType('Literal["a | b"]');
+    expect(t.kind).toBe('literal');
+    expect((t as any).value).toBe('a | b');
+  });
+
   it('parses Union containing nested Literal with commas', () => {
     const t = parseAnnotationToPythonType('Union[Literal["a,b"], str]');
     expect(t.kind).toBe('union');

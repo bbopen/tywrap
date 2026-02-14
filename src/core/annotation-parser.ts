@@ -185,10 +185,13 @@ export function parseAnnotationToPythonType(
     }
 
     // PEP 604 unions: int | str | None
-    if (raw.includes(' | ')) {
+    // Note: split at top-level only (avoid recursing forever on pipes inside quoted Literals).
+    if (raw.includes('|')) {
       const parts = splitTopLevel(raw, '|');
-      const types = parts.map(p => parse(p.trim(), depth + 1));
-      return { kind: 'union', types };
+      if (parts.length > 1) {
+        const types = parts.map(p => parse(p.trim(), depth + 1));
+        return { kind: 'union', types };
+      }
     }
 
     // typing.Union[...]
