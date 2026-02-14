@@ -262,10 +262,7 @@ function typedArrayToPlain(arr: unknown): unknown[] {
     return values.map(value => {
       // Convert BigInt to Number if within safe integer range
       if (typeof value === 'bigint') {
-        if (
-          value >= BigInt(Number.MIN_SAFE_INTEGER) &&
-          value <= BigInt(Number.MAX_SAFE_INTEGER)
-        ) {
+        if (value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)) {
           return Number(value);
         }
       }

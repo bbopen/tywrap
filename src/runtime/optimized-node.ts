@@ -18,4 +18,7 @@
  *
  * This file is maintained for backward compatibility only.
  */
-export { NodeBridge as OptimizedNodeBridge, type NodeBridgeOptions as ProcessPoolOptions } from './node.js';
+export {
+  NodeBridge as OptimizedNodeBridge,
+  type NodeBridgeOptions as ProcessPoolOptions,
+} from './node.js';

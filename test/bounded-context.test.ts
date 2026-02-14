@@ -554,10 +554,13 @@ describe('BoundedContext Bounded Execution', () => {
     it('succeeds within timeout', async () => {
       await context.init();
 
-      const result = await context.testExecute(async () => {
-        await new Promise(resolve => setTimeout(resolve, 10));
-        return 'success';
-      }, { timeoutMs: 1000 });
+      const result = await context.testExecute(
+        async () => {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          return 'success';
+        },
+        { timeoutMs: 1000 }
+      );
 
       expect(result).toBe('success');
     });
@@ -566,20 +569,26 @@ describe('BoundedContext Bounded Execution', () => {
       await context.init();
 
       await expect(
-        context.testExecute(async () => {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          return 'never';
-        }, { timeoutMs: 10 })
+        context.testExecute(
+          async () => {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            return 'never';
+          },
+          { timeoutMs: 10 }
+        )
       ).rejects.toThrow(BridgeTimeoutError);
     });
 
     it('disables timeout when timeoutMs is 0', async () => {
       await context.init();
 
-      const result = await context.testExecute(async () => {
-        await new Promise(resolve => setTimeout(resolve, 10));
-        return 'success';
-      }, { timeoutMs: 0 });
+      const result = await context.testExecute(
+        async () => {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          return 'success';
+        },
+        { timeoutMs: 0 }
+      );
 
       expect(result).toBe('success');
     });
@@ -590,13 +599,16 @@ describe('BoundedContext Bounded Execution', () => {
       await context.init();
       let attempts = 0;
 
-      const result = await context.testExecute(async () => {
-        attempts++;
-        if (attempts < 3) {
-          throw new Error('ECONNRESET');
-        }
-        return 'success';
-      }, { retries: 5, retryDelayMs: 1 });
+      const result = await context.testExecute(
+        async () => {
+          attempts++;
+          if (attempts < 3) {
+            throw new Error('ECONNRESET');
+          }
+          return 'success';
+        },
+        { retries: 5, retryDelayMs: 1 }
+      );
 
       expect(result).toBe('success');
       expect(attempts).toBe(3);
@@ -607,10 +619,13 @@ describe('BoundedContext Bounded Execution', () => {
       let attempts = 0;
 
       await expect(
-        context.testExecute(async () => {
-          attempts++;
-          throw new Error('Logic error');
-        }, { retries: 5, retryDelayMs: 1 })
+        context.testExecute(
+          async () => {
+            attempts++;
+            throw new Error('Logic error');
+          },
+          { retries: 5, retryDelayMs: 1 }
+        )
       ).rejects.toThrow('Logic error');
 
       expect(attempts).toBe(1);
@@ -620,13 +635,16 @@ describe('BoundedContext Bounded Execution', () => {
       await context.init();
       let attempts = 0;
 
-      const result = await context.testExecute(async () => {
-        attempts++;
-        if (attempts < 2) {
-          throw new BridgeTimeoutError('Timeout');
-        }
-        return 'success';
-      }, { retries: 3, retryDelayMs: 1 });
+      const result = await context.testExecute(
+        async () => {
+          attempts++;
+          if (attempts < 2) {
+            throw new BridgeTimeoutError('Timeout');
+          }
+          return 'success';
+        },
+        { retries: 3, retryDelayMs: 1 }
+      );
 
       expect(result).toBe('success');
       expect(attempts).toBe(2);
@@ -637,10 +655,13 @@ describe('BoundedContext Bounded Execution', () => {
       const timestamps: number[] = [];
 
       await expect(
-        context.testExecute(async () => {
-          timestamps.push(Date.now());
-          throw new Error('ECONNRESET');
-        }, { retries: 2, retryDelayMs: 20 })
+        context.testExecute(
+          async () => {
+            timestamps.push(Date.now());
+            throw new Error('ECONNRESET');
+          },
+          { retries: 2, retryDelayMs: 20 }
+        )
       ).rejects.toThrow();
 
       // 3 attempts: initial, +20ms, +40ms
@@ -667,10 +688,13 @@ describe('BoundedContext Bounded Execution', () => {
       await context.init();
       const controller = new AbortController();
 
-      const promise = context.testExecute(async () => {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        return 'never';
-      }, { signal: controller.signal, timeoutMs: 5000 });
+      const promise = context.testExecute(
+        async () => {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return 'never';
+        },
+        { signal: controller.signal, timeoutMs: 5000 }
+      );
 
       setTimeout(() => controller.abort(), 10);
 
@@ -681,10 +705,13 @@ describe('BoundedContext Bounded Execution', () => {
       await context.init();
       const controller = new AbortController();
 
-      const promise = context.testExecute(async () => {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        return 'never';
-      }, { signal: controller.signal, timeoutMs: 0 });
+      const promise = context.testExecute(
+        async () => {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return 'never';
+        },
+        { signal: controller.signal, timeoutMs: 0 }
+      );
 
       setTimeout(() => controller.abort(), 10);
 
@@ -724,9 +751,9 @@ describe('BoundedContext Bounded Execution', () => {
         return result;
       };
 
-      await expect(
-        context.testExecute(async () => -1, { validate })
-      ).rejects.toThrow('Must be positive');
+      await expect(context.testExecute(async () => -1, { validate })).rejects.toThrow(
+        'Must be positive'
+      );
     });
   });
 
@@ -735,9 +762,7 @@ describe('BoundedContext Bounded Execution', () => {
       await context.init();
       await context.dispose();
 
-      await expect(
-        context.testExecute(async () => 'never')
-      ).rejects.toThrow(BridgeDisposedError);
+      await expect(context.testExecute(async () => 'never')).rejects.toThrow(BridgeDisposedError);
     });
   });
 });

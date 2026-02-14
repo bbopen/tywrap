@@ -205,11 +205,9 @@ describeNodeOnly('ndarray Flatten+Reshape', () => {
       try {
         // Create a 2x3x4 array via numpy.arange().reshape()
         // We'll use builtins.eval to construct this
-        const result = await bridge.call<number[][][]>(
-          'builtins',
-          'eval',
-          ['__import__("numpy").arange(24).reshape(2, 3, 4).tolist()']
-        );
+        const result = await bridge.call<number[][][]>('builtins', 'eval', [
+          '__import__("numpy").arange(24).reshape(2, 3, 4).tolist()',
+        ]);
 
         // Verify shape by checking nested structure
         expect(result.length).toBe(2);
@@ -248,16 +246,32 @@ describeNodeOnly('ndarray Flatten+Reshape', () => {
           device?: string;
         }>('torch', 'tensor', [
           [
-            [[1, 2], [3, 4], [5, 6]],
-            [[7, 8], [9, 10], [11, 12]],
+            [
+              [1, 2],
+              [3, 4],
+              [5, 6],
+            ],
+            [
+              [7, 8],
+              [9, 10],
+              [11, 12],
+            ],
           ],
         ]);
 
         expect(result.shape).toEqual([2, 3, 2]);
         expect(result.device).toBe('cpu');
         expect(result.data).toEqual([
-          [[1, 2], [3, 4], [5, 6]],
-          [[7, 8], [9, 10], [11, 12]],
+          [
+            [1, 2],
+            [3, 4],
+            [5, 6],
+          ],
+          [
+            [7, 8],
+            [9, 10],
+            [11, 12],
+          ],
         ]);
       } finally {
         await bridge.dispose();
@@ -340,11 +354,17 @@ describeNodeOnly('ndarray Flatten+Reshape', () => {
           shape?: number[];
           dtype?: string;
         }>('torch', 'tensor', [
-          [[1.5, 2.5], [3.5, 4.5]],
+          [
+            [1.5, 2.5],
+            [3.5, 4.5],
+          ],
         ]);
 
         expect(result.shape).toEqual([2, 2]);
-        expect(result.data).toEqual([[1.5, 2.5], [3.5, 4.5]]);
+        expect(result.data).toEqual([
+          [1.5, 2.5],
+          [3.5, 4.5],
+        ]);
         // dtype should be float32 or float64
         expect(result.dtype).toMatch(/float/);
       } finally {
@@ -372,12 +392,24 @@ describeNodeOnly('ndarray Flatten+Reshape', () => {
         // Create a 2x2x2x2 tensor (batch x channels x height x width)
         const input = [
           [
-            [[1, 2], [3, 4]],
-            [[5, 6], [7, 8]],
+            [
+              [1, 2],
+              [3, 4],
+            ],
+            [
+              [5, 6],
+              [7, 8],
+            ],
           ],
           [
-            [[9, 10], [11, 12]],
-            [[13, 14], [15, 16]],
+            [
+              [9, 10],
+              [11, 12],
+            ],
+            [
+              [13, 14],
+              [15, 16],
+            ],
           ],
         ];
 

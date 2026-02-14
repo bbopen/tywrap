@@ -319,8 +319,14 @@ export class WorkerPool extends BoundedContext {
    * - Process exited unexpectedly
    * - Pipe errors (EPIPE)
    * - Connection reset errors (ECONNRESET)
+   * - Request timeouts (the worker may still be busy with an uncancellable request)
    */
   private isFatalWorkerError(error: unknown): boolean {
+    // If a request times out, the underlying transport may still be executing it.
+    // Quarantine this worker so subsequent requests don't get stuck behind it.
+    if (error instanceof BridgeTimeoutError) {
+      return true;
+    }
     if (error instanceof BridgeProtocolError) {
       const msg = error.message.toLowerCase();
       return (

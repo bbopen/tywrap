@@ -64,9 +64,7 @@ function createMockTransport(): Transport {
 /**
  * Create a valid ProtocolMessage for testing.
  */
-function createValidMessage(
-  overrides: Partial<ProtocolMessage> = {}
-): ProtocolMessage {
+function createValidMessage(overrides: Partial<ProtocolMessage> = {}): ProtocolMessage {
   return {
     id: 1,
     protocol: PROTOCOL_ID,
@@ -83,9 +81,7 @@ function createValidMessage(
 /**
  * Create a valid ProtocolResponse for testing.
  */
-function createValidResponse(
-  overrides: Partial<ProtocolResponse> = {}
-): ProtocolResponse {
+function createValidResponse(overrides: Partial<ProtocolResponse> = {}): ProtocolResponse {
   return {
     id: 1,
     result: 4,
@@ -294,7 +290,12 @@ describe('Transport Interface', () => {
     });
 
     it('returns true for message with full params', () => {
-      const msg = { id: 1, protocol: PROTOCOL_ID, method: 'call', params: { module: 'math', functionName: 'sqrt', args: [16], kwargs: { key: 'value' } } };
+      const msg = {
+        id: 1,
+        protocol: PROTOCOL_ID,
+        method: 'call',
+        params: { module: 'math', functionName: 'sqrt', args: [16], kwargs: { key: 'value' } },
+      };
       expect(isProtocolMessage(msg)).toBe(true);
     });
   });
@@ -562,7 +563,10 @@ describe('ProcessIO', () => {
 
       const firstId = 201;
       const secondId = 202;
-      const firstPending = transport.send(JSON.stringify(createValidMessage({ id: firstId })), 1000);
+      const firstPending = transport.send(
+        JSON.stringify(createValidMessage({ id: firstId })),
+        1000
+      );
       const secondPending = transport.send(
         JSON.stringify(createValidMessage({ id: secondId })),
         1000
@@ -616,16 +620,12 @@ describe('ProcessIO', () => {
 
     it('instantiate throws BridgeExecutionError synchronously', () => {
       const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
-      expect(() => transport.instantiate('module', 'Class', [])).toThrow(
-        BridgeExecutionError
-      );
+      expect(() => transport.instantiate('module', 'Class', [])).toThrow(BridgeExecutionError);
     });
 
     it('callMethod throws BridgeExecutionError synchronously', () => {
       const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
-      expect(() => transport.callMethod('handle', 'method', [])).toThrow(
-        BridgeExecutionError
-      );
+      expect(() => transport.callMethod('handle', 'method', [])).toThrow(BridgeExecutionError);
     });
 
     it('disposeInstance throws BridgeExecutionError synchronously', () => {
@@ -809,9 +809,7 @@ describe('HttpIO', () => {
     });
 
     it('handles network errors', async () => {
-      const mockFetch = vi
-        .fn()
-        .mockRejectedValue(new TypeError('fetch failed: network error'));
+      const mockFetch = vi.fn().mockRejectedValue(new TypeError('fetch failed: network error'));
       globalThis.fetch = mockFetch;
 
       const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
@@ -843,12 +841,10 @@ describe('HttpIO', () => {
       const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
-      await expect(
-        transport.send(message, 1000, controller.signal)
-      ).rejects.toThrow(BridgeTimeoutError);
-      await expect(
-        transport.send(message, 1000, controller.signal)
-      ).rejects.toThrow(/aborted/);
+      await expect(transport.send(message, 1000, controller.signal)).rejects.toThrow(
+        BridgeTimeoutError
+      );
+      await expect(transport.send(message, 1000, controller.signal)).rejects.toThrow(/aborted/);
     });
 
     it('passes abort signal to fetch', async () => {
@@ -1037,12 +1033,8 @@ describe('PyodideIO', () => {
         },
       };
 
-      await expect(transport.send('invalid json', 1000)).rejects.toThrow(
-        BridgeProtocolError
-      );
-      await expect(transport.send('invalid json', 1000)).rejects.toThrow(
-        /Invalid JSON message/
-      );
+      await expect(transport.send('invalid json', 1000)).rejects.toThrow(BridgeProtocolError);
+      await expect(transport.send('invalid json', 1000)).rejects.toThrow(/Invalid JSON message/);
     });
 
     it('validates message has required fields', async () => {
@@ -1056,12 +1048,8 @@ describe('PyodideIO', () => {
       };
 
       const invalidMessage = JSON.stringify({ args: [] }); // Missing id and type
-      await expect(transport.send(invalidMessage, 1000)).rejects.toThrow(
-        BridgeProtocolError
-      );
-      await expect(transport.send(invalidMessage, 1000)).rejects.toThrow(
-        /missing required fields/
-      );
+      await expect(transport.send(invalidMessage, 1000)).rejects.toThrow(BridgeProtocolError);
+      await expect(transport.send(invalidMessage, 1000)).rejects.toThrow(/missing required fields/);
     });
 
     it('rejects when Pyodide not initialized', async () => {
@@ -1209,15 +1197,9 @@ describe('PyodideIO', () => {
       const result = await transport.call<number>('math', 'sqrt', [16]);
       expect(result).toBe(4);
 
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"method":"call"')
-      );
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"module":"math"')
-      );
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"functionName":"sqrt"')
-      );
+      expect(mockDispatch).toHaveBeenCalledWith(expect.stringContaining('"method":"call"'));
+      expect(mockDispatch).toHaveBeenCalledWith(expect.stringContaining('"module":"math"'));
+      expect(mockDispatch).toHaveBeenCalledWith(expect.stringContaining('"functionName":"sqrt"'));
     });
 
     it('instantiate constructs and sends instantiate message', async () => {
@@ -1238,12 +1220,8 @@ describe('PyodideIO', () => {
       const result = await transport.instantiate<string>('mymodule', 'MyClass', [1, 2]);
       expect(result).toBe('handle-123');
 
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"method":"instantiate"')
-      );
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"className":"MyClass"')
-      );
+      expect(mockDispatch).toHaveBeenCalledWith(expect.stringContaining('"method":"instantiate"'));
+      expect(mockDispatch).toHaveBeenCalledWith(expect.stringContaining('"className":"MyClass"'));
     });
 
     it('callMethod constructs and sends call_method message', async () => {
@@ -1264,15 +1242,9 @@ describe('PyodideIO', () => {
       const result = await transport.callMethod<string>('handle-123', 'myMethod', []);
       expect(result).toBe('method result');
 
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"method":"call_method"')
-      );
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"handle":"handle-123"')
-      );
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"methodName":"myMethod"')
-      );
+      expect(mockDispatch).toHaveBeenCalledWith(expect.stringContaining('"method":"call_method"'));
+      expect(mockDispatch).toHaveBeenCalledWith(expect.stringContaining('"handle":"handle-123"'));
+      expect(mockDispatch).toHaveBeenCalledWith(expect.stringContaining('"methodName":"myMethod"'));
     });
 
     it('disposeInstance constructs and sends dispose_instance message', async () => {
@@ -1295,9 +1267,7 @@ describe('PyodideIO', () => {
       expect(mockDispatch).toHaveBeenCalledWith(
         expect.stringContaining('"method":"dispose_instance"')
       );
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.stringContaining('"handle":"handle-123"')
-      );
+      expect(mockDispatch).toHaveBeenCalledWith(expect.stringContaining('"handle":"handle-123"'));
     });
 
     it('call throws BridgeExecutionError on Python error', async () => {
@@ -1322,9 +1292,7 @@ describe('PyodideIO', () => {
         },
       };
 
-      await expect(transport.call('math', 'sqrt', [-1])).rejects.toThrow(
-        BridgeExecutionError
-      );
+      await expect(transport.call('math', 'sqrt', [-1])).rejects.toThrow(BridgeExecutionError);
       await expect(transport.call('math', 'sqrt', [-1])).rejects.toThrow(
         /ValueError: invalid argument/
       );

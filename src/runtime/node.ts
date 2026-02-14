@@ -73,8 +73,7 @@ export interface NodeBridgeOptions {
 
   /** Commands to run on each process at startup for warming up. */
   warmupCommands?: Array<
-    | { module: string; functionName: string; args?: unknown[] }
-    | { method: string; params: unknown } // Legacy format for backwards compatibility
+    { module: string; functionName: string; args?: unknown[] } | { method: string; params: unknown } // Legacy format for backwards compatibility
   >;
 
   // ===========================================================================
@@ -121,8 +120,7 @@ interface ResolvedOptions {
   env: Record<string, string | undefined>;
   codec?: CodecOptions;
   warmupCommands: Array<
-    | { module: string; functionName: string; args?: unknown[] }
-    | { method: string; params: unknown }
+    { module: string; functionName: string; args?: unknown[] } | { method: string; params: unknown }
   >;
 }
 
@@ -188,9 +186,7 @@ function getEnvValue(env: Record<string, string>, key: string): string | undefin
 
 function assertSafeEnvOverrideKey(key: string): void {
   if (DANGEROUS_ENV_OVERRIDE_KEYS.has(key)) {
-    throw new BridgeProtocolError(
-      `Invalid environment override key "${key}" in options.env`
-    );
+    throw new BridgeProtocolError(`Invalid environment override key "${key}" in options.env`);
   }
 }
 
@@ -275,9 +271,10 @@ export class NodeBridge extends BridgeProtocol {
     const processEnv = buildProcessEnv(resolvedOptions);
 
     // Create warmup callback for per-worker initialization
-    const onWorkerReady = resolvedOptions.warmupCommands.length > 0
-      ? createWarmupCallback(resolvedOptions.warmupCommands, resolvedOptions.timeoutMs)
-      : undefined;
+    const onWorkerReady =
+      resolvedOptions.warmupCommands.length > 0
+        ? createWarmupCallback(resolvedOptions.warmupCommands, resolvedOptions.timeoutMs)
+        : undefined;
 
     // Create pooled transport with ProcessIO workers
     const transport = new PooledTransport({
@@ -500,8 +497,7 @@ function generateWarmupId(): string {
  */
 function createWarmupCallback(
   warmupCommands: Array<
-    | { module: string; functionName: string; args?: unknown[] }
-    | { method: string; params: unknown }
+    { module: string; functionName: string; args?: unknown[] } | { method: string; params: unknown }
   >,
   timeoutMs: number
 ): (worker: PooledWorker) => Promise<void> {

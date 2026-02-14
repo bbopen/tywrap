@@ -39,6 +39,7 @@ type DeepPartial<T> = {
  */
 const DEFAULT_CONFIG: TywrapConfig = {
   pythonModules: {},
+  pythonImportPath: [],
   output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false },
   runtime: { node: { pythonPath: getDefaultPythonPath(), timeout: 30000 } },
   performance: { caching: false, batching: false, compression: 'none' },
@@ -89,6 +90,7 @@ function safeExists(path: string): boolean {
 function validateConfig(config: TywrapConfig): void {
   const allowedTopLevel = new Set([
     'pythonModules',
+    'pythonImportPath',
     'output',
     'runtime',
     'performance',
@@ -105,6 +107,15 @@ function validateConfig(config: TywrapConfig): void {
   const out: OutputConfig = config.output;
   if (typeof out.dir !== 'string') {
     throw new Error('output.dir must be a string');
+  }
+
+  if (config.pythonImportPath !== undefined) {
+    if (
+      !Array.isArray(config.pythonImportPath) ||
+      config.pythonImportPath.some(p => typeof p !== 'string')
+    ) {
+      throw new Error('pythonImportPath must be an array of strings');
+    }
   }
   if (!['esm', 'cjs', 'both'].includes(out.format)) {
     throw new Error('output.format must be one of "esm", "cjs" or "both"');

@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { generate } from '../src/tywrap.js';
 import { processUtils, fsUtils } from '../src/utils/runtime.js';
 import { NodeBridge } from '../src/runtime/node.js';
@@ -45,6 +48,37 @@ describe('IR-only integration', () => {
     expect(content).toContain('export async function');
     expect(content).toContain("getRuntimeBridge().call('math', 'sqrt'");
   });
+
+  it('supports local Python modules via pythonImportPath', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-pythonImportPath-'));
+    try {
+      const importDir = join(tempDir, 'py');
+      await mkdir(importDir, { recursive: true });
+      await writeFile(
+        join(importDir, 'local_module.py'),
+        `def add(a: int, b: int) -> int:\n  return a + b\n\n# Should be excluded by default export filtering\ndef dataclass(x):\n  return x\n`,
+        'utf-8'
+      );
+
+      const outDir = join(tempDir, 'generated');
+      const res = await generate({
+        pythonModules: { local_module: { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: [importDir],
+        output: { dir: outDir, format: 'esm', declaration: false, sourceMap: false },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+        development: { hotReload: false, sourceMap: false, validation: 'none' },
+      } as any);
+
+      expect(res.written.some(p => p.endsWith('local_module.generated.ts'))).toBe(true);
+      const content = await fsUtils.readFile(join(outDir, 'local_module.generated.ts'));
+      expect(content).toContain('local_module');
+      expect(content).toContain('add');
+      expect(content).not.toContain("call('local_module', 'dataclass'");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 describe('NodeBridge smoke', () => {

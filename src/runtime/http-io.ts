@@ -135,7 +135,8 @@ export class HttpIO implements Transport {
 
     // Determine effective timeout
     // 0 = no timeout (per interface contract), negative = use default
-    const effectiveTimeout = timeoutMs === 0 ? 0 : timeoutMs > 0 ? timeoutMs : this.defaultTimeoutMs;
+    const effectiveTimeout =
+      timeoutMs === 0 ? 0 : timeoutMs > 0 ? timeoutMs : this.defaultTimeoutMs;
 
     // Create abort controller for timeout
     const controller = new AbortController();

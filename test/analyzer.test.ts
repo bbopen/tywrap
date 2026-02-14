@@ -200,6 +200,24 @@ def documented():
       expect(func?.docstring).toBe('This is a docstring.');
     });
 
+    it('should strip docstring prefixes (r/u/f/b and combos) before unquoting', async () => {
+      const source = `
+def raw_doc():
+    r"""Raw docstring."""
+    pass
+
+def combo_doc():
+    rf"""Combo docstring."""
+    pass
+`;
+      const result = await analyzer.analyzePythonModule(source);
+
+      expect(result.module.functions).toHaveLength(2);
+      const byName = Object.fromEntries(result.module.functions.map(f => [f.name, f]));
+      expect(byName.raw_doc?.docstring).toBe('Raw docstring.');
+      expect(byName.combo_doc?.docstring).toBe('Combo docstring.');
+    });
+
     it('should extract multiple functions', async () => {
       const source = `
 def foo():
@@ -280,6 +298,27 @@ class Person:
 
       const cls = result.module.classes[0];
       expect(cls?.properties.length).toBeGreaterThan(0);
+    });
+
+    it('should not treat method-local assignments as properties and should not extract nested functions as methods', async () => {
+      const source = `
+class C:
+    x = 1
+
+    def m(self):
+        y = 2
+        def inner():
+            return 1
+        return inner()
+`;
+      const result = await analyzer.analyzePythonModule(source);
+
+      expect(result.module.functions).toHaveLength(0);
+      expect(result.module.classes).toHaveLength(1);
+      const cls = result.module.classes[0];
+      expect(cls?.methods.map(m => m.name)).toEqual(['m']);
+      expect(cls?.properties.map(p => p.name)).toContain('x');
+      expect(cls?.properties.map(p => p.name)).not.toContain('y');
     });
   });
 
@@ -614,8 +653,7 @@ def outer():
 `;
       const result = await analyzer.analyzePythonModule(source);
 
-      // At minimum, the outer function should be extracted
-      expect(result.module.functions.length).toBeGreaterThanOrEqual(1);
+      expect(result.module.functions).toHaveLength(1);
       expect(result.module.functions[0]?.name).toBe('outer');
     });
 

@@ -7,7 +7,11 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SafeCodec, type CodecOptions } from '../src/runtime/safe-codec.js';
-import { BridgeProtocolError, BridgeExecutionError } from '../src/runtime/errors.js';
+import {
+  BridgeCodecError,
+  BridgeProtocolError,
+  BridgeExecutionError,
+} from '../src/runtime/errors.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CODEC OPTIONS DEFAULTS
@@ -18,10 +22,10 @@ describe('CodecOptions defaults', () => {
     const codec = new SafeCodec();
     // Test defaults by verifying behavior
     // rejectSpecialFloats defaults to true
-    expect(() => codec.encodeRequest(NaN)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(NaN)).toThrow(BridgeCodecError);
     // rejectNonStringKeys defaults to true
     const mapWithNumberKey = new Map<number, string>([[1, 'value']]);
-    expect(() => codec.encodeRequest(mapWithNumberKey)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(mapWithNumberKey)).toThrow(BridgeCodecError);
     // maxPayloadBytes defaults to 10MB (tested via a smaller payload that should pass)
     expect(() => codec.encodeRequest({ small: 'data' })).not.toThrow();
   });
@@ -45,7 +49,7 @@ describe('CodecOptions defaults', () => {
 
     // But exceeding the custom limit should still throw
     const largeData = { data: 'x'.repeat(200) };
-    expect(() => codec.encodeRequest(largeData)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(largeData)).toThrow(BridgeCodecError);
   });
 
   it('uses bytesHandling default of base64', () => {
@@ -70,36 +74,36 @@ describe('encodeRequest - Special Float Rejection', () => {
   });
 
   it('rejects NaN at top level', () => {
-    expect(() => codec.encodeRequest(NaN)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(NaN)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(NaN)).toThrow(/non-finite number.*NaN or Infinity/);
     expect(() => codec.encodeRequest(NaN)).toThrow(/at root/);
   });
 
   it('rejects Infinity at top level', () => {
-    expect(() => codec.encodeRequest(Infinity)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(Infinity)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(Infinity)).toThrow(/non-finite number/);
   });
 
   it('rejects -Infinity at top level', () => {
-    expect(() => codec.encodeRequest(-Infinity)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(-Infinity)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(-Infinity)).toThrow(/non-finite number/);
   });
 
   it('rejects NaN nested in objects', () => {
     const data = { a: { b: { c: NaN } } };
-    expect(() => codec.encodeRequest(data)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(data)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(data)).toThrow(/at a\.b\.c/);
   });
 
   it('rejects NaN nested in arrays', () => {
     const data = [1, 2, [3, NaN]];
-    expect(() => codec.encodeRequest(data)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(data)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(data)).toThrow(/at \[2\]\[1\]/);
   });
 
   it('rejects Infinity nested in mixed structures', () => {
     const data = { arr: [1, { deep: Infinity }] };
-    expect(() => codec.encodeRequest(data)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(data)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(data)).toThrow(/at arr\[1\]\.deep/);
   });
 
@@ -135,8 +139,11 @@ describe('encodeRequest - Non-String Key Rejection', () => {
   });
 
   it('rejects Map with number keys', () => {
-    const map = new Map<number, string>([[1, 'one'], [2, 'two']]);
-    expect(() => codec.encodeRequest({ data: map })).toThrow(BridgeProtocolError);
+    const map = new Map<number, string>([
+      [1, 'one'],
+      [2, 'two'],
+    ]);
+    expect(() => codec.encodeRequest({ data: map })).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest({ data: map })).toThrow(/Non-string key.*Map/);
     expect(() => codec.encodeRequest({ data: map })).toThrow(/1.*number/);
   });
@@ -144,7 +151,7 @@ describe('encodeRequest - Non-String Key Rejection', () => {
   it('rejects Map with object keys', () => {
     const objKey = { id: 1 };
     const map = new Map<object, string>([[objKey, 'value']]);
-    expect(() => codec.encodeRequest({ data: map })).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest({ data: map })).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest({ data: map })).toThrow(/Non-string key.*Map/);
     expect(() => codec.encodeRequest({ data: map })).toThrow(/object/);
   });
@@ -152,12 +159,15 @@ describe('encodeRequest - Non-String Key Rejection', () => {
   it('rejects Map with symbol keys', () => {
     const sym = Symbol('test');
     const map = new Map<symbol, string>([[sym, 'value']]);
-    expect(() => codec.encodeRequest({ data: map })).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest({ data: map })).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest({ data: map })).toThrow(/symbol/);
   });
 
   it('passes Map with string keys', () => {
-    const map = new Map<string, number>([['a', 1], ['b', 2]]);
+    const map = new Map<string, number>([
+      ['a', 1],
+      ['b', 2],
+    ]);
     // Note: JSON.stringify doesn't serialize Maps to objects by default
     // It will serialize to {} or needs a replacer, so we just verify validation passes
     expect(() => codec.encodeRequest({ data: map })).not.toThrow();
@@ -171,21 +181,21 @@ describe('encodeRequest - Non-String Key Rejection', () => {
   it('rejects objects with symbol keys', () => {
     const sym = Symbol('hidden');
     const obj = { visible: 'value', [sym]: 'hidden' };
-    expect(() => codec.encodeRequest(obj)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(obj)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(obj)).toThrow(/Symbol key found/);
   });
 
   it('detects non-string keys in nested structures', () => {
     const innerMap = new Map<number, string>([[42, 'answer']]);
     const data = { outer: { inner: innerMap } };
-    expect(() => codec.encodeRequest(data)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(data)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(data)).toThrow(/at outer\.inner/);
   });
 
   it('detects non-string keys in Maps nested in arrays', () => {
     const map = new Map<number, string>([[1, 'one']]);
     const data = [{ maps: [map] }];
-    expect(() => codec.encodeRequest(data)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(data)).toThrow(BridgeCodecError);
   });
 
   it('can be disabled via rejectNonStringKeys: false', () => {
@@ -204,7 +214,7 @@ describe('encodeRequest - Size Limits', () => {
   it('rejects payload exceeding maxPayloadBytes', () => {
     const codec = new SafeCodec({ maxPayloadBytes: 100 });
     const largeData = { data: 'x'.repeat(200) };
-    expect(() => codec.encodeRequest(largeData)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(largeData)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(largeData)).toThrow(/exceeds maximum/);
     expect(() => codec.encodeRequest(largeData)).toThrow(/100 bytes/);
   });
@@ -220,7 +230,7 @@ describe('encodeRequest - Size Limits', () => {
     const smallData = { a: 1 };
     expect(() => tinyCodec.encodeRequest(smallData)).not.toThrow();
     const biggerData = { data: 'x'.repeat(100) };
-    expect(() => tinyCodec.encodeRequest(biggerData)).toThrow(BridgeProtocolError);
+    expect(() => tinyCodec.encodeRequest(biggerData)).toThrow(BridgeCodecError);
   });
 
   it('default limit is 10MB', () => {
@@ -238,7 +248,7 @@ describe('encodeRequest - Size Limits', () => {
     const payload = JSON.stringify(emojiData);
     const actualBytes = new TextEncoder().encode(payload).length;
     if (actualBytes > 50) {
-      expect(() => codec.encodeRequest(emojiData)).toThrow(BridgeProtocolError);
+      expect(() => codec.encodeRequest(emojiData)).toThrow(BridgeCodecError);
     }
   });
 });
@@ -248,26 +258,26 @@ describe('encodeRequest - Size Limits', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('encodeRequest - Serialization Errors', () => {
-  it('circular references throw BridgeProtocolError by default', () => {
+  it('circular references throw BridgeCodecError by default', () => {
     const codec = new SafeCodec();
     const circular: Record<string, unknown> = { a: 1 };
     circular.self = circular;
-    expect(() => codec.encodeRequest(circular)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(circular)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(circular)).toThrow(/JSON serialization failed/);
   });
 
-  it('circular references throw BridgeProtocolError when validation guardrails are disabled', () => {
+  it('circular references throw BridgeCodecError when validation guardrails are disabled', () => {
     const codec = new SafeCodec({ rejectSpecialFloats: false, rejectNonStringKeys: false });
     const circular: Record<string, unknown> = { a: 1 };
     circular.self = circular;
-    expect(() => codec.encodeRequest(circular)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(circular)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(circular)).toThrow(/JSON serialization failed/);
   });
 
-  it('BigInt throws BridgeProtocolError', () => {
+  it('BigInt throws BridgeCodecError', () => {
     const codec = new SafeCodec();
     const data = { value: BigInt(12345678901234567890n) };
-    expect(() => codec.encodeRequest(data)).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest(data)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(data)).toThrow(/JSON serialization failed/);
   });
 
@@ -315,7 +325,7 @@ describe('encodeRequest - Bytes Handling', () => {
   it('rejects binary data when bytesHandling is reject', () => {
     const codec = new SafeCodec({ bytesHandling: 'reject' });
     const bytes = new Uint8Array([1, 2, 3]);
-    expect(() => codec.encodeRequest({ data: bytes })).toThrow(BridgeProtocolError);
+    expect(() => codec.encodeRequest({ data: bytes })).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest({ data: bytes })).toThrow(/binary data found/);
     expect(() => codec.encodeRequest({ data: bytes })).toThrow(/bytesHandling: reject/);
   });
@@ -359,20 +369,20 @@ describe('decodeResponse - Basic', () => {
     expect(codec.decodeResponse<null>('null')).toBe(null);
   });
 
-  it('throws BridgeProtocolError on invalid JSON', () => {
-    expect(() => codec.decodeResponse('not json')).toThrow(BridgeProtocolError);
+  it('throws BridgeCodecError on invalid JSON', () => {
+    expect(() => codec.decodeResponse('not json')).toThrow(BridgeCodecError);
     expect(() => codec.decodeResponse('not json')).toThrow(/JSON parse failed/);
   });
 
-  it('throws BridgeProtocolError on malformed JSON', () => {
-    expect(() => codec.decodeResponse('{"a": }')).toThrow(BridgeProtocolError);
-    expect(() => codec.decodeResponse('{unterminated')).toThrow(BridgeProtocolError);
+  it('throws BridgeCodecError on malformed JSON', () => {
+    expect(() => codec.decodeResponse('{"a": }')).toThrow(BridgeCodecError);
+    expect(() => codec.decodeResponse('{unterminated')).toThrow(BridgeCodecError);
   });
 
   it('respects maxPayloadBytes on response', () => {
     const smallCodec = new SafeCodec({ maxPayloadBytes: 50 });
     const largePayload = JSON.stringify({ data: 'x'.repeat(100) });
-    expect(() => smallCodec.decodeResponse(largePayload)).toThrow(BridgeProtocolError);
+    expect(() => smallCodec.decodeResponse(largePayload)).toThrow(BridgeCodecError);
     expect(() => smallCodec.decodeResponse(largePayload)).toThrow(/exceeds maximum/);
   });
 });
@@ -413,7 +423,8 @@ describe('decodeResponse - Error Detection', () => {
       error: {
         type: 'RuntimeError',
         message: 'something failed',
-        traceback: 'Traceback (most recent call last):\n  File "test.py", line 1\nRuntimeError: something failed',
+        traceback:
+          'Traceback (most recent call last):\n  File "test.py", line 1\nRuntimeError: something failed',
       },
     });
     try {
@@ -509,11 +520,11 @@ describe('decodeResponseAsync - Arrow Integration', () => {
   it('respects maxPayloadBytes', async () => {
     const smallCodec = new SafeCodec({ maxPayloadBytes: 50 });
     const largePayload = JSON.stringify({ data: 'x'.repeat(100) });
-    await expect(smallCodec.decodeResponseAsync(largePayload)).rejects.toThrow(BridgeProtocolError);
+    await expect(smallCodec.decodeResponseAsync(largePayload)).rejects.toThrow(BridgeCodecError);
   });
 
-  it('throws BridgeProtocolError on invalid JSON', async () => {
-    await expect(codec.decodeResponseAsync('not json')).rejects.toThrow(BridgeProtocolError);
+  it('throws BridgeCodecError on invalid JSON', async () => {
+    await expect(codec.decodeResponseAsync('not json')).rejects.toThrow(BridgeCodecError);
     await expect(codec.decodeResponseAsync('not json')).rejects.toThrow(/JSON parse failed/);
   });
 
@@ -674,7 +685,11 @@ describe('Edge Cases', () => {
   });
 
   it('handles unicode strings', () => {
-    const data = { emoji: '\u{1F600}\u{1F389}', chinese: '\u4E2D\u6587', arabic: '\u0627\u0644\u0639\u0631\u0628\u064A\u0629' };
+    const data = {
+      emoji: '\u{1F600}\u{1F389}',
+      chinese: '\u4E2D\u6587',
+      arabic: '\u0627\u0644\u0639\u0631\u0628\u064A\u0629',
+    };
     const encoded = codec.encodeRequest(data);
     const decoded = codec.decodeResponse<typeof data>(encoded);
     expect(decoded).toEqual(data);

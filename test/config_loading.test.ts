@@ -37,8 +37,12 @@ export default defineConfig({ debug: true });
     const dir = await mkdtemp(join(process.cwd(), '.tmp-tywrap-config-ro-'));
     const configPath = join(dir, 'tywrap.config.ts');
 
-    await writeFile(configPath, `export default { debug: true };
-`, 'utf-8');
+    await writeFile(
+      configPath,
+      `export default { debug: true };
+`,
+      'utf-8'
+    );
     await chmod(dir, 0o555);
 
     try {
@@ -49,5 +53,4 @@ export default defineConfig({ debug: true });
       await rm(dir, { recursive: true, force: true });
     }
   });
-
 });

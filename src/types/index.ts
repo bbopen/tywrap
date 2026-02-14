@@ -47,6 +47,8 @@ export interface Parameter {
   defaultValue?: unknown;
   varArgs: boolean;
   kwArgs: boolean;
+  positionalOnly?: boolean;
+  keywordOnly?: boolean;
 }
 
 export interface Property {
@@ -242,6 +244,11 @@ export type RuntimeStrategy = 'pyodide' | 'node' | 'http' | 'auto';
 
 export interface TywrapOptions {
   pythonModules: Record<string, PythonModuleConfig>;
+  /**
+   * Additional Python import paths to prepend to PYTHONPATH during code generation
+   * and discovery (IR extraction). Useful for local modules not installed in site-packages.
+   */
+  pythonImportPath?: string[];
   output: OutputConfig;
   runtime: RuntimeConfig;
   performance: PerformanceConfig;
@@ -255,6 +262,10 @@ export interface PythonModuleConfig {
   runtime: RuntimeStrategy;
   functions?: string[];
   classes?: string[];
+  /** Exclude specific exports by exact name. */
+  exclude?: string[];
+  /** Exclude exports matching one or more regex patterns (JavaScript RegExp source). */
+  excludePatterns?: string[];
   alias?: string;
   typeHints: 'strict' | 'loose' | 'ignore';
   watch?: boolean;

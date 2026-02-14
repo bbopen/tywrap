@@ -232,7 +232,10 @@ export class ProcessIO extends BoundedContext implements Transport {
     }
 
     // Check for restart condition (either scheduled restart or forced by stream error)
-    if (this.needsRestart || (this.restartAfterRequests > 0 && this.requestCount >= this.restartAfterRequests)) {
+    if (
+      this.needsRestart ||
+      (this.restartAfterRequests > 0 && this.requestCount >= this.restartAfterRequests)
+    ) {
       await this.restartProcess();
     }
 
@@ -318,9 +321,7 @@ export class ProcessIO extends BoundedContext implements Transport {
   protected async doDispose(): Promise<void> {
     // Reject all pending requests
     const stderrTail = this.getStderrTail();
-    const msg = stderrTail
-      ? `Transport disposed. Stderr:\n${stderrTail}`
-      : 'Transport disposed';
+    const msg = stderrTail ? `Transport disposed. Stderr:\n${stderrTail}` : 'Transport disposed';
     const error = new BridgeDisposedError(msg);
 
     for (const [, pending] of this.pending) {
@@ -539,16 +540,10 @@ export class ProcessIO extends BoundedContext implements Transport {
     this.stdoutBuffer += chunk.toString();
 
     // Check for excessive line length without newline
-    if (
-      this.stdoutBuffer.length > this.maxLineLength &&
-      !this.stdoutBuffer.includes('\n')
-    ) {
+    if (this.stdoutBuffer.length > this.maxLineLength && !this.stdoutBuffer.includes('\n')) {
       const snippet = this.stdoutBuffer.slice(0, 500);
       this.stdoutBuffer = '';
-      this.handleProtocolError(
-        `Response line exceeded ${this.maxLineLength} bytes`,
-        snippet
-      );
+      this.handleProtocolError(`Response line exceeded ${this.maxLineLength} bytes`, snippet);
       return;
     }
 
@@ -566,10 +561,7 @@ export class ProcessIO extends BoundedContext implements Transport {
       // Check line length
       if (line.length > this.maxLineLength) {
         const snippet = line.slice(0, 500);
-        this.handleProtocolError(
-          `Response line exceeded ${this.maxLineLength} bytes`,
-          snippet
-        );
+        this.handleProtocolError(`Response line exceeded ${this.maxLineLength} bytes`, snippet);
         return;
       }
 
@@ -616,9 +608,7 @@ export class ProcessIO extends BoundedContext implements Transport {
 
       // Keep only the tail
       if (this.stderrBuffer.length > MAX_STDERR_BYTES) {
-        this.stderrBuffer = this.stderrBuffer.slice(
-          this.stderrBuffer.length - MAX_STDERR_BYTES
-        );
+        this.stderrBuffer = this.stderrBuffer.slice(this.stderrBuffer.length - MAX_STDERR_BYTES);
       }
     } catch {
       // Ignore stderr buffering errors
@@ -676,9 +666,7 @@ export class ProcessIO extends BoundedContext implements Transport {
    */
   private handleStdinError(err: Error): void {
     // EPIPE means process died
-    const error = new BridgeProtocolError(
-      this.withStderrTail(`stdin error: ${err.message}`)
-    );
+    const error = new BridgeProtocolError(this.withStderrTail(`stdin error: ${err.message}`));
 
     // Reject all pending writes
     for (const queued of this.writeQueue) {
@@ -699,9 +687,7 @@ export class ProcessIO extends BoundedContext implements Transport {
    * This can occur during pipe errors or when the process crashes.
    */
   private handleStdoutError(err: Error): void {
-    const error = new BridgeProtocolError(
-      this.withStderrTail(`stdout error: ${err.message}`)
-    );
+    const error = new BridgeProtocolError(this.withStderrTail(`stdout error: ${err.message}`));
     this.rejectAllPending(error);
     this.markForRestart();
   }
@@ -712,9 +698,7 @@ export class ProcessIO extends BoundedContext implements Transport {
    */
   private handleStderrError(err: Error): void {
     // Stderr errors are less critical but still indicate process health issues
-    const error = new BridgeProtocolError(
-      this.withStderrTail(`stderr error: ${err.message}`)
-    );
+    const error = new BridgeProtocolError(this.withStderrTail(`stderr error: ${err.message}`));
     this.rejectAllPending(error);
     this.markForRestart();
   }
@@ -741,9 +725,11 @@ export class ProcessIO extends BoundedContext implements Transport {
       const index = this.writeQueue.indexOf(entry);
       if (index !== -1) {
         this.writeQueue.splice(index, 1);
-        reject(new BridgeTimeoutError(
-          `Write queue timeout: entry waited ${this.writeQueueTimeoutMs}ms without drain`
-        ));
+        reject(
+          new BridgeTimeoutError(
+            `Write queue timeout: entry waited ${this.writeQueueTimeoutMs}ms without drain`
+          )
+        );
       }
     }, this.writeQueueTimeoutMs);
 
@@ -828,9 +814,11 @@ export class ProcessIO extends BoundedContext implements Transport {
 
       // Check for write queue timeout (fallback check, timer should have handled this)
       if (now - queued.queuedAt > this.writeQueueTimeoutMs) {
-        queued.reject(new BridgeTimeoutError(
-          `Write queue timeout: entry waited ${now - queued.queuedAt}ms (limit: ${this.writeQueueTimeoutMs}ms)`
-        ));
+        queued.reject(
+          new BridgeTimeoutError(
+            `Write queue timeout: entry waited ${now - queued.queuedAt}ms (limit: ${this.writeQueueTimeoutMs}ms)`
+          )
+        );
         continue; // Process next entry
       }
 
@@ -849,9 +837,7 @@ export class ProcessIO extends BoundedContext implements Transport {
       } catch (err) {
         // Synchronous write error (e.g., EPIPE) - reject this and all remaining writes
         const errorMessage = err instanceof Error ? err.message : 'unknown';
-        const error = new BridgeProtocolError(
-          this.withStderrTail(`Write error: ${errorMessage}`)
-        );
+        const error = new BridgeProtocolError(this.withStderrTail(`Write error: ${errorMessage}`));
         queued.reject(error);
         for (const q of this.writeQueue) {
           this.clearQueuedWriteTimeout(q);
@@ -887,9 +873,7 @@ export class ProcessIO extends BoundedContext implements Transport {
    * Handle a protocol error by rejecting all pending requests.
    */
   private handleProtocolError(details: string, line?: string): void {
-    const snippet = line
-      ? line.length > 500 ? `${line.slice(0, 500)}...` : line
-      : undefined;
+    const snippet = line ? (line.length > 500 ? `${line.slice(0, 500)}...` : line) : undefined;
 
     const hint = 'Ensure Python code does not print to stdout and bridge outputs only JSON lines.';
 

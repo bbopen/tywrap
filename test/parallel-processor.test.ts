@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { cpus } from 'os';
+import { cpus, tmpdir } from 'os';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { ParallelProcessor } from '../src/utils/parallel-processor.js';
 
 describe('ParallelProcessor', () => {
@@ -555,4 +557,161 @@ describe('ParallelProcessor - Result Structure', () => {
       expect(stats.activeTasks).toBe(3);
     });
   });
+});
+
+describe('ParallelProcessor - Reliability', () => {
+  let processor: ParallelProcessor | undefined;
+  let tempDir: string | undefined;
+  let workerScriptPath: string | undefined;
+
+  const writeWorkerScript = async (): Promise<string> => {
+    tempDir = await mkdtemp(join(tmpdir(), 'tywrap-parallel-processor-worker-'));
+    workerScriptPath = join(tempDir, 'worker.cjs');
+    await writeFile(
+      workerScriptPath,
+      `
+const { parentPort, workerData } = require('worker_threads');
+
+parentPort.postMessage({ type: 'worker_ready', workerId: workerData.workerId });
+
+parentPort.on('message', (message) => {
+  if (!message || typeof message !== 'object') return;
+  if (message.type === 'shutdown') process.exit(0);
+  if (message.type !== 'task') return;
+  const task = message.task;
+  const action = task && task.data && task.data.action;
+  if (action === 'crash') {
+    throw new Error('simulated worker crash');
+  }
+  if (action === 'hang') {
+    return;
+  }
+  const delayMs = task && task.data && typeof task.data.delayMs === 'number' ? task.data.delayMs : 0;
+  setTimeout(() => {
+    parentPort.postMessage({
+      type: 'task_complete',
+      taskId: task.id,
+      result: { ok: true, workerId: workerData.workerId },
+      duration: 1,
+      memoryUsage: 0
+    });
+  }, delayMs);
+});
+`,
+      'utf-8'
+    );
+    return workerScriptPath;
+  };
+
+  afterEach(async () => {
+    if (processor) {
+      await processor.dispose();
+      processor = undefined;
+    }
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true });
+      tempDir = undefined;
+      workerScriptPath = undefined;
+    }
+  });
+
+  it('worker errors only reject tasks owned by that worker', async () => {
+    const workerScript = await writeWorkerScript();
+    processor = new ParallelProcessor({
+      maxWorkers: 2,
+      workerScript,
+      enableCaching: false,
+      enableMemoryMonitoring: false,
+      retryAttempts: 1,
+      taskTimeout: 1000,
+      loadBalancing: 'round-robin',
+    });
+
+    const results = await processor.executeTasks([
+      { id: 'crash', type: 'custom', data: { action: 'crash' } },
+      { id: 'ok', type: 'custom', data: { action: 'ok' } },
+    ]);
+
+    const byId = Object.fromEntries(results.map(r => [r.taskId, r]));
+    expect(byId.ok?.success).toBe(true);
+    expect(byId.crash?.success).toBe(false);
+    expect(String(byId.crash?.error ?? '')).toContain('Worker');
+    expect(processor.getStats().activeTasks).toBe(0);
+  }, 10_000);
+
+  it('timeouts clean up activeTasks and do not affect unrelated tasks', async () => {
+    const workerScript = await writeWorkerScript();
+    processor = new ParallelProcessor({
+      maxWorkers: 2,
+      workerScript,
+      enableCaching: false,
+      enableMemoryMonitoring: false,
+      retryAttempts: 1,
+      taskTimeout: 150,
+      loadBalancing: 'round-robin',
+    });
+
+    const results = await processor.executeTasks([
+      { id: 'hang', type: 'custom', data: { action: 'hang' } },
+      { id: 'ok', type: 'custom', data: { action: 'ok', delayMs: 10 } },
+    ]);
+
+    const byId = Object.fromEntries(results.map(r => [r.taskId, r]));
+    expect(byId.ok?.success).toBe(true);
+    expect(byId.hang?.success).toBe(false);
+    expect(String(byId.hang?.error ?? '')).toContain('timed out');
+    expect(processor.getStats().activeTasks).toBe(0);
+  }, 10_000);
+
+  it('postMessage failures reject the task and do not leak activeTasks', async () => {
+    const workerScript = await writeWorkerScript();
+    processor = new ParallelProcessor({
+      maxWorkers: 1,
+      workerScript,
+      enableCaching: false,
+      enableMemoryMonitoring: false,
+      retryAttempts: 1,
+      taskTimeout: 1000,
+    });
+
+    const results = await processor.executeTasks([
+      {
+        id: 'uncloneable',
+        type: 'custom',
+        // Sending a function triggers a DataCloneError from worker.postMessage().
+        data: { action: 'ok', uncloneable: () => {} } as any,
+      },
+    ]);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.success).toBe(false);
+    expect(results[0]?.error).toBeTruthy();
+    expect(processor.getStats().activeTasks).toBe(0);
+  }, 10_000);
+
+  it('dispose() rejects pending tasks', async () => {
+    const workerScript = await writeWorkerScript();
+    processor = new ParallelProcessor({
+      maxWorkers: 1,
+      workerScript,
+      enableCaching: false,
+      enableMemoryMonitoring: false,
+      retryAttempts: 1,
+      taskTimeout: 10_000,
+    });
+
+    const promise = processor.executeTasks([
+      { id: 'hang', type: 'custom', data: { action: 'hang' } },
+    ]);
+
+    // Give the worker a moment to receive the task.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await processor.dispose();
+
+    const results = await promise;
+    expect(results).toHaveLength(1);
+    expect(results[0]?.success).toBe(false);
+    expect(String(results[0]?.error ?? '').toLowerCase()).toContain('disposed');
+    expect(processor.getStats().activeTasks).toBe(0);
+  }, 10_000);
 });

@@ -597,10 +597,13 @@ def serialize_pydantic(obj):
     if not callable(model_dump):
         return _NO_PYDANTIC
     try:
-        return model_dump(by_alias=True, mode='json')
-    except TypeError:
-        # Older Pydantic versions may not support `mode=...`.
-        return model_dump(by_alias=True)
+        try:
+            return model_dump(by_alias=True, mode='json')
+        except TypeError:
+            # Older Pydantic versions may not support `mode=...`.
+            return model_dump(by_alias=True)
+    except Exception as exc:
+        raise RuntimeError(f'model_dump failed: {exc}') from exc
 
 def serialize(obj):
     if is_numpy_array(obj):

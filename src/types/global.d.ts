@@ -8,13 +8,20 @@ declare namespace DenoTypes {
     deno: string;
   }
 
+  interface CommandOptions {
+    args?: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+    signal?: AbortSignal;
+  }
+
   interface DenoGlobal {
     version: Version;
     readTextFile(path: string): Promise<string>;
     writeTextFile(path: string, content: string): Promise<void>;
     Command: new (
       cmd: string,
-      options?: { args?: string[] }
+      options?: CommandOptions
     ) => {
       output(): Promise<{ code: number; stdout: Uint8Array; stderr: Uint8Array }>;
     };
@@ -37,12 +44,15 @@ declare namespace BunTypes {
       options?: {
         stdout?: string;
         stderr?: string;
+        cwd?: string;
+        env?: Record<string, string>;
       }
     ): {
       stdout: ReadableStream;
       stderr: ReadableStream;
       exitCode?: number;
       exited: Promise<void>;
+      kill(signal?: number | string): void;
     };
   }
 }
