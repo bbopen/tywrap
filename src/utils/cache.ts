@@ -147,18 +147,72 @@ export class IntelligentCache {
 
     // Add prefix
     hash.update(prefix);
+    hash.update('\0');
 
     // Add inputs
     for (const input of inputs) {
-      if (typeof input === 'string') {
-        hash.update(input);
-      } else if (Buffer.isBuffer(input)) {
-        hash.update(input);
-      } else if (input !== undefined && input !== null) {
-        hash.update(JSON.stringify(input));
-      } else {
-        hash.update('null');
+      // Why: disambiguate types so "1" and 1 don't collide, and keep input boundaries so
+      // ["a", "bc"] doesn't collide with ["ab", "c"].
+      if (input === undefined) {
+        hash.update('undef:');
+        hash.update('\0');
+        continue;
       }
+      if (input === null) {
+        hash.update('null:');
+        hash.update('\0');
+        continue;
+      }
+      if (typeof input === 'string') {
+        hash.update('str:');
+        hash.update(input);
+        hash.update('\0');
+        continue;
+      }
+      if (typeof input === 'number') {
+        hash.update('num:');
+        hash.update(String(input));
+        hash.update('\0');
+        continue;
+      }
+      if (typeof input === 'boolean') {
+        hash.update('bool:');
+        hash.update(input ? '1' : '0');
+        hash.update('\0');
+        continue;
+      }
+      if (typeof input === 'bigint') {
+        hash.update('bigint:');
+        hash.update(input.toString());
+        hash.update('\0');
+        continue;
+      }
+      if (Buffer.isBuffer(input)) {
+        hash.update('buf:');
+        hash.update(input);
+        hash.update('\0');
+        continue;
+      }
+
+      if (typeof input === 'symbol') {
+        hash.update('sym:');
+        hash.update(input.toString());
+        hash.update('\0');
+        continue;
+      }
+
+      hash.update('json:');
+      let json: string;
+      try {
+        json =
+          JSON.stringify(input, (_key, value) =>
+            typeof value === 'symbol' ? value.toString() : value
+          ) ?? 'undefined';
+      } catch {
+        json = String(input);
+      }
+      hash.update(json);
+      hash.update('\0');
     }
 
     return hash.digest('hex').substring(0, 16); // Use first 16 chars for readability

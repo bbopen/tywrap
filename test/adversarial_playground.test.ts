@@ -223,9 +223,9 @@ describeAdversarial('Adversarial playground', () => {
       if (!bridge) return;
 
       try {
-        await expect(callAdversarial(bridge, 'return_torch_non_contiguous_tensor', [])).rejects.toThrow(
-          /Torch tensor is not contiguous|TYWRAP_TORCH_ALLOW_COPY/
-        );
+        await expect(
+          callAdversarial(bridge, 'return_torch_non_contiguous_tensor', [])
+        ).rejects.toThrow(/Torch tensor is not contiguous|TYWRAP_TORCH_ALLOW_COPY/);
       } finally {
         await bridge.dispose();
       }
@@ -967,7 +967,9 @@ describeAdversarial('Multi-worker adversarial tests', () => {
         expect(results[0].status).toBe('rejected');
         expect(results[1].status).toBe('rejected');
         if (results[0].status === 'rejected') {
-          expect(results[0].reason.message).toMatch(/TYWRAP_REQUEST_MAX_BYTES|RequestTooLargeError/);
+          expect(results[0].reason.message).toMatch(
+            /TYWRAP_REQUEST_MAX_BYTES|RequestTooLargeError/
+          );
         }
       } finally {
         await bridge.dispose();

@@ -14,10 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  BoundedContext,
-  type ContextState,
-} from '../src/runtime/bounded-context.js';
+import { BoundedContext, type ContextState } from '../src/runtime/bounded-context.js';
 import {
   BridgeDisposedError,
   BridgeError,
@@ -384,10 +381,18 @@ describe('Issue #143: Standardized error classification', () => {
     });
 
     it('classifies protocol errors as BridgeProtocolError', () => {
-      expect(bridge.testClassifyError(new Error('protocol error'))).toBeInstanceOf(BridgeProtocolError);
-      expect(bridge.testClassifyError(new Error('invalid json'))).toBeInstanceOf(BridgeProtocolError);
-      expect(bridge.testClassifyError(new Error('parse error'))).toBeInstanceOf(BridgeProtocolError);
-      expect(bridge.testClassifyError(new Error('unexpected token'))).toBeInstanceOf(BridgeProtocolError);
+      expect(bridge.testClassifyError(new Error('protocol error'))).toBeInstanceOf(
+        BridgeProtocolError
+      );
+      expect(bridge.testClassifyError(new Error('invalid json'))).toBeInstanceOf(
+        BridgeProtocolError
+      );
+      expect(bridge.testClassifyError(new Error('parse error'))).toBeInstanceOf(
+        BridgeProtocolError
+      );
+      expect(bridge.testClassifyError(new Error('unexpected token'))).toBeInstanceOf(
+        BridgeProtocolError
+      );
       expect(bridge.testClassifyError(new Error('not found'))).toBeInstanceOf(BridgeProtocolError);
     });
 
@@ -397,7 +402,9 @@ describe('Issue #143: Standardized error classification', () => {
     });
 
     it('classifies unknown errors as BridgeExecutionError', () => {
-      expect(bridge.testClassifyError(new Error('random error'))).toBeInstanceOf(BridgeExecutionError);
+      expect(bridge.testClassifyError(new Error('random error'))).toBeInstanceOf(
+        BridgeExecutionError
+      );
     });
   });
 
