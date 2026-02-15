@@ -39,4 +39,12 @@ describe('annotation parser', () => {
     expect((t as any).itemTypes[0].kind).toBe('primitive');
     expect((t as any).itemTypes[0].name).toBe('int');
   });
+
+  it('parses Callable[..., R] as an ellipsis callable', () => {
+    const t = parseAnnotationToPythonType('Callable[..., int]');
+    expect(t.kind).toBe('callable');
+    expect((t as any).parameters).toHaveLength(1);
+    expect((t as any).parameters[0].kind).toBe('custom');
+    expect((t as any).parameters[0].name).toBe('...');
+  });
 });

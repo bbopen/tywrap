@@ -235,25 +235,29 @@ export function parseAnnotationToPythonType(
     }
 
     // Callable[[...], R]
-    if (raw.startsWith('typing.Callable[') || raw.startsWith('Callable[')) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const parts = splitTopLevel(inner, ',');
-      if (parts.length >= 2) {
-        const paramsPart = (parts[0] ?? '').trim();
-        const returnPart = parts.slice(1).join(',').trim();
-        const paramInner =
-          paramsPart.startsWith('[') && paramsPart.endsWith(']') ? paramsPart.slice(1, -1) : '';
-        const paramTypes = ((): PythonType[] => {
-          const trimmed = paramInner.trim();
-          if (trimmed === '...' || trimmed === 'Ellipsis') {
-            return [{ kind: 'custom', name: '...' } as PythonType];
-          }
-          return trimmed ? splitTopLevel(trimmed, ',').map(p => parse(p.trim(), depth + 1)) : [];
-        })();
-        const returnType = parse(returnPart, depth + 1);
-        return { kind: 'callable', parameters: paramTypes, returnType } as PythonType;
-      }
-    }
+	    if (raw.startsWith('typing.Callable[') || raw.startsWith('Callable[')) {
+	      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
+	      const parts = splitTopLevel(inner, ',');
+	      if (parts.length >= 2) {
+	        const paramsPart = (parts[0] ?? '').trim();
+	        const returnPart = parts.slice(1).join(',').trim();
+	        const paramInner =
+	          paramsPart.startsWith('[') && paramsPart.endsWith(']') ? paramsPart.slice(1, -1) : '';
+	        const paramTypes = ((): PythonType[] => {
+	          // Callable[..., R] uses a top-level Ellipsis.
+	          if (paramsPart === '...' || paramsPart === 'Ellipsis') {
+	            return [{ kind: 'custom', name: '...' } as PythonType];
+	          }
+	          const trimmed = paramInner.trim();
+	          if (trimmed === '...' || trimmed === 'Ellipsis') {
+	            return [{ kind: 'custom', name: '...' } as PythonType];
+	          }
+	          return trimmed ? splitTopLevel(trimmed, ',').map(p => parse(p.trim(), depth + 1)) : [];
+	        })();
+	        const returnType = parse(returnPart, depth + 1);
+	        return { kind: 'callable', parameters: paramTypes, returnType } as PythonType;
+	      }
+	    }
 
     // Mapping[K, V] / Dict[K, V] normalization
     if (raw.startsWith('typing.Mapping[') || raw.startsWith('Mapping[')) {
