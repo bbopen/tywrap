@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { describe, it, expect } from 'vitest';
 
 import { processUtils } from '../src/utils/runtime.js';
@@ -6,6 +7,10 @@ import { getDefaultPythonPath } from '../src/utils/python.js';
 describe('processUtils.exec', () => {
   it('rejects with a clear timeout error when the subprocess hangs', async () => {
     const pythonPath = getDefaultPythonPath();
+    const check = spawnSync(pythonPath, ['--version'], { encoding: 'utf-8' });
+    if (check.error || check.status !== 0) {
+      return; // Python not available
+    }
     const timeoutMs = 200;
 
     await expect(

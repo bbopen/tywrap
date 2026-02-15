@@ -109,6 +109,41 @@ export class CodeGenerator {
       });
   }
 
+  private renderLooksLikeKwargsExpr(
+    valueExpr: string,
+    options: {
+      keywordOnlyNames: string[];
+      requiredKwOnlyNames: string[];
+      hasVarKwArgs: boolean;
+    }
+  ): string {
+    const base = `typeof ${valueExpr} === 'object' && ${valueExpr} !== null && !Array.isArray(${valueExpr}) && (Object.getPrototypeOf(${valueExpr}) === Object.prototype || Object.getPrototypeOf(${valueExpr}) === null)`;
+
+    const keyCheck = (() => {
+      if (options.requiredKwOnlyNames.length > 0) {
+        return options.requiredKwOnlyNames
+          .map(
+            k => `Object.prototype.hasOwnProperty.call(${valueExpr}, ${JSON.stringify(k)})`
+          )
+          .join(' && ');
+      }
+      if (options.hasVarKwArgs) {
+        // With **kwargs, any plain object could be kwargs.
+        return 'true';
+      }
+      if (options.keywordOnlyNames.length > 0) {
+        return options.keywordOnlyNames
+          .map(
+            k => `Object.prototype.hasOwnProperty.call(${valueExpr}, ${JSON.stringify(k)})`
+          )
+          .join(' || ');
+      }
+      return 'false';
+    })();
+
+    return `(${base} && (${keyCheck}))`;
+  }
+
   generateFunctionWrapper(
     func: PythonFunction,
     moduleName?: string,
@@ -189,12 +224,6 @@ export class CodeGenerator {
     }
     const paramDecl = implParams.join(', ');
 
-    const callArgParts: string[] = positionalParams.map(p => this.escapeIdentifier(p.name));
-    if (varArgsParam) {
-      const vname = this.escapeIdentifier(varArgsParam.name);
-      callArgParts.push(needsVarArgsArray ? `...(${vname} ?? [])` : `...${vname}`);
-    }
-    const callArgsArray = `[${callArgParts.join(', ')}]`;
     const hasKwArgs = needsKwargsParam;
     const returnType = this.typeToTs(this.mapper.mapPythonType(func.returnType, 'return'));
     const fname = this.escapeIdentifier(func.name);
@@ -207,6 +236,7 @@ export class CodeGenerator {
     // call that supplies all args still matches an overload.
     const firstOptionalIndex = positionalParams.findIndex(p => p.optional);
     const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
+    const keywordOnlyNames = keywordOnlyParams.map(p => p.name);
     const overloads: string[] = [];
     if (requiredKwOnlyNames.length > 0) {
       // Required keyword-only params must be represented with a required `kwargs` parameter.
@@ -238,6 +268,12 @@ export class CodeGenerator {
         overloads.push(
           `export function ${fname}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`
         );
+        if (varArgsParam && needsVarArgsArray) {
+          // Also allow callers to omit the varargs surrogate parameter entirely (i.e. `fn(kwargs)`).
+          overloads.push(
+            `export function ${fname}(${[...head, renderKwargsParam(true)].join(', ')}): Promise<${returnType}>;`
+          );
+        }
       }
     } else if (firstOptionalIndex >= 0) {
       for (let i = firstOptionalIndex; i <= positionalParams.length; i++) {
@@ -264,7 +300,7 @@ export class CodeGenerator {
         `  const __positionalOnly = ${JSON.stringify(positionalOnlyNames)} as const;`
       );
       guardLines.push(`  for (const key of __positionalOnly) {`);
-      guardLines.push(`    if (kwargs && Object.prototype.hasOwnProperty.call(kwargs, key)) {`);
+      guardLines.push(`    if (__kwargs && Object.prototype.hasOwnProperty.call(__kwargs, key)) {`);
       guardLines.push(
         `      throw new Error(\`${func.name} does not accept positional-only argument "\${key}" as a keyword argument\`);`
       );
@@ -277,7 +313,9 @@ export class CodeGenerator {
       );
       guardLines.push(`  const __missing: string[] = [];`);
       guardLines.push(`  for (const key of __requiredKwOnly) {`);
-      guardLines.push(`    if (!kwargs || !Object.prototype.hasOwnProperty.call(kwargs, key)) {`);
+      guardLines.push(
+        `    if (!__kwargs || !Object.prototype.hasOwnProperty.call(__kwargs, key)) {`
+      );
       guardLines.push(`      __missing.push(key);`);
       guardLines.push(`    }`);
       guardLines.push(`  }`);
@@ -289,9 +327,66 @@ export class CodeGenerator {
     }
     const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
 
+    const firstOptionalPosIndex = positionalParams.findIndex(p => p.optional);
+    const requiredPosCount =
+      firstOptionalPosIndex >= 0 ? firstOptionalPosIndex : positionalParams.length;
+    const callPreludeLines: string[] = [];
+    if (hasKwArgs) {
+      callPreludeLines.push(`  let __kwargs = kwargs;`);
+    }
+    const positionalArgExprs = positionalParams.map(p => this.escapeIdentifier(p.name));
+    callPreludeLines.push(`  const __args: unknown[] = [${positionalArgExprs.join(', ')}];`);
+    if (requiredPosCount < positionalParams.length) {
+      callPreludeLines.push(
+        `  while (__args.length > ${requiredPosCount} && __args[__args.length - 1] === undefined) {`
+      );
+      callPreludeLines.push(`    __args.pop();`);
+      callPreludeLines.push(`  }`);
+    }
+    if (hasKwArgs && requiredPosCount < positionalParams.length) {
+      const looksLikeKwargs = this.renderLooksLikeKwargsExpr('__candidate', {
+        keywordOnlyNames,
+        requiredKwOnlyNames,
+        hasVarKwArgs,
+      });
+      callPreludeLines.push(`  if (__kwargs === undefined && __args.length > ${requiredPosCount}) {`);
+      callPreludeLines.push(`    const __candidate = __args[__args.length - 1];`);
+      callPreludeLines.push(`    if (${looksLikeKwargs}) {`);
+      callPreludeLines.push(`      __kwargs = __candidate as any;`);
+      callPreludeLines.push(`      __args.pop();`);
+      callPreludeLines.push(`    }`);
+      callPreludeLines.push(`  }`);
+    }
+    if (varArgsParam) {
+      const vname = this.escapeIdentifier(varArgsParam.name);
+      if (needsVarArgsArray) {
+        const looksLikeKwargs = this.renderLooksLikeKwargsExpr(vname, {
+          keywordOnlyNames,
+          requiredKwOnlyNames,
+          hasVarKwArgs,
+        });
+        callPreludeLines.push(`  let __varargs: unknown[] = [];`);
+        callPreludeLines.push(`  if (${vname} !== undefined) {`);
+        callPreludeLines.push(`    if (Array.isArray(${vname})) {`);
+        callPreludeLines.push(`      __varargs = ${vname};`);
+        callPreludeLines.push(`    } else if (__kwargs === undefined && ${looksLikeKwargs}) {`);
+        callPreludeLines.push(`      __kwargs = ${vname} as any;`);
+        callPreludeLines.push(`    } else {`);
+        callPreludeLines.push(
+          `      throw new Error(\`${func.name} expected ${varArgsParam.name} to be an array\`);`
+        );
+        callPreludeLines.push(`    }`);
+        callPreludeLines.push(`  }`);
+        callPreludeLines.push(`  __args.push(...__varargs);`);
+      } else {
+        callPreludeLines.push(`  __args.push(...${vname});`);
+      }
+    }
+    const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
+
     const ts = `${jsdoc}${overloadDecl}export async function ${fname}(${paramDecl}): Promise<${returnType}> {
-${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callArgsArray}${
-      hasKwArgs ? ', kwargs' : ''
+${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', __args${
+      hasKwArgs ? ', __kwargs' : ''
     });
 }
 `;
@@ -387,6 +482,10 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
         const varArgsParam = fparams.find(p => p.varArgs);
         const needsVarArgsArray = Boolean(varArgsParam) && needsKwargsParam;
         const positionalParams = fparams.filter(p => !p.keywordOnly && !p.varArgs && !p.kwArgs);
+        const firstOptionalPosIndex = positionalParams.findIndex(p => p.optional);
+        const requiredPosCount =
+          firstOptionalPosIndex >= 0 ? firstOptionalPosIndex : positionalParams.length;
+        const keywordOnlyNames = keywordOnlyParams.map(p => p.name);
 
         const renderPositionalParam = (
           p: (typeof positionalParams)[number],
@@ -426,13 +525,6 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
         }
         const paramsDecl = paramsDeclParts.join(', ');
 
-        const callArgParts: string[] = positionalParams.map(p => this.escapeIdentifier(p.name));
-        if (varArgsParam) {
-          const vname = this.escapeIdentifier(varArgsParam.name);
-          callArgParts.push(needsVarArgsArray ? `...(${vname} ?? [])` : `...${vname}`);
-        }
-        const callArgsArray = `[${callArgParts.join(', ')}]`;
-
         const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
         const returnType = this.typeToTs(this.mapper.mapPythonType(m.returnType, 'return'));
         const mname = this.escapeIdentifier(m.name);
@@ -453,9 +545,70 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
             }
             rest.push(`kwargs: ${kwargsType}`);
             overloads.push(`  ${mname}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`);
+            if (varArgsParam && needsVarArgsArray) {
+              overloads.push(
+                `  ${mname}(${[...head, `kwargs: ${kwargsType}`].join(', ')}): Promise<${returnType}>;`
+              );
+            }
           }
         }
         const overloadDecl = overloads.length > 0 ? `${overloads.join('\n')}\n` : '';
+
+        const callPreludeLines: string[] = [];
+        if (needsKwargsParam) {
+          callPreludeLines.push(`    let __kwargs = kwargs;`);
+        }
+        const positionalArgExprs = positionalParams.map(p => this.escapeIdentifier(p.name));
+        callPreludeLines.push(`    const __args: unknown[] = [${positionalArgExprs.join(', ')}];`);
+        if (requiredPosCount < positionalParams.length) {
+          callPreludeLines.push(
+            `    while (__args.length > ${requiredPosCount} && __args[__args.length - 1] === undefined) {`
+          );
+          callPreludeLines.push(`      __args.pop();`);
+          callPreludeLines.push(`    }`);
+        }
+        if (needsKwargsParam && requiredPosCount < positionalParams.length) {
+          const looksLikeKwargs = this.renderLooksLikeKwargsExpr('__candidate', {
+            keywordOnlyNames,
+            requiredKwOnlyNames,
+            hasVarKwArgs,
+          });
+          callPreludeLines.push(
+            `    if (__kwargs === undefined && __args.length > ${requiredPosCount}) {`
+          );
+          callPreludeLines.push(`      const __candidate = __args[__args.length - 1];`);
+          callPreludeLines.push(`      if (${looksLikeKwargs}) {`);
+          callPreludeLines.push(`        __kwargs = __candidate as any;`);
+          callPreludeLines.push(`        __args.pop();`);
+          callPreludeLines.push(`      }`);
+          callPreludeLines.push(`    }`);
+        }
+        if (varArgsParam) {
+          const vname = this.escapeIdentifier(varArgsParam.name);
+          if (needsVarArgsArray) {
+            const looksLikeKwargs = this.renderLooksLikeKwargsExpr(vname, {
+              keywordOnlyNames,
+              requiredKwOnlyNames,
+              hasVarKwArgs,
+            });
+            callPreludeLines.push(`    let __varargs: unknown[] = [];`);
+            callPreludeLines.push(`    if (${vname} !== undefined) {`);
+            callPreludeLines.push(`      if (Array.isArray(${vname})) {`);
+            callPreludeLines.push(`        __varargs = ${vname};`);
+            callPreludeLines.push(`      } else if (__kwargs === undefined && ${looksLikeKwargs}) {`);
+            callPreludeLines.push(`        __kwargs = ${vname} as any;`);
+            callPreludeLines.push(`      } else {`);
+            callPreludeLines.push(
+              `        throw new Error(\`${m.name} expected ${varArgsParam.name} to be an array\`);`
+            );
+            callPreludeLines.push(`      }`);
+            callPreludeLines.push(`    }`);
+            callPreludeLines.push(`    __args.push(...__varargs);`);
+          } else {
+            callPreludeLines.push(`    __args.push(...${vname});`);
+          }
+        }
+        const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
         const guardLines: string[] = [];
         if (needsKwargsParam && positionalOnlyNames.length > 0) {
           guardLines.push(
@@ -463,7 +616,7 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
           );
           guardLines.push(`    for (const key of __positionalOnly) {`);
           guardLines.push(
-            `      if (kwargs && Object.prototype.hasOwnProperty.call(kwargs, key)) {`
+            `      if (__kwargs && Object.prototype.hasOwnProperty.call(__kwargs, key)) {`
           );
           guardLines.push(
             `        throw new Error(\`${m.name} does not accept positional-only argument "\${key}" as a keyword argument\`);`
@@ -478,7 +631,7 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
           guardLines.push(`    const __missing: string[] = [];`);
           guardLines.push(`    for (const key of __requiredKwOnly) {`);
           guardLines.push(
-            `      if (!kwargs || !Object.prototype.hasOwnProperty.call(kwargs, key)) {`
+            `      if (!__kwargs || !Object.prototype.hasOwnProperty.call(__kwargs, key)) {`
           );
           guardLines.push(`        __missing.push(key);`);
           guardLines.push(`      }`);
@@ -492,10 +645,10 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
         const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
 
         return `${overloadDecl}  async ${mname}(${paramsDecl}): Promise<${returnType}> {
-	${guards}    return getRuntimeBridge().callMethod(this.__handle, '${m.name}', ${callArgsArray}${
-    needsKwargsParam ? ', kwargs' : ''
+${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '${m.name}', __args${
+    needsKwargsParam ? ', __kwargs' : ''
   });
-	  }`;
+		  }`;
       })
       .join('\n');
 
@@ -506,7 +659,7 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
         return {
           overloadDecl: '',
           paramsDecl: `...args: unknown[]`,
-          callArgsArray: `[...args]`,
+          callPrelude: `    const __args: unknown[] = [...args];\n`,
           hasKwargs: false,
           guardLines: [] as string[],
         };
@@ -520,6 +673,10 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
       const varArgsParam = fparams.find(p => p.varArgs);
       const needsVarArgsArray = Boolean(varArgsParam) && needsKwargsParam;
       const positionalParams = fparams.filter(p => !p.keywordOnly && !p.varArgs && !p.kwArgs);
+      const firstOptionalPosIndex = positionalParams.findIndex(p => p.optional);
+      const requiredPosCount =
+        firstOptionalPosIndex >= 0 ? firstOptionalPosIndex : positionalParams.length;
+      const keywordOnlyNames = keywordOnlyParams.map(p => p.name);
 
       const renderPositionalParam = (
         p: (typeof positionalParams)[number],
@@ -557,13 +714,6 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
       }
       const paramsDecl = paramsDeclParts.join(', ');
 
-      const callArgParts: string[] = positionalParams.map(p => this.escapeIdentifier(p.name));
-      if (varArgsParam) {
-        const vname = this.escapeIdentifier(varArgsParam.name);
-        callArgParts.push(needsVarArgsArray ? `...(${vname} ?? [])` : `...${vname}`);
-      }
-      const callArgsArray = `[${callArgParts.join(', ')}]`;
-
       const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
       const overloads: string[] = [];
       if (needsKwargsParam && requiredKwOnlyNames.length > 0) {
@@ -581,16 +731,79 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
           }
           rest.push(`kwargs: ${kwargsType}`);
           overloads.push(`  static create(${[...head, ...rest].join(', ')}): Promise<${cname}>;`);
+          if (varArgsParam && needsVarArgsArray) {
+            overloads.push(
+              `  static create(${[...head, `kwargs: ${kwargsType}`].join(', ')}): Promise<${cname}>;`
+            );
+          }
         }
       }
       const overloadDecl = overloads.length > 0 ? `${overloads.join('\n')}\n` : '';
       const guardLines: string[] = [];
+
+      const callPreludeLines: string[] = [];
+      if (needsKwargsParam) {
+        callPreludeLines.push(`    let __kwargs = kwargs;`);
+      }
+      const positionalArgExprs = positionalParams.map(p => this.escapeIdentifier(p.name));
+      callPreludeLines.push(`    const __args: unknown[] = [${positionalArgExprs.join(', ')}];`);
+      if (requiredPosCount < positionalParams.length) {
+        callPreludeLines.push(
+          `    while (__args.length > ${requiredPosCount} && __args[__args.length - 1] === undefined) {`
+        );
+        callPreludeLines.push(`      __args.pop();`);
+        callPreludeLines.push(`    }`);
+      }
+      if (needsKwargsParam && requiredPosCount < positionalParams.length) {
+        const looksLikeKwargs = this.renderLooksLikeKwargsExpr('__candidate', {
+          keywordOnlyNames,
+          requiredKwOnlyNames,
+          hasVarKwArgs,
+        });
+        callPreludeLines.push(
+          `    if (__kwargs === undefined && __args.length > ${requiredPosCount}) {`
+        );
+        callPreludeLines.push(`      const __candidate = __args[__args.length - 1];`);
+        callPreludeLines.push(`      if (${looksLikeKwargs}) {`);
+        callPreludeLines.push(`        __kwargs = __candidate as any;`);
+        callPreludeLines.push(`        __args.pop();`);
+        callPreludeLines.push(`      }`);
+        callPreludeLines.push(`    }`);
+      }
+      if (varArgsParam) {
+        const vname = this.escapeIdentifier(varArgsParam.name);
+        if (needsVarArgsArray) {
+          const looksLikeKwargs = this.renderLooksLikeKwargsExpr(vname, {
+            keywordOnlyNames,
+            requiredKwOnlyNames,
+            hasVarKwArgs,
+          });
+          callPreludeLines.push(`    let __varargs: unknown[] = [];`);
+          callPreludeLines.push(`    if (${vname} !== undefined) {`);
+          callPreludeLines.push(`      if (Array.isArray(${vname})) {`);
+          callPreludeLines.push(`        __varargs = ${vname};`);
+          callPreludeLines.push(`      } else if (__kwargs === undefined && ${looksLikeKwargs}) {`);
+          callPreludeLines.push(`        __kwargs = ${vname} as any;`);
+          callPreludeLines.push(`      } else {`);
+          callPreludeLines.push(
+            `        throw new Error(\`__init__ expected ${varArgsParam.name} to be an array\`);`
+          );
+          callPreludeLines.push(`      }`);
+          callPreludeLines.push(`    }`);
+          callPreludeLines.push(`    __args.push(...__varargs);`);
+        } else {
+          callPreludeLines.push(`    __args.push(...${vname});`);
+        }
+      }
+      const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
       if (needsKwargsParam && positionalOnlyNames.length > 0) {
         guardLines.push(
           `    const __positionalOnly = ${JSON.stringify(positionalOnlyNames)} as const;`
         );
         guardLines.push(`    for (const key of __positionalOnly) {`);
-        guardLines.push(`      if (kwargs && Object.prototype.hasOwnProperty.call(kwargs, key)) {`);
+        guardLines.push(
+          `      if (__kwargs && Object.prototype.hasOwnProperty.call(__kwargs, key)) {`
+        );
         guardLines.push(
           `        throw new Error(\`__init__ does not accept positional-only argument "\${key}" as a keyword argument\`);`
         );
@@ -604,7 +817,7 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
         guardLines.push(`    const __missing: string[] = [];`);
         guardLines.push(`    for (const key of __requiredKwOnly) {`);
         guardLines.push(
-          `      if (!kwargs || !Object.prototype.hasOwnProperty.call(kwargs, key)) {`
+          `      if (!__kwargs || !Object.prototype.hasOwnProperty.call(__kwargs, key)) {`
         );
         guardLines.push(`        __missing.push(key);`);
         guardLines.push(`      }`);
@@ -616,20 +829,20 @@ ${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', ${callA
         guardLines.push(`    }`);
       }
 
-      return { overloadDecl, paramsDecl, callArgsArray, hasKwargs: needsKwargsParam, guardLines };
+      return { overloadDecl, paramsDecl, callPrelude, hasKwargs: needsKwargsParam, guardLines };
     })();
 
     const moduleId = moduleName ?? '__main__';
     const methodsSection = methodBodies ? `\n${methodBodies}\n` : '\n';
     const ctorGuards = ctorSpec.guardLines.length > 0 ? `${ctorSpec.guardLines.join('\n')}\n` : '';
     const ts = `${jsdoc}export class ${cname} {
-	  private readonly __handle: string;
-	  private constructor(handle: string) { this.__handle = handle; }
-	${ctorSpec.overloadDecl}  static async create(${ctorSpec.paramsDecl}): Promise<${cname}> {
-${ctorGuards}    const handle = await getRuntimeBridge().instantiate<string>('${moduleId}', '${cls.name}', ${ctorSpec.callArgsArray}${
-      ctorSpec.hasKwargs ? ', kwargs' : ''
+		  private readonly __handle: string;
+		  private constructor(handle: string) { this.__handle = handle; }
+		${ctorSpec.overloadDecl}  static async create(${ctorSpec.paramsDecl}): Promise<${cname}> {
+${ctorSpec.callPrelude}${ctorGuards}    const handle = await getRuntimeBridge().instantiate<string>('${moduleId}', '${cls.name}', __args${
+      ctorSpec.hasKwargs ? ', __kwargs' : ''
     });
-	    return new ${cname}(handle);
+		    return new ${cname}(handle);
   }
   static fromHandle(handle: string): ${cname} { return new ${cname}(handle); }${methodsSection}  async disposeHandle(): Promise<void> { await getRuntimeBridge().disposeInstance(this.__handle); }
 }

@@ -715,12 +715,13 @@ export const hashUtils = {
       const bytes = Array.from(new Uint8Array(digest));
       return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
     }
-    // Fallback to DJB2 (non-crypto) for unknown runtimes
-    let hash = 5381;
-    for (let i = 0; i < text.length; i++) {
-      hash = (hash << 5) + hash + text.charCodeAt(i);
-      hash |= 0;
-    }
-    return Math.abs(hash).toString(16);
-  },
-};
+	  // Fallback to DJB2 (non-crypto) for unknown runtimes
+	  let hash = 5381;
+	  for (let i = 0; i < text.length; i++) {
+	    hash = (hash << 5) + hash + text.charCodeAt(i);
+	    hash |= 0;
+	  }
+	  // Match sha256 hex shape (64 chars) so callers can rely on fixed-length output.
+	  return Math.abs(hash).toString(16).padStart(64, '0');
+	},
+  };

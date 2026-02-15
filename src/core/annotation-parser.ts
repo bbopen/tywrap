@@ -32,7 +32,8 @@ export function parseAnnotationToPythonType(
       return { kind: 'literal', value: null } as PythonType;
     }
     const num = Number(t);
-    if (!Number.isNaN(num)) {
+    // Number('') is 0, so ensure we don't treat empty literals as numeric.
+    if (t !== '' && !Number.isNaN(num)) {
       return { kind: 'literal', value: num } as PythonType;
     }
     return { kind: 'custom', name: t } as PythonType;

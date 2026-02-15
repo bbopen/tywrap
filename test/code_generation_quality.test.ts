@@ -1127,10 +1127,10 @@ Example:
       expect(generatedCode).toMatch(/kwargs\?: Record<string, unknown>/);
 
       // Should pass them correctly to bridge call
-      expect(generatedCode).toContain('...(args ?? [])');
+      expect(generatedCode).toContain('__args.push(...__varargs)');
       expect(generatedCode).toContain('kwargs');
       expect(generatedCode).toContain(
-        "getRuntimeBridge().call('test', 'variadic_function', [base, ...(args ?? [])], kwargs)"
+        "getRuntimeBridge().call('test', 'variadic_function', __args, __kwargs)"
       );
     });
 

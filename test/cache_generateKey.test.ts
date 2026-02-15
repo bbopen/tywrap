@@ -13,6 +13,20 @@ describe('IntelligentCache.generateKey', () => {
     expect(cache.generateKey('x', undefined)).not.toBe(cache.generateKey('x', null));
   });
 
+  it('disambiguates input boundaries', () => {
+    const cache = new IntelligentCache({ persistToDisk: false, cleanupInterval: 0 });
+
+    expect(cache.generateKey('x', 'a', 'bc')).not.toBe(cache.generateKey('x', 'ab', 'c'));
+    expect(cache.generateKey('x', 'a', 'b')).not.toBe(cache.generateKey('x', 'ab'));
+  });
+
+  it('is deterministic for identical inputs', () => {
+    const cache = new IntelligentCache({ persistToDisk: false, cleanupInterval: 0 });
+
+    expect(cache.generateKey('x', 1, 'a')).toBe(cache.generateKey('x', 1, 'a'));
+    expect(cache.generateKey('x', null)).toBe(cache.generateKey('x', null));
+  });
+
   it('handles Symbol inputs deterministically', () => {
     const cache = new IntelligentCache({ persistToDisk: false, cleanupInterval: 0 });
 

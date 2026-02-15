@@ -605,7 +605,11 @@ parentPort.on('message', (message) => {
 
   afterEach(async () => {
     if (processor) {
-      await processor.dispose();
+      try {
+        await processor.dispose();
+      } catch {
+        // Ignore disposal errors in cleanup so failures don't mask test assertions.
+      }
       processor = undefined;
     }
     if (tempDir) {

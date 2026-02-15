@@ -51,7 +51,10 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       const { promisify } = await import('util');
       const resolvedPython = await resolvePythonExecutable();
       const execFileAsync = promisify(execFile);
-      const { stdout } = await execFileAsync(resolvedPython, ['-c', expr], { encoding: 'utf-8' });
+      const { stdout } = await execFileAsync(resolvedPython, ['-c', expr], {
+        encoding: 'utf-8',
+        timeout: 10_000,
+      });
       return String(stdout).trim() === '1';
     } catch {
       return false;
@@ -302,12 +305,9 @@ def get_bad():
             timeoutMs: defaultTimeoutMs,
           });
 
-          await expect(bridge.call(moduleName, 'get_bad', [])).rejects.toThrow(
-            BridgeExecutionError
-          );
-          await expect(bridge.call(moduleName, 'get_bad', [])).rejects.toThrow(
-            /model_dump failed/i
-          );
+          const p = bridge.call(moduleName, 'get_bad', []);
+          await expect(p).rejects.toThrow(BridgeExecutionError);
+          await expect(p).rejects.toThrow(/model_dump failed/i);
         } finally {
           await bridge?.dispose();
           if (tempDir) {

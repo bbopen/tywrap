@@ -364,6 +364,10 @@ describe('CodeGenerator', () => {
     expect(code.typescript).toMatch(
       /export function g\(args: unknown\[\]\s*\|\s*undefined, kwargs: \{ "c": number; \}\): Promise<number>;/
     );
+    // Also allow omitting the varargs placeholder entirely.
+    expect(code.typescript).toMatch(
+      /export function g\(kwargs: \{ "c": number; \}\): Promise<number>;/
+    );
     expect(code.typescript).toMatch(
       /export async function g\(args\?: unknown\[], kwargs\?: \{ "c": number; \}\): Promise<number>/
     );
