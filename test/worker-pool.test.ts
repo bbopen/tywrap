@@ -70,9 +70,7 @@ function createMockTransportFactory() {
 /**
  * Create default pool options for testing.
  */
-function createTestOptions(
-  overrides: Partial<WorkerPoolOptions> = {}
-): WorkerPoolOptions {
+function createTestOptions(overrides: Partial<WorkerPoolOptions> = {}): WorkerPoolOptions {
   const { factory } = createMockTransportFactory();
   return {
     createTransport: factory,
@@ -93,19 +91,13 @@ describe('WorkerPool', () => {
 
     it('requires maxWorkers option', () => {
       const { factory } = createMockTransportFactory();
-      expect(
-        () => new WorkerPool({ createTransport: factory } as WorkerPoolOptions)
-      ).toThrow();
+      expect(() => new WorkerPool({ createTransport: factory } as WorkerPoolOptions)).toThrow();
     });
 
     it('requires maxWorkers to be positive', () => {
       const { factory } = createMockTransportFactory();
-      expect(
-        () => new WorkerPool({ createTransport: factory, maxWorkers: 0 })
-      ).toThrow();
-      expect(
-        () => new WorkerPool({ createTransport: factory, maxWorkers: -1 })
-      ).toThrow();
+      expect(() => new WorkerPool({ createTransport: factory, maxWorkers: 0 })).toThrow();
+      expect(() => new WorkerPool({ createTransport: factory, maxWorkers: -1 })).toThrow();
     });
 
     it('creates instance with required options', () => {
@@ -660,9 +652,7 @@ describe('WorkerPool', () => {
       await pool.init();
 
       // Concurrent acquires - each sees initial state before others increment
-      const workers = await Promise.all(
-        Array.from({ length: 6 }, () => pool.acquire())
-      );
+      const workers = await Promise.all(Array.from({ length: 6 }, () => pool.acquire()));
 
       // With concurrent acquires, all 6 may see the same initial state
       // and each creates a new worker (up to maxWorkers limit)
@@ -901,9 +891,7 @@ describe('WorkerPool', () => {
       await pool.init();
       await pool.dispose();
 
-      await expect(
-        pool.withWorker(async () => 'never')
-      ).rejects.toThrow(BridgeExecutionError);
+      await expect(pool.withWorker(async () => 'never')).rejects.toThrow(BridgeExecutionError);
     });
 
     it('provides access to transport through worker', async () => {
@@ -1255,36 +1243,30 @@ describe('WorkerPool', () => {
       pool = new WorkerPool(createTestOptions());
       await pool.init();
 
-      await expect(
-        pool.call('module', 'function', [])
-      ).rejects.toThrow(BridgeExecutionError);
+      await expect(pool.call('module', 'function', [])).rejects.toThrow(BridgeExecutionError);
     });
 
     it('instantiate() throws BridgeExecutionError', async () => {
       pool = new WorkerPool(createTestOptions());
       await pool.init();
 
-      await expect(
-        pool.instantiate('module', 'ClassName', [])
-      ).rejects.toThrow(BridgeExecutionError);
+      await expect(pool.instantiate('module', 'ClassName', [])).rejects.toThrow(
+        BridgeExecutionError
+      );
     });
 
     it('callMethod() throws BridgeExecutionError', async () => {
       pool = new WorkerPool(createTestOptions());
       await pool.init();
 
-      await expect(
-        pool.callMethod('handle', 'method', [])
-      ).rejects.toThrow(BridgeExecutionError);
+      await expect(pool.callMethod('handle', 'method', [])).rejects.toThrow(BridgeExecutionError);
     });
 
     it('disposeInstance() throws BridgeExecutionError', async () => {
       pool = new WorkerPool(createTestOptions());
       await pool.init();
 
-      await expect(
-        pool.disposeInstance('handle')
-      ).rejects.toThrow(BridgeExecutionError);
+      await expect(pool.disposeInstance('handle')).rejects.toThrow(BridgeExecutionError);
     });
   });
 });

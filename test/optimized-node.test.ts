@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 // OptimizedNodeBridge is now an alias for NodeBridge with pool configuration
 import { NodeBridge as OptimizedNodeBridge } from '../src/runtime/node.js';
 import { isNodejs, getPythonExecutableName } from '../src/utils/runtime.js';
-import { BridgeProtocolError } from '../src/runtime/errors.js';
+import { BridgeCodecError } from '../src/runtime/errors.js';
 
 const describeNodeOnly = isNodejs() ? describe : describe.skip;
 const BRIDGE_SCRIPT = 'runtime/python_bridge.py';
@@ -360,7 +360,7 @@ describeNodeOnly('OptimizedNodeBridge - Functional Tests', () => {
 
       const promise = bridge.call('math', 'sqrt', [BigInt(4)]);
       await expect(promise).rejects.toSatisfy((error: unknown) => {
-        if (!(error instanceof BridgeProtocolError)) {
+        if (!(error instanceof BridgeCodecError)) {
           return false;
         }
         // Error message may be "Failed to serialize" or reference BigInt

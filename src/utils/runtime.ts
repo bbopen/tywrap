@@ -442,21 +442,75 @@ export const processUtils = {
     }
 
     if (runtime.name === 'deno' && Deno) {
-      const cmd = new Deno.Command(command, { args });
-      const { code, stdout, stderr } = await cmd.output();
+      const timeoutMs = options.timeoutMs;
+      const controller =
+        typeof timeoutMs === 'number' && timeoutMs > 0 ? new AbortController() : undefined;
+      const timeout =
+        controller && typeof timeoutMs === 'number'
+          ? setTimeout(() => controller.abort(), timeoutMs)
+          : undefined;
+      const env: Record<string, string> | undefined =
+        options.env && Object.keys(options.env).length > 0
+          ? Object.fromEntries(
+              Object.entries(options.env)
+                .filter(([, value]) => typeof value === 'string')
+                .map(([key, value]) => [key, value as string])
+            )
+          : undefined;
 
-      return {
-        code,
-        stdout: new TextDecoder().decode(stdout),
-        stderr: new TextDecoder().decode(stderr),
-      };
+      try {
+        const cmd = new Deno.Command(command, {
+          args,
+          ...(options.cwd ? { cwd: options.cwd } : {}),
+          ...(env ? { env } : {}),
+          ...(controller ? { signal: controller.signal } : {}),
+        });
+        const { code, stdout, stderr } = await cmd.output();
+
+        return {
+          code,
+          stdout: new TextDecoder().decode(stdout),
+          stderr: new TextDecoder().decode(stderr),
+        };
+      } catch (error: unknown) {
+        if (controller?.signal.aborted && typeof timeoutMs === 'number') {
+          throw new Error(`Command "${command}" timed out after ${timeoutMs}ms`);
+        }
+        throw error;
+      } finally {
+        if (timeout) {
+          clearTimeout(timeout);
+        }
+      }
     }
 
     if (runtime.name === 'bun' && Bun) {
+      const timeoutMs = options.timeoutMs;
+      const mergedEnv: Record<string, string> | undefined = options.env
+        ? Object.fromEntries(
+            Object.entries({
+              ...(typeof process !== 'undefined' ? process.env : {}),
+              ...options.env,
+            })
+              .filter(([, value]) => typeof value === 'string')
+              .map(([key, value]) => [key, value as string])
+          )
+        : undefined;
       const proc = Bun.spawn([command, ...args], {
         stdout: 'pipe',
         stderr: 'pipe',
+        ...(options.cwd ? { cwd: options.cwd } : {}),
+        ...(mergedEnv ? { env: mergedEnv } : {}),
       });
+
+      let timedOut = false;
+      const timeout =
+        typeof timeoutMs === 'number' && timeoutMs > 0
+          ? setTimeout(() => {
+              timedOut = true;
+              proc.kill?.('SIGKILL');
+            }, timeoutMs)
+          : undefined;
 
       const [stdout, stderr] = await Promise.all([
         new Response(proc.stdout).text(),
@@ -464,6 +518,12 @@ export const processUtils = {
       ]);
 
       await proc.exited;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      if (timedOut && typeof timeoutMs === 'number') {
+        throw new Error(`Command "${command}" timed out after ${timeoutMs}ms`);
+      }
 
       return {
         code: proc.exitCode ?? 0,
@@ -477,7 +537,8 @@ export const processUtils = {
       const { delimiter } = await import('node:path');
 
       return new Promise((resolve, reject) => {
-        const extraPyPath = pathUtils.join(process.cwd(), 'tywrap_ir');
+        const cwd = options.cwd ?? process.cwd();
+        const extraPyPath = pathUtils.join(cwd, 'tywrap_ir');
         const env: Record<string, string> = Object.create(null) as Record<string, string>;
         Object.entries(process.env).forEach(([key, value]) => {
           if (value !== undefined) {
@@ -532,7 +593,14 @@ export const processUtils = {
 
         child.on('close', code => {
           if (timedOut) {
-            finish(() => reject(new Error(`Command "${command}" timed out after ${options.timeoutMs}ms`)));
+            const timeoutMs = options.timeoutMs;
+            finish(() =>
+              reject(
+                new Error(
+                  `Command "${command}" timed out after ${typeof timeoutMs === 'number' ? timeoutMs : 0}ms`
+                )
+              )
+            );
             return;
           }
           finish(() => resolve({ code: code ?? 0, stdout, stderr }));
@@ -647,12 +715,13 @@ export const hashUtils = {
       const bytes = Array.from(new Uint8Array(digest));
       return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
     }
-    // Fallback to DJB2 (non-crypto) for unknown runtimes
-    let hash = 5381;
-    for (let i = 0; i < text.length; i++) {
-      hash = (hash << 5) + hash + text.charCodeAt(i);
-      hash |= 0;
-    }
-    return Math.abs(hash).toString(16);
-  },
-};
+	  // Fallback to DJB2 (non-crypto) for unknown runtimes
+	  let hash = 5381;
+	  for (let i = 0; i < text.length; i++) {
+	    hash = (hash << 5) + hash + text.charCodeAt(i);
+	    hash |= 0;
+	  }
+	  // Match sha256 hex shape (64 chars) so callers can rely on fixed-length output.
+	  return Math.abs(hash).toString(16).padStart(64, '0');
+	},
+  };

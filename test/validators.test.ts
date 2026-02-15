@@ -153,7 +153,9 @@ describe('assertFiniteNumber', () => {
 
   it('throws ValidationError for NaN', () => {
     expect(() => assertFiniteNumber(NaN, 'value')).toThrow(ValidationError);
-    expect(() => assertFiniteNumber(NaN, 'value')).toThrow(/value must be a finite number, got: NaN/);
+    expect(() => assertFiniteNumber(NaN, 'value')).toThrow(
+      /value must be a finite number, got: NaN/
+    );
   });
 
   it('throws ValidationError for Infinity', () => {
@@ -295,8 +297,18 @@ describe('containsSpecialFloat', () => {
   });
 
   it('detects special floats in nested arrays', () => {
-    expect(containsSpecialFloat([[1, 2], [3, 4]])).toBe(false);
-    expect(containsSpecialFloat([[1, 2], [NaN, 4]])).toBe(true);
+    expect(
+      containsSpecialFloat([
+        [1, 2],
+        [3, 4],
+      ])
+    ).toBe(false);
+    expect(
+      containsSpecialFloat([
+        [1, 2],
+        [NaN, 4],
+      ])
+    ).toBe(true);
   });
 
   it('detects special floats in objects', () => {

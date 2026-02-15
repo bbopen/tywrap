@@ -192,6 +192,11 @@ async function main(): Promise<void> {
             type: 'boolean',
             describe: 'Enable debug logging',
           })
+          .option('verbose', {
+            alias: 'v',
+            type: 'boolean',
+            describe: 'Alias for --debug',
+          })
           .option('fail-on-warn', {
             type: 'boolean',
             default: false,
@@ -215,6 +220,7 @@ async function main(): Promise<void> {
           sourceMap?: boolean;
           useCache?: boolean;
           debug?: boolean;
+          verbose?: boolean;
           failOnWarn: boolean;
           check: boolean;
         }>
@@ -253,7 +259,9 @@ async function main(): Promise<void> {
           };
         }
 
-        if (typeof argv.debug === 'boolean') {
+        if (argv.verbose === true) {
+          overrides.debug = true;
+        } else if (typeof argv.debug === 'boolean') {
           overrides.debug = argv.debug;
         }
 
@@ -279,11 +287,27 @@ async function main(): Promise<void> {
           }
 
           const res = await generate(options, { check: argv.check });
+          const warnings = res.warnings ?? [];
+          const moduleCount = Object.keys(options.pythonModules ?? {}).length;
+
+          const emitWarnings = (): void => {
+            if (warnings.length === 0) {
+              return;
+            }
+            process.stderr.write(`Warnings (count ${warnings.length}):\n`);
+            for (const w of warnings) {
+              process.stderr.write(`- ${w}\n`);
+            }
+            process.stderr.write('\n');
+          };
+
           if (argv.check) {
             const outOfDate = res.outOfDate ?? [];
             if (outOfDate.length === 0) {
+              emitWarnings();
               process.stdout.write('Generated wrappers are up to date.\n');
             } else {
+              emitWarnings();
               process.stderr.write('Generated wrappers are out of date:\n');
               for (const file of outOfDate) {
                 process.stderr.write(`- ${file}\n`);
@@ -294,7 +318,42 @@ async function main(): Promise<void> {
               }
             }
           } else {
-            process.stdout.write(`Generated: ${res.written.join(', ')}\n`);
+            emitWarnings();
+
+            const written = res.written ?? [];
+            if (written.length === 0) {
+              process.stderr.write(
+                `No files were generated. This usually means Python failed to import one or more modules.\n`
+              );
+              const modulesConfigured = Object.keys(options.pythonModules ?? {});
+              if (modulesConfigured.length > 0) {
+                process.stderr.write(`Modules: ${modulesConfigured.join(', ')}\n`);
+              }
+
+              const pythonImportPath = options.pythonImportPath ?? [];
+              if (pythonImportPath.length > 0) {
+                process.stderr.write(`pythonImportPath: ${pythonImportPath.join(', ')}\n`);
+              } else {
+                process.stderr.write(
+                  `Tip: set "pythonImportPath" in your tywrap config to include your local module directories.\n`
+                );
+              }
+
+              const pyPath = process.env.PYTHONPATH;
+              if (typeof pyPath === 'string' && pyPath.trim().length > 0) {
+                process.stderr.write(`PYTHONPATH: ${pyPath}\n`);
+              }
+
+              process.stderr.write(`Tip: re-run with --debug for more context.\n`);
+              process.exit(1);
+            }
+
+            process.stdout.write(
+              `Generated: ${written.length} files from ${moduleCount} modules (warnings: ${warnings.length}).\n`
+            );
+            for (const file of written) {
+              process.stdout.write(`- ${file}\n`);
+            }
           }
           if (argv.failOnWarn && res.warnings.length > 0) {
             log.error(

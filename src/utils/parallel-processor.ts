@@ -127,10 +127,12 @@ export class ParallelProcessor extends EventEmitter {
   private workers = new Map<string, Worker>();
   private workerStats = new Map<string, WorkerStats>();
   private taskQueue: ParallelTask[] = [];
+  private queueInterval?: NodeJS.Timeout;
   private activeTasks = new Map<string, ParallelTask>();
   private pendingResults = new Map<
     string,
     {
+      workerId: string;
       resolve: (result: ParallelResult<unknown>) => void;
       reject: (error: Error) => void;
       timeout?: NodeJS.Timeout;
@@ -329,12 +331,16 @@ export class ParallelProcessor extends EventEmitter {
       attempts++;
 
       try {
-        const worker = this.selectOptimalWorker();
-        if (!worker) {
+        const selected = this.selectOptimalWorker();
+        if (!selected) {
           throw new Error('No available workers');
         }
 
-        const result = await this.sendTaskToWorker<Data, Result>(worker, task);
+        const result = await this.sendTaskToWorker<Data, Result>(
+          selected.workerId,
+          selected.worker,
+          task
+        );
 
         // Cache successful results
         if (this.options.enableCaching && result.success) {
@@ -366,10 +372,16 @@ export class ParallelProcessor extends EventEmitter {
   /**
    * Select optimal worker using load balancing strategy
    */
-  private selectOptimalWorker(): Worker | null {
-    const availableWorkers = Array.from(this.workers.values()).filter(
-      worker => worker.threadId > 0
-    );
+  private selectOptimalWorker(): { workerId: string; worker: Worker } | null {
+    const availableWorkers = Array.from(this.workers.entries())
+      .map(([workerId, worker]) => ({ workerId, worker }))
+      .filter(({ workerId, worker }) => {
+        if (worker.threadId <= 0) {
+          return false;
+        }
+        const stats = this.workerStats.get(workerId);
+        return stats?.isActive !== false;
+      });
 
     if (availableWorkers.length === 0) {
       return null;
@@ -384,37 +396,37 @@ export class ParallelProcessor extends EventEmitter {
 
       case 'least-loaded': {
         // Find worker with least active tasks
-        const workerLoads = availableWorkers.map(w => {
-          const workerId = this.getWorkerId(w);
+        const workerLoads = availableWorkers.map(({ workerId, worker }) => {
           const stats = this.workerStats.get(workerId);
-          return { worker: w, load: stats?.tasksCompleted ?? 0 };
+          return { workerId, worker, load: stats?.tasksCompleted ?? 0 };
         });
 
         workerLoads.sort((a, b) => a.load - b.load);
-        return workerLoads[0]?.worker ?? null;
+        const first = workerLoads[0];
+        return first ? { workerId: first.workerId, worker: first.worker } : null;
       }
 
       case 'weighted': {
         // Weight by average task completion time
-        const workerWeights = availableWorkers.map(w => {
-          const workerId = this.getWorkerId(w);
+        const workerWeights = availableWorkers.map(({ workerId, worker }) => {
           const stats = this.workerStats.get(workerId);
           const avgTime = stats?.averageTime ?? 1000;
-          return { worker: w, weight: 1 / avgTime };
+          return { workerId, worker, weight: 1 / avgTime };
         });
 
         // Weighted random selection
         const totalWeight = workerWeights.reduce((sum, w) => sum + w.weight, 0);
         let random = Math.random() * totalWeight;
 
-        for (const { worker: candidate, weight } of workerWeights) {
+        for (const { workerId, worker: candidate, weight } of workerWeights) {
           random -= weight;
           if (random <= 0) {
-            return candidate;
+            return { workerId, worker: candidate };
           }
         }
 
-        return workerWeights[0]?.worker ?? null;
+        const fallback = workerWeights[0];
+        return fallback ? { workerId: fallback.workerId, worker: fallback.worker } : null;
       }
 
       default:
@@ -426,17 +438,29 @@ export class ParallelProcessor extends EventEmitter {
    * Send task to specific worker
    */
   private async sendTaskToWorker<Data, Result>(
+    workerId: string,
     worker: Worker,
     task: ParallelTask<Data>
   ): Promise<ParallelResult<Result>> {
     return new Promise((resolve, reject) => {
+      if (this.disposed) {
+        reject(new Error('Processor has been disposed'));
+        return;
+      }
+
       const timeoutMs = task.timeout ?? this.options.taskTimeout;
       const timeout = setTimeout(() => {
+        const pending = this.pendingResults.get(task.id);
+        if (!pending) {
+          return;
+        }
         this.pendingResults.delete(task.id);
-        reject(new Error(`Task ${task.id} timed out after ${timeoutMs}ms`));
+        this.activeTasks.delete(task.id);
+        pending.reject(new Error(`Task ${task.id} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
       this.pendingResults.set(task.id, {
+        workerId,
         resolve: resolve as unknown as (result: ParallelResult<unknown>) => void,
         reject,
         timeout,
@@ -444,10 +468,17 @@ export class ParallelProcessor extends EventEmitter {
 
       this.activeTasks.set(task.id, task);
 
-      worker.postMessage({
-        type: 'task',
-        task,
-      });
+      try {
+        worker.postMessage({
+          type: 'task',
+          task,
+        });
+      } catch (error: unknown) {
+        this.pendingResults.delete(task.id);
+        this.activeTasks.delete(task.id);
+        clearTimeout(timeout);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -554,14 +585,24 @@ export class ParallelProcessor extends EventEmitter {
       stats.isActive = false;
     }
 
-    // Reject pending tasks for this worker
+    // Reject only tasks owned by this worker.
+    const ownedTasks: string[] = [];
     for (const [taskId, pending] of this.pendingResults) {
-      const task = this.activeTasks.get(taskId);
-      if (task) {
-        pending.reject(new Error(`Worker ${workerId} error: ${error.message}`));
-        this.pendingResults.delete(taskId);
-        this.activeTasks.delete(taskId);
+      if (pending.workerId === workerId) {
+        ownedTasks.push(taskId);
       }
+    }
+    for (const taskId of ownedTasks) {
+      const pending = this.pendingResults.get(taskId);
+      if (!pending) {
+        continue;
+      }
+      if (pending.timeout) {
+        clearTimeout(pending.timeout);
+      }
+      pending.reject(new Error(`Worker ${workerId} error: ${error.message}`));
+      this.pendingResults.delete(taskId);
+      this.activeTasks.delete(taskId);
     }
 
     this.emit('worker_error', workerId, error);
@@ -576,6 +617,26 @@ export class ParallelProcessor extends EventEmitter {
     const stats = this.workerStats.get(workerId);
     if (stats) {
       stats.isActive = false;
+    }
+
+    // Reject any tasks that were in-flight on this worker.
+    const ownedTasks: string[] = [];
+    for (const [taskId, pending] of this.pendingResults) {
+      if (pending.workerId === workerId) {
+        ownedTasks.push(taskId);
+      }
+    }
+    for (const taskId of ownedTasks) {
+      const pending = this.pendingResults.get(taskId);
+      if (!pending) {
+        continue;
+      }
+      if (pending.timeout) {
+        clearTimeout(pending.timeout);
+      }
+      pending.reject(new Error(`Worker ${workerId} exited with code ${code}`));
+      this.pendingResults.delete(taskId);
+      this.activeTasks.delete(taskId);
     }
 
     // Respawn worker if not disposing
@@ -593,7 +654,10 @@ export class ParallelProcessor extends EventEmitter {
    */
   private processQueue(): void {
     // Simple queue processing - could be enhanced with priority scheduling
-    setInterval(() => {
+    if (this.queueInterval) {
+      return;
+    }
+    this.queueInterval = setInterval(() => {
       if (this.taskQueue.length > 0 && this.workers.size > 0) {
         const task = this.taskQueue.shift();
         if (task) {
@@ -603,6 +667,8 @@ export class ParallelProcessor extends EventEmitter {
         }
       }
     }, 100);
+    // Don't keep the event loop alive just for an idle queue pump.
+    this.queueInterval.unref?.();
   }
 
   /**
@@ -645,15 +711,6 @@ export class ParallelProcessor extends EventEmitter {
     return chunks;
   }
 
-  private getWorkerId(worker: Worker): string {
-    for (const [id, w] of this.workers) {
-      if (w === worker) {
-        return id;
-      }
-    }
-    return 'unknown';
-  }
-
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -670,6 +727,22 @@ export class ParallelProcessor extends EventEmitter {
 
     this.debugLog('🛑 Disposing parallel processor...');
 
+    if (this.queueInterval) {
+      clearInterval(this.queueInterval);
+      this.queueInterval = undefined;
+    }
+
+    // Reject any pending results immediately so callers don't hang.
+    const disposedError = new Error('Processor has been disposed');
+    for (const pending of this.pendingResults.values()) {
+      if (pending.timeout) {
+        clearTimeout(pending.timeout);
+      }
+      pending.reject(disposedError);
+    }
+    this.pendingResults.clear();
+    this.activeTasks.clear();
+
     // Terminate all workers
     const terminationPromises = Array.from(this.workers.values()).map(worker => {
       return new Promise<void>(resolve => {
@@ -683,7 +756,11 @@ export class ParallelProcessor extends EventEmitter {
           resolve();
         });
 
-        worker.postMessage({ type: 'shutdown' });
+        try {
+          worker.postMessage({ type: 'shutdown' });
+        } catch {
+          // Ignore: worker may already be dead.
+        }
       });
     });
 
@@ -693,8 +770,6 @@ export class ParallelProcessor extends EventEmitter {
     this.workers.clear();
     this.workerStats.clear();
     this.taskQueue.length = 0;
-    this.activeTasks.clear();
-    this.pendingResults.clear();
 
     this.removeAllListeners();
 

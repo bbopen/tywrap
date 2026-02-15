@@ -4,6 +4,7 @@
 
 import { CodeGenerator } from './core/generator.js';
 import { TypeMapper } from './core/mapper.js';
+import { parseAnnotationToPythonType } from './core/annotation-parser.js';
 import { createConfig } from './config/index.js';
 import type {
   TywrapOptions,
@@ -13,10 +14,11 @@ import type {
   Parameter,
   PythonType,
 } from './types/index.js';
-import { fsUtils, pathUtils, processUtils, hashUtils } from './utils/runtime.js';
+import { fsUtils, pathUtils, processUtils, isWindows } from './utils/runtime.js';
 import { globalCache } from './utils/cache.js';
 import { globalParallelProcessor } from './utils/parallel-processor.js';
 import { resolvePythonExecutable } from './utils/python.js';
+import { computeIrCacheFilename } from './utils/ir-cache.js';
 
 // Collect unknown typing constructs encountered during annotation parsing (per-generate run)
 let unknownTypeNamesCollector: Map<string, number> = new Map();
@@ -138,10 +140,11 @@ export async function generate(
   const modules = resolvedOptions.pythonModules ?? {};
   for (const entry of Object.entries(modules)) {
     const moduleKey = entry[0];
+    const moduleConfig = entry[1];
     // reset collector for each module
     unknownTypeNamesCollector = new Map();
     // Prefer Python IR extractor over TS analyzer with optional cache
-    const cacheKey = await computeCacheKey(moduleKey, options);
+    const cacheKey = await computeCacheKey(moduleKey, resolvedOptions);
     let ir: unknown | null = null;
     let irError: string | undefined;
     if (caching && fsUtils.isAvailable()) {
@@ -153,7 +156,10 @@ export async function generate(
       }
     }
     if (!ir) {
-      const fetchResult = await fetchPythonIr(moduleKey, pythonPath, resolvedOptions.runtime?.node?.timeout);
+      const fetchResult = await fetchPythonIr(moduleKey, pythonPath, {
+        timeoutMs: resolvedOptions.runtime?.node?.timeout,
+        pythonImportPath: resolvedOptions.pythonImportPath,
+      });
       ir = fetchResult.ir;
       irError = fetchResult.error;
       if (ir && caching && fsUtils.isAvailable() && !checkMode) {
@@ -168,6 +174,74 @@ export async function generate(
     }
 
     const moduleModel = transformIrToTsModel(ir);
+
+    // Apply module-level export filtering (functions/classes + excludes).
+    {
+      const builtInDefaultExcludes = new Set([
+        'dataclass',
+        'property',
+        'staticmethod',
+        'classmethod',
+        'abstractmethod',
+        'cached_property',
+      ]);
+
+      const excludeExact = new Set((moduleConfig.exclude ?? []).map(String));
+      const excludeRegexes: RegExp[] = [];
+      for (const pattern of moduleConfig.excludePatterns ?? []) {
+        try {
+          excludeRegexes.push(new RegExp(String(pattern)));
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          warnings.push(
+            `Module ${moduleKey}: invalid excludePatterns regex "${String(pattern)}": ${message}`
+          );
+        }
+      }
+
+      const shouldExclude = (name: string, applyBuiltInDefaults: boolean): boolean => {
+        if (excludeExact.has(name)) {
+          return true;
+        }
+        if (excludeRegexes.some(r => r.test(name))) {
+          return true;
+        }
+        if (applyBuiltInDefaults && builtInDefaultExcludes.has(name)) {
+          return true;
+        }
+        return false;
+      };
+
+      if (Array.isArray(moduleConfig.functions)) {
+        const allow = new Set(moduleConfig.functions.map(String));
+        for (const requested of allow) {
+          if (!moduleModel.functions.some(f => f.name === requested)) {
+            warnings.push(
+              `Module ${moduleKey}: configured function "${requested}" not found in IR`
+            );
+          }
+        }
+        moduleModel.functions = moduleModel.functions.filter(
+          f => allow.has(f.name) && !shouldExclude(f.name, false)
+        );
+      } else {
+        moduleModel.functions = moduleModel.functions.filter(f => !shouldExclude(f.name, true));
+      }
+
+      if (Array.isArray(moduleConfig.classes)) {
+        const allow = new Set(moduleConfig.classes.map(String));
+        for (const requested of allow) {
+          if (!moduleModel.classes.some(c => c.name === requested)) {
+            warnings.push(`Module ${moduleKey}: configured class "${requested}" not found in IR`);
+          }
+        }
+        moduleModel.classes = moduleModel.classes.filter(
+          c => allow.has(c.name) && !shouldExclude(c.name, false)
+        );
+      } else {
+        moduleModel.classes = moduleModel.classes.filter(c => !shouldExclude(c.name, true));
+      }
+    }
 
     // Generate module code
     const annotatedJSDoc = Boolean(resolvedOptions.output?.annotatedJSDoc);
@@ -254,16 +328,26 @@ export async function generate(
 async function fetchPythonIr(
   moduleName: string,
   pythonPath: string,
-  timeoutMs?: number
+  options: { timeoutMs?: number; pythonImportPath?: string[] } = {}
 ): Promise<{ ir: unknown | null; error?: string }> {
   if (!processUtils.isAvailable()) {
     return { ir: null, error: 'Subprocess operations not available in this runtime' };
   }
+  const delimiter = isWindows() ? ';' : ':';
+  const extraPaths = (options.pythonImportPath ?? []).filter(Boolean);
+  const existingPyPath =
+    typeof process !== 'undefined' && typeof process.env === 'object' && process.env
+      ? process.env.PYTHONPATH
+      : undefined;
+  const mergedPyPath = [...extraPaths, ...(existingPyPath ? [existingPyPath] : [])]
+    .filter(Boolean)
+    .join(delimiter);
+  const env = mergedPyPath ? { PYTHONPATH: mergedPyPath } : undefined;
   try {
     const result = await processUtils.exec(
       pythonPath,
       ['-m', 'tywrap_ir', '--module', moduleName, '--no-pretty'],
-      { timeoutMs }
+      { timeoutMs: options.timeoutMs, env }
     );
     if (result.code === 0) {
       try {
@@ -276,17 +360,40 @@ async function fetchPythonIr(
       }
     }
 
-    // Fallback to invoking local __main__.py
+    const stderrText = result.stderr.trim();
+    const isTywrapIrMissing =
+      stderrText.includes('No module named') && stderrText.includes('tywrap_ir');
+    if (!isTywrapIrMissing) {
+      return { ir: null, error: `tywrap_ir failed. stderr: ${stderrText || 'empty'}` };
+    }
+
+    // Fallback to invoking local __main__.py (useful when running from the repo).
     const localMain = pathUtils.join(process.cwd(), 'tywrap_ir', 'tywrap_ir', '__main__.py');
+    let localMainExists = false;
+    if (fsUtils.isAvailable()) {
+      try {
+        await fsUtils.readFile(localMain);
+        localMainExists = true;
+      } catch {
+        localMainExists = false;
+      }
+    }
+    if (!localMainExists) {
+      return {
+        ir: null,
+        error: `tywrap_ir not found on PYTHONPATH. stderr: ${stderrText || 'empty'}`,
+      };
+    }
+
     const fallback = await processUtils.exec(
       pythonPath,
       [localMain, '--module', moduleName, '--no-pretty'],
-      { timeoutMs }
+      { timeoutMs: options.timeoutMs, env }
     );
     if (fallback.code !== 0) {
       return {
         ir: null,
-        error: `tywrap_ir failed. stderr: ${fallback.stderr.trim() || result.stderr.trim() || 'empty'}`,
+        error: `tywrap_ir failed. stderr: ${fallback.stderr.trim() || stderrText || 'empty'}`,
       };
     }
     try {
@@ -310,12 +417,16 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
     typeof ir === 'object' && ir !== null ? (ir as Record<string, unknown>) : {};
   const functions = (obj.functions as unknown[]) ?? [];
   const classes = (obj.classes as unknown[]) ?? [];
+  const parseType = (annotation: unknown): PythonType =>
+    parseAnnotationToPythonType(annotation, { onUnknownTypeName: recordUnknown });
   const mapParam = (p: Record<string, unknown>): Parameter => ({
     name: String(p.name ?? ''),
-    type: parseAnnotationToPythonType(p.annotation),
+    type: parseType(p.annotation),
     optional: Boolean(p.default),
     varArgs: p.kind === 'VAR_POSITIONAL',
     kwArgs: p.kind === 'VAR_KEYWORD',
+    positionalOnly: p.kind === 'POSITIONAL_ONLY',
+    keywordOnly: p.kind === 'KEYWORD_ONLY',
   });
 
   const mapFunc = (f: Record<string, unknown>): PythonFunction => ({
@@ -324,7 +435,7 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
       parameters: Array.isArray(f.parameters)
         ? (f.parameters as unknown[]).map(v => mapParam((v ?? {}) as Record<string, unknown>))
         : [],
-      returnType: parseAnnotationToPythonType(f.returns),
+      returnType: parseType(f.returns),
       isAsync: Boolean(f.is_async),
       isGenerator: Boolean(f.is_generator),
     },
@@ -332,7 +443,7 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
     decorators: [],
     isAsync: Boolean(f.is_async),
     isGenerator: Boolean(f.is_generator),
-    returnType: parseAnnotationToPythonType(f.returns),
+    returnType: parseType(f.returns),
     parameters: Array.isArray(f.parameters)
       ? (f.parameters as unknown[]).map(v => mapParam((v ?? {}) as Record<string, unknown>))
       : [],
@@ -350,7 +461,7 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
           const optional = Boolean(p.default);
           return {
             name: String(p.name ?? ''),
-            type: parseAnnotationToPythonType(p.annotation),
+            type: parseType(p.annotation),
             readonly: false,
             setter: false,
             getter: true,
@@ -388,249 +499,6 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
   return moduleModel;
 }
 
-function unknownType(): PythonType {
-  return { kind: 'custom', name: 'Any', module: 'typing' };
-}
-
-// Parse Python IR annotation string -> PythonType
-function parseAnnotationToPythonType(annotation: unknown, depth = 0): PythonType {
-  if (annotation === null || annotation === undefined) {
-    return unknownType();
-  }
-  if (depth > 100) {
-    return unknownType();
-  }
-  const raw = String(annotation).trim();
-
-  // Handle built-in class repr: <class 'int'>
-  const classMatch = raw.match(/^<class ['"][^'"]+['"]>$/);
-  if (classMatch) {
-    const inner = (raw.match(/^<class ['"]([^'"]+)['"]>$/) ?? [])[1] ?? '';
-    const name = (inner.split('.').pop() ?? '').toString();
-    return mapSimpleName(name);
-  }
-
-  // PEP 604 unions: int | str | None
-  if (raw.includes(' | ')) {
-    const parts = splitTopLevel(raw, '|');
-    const types = parts.map(p => parseAnnotationToPythonType(p.trim(), depth + 1));
-    return { kind: 'union', types };
-  }
-
-  // typing.Union[...]
-  if (raw.startsWith('typing.Union[') || raw.startsWith('Union[')) {
-    const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-    const parts = splitTopLevel(inner, ',');
-    const types = parts.map(p => parseAnnotationToPythonType(p.trim(), depth + 1));
-    return { kind: 'union', types };
-  }
-
-  // Optional[T]
-  if (raw.startsWith('typing.Optional[') || raw.startsWith('Optional[')) {
-    const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-    const base = parseAnnotationToPythonType(inner, depth + 1);
-    return { kind: 'optional', type: base };
-  }
-
-  // Literal[...] -> literal values union
-  if (raw.startsWith('typing.Literal[') || raw.startsWith('Literal[')) {
-    const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-    const parts = splitTopLevel(inner, ',');
-    if (parts.length === 1) {
-      return mapLiteral(String(parts[0] ?? '').trim());
-    }
-    return { kind: 'union', types: parts.map(p => mapLiteral(String(p).trim())) } as PythonType;
-  }
-
-  // typing_extensions wrappers: ClassVar[T], Final[T], Required[T], NotRequired[T]
-  const extMatch = raw.match(
-    /^(typing\.|typing_extensions\.)?(ClassVar|Final|Required|NotRequired)\[(.*)\]$/
-  );
-  if (extMatch) {
-    const inner = extMatch[3] ?? '';
-    const base = parseAnnotationToPythonType(inner, depth + 1);
-    return base;
-  }
-
-  // LiteralString
-  if (raw === 'typing.LiteralString' || raw === 'LiteralString') {
-    return { kind: 'primitive', name: 'str' } as PythonType;
-  }
-
-  // Callable[[...], R]
-  if (raw.startsWith('typing.Callable[') || raw.startsWith('Callable[')) {
-    const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-    const parts = splitTopLevel(inner, ',');
-    if (parts.length >= 2) {
-      const paramsPart = (parts[0] ?? '').trim();
-      const returnPart = parts.slice(1).join(',').trim();
-      const paramInner =
-        paramsPart.startsWith('[') && paramsPart.endsWith(']') ? paramsPart.slice(1, -1) : '';
-      const paramTypes = ((): PythonType[] => {
-        const trimmed = paramInner.trim();
-        if (trimmed === '...' || trimmed === 'Ellipsis') {
-          return [{ kind: 'custom', name: '...' } as PythonType];
-        }
-        return trimmed
-          ? splitTopLevel(trimmed, ',').map(p => parseAnnotationToPythonType(p.trim(), depth + 1))
-          : [];
-      })();
-      const returnType = parseAnnotationToPythonType(returnPart, depth + 1);
-      return { kind: 'callable', parameters: paramTypes, returnType } as PythonType;
-    }
-  }
-
-  // Mapping[K, V] / Dict[K, V] normalization
-  if (raw.startsWith('typing.Mapping[') || raw.startsWith('Mapping[')) {
-    const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-    const parts = splitTopLevel(inner, ',');
-    const itemTypes = parts.map(p => parseAnnotationToPythonType(p.trim(), depth + 1));
-    return { kind: 'collection', name: 'dict', itemTypes } as PythonType;
-  }
-
-  // Annotated[T, ...] -> annotated node with base and metadata
-  if (raw.startsWith('typing.Annotated[') || raw.startsWith('Annotated[')) {
-    const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-    const parts = splitTopLevel(inner, ',');
-    if (parts.length > 0) {
-      const base = parseAnnotationToPythonType((parts[0] ?? '').trim(), depth + 1);
-      const metaParts = parts.slice(1).map(p => String(p).trim());
-      return { kind: 'annotated', base, metadata: metaParts } as PythonType;
-    }
-  }
-
-  // Collections: list[T], dict[K,V], tuple[...], set[T]
-  const coll = normalizeCollectionName(raw);
-  if (coll) {
-    const { name, inner } = coll;
-    const itemParts =
-      name === 'dict' ? splitTopLevel(inner ?? '', ',') : splitTopLevel(inner ?? '', ',');
-    const itemTypes = (inner ? itemParts : []).map(p =>
-      parseAnnotationToPythonType(p.trim(), depth + 1)
-    );
-    return { kind: 'collection', name, itemTypes };
-  }
-
-  // typing.Callable[...] unlikely for now - treat as custom
-
-  // Bare names like int, str, float, bool, bytes, None
-  return mapSimpleName(raw);
-}
-
-function mapSimpleName(name: string): PythonType {
-  const n = name.replace(/^typing\./, '').trim();
-  if (n === 'int' || n === 'float' || n === 'str' || n === 'bool' || n === 'bytes') {
-    // cast to the specific union type without using any
-    return { kind: 'primitive', name: n };
-  }
-  // Track unknown typing-ish names for diagnostics
-  if (
-    n === 'Any' ||
-    n === 'Never' ||
-    n === 'LiteralString' ||
-    n === 'ClassVar' ||
-    n === 'Final' ||
-    n === 'TypeAlias' ||
-    n === 'Required' ||
-    n === 'NotRequired'
-  ) {
-    try {
-      recordUnknown(n);
-    } catch {}
-  }
-  if (n === 'None' || n.toLowerCase() === 'nonetype') {
-    return { kind: 'primitive', name: 'None' };
-  }
-  if (n === 'list' || n === 'List') {
-    return { kind: 'collection', name: 'list', itemTypes: [] };
-  }
-  if (n === 'dict' || n === 'Dict') {
-    return { kind: 'collection', name: 'dict', itemTypes: [] };
-  }
-  if (n === 'tuple' || n === 'Tuple') {
-    return { kind: 'collection', name: 'tuple', itemTypes: [] };
-  }
-  if (n === 'set' || n === 'Set') {
-    return { kind: 'collection', name: 'set', itemTypes: [] };
-  }
-  return { kind: 'custom', name: n };
-}
-
-function normalizeCollectionName(
-  raw: string
-): { name: 'list' | 'dict' | 'tuple' | 'set' | 'frozenset'; inner?: string } | null {
-  const m = raw.match(/^(typing\.)?(List|Dict|Tuple|Set|list|dict|tuple|set)\[(.*)\]$/);
-  if (!m) {
-    return null;
-  }
-  const nameRaw = String(m[2] ?? '');
-  const name =
-    nameRaw.toLowerCase() === 'list'
-      ? 'list'
-      : nameRaw.toLowerCase() === 'dict'
-        ? 'dict'
-        : nameRaw.toLowerCase() === 'tuple'
-          ? 'tuple'
-          : 'set';
-  return { name, inner: String(m[3] ?? '') };
-}
-
-function splitTopLevel(input: string, sep: '|' | ','): string[] {
-  const results: string[] = [];
-  let level = 0;
-  let cur = '';
-  let guard = 0;
-  for (let i = 0; i < input.length; i++) {
-    // Depth/length guard to avoid pathological recursion/loops
-    guard++;
-    if (guard > 20000) {
-      // Bail out safely; push remaining and break
-      if (cur.trim()) {
-        results.push(cur.trim());
-      }
-      break;
-    }
-    const ch = input.charAt(i);
-    if (ch === '[' || ch === '(') {
-      level++;
-    }
-    if (ch === ']' || ch === ')') {
-      level = Math.max(0, level - 1);
-    }
-    if (level === 0 && input.slice(i, i + sep.length) === sep) {
-      results.push(cur.trim());
-      cur = '';
-      i += sep.length - 1;
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur.trim()) {
-    results.push(cur.trim());
-  }
-  return results;
-}
-
-function mapLiteral(text: string): PythonType {
-  // strip quotes if present
-  const t = text.trim();
-  if ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"'))) {
-    return { kind: 'literal', value: t.slice(1, -1) } as PythonType;
-  }
-  if (t === 'True' || t === 'False') {
-    return { kind: 'literal', value: t === 'True' } as PythonType;
-  }
-  if (t === 'None') {
-    return { kind: 'literal', value: null } as PythonType;
-  }
-  const num = Number(t);
-  if (!Number.isNaN(num)) {
-    return { kind: 'literal', value: num } as PythonType;
-  }
-  // fallback
-  return { kind: 'custom', name: t } as PythonType;
-}
-
 /**
  * Compute a stable cache key filename for a module and options
  */
@@ -648,6 +516,7 @@ async function computeCacheKey(
   const keyObject = {
     module: moduleName,
     moduleVersion: moduleConfig?.version ?? null,
+    pythonImportPath: options.pythonImportPath ?? [],
     runtime: {
       pythonPath: runtimePython,
       virtualEnv: options.runtime?.node?.virtualEnv ?? null,
@@ -663,9 +532,7 @@ async function computeCacheKey(
     },
     typeHints: moduleConfig?.typeHints ?? 'strict',
   } as const;
-  const normalized = JSON.stringify(keyObject);
-  const digest = await hashUtils.sha256Hex(normalized);
-  return `ir_${moduleName}_${digest.slice(0, 16)}.json`;
+  return await computeIrCacheFilename(keyObject);
 }
 
 /**

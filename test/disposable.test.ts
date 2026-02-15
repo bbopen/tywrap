@@ -134,10 +134,7 @@ describe('disposeAll', () => {
   });
 
   it('collects errors from failing resources', async () => {
-    const resources = [
-      new FailingDisposable('Error 1'),
-      new FailingDisposable('Error 2'),
-    ];
+    const resources = [new FailingDisposable('Error 1'), new FailingDisposable('Error 2')];
 
     const errors = await disposeAll(resources);
 

@@ -170,7 +170,9 @@ import os
 
   describe('subprocess timeout forwarding', () => {
     it('passes timeoutMs to subprocess calls', async () => {
-      const isAvailableSpy = vi.spyOn(runtimeModule.processUtils, 'isAvailable').mockReturnValue(true);
+      const isAvailableSpy = vi
+        .spyOn(runtimeModule.processUtils, 'isAvailable')
+        .mockReturnValue(true);
       const execSpy = vi
         .spyOn(runtimeModule.processUtils, 'exec')
         .mockResolvedValue({ code: 0, stdout: '/tmp/example.py\n', stderr: '' });
@@ -179,7 +181,9 @@ import os
       const result = await discovery2.resolvePythonPath('example');
 
       expect(result).toBe('/tmp/example.py');
-      expect(execSpy).toHaveBeenCalledWith(expect.any(String), expect.any(Array), { timeoutMs: 1234 });
+      expect(execSpy).toHaveBeenCalledWith(expect.any(String), expect.any(Array), {
+        timeoutMs: 1234,
+      });
 
       execSpy.mockRestore();
       isAvailableSpy.mockRestore();

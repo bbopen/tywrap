@@ -7,6 +7,7 @@ Complete configuration reference covering all options from basic setup to advanc
 | Field | Description |
 |-------|-------------|
 | `pythonModules` | Mapping of module names to wrapper configuration |
+| `pythonImportPath` | Extra directories to prepend to `PYTHONPATH` during IR generation (useful for local modules not installed into your env) |
 | `output` | Output directory, module format and artifact options |
 | `runtime` | Settings for Node, Pyodide or HTTP runtimes |
 | `performance` | Caching and optimization controls |
@@ -44,6 +45,7 @@ When `--config` is omitted, the CLI searches for `tywrap.config.ts`, `.mts`,
 import { defineConfig } from 'tywrap';
 
 export default defineConfig({
+  pythonImportPath: ['./python', './vendor'],
   pythonModules: {
     numpy: { 
       version: '1.24.0',
@@ -69,6 +71,17 @@ export default defineConfig({
   }
 });
 ```
+
+## Local Modules and `pythonImportPath`
+
+If you're wrapping local modules/packages that are not installed into your Python environment, add one
+or more directories to `pythonImportPath`. tywrap will prepend these entries to `PYTHONPATH` when
+running the `tywrap_ir` subprocess. Existing `PYTHONPATH` (if set) is preserved.
+
+Notes:
+
+- Paths are passed through as provided (use absolute paths or paths relative to where you run the CLI).
+- This affects IR discovery/import, not your runtime bridge configuration.
 
 ## Python Modules Configuration
 
@@ -114,9 +127,15 @@ export default defineConfig({
 | `version` | `string` | Latest | Specific package version |
 | `functions` | `string[]` | All | Specific functions to wrap |
 | `classes` | `string[]` | All | Specific classes to wrap |
+| `exclude` | `string[]` | `[]` | Exclude specific exports by exact name |
+| `excludePatterns` | `string[]` | `[]` | Exclude exports by regex pattern |
 | `alias` | `string` | Module name | Import alias in generated code |
 | `typeHints` | `'strict' \| 'loose' \| 'ignore'` | `'strict'` | Type hint processing |
 | `watch` | `boolean` | `false` | Enable file watching in development |
+
+When `functions`/`classes` are not explicitly configured for a module, tywrap applies a small
+default exclude list to avoid generating wrappers for common decorator helpers:
+`dataclass`, `property`, `staticmethod`, `classmethod`, `abstractmethod`, `cached_property`.
 
 ## Output Configuration
 

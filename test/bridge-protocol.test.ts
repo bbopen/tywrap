@@ -24,6 +24,7 @@ import {
   type PooledWorker,
 } from '../src/runtime/worker-pool.js';
 import {
+  BridgeCodecError,
   BridgeProtocolError,
   BridgeExecutionError,
   BridgeTimeoutError,
@@ -92,7 +93,11 @@ class MockTransport implements Transport {
    * Returns the full ProtocolResponse format { id, result }.
    */
   setDynamicResponse(resultFn: (msg: ProtocolMessage) => unknown): void {
-    this.send = async (message: string, timeoutMs: number, signal?: AbortSignal): Promise<string> => {
+    this.send = async (
+      message: string,
+      timeoutMs: number,
+      signal?: AbortSignal
+    ): Promise<string> => {
       this.lastMessage = message;
 
       if (signal?.aborted) {
@@ -303,9 +308,7 @@ describe('BridgeProtocol', () => {
       await protocol.init();
       await protocol.dispose();
 
-      await expect(
-        protocol.call('module', 'function', [])
-      ).rejects.toThrow(BridgeDisposedError);
+      await expect(protocol.call('module', 'function', [])).rejects.toThrow(BridgeDisposedError);
     });
   });
 
@@ -410,7 +413,7 @@ describe('BridgeProtocol', () => {
             args: [NaN],
           },
         })
-      ).rejects.toThrow(BridgeProtocolError);
+      ).rejects.toThrow(BridgeCodecError);
     });
 
     it('handles decoding errors from codec (invalid JSON)', async () => {
@@ -426,7 +429,7 @@ describe('BridgeProtocol', () => {
             args: [],
           },
         })
-      ).rejects.toThrow(BridgeProtocolError);
+      ).rejects.toThrow(BridgeCodecError);
     });
 
     it('generates unique request IDs', async () => {
@@ -437,9 +440,18 @@ describe('BridgeProtocol', () => {
         return JSON.stringify({ id: parsed.id, result: null });
       };
 
-      await protocol.testSendMessage({ method: 'call', params: { module: 'm', functionName: 'f', args: [] } });
-      await protocol.testSendMessage({ method: 'call', params: { module: 'm', functionName: 'f', args: [] } });
-      await protocol.testSendMessage({ method: 'call', params: { module: 'm', functionName: 'f', args: [] } });
+      await protocol.testSendMessage({
+        method: 'call',
+        params: { module: 'm', functionName: 'f', args: [] },
+      });
+      await protocol.testSendMessage({
+        method: 'call',
+        params: { module: 'm', functionName: 'f', args: [] },
+      });
+      await protocol.testSendMessage({
+        method: 'call',
+        params: { module: 'm', functionName: 'f', args: [] },
+      });
 
       expect(capturedIds.length).toBe(3);
       expect(new Set(capturedIds).size).toBe(3); // All unique
@@ -577,9 +589,7 @@ describe('BridgeProtocol Integration', () => {
         return '{}';
       };
 
-      await expect(
-        protocol.call('module', 'func', [NaN])
-      ).rejects.toThrow(BridgeProtocolError);
+      await expect(protocol.call('module', 'func', [NaN])).rejects.toThrow(BridgeCodecError);
 
       expect(transportCalled).toBe(false);
     });
@@ -615,9 +625,7 @@ describe('BridgeProtocol Integration', () => {
     it('error responses without traceback work correctly', async () => {
       transport.setErrorResponse('TypeError', 'type mismatch');
 
-      await expect(
-        protocol.call('module', 'func', [])
-      ).rejects.toThrow('TypeError: type mismatch');
+      await expect(protocol.call('module', 'func', [])).rejects.toThrow('TypeError: type mismatch');
     });
 
     it('binary data is encoded as base64 with marker', async () => {
@@ -640,9 +648,9 @@ describe('BridgeProtocol Integration', () => {
       });
       await smallCodecProtocol.init();
 
-      await expect(
-        smallCodecProtocol.call('module', 'func', ['x'.repeat(200)])
-      ).rejects.toThrow(BridgeProtocolError);
+      await expect(smallCodecProtocol.call('module', 'func', ['x'.repeat(200)])).rejects.toThrow(
+        BridgeCodecError
+      );
 
       await smallCodecProtocol.dispose();
     });
@@ -657,9 +665,9 @@ describe('BridgeProtocol Integration', () => {
       });
       await smallCodecProtocol.init();
 
-      await expect(
-        smallCodecProtocol.call('module', 'func', [])
-      ).rejects.toThrow(/exceeds maximum/);
+      await expect(smallCodecProtocol.call('module', 'func', [])).rejects.toThrow(
+        /exceeds maximum/
+      );
 
       await smallCodecProtocol.dispose();
     });
@@ -702,12 +710,18 @@ describe('BridgeProtocol Integration', () => {
       const results: string[] = [];
 
       await pool.withWorker(async worker => {
-        const response = await worker.transport.send('{"id":1,"protocol":"tywrap/1","method":"call","params":{}}', 1000);
+        const response = await worker.transport.send(
+          '{"id":1,"protocol":"tywrap/1","method":"call","params":{}}',
+          1000
+        );
         results.push(response);
       });
 
       await pool.withWorker(async worker => {
-        const response = await worker.transport.send('{"id":2,"protocol":"tywrap/1","method":"call","params":{}}', 1000);
+        const response = await worker.transport.send(
+          '{"id":2,"protocol":"tywrap/1","method":"call","params":{}}',
+          1000
+        );
         results.push(response);
       });
 
@@ -783,7 +797,12 @@ describe('BridgeProtocol Integration', () => {
       // Use the pool to execute requests
       const result = await pool.withWorker(async worker => {
         const response = await worker.transport.send(
-          JSON.stringify({ id: 1, protocol: 'tywrap/1', method: 'call', params: { module: 'math', functionName: 'sqrt', args: [16] } }),
+          JSON.stringify({
+            id: 1,
+            protocol: 'tywrap/1',
+            method: 'call',
+            params: { module: 'math', functionName: 'sqrt', args: [16] },
+          }),
           1000
         );
         return JSON.parse(response);
@@ -906,9 +925,14 @@ describe('BridgeProtocol Integration', () => {
         pool.withWorker(async worker => {
           const codec = new SafeCodec({ rejectSpecialFloats: true });
           // This should throw before reaching transport
-          codec.encodeRequest({ id: 1, protocol: 'tywrap/1', method: 'call', params: { args: [NaN] } });
+          codec.encodeRequest({
+            id: 1,
+            protocol: 'tywrap/1',
+            method: 'call',
+            params: { args: [NaN] },
+          });
         })
-      ).rejects.toThrow(BridgeProtocolError);
+      ).rejects.toThrow(BridgeCodecError);
 
       expect(transportCalled).toBe(false);
     });
@@ -942,19 +966,34 @@ describe('BridgeProtocol Integration', () => {
       const operations = [
         pool.withWorker(async worker => {
           const codec = new SafeCodec();
-          const req = codec.encodeRequest({ id: 1, protocol: 'tywrap/1', method: 'call', params: { module: 'm', functionName: 'add', args: [1, 2] } });
+          const req = codec.encodeRequest({
+            id: 1,
+            protocol: 'tywrap/1',
+            method: 'call',
+            params: { module: 'm', functionName: 'add', args: [1, 2] },
+          });
           const res = await worker.transport.send(req, 1000);
           return codec.decodeResponse<number>(res);
         }),
         pool.withWorker(async worker => {
           const codec = new SafeCodec();
-          const req = codec.encodeRequest({ id: 2, protocol: 'tywrap/1', method: 'call', params: { module: 'm', functionName: 'multiply', args: [3, 4] } });
+          const req = codec.encodeRequest({
+            id: 2,
+            protocol: 'tywrap/1',
+            method: 'call',
+            params: { module: 'm', functionName: 'multiply', args: [3, 4] },
+          });
           const res = await worker.transport.send(req, 1000);
           return codec.decodeResponse<number>(res);
         }),
         pool.withWorker(async worker => {
           const codec = new SafeCodec();
-          const req = codec.encodeRequest({ id: 3, protocol: 'tywrap/1', method: 'call', params: { module: 'm', functionName: 'sqrt', args: [25] } });
+          const req = codec.encodeRequest({
+            id: 3,
+            protocol: 'tywrap/1',
+            method: 'call',
+            params: { module: 'm', functionName: 'sqrt', args: [25] },
+          });
           const res = await worker.transport.send(req, 1000);
           return codec.decodeResponse<number>(res);
         }),
@@ -972,7 +1011,11 @@ describe('BridgeProtocol Integration', () => {
         const transport = new MockTransport();
         const originalSend = transport.send.bind(transport);
 
-        transport.send = async (message: string, timeoutMs: number, signal?: AbortSignal): Promise<string> => {
+        transport.send = async (
+          message: string,
+          timeoutMs: number,
+          signal?: AbortSignal
+        ): Promise<string> => {
           sendCallCount++;
           if (sendCallCount === 1) {
             // First call fails
@@ -996,13 +1039,19 @@ describe('BridgeProtocol Integration', () => {
       // First attempt should fail
       await expect(
         pool.withWorker(async worker => {
-          return worker.transport.send('{"id":1,"protocol":"tywrap/1","method":"call","params":{}}', 1000);
+          return worker.transport.send(
+            '{"id":1,"protocol":"tywrap/1","method":"call","params":{}}',
+            1000
+          );
         })
       ).rejects.toThrow('Connection lost');
 
       // Second attempt should succeed (same transport, but send now works)
       const result = await pool.withWorker(async worker => {
-        return worker.transport.send('{"id":2,"protocol":"tywrap/1","method":"call","params":{}}', 1000);
+        return worker.transport.send(
+          '{"id":2,"protocol":"tywrap/1","method":"call","params":{}}',
+          1000
+        );
       });
 
       expect(result).toContain('recovered');
@@ -1034,9 +1083,15 @@ describe('BridgeProtocol Integration', () => {
 
       // Send 3 concurrent requests
       const results = await Promise.all([
-        pool.withWorker(w => w.transport.send('{"id":1,"protocol":"tywrap/1","method":"call","params":{}}', 1000)),
-        pool.withWorker(w => w.transport.send('{"id":2,"protocol":"tywrap/1","method":"call","params":{}}', 1000)),
-        pool.withWorker(w => w.transport.send('{"id":3,"protocol":"tywrap/1","method":"call","params":{}}', 1000)),
+        pool.withWorker(w =>
+          w.transport.send('{"id":1,"protocol":"tywrap/1","method":"call","params":{}}', 1000)
+        ),
+        pool.withWorker(w =>
+          w.transport.send('{"id":2,"protocol":"tywrap/1","method":"call","params":{}}', 1000)
+        ),
+        pool.withWorker(w =>
+          w.transport.send('{"id":3,"protocol":"tywrap/1","method":"call","params":{}}', 1000)
+        ),
       ]);
 
       // Should have used 3 different transports

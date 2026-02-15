@@ -359,7 +359,9 @@ describe('Pyodide Runtime Bridge', () => {
       await bridge.call('math', 'sqrt', [16]);
 
       // Verify that bootstrap code was executed (now uses single dispatch function)
-      expect(runPythonAsyncSpy).toHaveBeenCalledWith(expect.stringContaining('def __tywrap_dispatch'));
+      expect(runPythonAsyncSpy).toHaveBeenCalledWith(
+        expect.stringContaining('def __tywrap_dispatch')
+      );
     });
   });
 
