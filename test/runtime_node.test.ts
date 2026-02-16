@@ -113,6 +113,55 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
     );
 
     it(
+      'should roundtrip Uint8Array as Python bytes',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        const input = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
+
+        const length = await bridge.call<number>('builtins', 'len', [input]);
+        expect(length).toBe(5);
+
+        const output = await bridge.call<Uint8Array>('builtins', 'bytes', [input]);
+        expect(output).toBeInstanceOf(Uint8Array);
+        expect(Array.from(output)).toEqual(Array.from(input));
+      },
+      testTimeout
+    );
+
+    it(
+      'should support zero-length Uint8Array as Python bytes',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        const input = new Uint8Array([]);
+
+        const length = await bridge.call<number>('builtins', 'len', [input]);
+        expect(length).toBe(0);
+
+        const output = await bridge.call<Uint8Array>('builtins', 'bytes', [input]);
+        expect(output).toBeInstanceOf(Uint8Array);
+        expect(output.length).toBe(0);
+      },
+      testTimeout
+    );
+
+    it(
+      'should reject malformed bytes envelopes with explicit protocol error',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        await expect(
+          bridge.call('builtins', 'len', [{ __tywrap_bytes__: true, b64: '%%%' }])
+        ).rejects.toThrow(/Invalid bytes envelope: invalid base64/);
+      },
+      testTimeout
+    );
+
+    it(
       'should handle function calls with kwargs',
       async () => {
         const pythonAvailable = await isPythonAvailable();
