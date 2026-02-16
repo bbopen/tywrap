@@ -327,6 +327,52 @@ export class SafeCodec {
     this.bytesHandling = options.bytesHandling ?? 'base64';
   }
 
+  /**
+   * Convert base64 string to Uint8Array.
+   *
+   * Why: Python bridge represents bytes/bytearray as base64 envelopes. Decoding them here
+   * restores ergonomic JS types at the boundary.
+   */
+  private fromBase64(b64: string): Uint8Array {
+    if (typeof Buffer !== 'undefined') {
+      const buf = Buffer.from(b64, 'base64');
+      return new Uint8Array(buf.buffer, buf.byteOffset, buf.length);
+    }
+    if (globalThis.atob) {
+      const bin = globalThis.atob(b64);
+      const arr = Array.from(bin, c => c.charCodeAt(0));
+      return new Uint8Array(arr);
+    }
+    throw new BridgeCodecError('Base64 decoding is not available in this runtime', {
+      codecPhase: 'decode',
+      valueType: 'bytes',
+    });
+  }
+
+  /**
+   * JSON.parse reviver that decodes bytes envelopes.
+   *
+   * Supported shapes:
+   * - { "__tywrap_bytes__": true, "b64": "..." } (JS SafeCodec.encodeRequest; also allowed in responses)
+   * - { "__type__": "bytes", "encoding": "base64", "data": "..." } (Python SafeCodec default encoder)
+   */
+  private reviveValue(_key: string, value: unknown): unknown {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      return value;
+    }
+    const obj = value as Record<string, unknown>;
+
+    if (obj.__tywrap_bytes__ === true && typeof obj.b64 === 'string') {
+      return this.fromBase64(obj.b64);
+    }
+
+    if (obj.__type__ === 'bytes' && obj.encoding === 'base64' && typeof obj.data === 'string') {
+      return this.fromBase64(obj.data);
+    }
+
+    return value;
+  }
+
   private toBridgeExecutionError(error: NormalizedPythonError): BridgeExecutionError {
     const bridgeError = new BridgeExecutionError(`${error.type}: ${error.message}`);
     bridgeError.traceback = error.traceback;
@@ -461,7 +507,7 @@ export class SafeCodec {
     // Parse JSON
     let parsed: unknown;
     try {
-      parsed = JSON.parse(payload);
+      parsed = JSON.parse(payload, this.reviveValue.bind(this));
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       throw new BridgeCodecError(
@@ -510,7 +556,7 @@ export class SafeCodec {
     // Parse JSON
     let parsed: unknown;
     try {
-      parsed = JSON.parse(payload);
+      parsed = JSON.parse(payload, this.reviveValue.bind(this));
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       throw new BridgeCodecError(
