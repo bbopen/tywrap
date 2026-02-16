@@ -142,9 +142,12 @@ class InstanceHandleError(ValueError):
     """Raised when an instance handle is unknown or no longer valid."""
 
 _NO_DESERIALIZE = object()
+_ERR_BYTES_MISSING_B64 = 'Invalid bytes envelope: missing b64'
+_ERR_BYTES_MISSING_DATA = 'Invalid bytes envelope: missing data'
+_ERR_BYTES_INVALID_BASE64 = 'Invalid bytes envelope: invalid base64'
 
 
-def _deserialize_bytes_envelope(value):
+def _deserialize_bytes_envelope(value) -> object:
     """
     Decode base64-encoded bytes envelopes from JS into Python bytes.
 
@@ -160,21 +163,21 @@ def _deserialize_bytes_envelope(value):
 
     if value.get('__tywrap_bytes__') is True:
         b64 = value.get('b64')
-        if not isinstance(b64, str) or not b64:
-            raise ProtocolError('Invalid bytes envelope: missing b64')
+        if not isinstance(b64, str):
+            raise ProtocolError(_ERR_BYTES_MISSING_B64)
         try:
-            return base64.b64decode(b64)
+            return base64.b64decode(b64, validate=True)
         except Exception as exc:
-            raise ProtocolError('Invalid bytes envelope: invalid base64') from exc
+            raise ProtocolError(_ERR_BYTES_INVALID_BASE64) from exc
 
     if value.get('__type__') == 'bytes' and value.get('encoding') == 'base64':
         data = value.get('data')
-        if not isinstance(data, str) or not data:
-            raise ProtocolError('Invalid bytes envelope: missing data')
+        if not isinstance(data, str):
+            raise ProtocolError(_ERR_BYTES_MISSING_DATA)
         try:
-            return base64.b64decode(data)
+            return base64.b64decode(data, validate=True)
         except Exception as exc:
-            raise ProtocolError('Invalid bytes envelope: invalid base64') from exc
+            raise ProtocolError(_ERR_BYTES_INVALID_BASE64) from exc
 
     return _NO_DESERIALIZE
 
