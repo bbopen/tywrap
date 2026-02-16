@@ -319,12 +319,89 @@ export class SafeCodec {
   private readonly rejectNonStringKeys: boolean;
   private readonly maxPayloadBytes: number;
   private readonly bytesHandling: 'base64' | 'reject' | 'passthrough';
+  private readonly reviveValueBound: (key: string, value: unknown) => unknown;
+  private static readonly base64Pattern =
+    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
   constructor(options: CodecOptions = {}) {
     this.rejectSpecialFloats = options.rejectSpecialFloats ?? true;
     this.rejectNonStringKeys = options.rejectNonStringKeys ?? true;
     this.maxPayloadBytes = options.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES;
     this.bytesHandling = options.bytesHandling ?? 'base64';
+    this.reviveValueBound = this.reviveValue.bind(this);
+  }
+
+  private assertValidBase64(b64: string): void {
+    if (!SafeCodec.base64Pattern.test(b64)) {
+      throw new BridgeCodecError('Invalid base64 in bytes envelope', {
+        codecPhase: 'decode',
+        valueType: 'bytes',
+      });
+    }
+  }
+
+  /**
+   * Convert base64 string to Uint8Array.
+   *
+   * Why: Python bridge represents bytes/bytearray as base64 envelopes. Decoding them here
+   * restores ergonomic JS types at the boundary.
+   */
+  private fromBase64(b64: string): Uint8Array {
+    this.assertValidBase64(b64);
+
+    if (typeof Buffer !== 'undefined') {
+      const buf = Buffer.from(b64, 'base64');
+      return new Uint8Array(buf.buffer, buf.byteOffset, buf.length);
+    }
+    if (globalThis.atob) {
+      const bin = globalThis.atob(b64);
+      const arr = Array.from(bin, c => c.charCodeAt(0));
+      return new Uint8Array(arr);
+    }
+    throw new BridgeCodecError('Base64 decoding is not available in this runtime', {
+      codecPhase: 'decode',
+      valueType: 'bytes',
+    });
+  }
+
+  /**
+   * JSON.parse reviver that decodes bytes envelopes.
+   *
+   * Supported shapes:
+   * - { "__tywrap_bytes__": true, "b64": "..." } (JS SafeCodec.encodeRequest; also allowed in responses)
+   * - { "__type__": "bytes", "encoding": "base64", "data": "..." } (Python SafeCodec default encoder)
+   */
+  private reviveValue(_key: string, value: unknown): unknown {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      return value;
+    }
+    const obj = value as Record<string, unknown>;
+
+    if (obj.__tywrap_bytes__ === true && typeof obj.b64 === 'string') {
+      try {
+        return this.fromBase64(obj.b64);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        throw new BridgeCodecError(`Bytes envelope decode failed: ${errorMessage}`, {
+          codecPhase: 'decode',
+          valueType: 'bytes',
+        });
+      }
+    }
+
+    if (obj.__type__ === 'bytes' && obj.encoding === 'base64' && typeof obj.data === 'string') {
+      try {
+        return this.fromBase64(obj.data);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        throw new BridgeCodecError(`Bytes envelope decode failed: ${errorMessage}`, {
+          codecPhase: 'decode',
+          valueType: 'bytes',
+        });
+      }
+    }
+
+    return value;
   }
 
   private toBridgeExecutionError(error: NormalizedPythonError): BridgeExecutionError {
@@ -461,8 +538,11 @@ export class SafeCodec {
     // Parse JSON
     let parsed: unknown;
     try {
-      parsed = JSON.parse(payload);
+      parsed = JSON.parse(payload, this.reviveValueBound);
     } catch (err) {
+      if (err instanceof BridgeCodecError || err instanceof BridgeProtocolError) {
+        throw err;
+      }
       const errorMessage = err instanceof Error ? err.message : String(err);
       throw new BridgeCodecError(
         `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`,
@@ -510,8 +590,11 @@ export class SafeCodec {
     // Parse JSON
     let parsed: unknown;
     try {
-      parsed = JSON.parse(payload);
+      parsed = JSON.parse(payload, this.reviveValueBound);
     } catch (err) {
+      if (err instanceof BridgeCodecError || err instanceof BridgeProtocolError) {
+        throw err;
+      }
       const errorMessage = err instanceof Error ? err.message : String(err);
       throw new BridgeCodecError(
         `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`,

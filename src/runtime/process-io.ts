@@ -733,8 +733,10 @@ export class ProcessIO extends BoundedContext implements Transport {
       }
     }, this.writeQueueTimeoutMs);
 
-    // Unref the timer so it doesn't keep the process alive
-    entry.timeoutHandle.unref();
+    // Unref the timer so it doesn't keep the process alive (best-effort for non-Node runtimes)
+    if (typeof entry.timeoutHandle.unref === 'function') {
+      entry.timeoutHandle.unref();
+    }
 
     return entry;
   }

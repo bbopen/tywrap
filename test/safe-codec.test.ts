@@ -357,6 +357,47 @@ describe('decodeResponse - Basic', () => {
     expect(result).toEqual({ a: 1 });
   });
 
+  it('decodes Python bytes envelope (__type__: bytes) to Uint8Array', () => {
+    const payload = JSON.stringify({
+      id: 1,
+      result: { __type__: 'bytes', encoding: 'base64', data: 'SGVsbG8=' }, // "Hello"
+    });
+    const result = codec.decodeResponse<Uint8Array>(payload);
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(Array.from(result)).toEqual([72, 101, 108, 108, 111]);
+  });
+
+  it('decodes Tywrap bytes envelope (__tywrap_bytes__) to Uint8Array', () => {
+    const payload = JSON.stringify({
+      id: 1,
+      result: { __tywrap_bytes__: true, b64: 'SGVsbG8=' }, // "Hello"
+    });
+    const result = codec.decodeResponse<Uint8Array>(payload);
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(Array.from(result)).toEqual([72, 101, 108, 108, 111]);
+  });
+
+  it('decodes bytes envelope even when bytesHandling is reject', () => {
+    const rejectCodec = new SafeCodec({ bytesHandling: 'reject' });
+    const payload = JSON.stringify({
+      id: 1,
+      result: { __type__: 'bytes', encoding: 'base64', data: 'SGVsbG8=' }, // "Hello"
+    });
+    const result = rejectCodec.decodeResponse<Uint8Array>(payload);
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(Array.from(result)).toEqual([72, 101, 108, 108, 111]);
+  });
+
+  it('surfaces invalid bytes envelope base64 as a codec error', () => {
+    const payload = JSON.stringify({
+      id: 1,
+      result: { __tywrap_bytes__: true, b64: '%%%' },
+    });
+    expect(() => codec.decodeResponse(payload)).toThrow(BridgeCodecError);
+    expect(() => codec.decodeResponse(payload)).toThrow(/Bytes envelope decode failed/);
+    expect(() => codec.decodeResponse(payload)).not.toThrow(/JSON parse failed/);
+  });
+
   it('parses arrays', () => {
     const result = codec.decodeResponse<number[]>('[1, 2, 3]');
     expect(result).toEqual([1, 2, 3]);
