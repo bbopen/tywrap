@@ -319,12 +319,25 @@ export class SafeCodec {
   private readonly rejectNonStringKeys: boolean;
   private readonly maxPayloadBytes: number;
   private readonly bytesHandling: 'base64' | 'reject' | 'passthrough';
+  private readonly reviveValueBound: (key: string, value: unknown) => unknown;
+  private static readonly base64Pattern =
+    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
   constructor(options: CodecOptions = {}) {
     this.rejectSpecialFloats = options.rejectSpecialFloats ?? true;
     this.rejectNonStringKeys = options.rejectNonStringKeys ?? true;
     this.maxPayloadBytes = options.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES;
     this.bytesHandling = options.bytesHandling ?? 'base64';
+    this.reviveValueBound = this.reviveValue.bind(this);
+  }
+
+  private assertValidBase64(b64: string): void {
+    if (!SafeCodec.base64Pattern.test(b64)) {
+      throw new BridgeCodecError('Invalid base64 in bytes envelope', {
+        codecPhase: 'decode',
+        valueType: 'bytes',
+      });
+    }
   }
 
   /**
@@ -334,6 +347,8 @@ export class SafeCodec {
    * restores ergonomic JS types at the boundary.
    */
   private fromBase64(b64: string): Uint8Array {
+    this.assertValidBase64(b64);
+
     if (typeof Buffer !== 'undefined') {
       const buf = Buffer.from(b64, 'base64');
       return new Uint8Array(buf.buffer, buf.byteOffset, buf.length);
@@ -363,11 +378,27 @@ export class SafeCodec {
     const obj = value as Record<string, unknown>;
 
     if (obj.__tywrap_bytes__ === true && typeof obj.b64 === 'string') {
-      return this.fromBase64(obj.b64);
+      try {
+        return this.fromBase64(obj.b64);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        throw new BridgeCodecError(`Bytes envelope decode failed: ${errorMessage}`, {
+          codecPhase: 'decode',
+          valueType: 'bytes',
+        });
+      }
     }
 
     if (obj.__type__ === 'bytes' && obj.encoding === 'base64' && typeof obj.data === 'string') {
-      return this.fromBase64(obj.data);
+      try {
+        return this.fromBase64(obj.data);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        throw new BridgeCodecError(`Bytes envelope decode failed: ${errorMessage}`, {
+          codecPhase: 'decode',
+          valueType: 'bytes',
+        });
+      }
     }
 
     return value;
@@ -507,8 +538,11 @@ export class SafeCodec {
     // Parse JSON
     let parsed: unknown;
     try {
-      parsed = JSON.parse(payload, this.reviveValue.bind(this));
+      parsed = JSON.parse(payload, this.reviveValueBound);
     } catch (err) {
+      if (err instanceof BridgeCodecError || err instanceof BridgeProtocolError) {
+        throw err;
+      }
       const errorMessage = err instanceof Error ? err.message : String(err);
       throw new BridgeCodecError(
         `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`,
@@ -556,8 +590,11 @@ export class SafeCodec {
     // Parse JSON
     let parsed: unknown;
     try {
-      parsed = JSON.parse(payload, this.reviveValue.bind(this));
+      parsed = JSON.parse(payload, this.reviveValueBound);
     } catch (err) {
+      if (err instanceof BridgeCodecError || err instanceof BridgeProtocolError) {
+        throw err;
+      }
       const errorMessage = err instanceof Error ? err.message : String(err);
       throw new BridgeCodecError(
         `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`,
