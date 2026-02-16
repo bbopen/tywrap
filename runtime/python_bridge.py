@@ -141,6 +141,62 @@ class ProtocolError(Exception):
 class InstanceHandleError(ValueError):
     """Raised when an instance handle is unknown or no longer valid."""
 
+_NO_DESERIALIZE = object()
+
+
+def _deserialize_bytes_envelope(value):
+    """
+    Decode base64-encoded bytes envelopes from JS into Python bytes.
+
+    Supported shapes:
+    - { "__tywrap_bytes__": true, "b64": "..." }  (JS SafeCodec.encodeRequest)
+    - { "__type__": "bytes", "encoding": "base64", "data": "..." }  (legacy/compat)
+
+    Why: TS SafeCodec encodes Uint8Array/ArrayBuffer as base64 objects, but
+    Python handlers expect real bytes/bytearray to preserve behavior (e.g., len()).
+    """
+    if not isinstance(value, dict):
+        return _NO_DESERIALIZE
+
+    if value.get('__tywrap_bytes__') is True:
+        b64 = value.get('b64')
+        if not isinstance(b64, str) or not b64:
+            raise ProtocolError('Invalid bytes envelope: missing b64')
+        try:
+            return base64.b64decode(b64)
+        except Exception as exc:
+            raise ProtocolError('Invalid bytes envelope: invalid base64') from exc
+
+    if value.get('__type__') == 'bytes' and value.get('encoding') == 'base64':
+        data = value.get('data')
+        if not isinstance(data, str) or not data:
+            raise ProtocolError('Invalid bytes envelope: missing data')
+        try:
+            return base64.b64decode(data)
+        except Exception as exc:
+            raise ProtocolError('Invalid bytes envelope: invalid base64') from exc
+
+    return _NO_DESERIALIZE
+
+
+def deserialize(value):
+    """
+    Recursively deserialize request values into Python-native types.
+
+    Why: requests are JSON-only; we need a small set of explicit decoders
+    (currently bytes) to restore Python semantics at the boundary.
+    """
+    decoded = _deserialize_bytes_envelope(value)
+    if decoded is not _NO_DESERIALIZE:
+        return decoded
+
+    if isinstance(value, list):
+        return [deserialize(item) for item in value]
+    if isinstance(value, dict):
+        # Preserve dict shape while decoding nested values.
+        return {k: deserialize(v) for k, v in value.items()}
+    return value
+
 
 _PROTOCOL_DIAGNOSTIC_MAX = 2048
 
@@ -648,8 +704,8 @@ def serialize_stdlib(obj):
 def handle_call(params):
     module_name = require_str(params, 'module')
     function_name = require_str(params, 'functionName')
-    args = coerce_list(params.get('args'), 'args')
-    kwargs = coerce_dict(params.get('kwargs'), 'kwargs')
+    args = deserialize(coerce_list(params.get('args'), 'args'))
+    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'))
     mod = importlib.import_module(module_name)
     func = getattr(mod, function_name)
     res = func(*args, **kwargs)
@@ -659,8 +715,8 @@ def handle_call(params):
 def handle_instantiate(params):
     module_name = require_str(params, 'module')
     class_name = require_str(params, 'className')
-    args = coerce_list(params.get('args'), 'args')
-    kwargs = coerce_dict(params.get('kwargs'), 'kwargs')
+    args = deserialize(coerce_list(params.get('args'), 'args'))
+    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'))
     mod = importlib.import_module(module_name)
     cls = getattr(mod, class_name)
     obj = cls(*args, **kwargs)
@@ -672,8 +728,8 @@ def handle_instantiate(params):
 def handle_call_method(params):
     handle_id = require_str(params, 'handle')
     method_name = require_str(params, 'methodName')
-    args = coerce_list(params.get('args'), 'args')
-    kwargs = coerce_dict(params.get('kwargs'), 'kwargs')
+    args = deserialize(coerce_list(params.get('args'), 'args'))
+    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'))
     if handle_id not in instances:
         raise InstanceHandleError(f'Unknown instance handle: {handle_id}')
     obj = instances[handle_id]

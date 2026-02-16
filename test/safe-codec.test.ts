@@ -357,6 +357,16 @@ describe('decodeResponse - Basic', () => {
     expect(result).toEqual({ a: 1 });
   });
 
+  it('decodes Python bytes envelope (__type__: bytes) to Uint8Array', () => {
+    const payload = JSON.stringify({
+      id: 1,
+      result: { __type__: 'bytes', encoding: 'base64', data: 'SGVsbG8=' }, // "Hello"
+    });
+    const result = codec.decodeResponse<Uint8Array>(payload);
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(Array.from(result)).toEqual([72, 101, 108, 108, 111]);
+  });
+
   it('parses arrays', () => {
     const result = codec.decodeResponse<number[]>('[1, 2, 3]');
     expect(result).toEqual([1, 2, 3]);

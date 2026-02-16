@@ -113,6 +113,24 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
     );
 
     it(
+      'should roundtrip Uint8Array as Python bytes',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        const input = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
+
+        const length = await bridge.call<number>('builtins', 'len', [input]);
+        expect(length).toBe(5);
+
+        const output = await bridge.call<Uint8Array>('builtins', 'bytes', [input]);
+        expect(output).toBeInstanceOf(Uint8Array);
+        expect(Array.from(output)).toEqual(Array.from(input));
+      },
+      testTimeout
+    );
+
+    it(
       'should handle function calls with kwargs',
       async () => {
         const pythonAvailable = await isPythonAvailable();
