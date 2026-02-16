@@ -388,6 +388,16 @@ describe('decodeResponse - Basic', () => {
     expect(Array.from(result)).toEqual([72, 101, 108, 108, 111]);
   });
 
+  it('surfaces invalid bytes envelope base64 as a codec error', () => {
+    const payload = JSON.stringify({
+      id: 1,
+      result: { __tywrap_bytes__: true, b64: '%%%' },
+    });
+    expect(() => codec.decodeResponse(payload)).toThrow(BridgeCodecError);
+    expect(() => codec.decodeResponse(payload)).toThrow(/Bytes envelope decode failed/);
+    expect(() => codec.decodeResponse(payload)).not.toThrow(/JSON parse failed/);
+  });
+
   it('parses arrays', () => {
     const result = codec.decodeResponse<number[]>('[1, 2, 3]');
     expect(result).toEqual([1, 2, 3]);
