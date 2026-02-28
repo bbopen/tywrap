@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'path';
 import { NodeBridge } from '../src/runtime/node.js';
@@ -698,6 +698,97 @@ def get_bad():
         expect(result).toBe(5);
 
         await fallbackBridge.dispose();
+      },
+      testTimeout
+    );
+  });
+
+  describe('Warmup Commands', () => {
+    it(
+      'should execute warmup commands during init',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        let tempDir: string | undefined;
+        let warmupBridge: NodeBridge | undefined;
+        try {
+          tempDir = await mkdtemp(join(tmpdir(), 'tywrap-warmup-'));
+          const moduleName = 'warmup_fixture';
+          const markerPath = join(tempDir, 'warmup.marker');
+          const modulePath = join(tempDir, `${moduleName}.py`);
+
+          await writeFile(
+            modulePath,
+            `from pathlib import Path\n\ndef touch(path):\n    Path(path).write_text('warmed', encoding='utf-8')\n    return True\n`,
+            'utf-8'
+          );
+
+          const existingPyPath = process.env.PYTHONPATH;
+          const mergedPyPath = existingPyPath ? `${tempDir}${delimiter}${existingPyPath}` : tempDir;
+
+          warmupBridge = new NodeBridge({
+            scriptPath,
+            env: { PYTHONPATH: mergedPyPath },
+            warmupCommands: [{ module: moduleName, functionName: 'touch', args: [markerPath] }],
+            timeoutMs: defaultTimeoutMs,
+          });
+
+          await warmupBridge.init();
+          await expect(access(markerPath)).resolves.toBeUndefined();
+        } finally {
+          if (warmupBridge) {
+            await warmupBridge.dispose();
+          }
+          if (tempDir) {
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          }
+        }
+      },
+      testTimeout
+    );
+
+    it(
+      'should surface warmup failures and keep bridge not ready',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        let tempDir: string | undefined;
+        let warmupBridge: NodeBridge | undefined;
+        try {
+          tempDir = await mkdtemp(join(tmpdir(), 'tywrap-warmup-fail-'));
+          const moduleName = 'warmup_failure_fixture';
+          const modulePath = join(tempDir, `${moduleName}.py`);
+
+          await writeFile(
+            modulePath,
+            `def fail():\n    raise RuntimeError('warmup boom')\n`,
+            'utf-8'
+          );
+
+          const existingPyPath = process.env.PYTHONPATH;
+          const mergedPyPath = existingPyPath ? `${tempDir}${delimiter}${existingPyPath}` : tempDir;
+
+          warmupBridge = new NodeBridge({
+            scriptPath,
+            env: { PYTHONPATH: mergedPyPath },
+            warmupCommands: [{ module: moduleName, functionName: 'fail' }],
+            timeoutMs: defaultTimeoutMs,
+          });
+
+          const initPromise = warmupBridge.init();
+          await expect(initPromise).rejects.toThrow(/Warmup command #1/);
+          await expect(initPromise).rejects.toThrow(/RuntimeError: warmup boom/);
+          expect(warmupBridge.isReady).toBe(false);
+        } finally {
+          if (warmupBridge) {
+            await warmupBridge.dispose();
+          }
+          if (tempDir) {
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          }
+        }
       },
       testTimeout
     );

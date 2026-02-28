@@ -18,10 +18,11 @@ import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 import { globalCache } from '../utils/cache.js';
 
 import { BridgeProtocol, type BridgeProtocolOptions } from './bridge-protocol.js';
-import { BridgeProtocolError } from './errors.js';
+import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import { ProcessIO } from './process-io.js';
 import { PooledTransport } from './pooled-transport.js';
 import type { CodecOptions } from './safe-codec.js';
+import { PROTOCOL_ID } from './transport.js';
 import type { PooledWorker } from './worker-pool.js';
 
 // =============================================================================
@@ -119,9 +120,13 @@ interface ResolvedOptions {
   enableCache: boolean;
   env: Record<string, string | undefined>;
   codec?: CodecOptions;
-  warmupCommands: Array<
-    { module: string; functionName: string; args?: unknown[] } | { method: string; params: unknown }
-  >;
+  warmupCommands: WarmupCommand[];
+}
+
+interface WarmupCommand {
+  module: string;
+  functionName: string;
+  args?: unknown[];
 }
 
 // =============================================================================
@@ -190,6 +195,46 @@ function assertSafeEnvOverrideKey(key: string): void {
   }
 }
 
+function normalizeWarmupCommands(commands: NodeBridgeOptions['warmupCommands']): WarmupCommand[] {
+  const warmups = commands ?? [];
+  return warmups.map((command, index) => {
+    if (!command || typeof command !== 'object' || Array.isArray(command)) {
+      throw new BridgeProtocolError(
+        `Invalid warmup command at index ${index + 1}: expected { module, functionName, args? }`
+      );
+    }
+
+    const candidate = command as Record<string, unknown>;
+    if ('method' in candidate || 'params' in candidate) {
+      throw new BridgeProtocolError(
+        `Invalid warmup command at index ${index + 1}: legacy { method, params } format is no longer supported. Use { module, functionName, args? }.`
+      );
+    }
+
+    if (typeof candidate.module !== 'string' || candidate.module.trim().length === 0) {
+      throw new BridgeProtocolError(
+        `Invalid warmup command at index ${index + 1}: "module" must be a non-empty string`
+      );
+    }
+    if (typeof candidate.functionName !== 'string' || candidate.functionName.trim().length === 0) {
+      throw new BridgeProtocolError(
+        `Invalid warmup command at index ${index + 1}: "functionName" must be a non-empty string`
+      );
+    }
+    if (candidate.args !== undefined && !Array.isArray(candidate.args)) {
+      throw new BridgeProtocolError(
+        `Invalid warmup command at index ${index + 1}: "args" must be an array when provided`
+      );
+    }
+
+    return {
+      module: candidate.module,
+      functionName: candidate.functionName,
+      args: candidate.args as unknown[] | undefined,
+    };
+  });
+}
+
 // =============================================================================
 // NODE BRIDGE
 // =============================================================================
@@ -250,6 +295,8 @@ export class NodeBridge extends BridgeProtocol {
     const maxProcesses = options.maxProcesses ?? 1;
     const minProcesses = Math.min(options.minProcesses ?? 1, maxProcesses);
 
+    const warmupCommands = normalizeWarmupCommands(options.warmupCommands);
+
     const resolvedOptions: ResolvedOptions = {
       minProcesses,
       maxProcesses,
@@ -264,7 +311,7 @@ export class NodeBridge extends BridgeProtocol {
       enableCache: options.enableCache ?? false,
       env: options.env ?? {},
       codec: options.codec,
-      warmupCommands: options.warmupCommands ?? [],
+      warmupCommands,
     };
 
     // Build environment for ProcessIO
@@ -485,8 +532,8 @@ export class NodeBridge extends BridgeProtocol {
  * Simple request ID generator for warmup commands.
  */
 let warmupRequestId = 0;
-function generateWarmupId(): string {
-  return `warmup_${++warmupRequestId}_${Date.now()}`;
+function generateWarmupId(): number {
+  return ++warmupRequestId;
 }
 
 /**
@@ -496,32 +543,59 @@ function generateWarmupId(): string {
  * bypassing the pool to ensure each worker gets warmed up individually.
  */
 function createWarmupCallback(
-  warmupCommands: Array<
-    { module: string; functionName: string; args?: unknown[] } | { method: string; params: unknown }
-  >,
+  warmupCommands: WarmupCommand[],
   timeoutMs: number
 ): (worker: PooledWorker) => Promise<void> {
   return async (worker: PooledWorker) => {
-    for (const cmd of warmupCommands) {
-      try {
-        // Handle both new and legacy warmup command formats
-        if ('module' in cmd && 'functionName' in cmd) {
-          // Build the protocol message
-          const message = JSON.stringify({
-            id: generateWarmupId(),
-            type: 'call',
-            module: cmd.module,
-            functionName: cmd.functionName,
-            args: cmd.args ?? [],
-            kwargs: {},
-          });
+    for (const [index, cmd] of warmupCommands.entries()) {
+      const commandLabel = `${cmd.module}.${cmd.functionName}`;
+      const message = JSON.stringify({
+        id: generateWarmupId(),
+        protocol: PROTOCOL_ID,
+        method: 'call',
+        params: {
+          module: cmd.module,
+          functionName: cmd.functionName,
+          args: cmd.args ?? [],
+          kwargs: {},
+        },
+      });
 
-          // Send directly to this worker's transport
-          await worker.transport.send(message, timeoutMs);
+      let response: string;
+      try {
+        response = await worker.transport.send(message, timeoutMs);
+      } catch (error) {
+        throw new BridgeExecutionError(
+          `Warmup command #${index + 1} (${commandLabel}) failed to send: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error instanceof Error ? error : undefined }
+        );
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(response);
+      } catch (error) {
+        throw new BridgeExecutionError(
+          `Warmup command #${index + 1} (${commandLabel}) returned invalid JSON response`,
+          { cause: error instanceof Error ? error : undefined }
+        );
+      }
+
+      if (parsed && typeof parsed === 'object' && 'error' in parsed) {
+        const errorPayload = (parsed as { error?: unknown }).error;
+        if (errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)) {
+          const err = errorPayload as { type?: unknown; message?: unknown };
+          const errType = typeof err.type === 'string' ? err.type : 'Error';
+          const errMessage =
+            typeof err.message === 'string' ? err.message : 'Unknown warmup error';
+          throw new BridgeExecutionError(
+            `Warmup command #${index + 1} (${commandLabel}) failed: ${errType}: ${errMessage}`
+          );
         }
-        // Legacy format { method, params } is ignored as it's not supported
-      } catch {
-        // Ignore warmup errors - they're not critical
+
+        throw new BridgeExecutionError(
+          `Warmup command #${index + 1} (${commandLabel}) failed with malformed error payload`
+        );
       }
     }
   };
