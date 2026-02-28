@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 // OptimizedNodeBridge is now an alias for NodeBridge with pool configuration
 import { NodeBridge as OptimizedNodeBridge } from '../src/runtime/node.js';
 import { isNodejs, getPythonExecutableName } from '../src/utils/runtime.js';
-import { BridgeCodecError } from '../src/runtime/errors.js';
+import { BridgeCodecError, BridgeProtocolError } from '../src/runtime/errors.js';
 
 const describeNodeOnly = isNodejs() ? describe : describe.skip;
 const BRIDGE_SCRIPT = 'runtime/python_bridge.py';
@@ -71,9 +71,19 @@ describe('OptimizedNodeBridge', () => {
 
     it('should accept warmup commands', () => {
       bridge = new OptimizedNodeBridge({
-        warmupCommands: [{ method: 'import', params: { module: 'os' } }],
+        warmupCommands: [{ module: 'math', functionName: 'sqrt', args: [16] }],
       });
       expect(bridge).toBeInstanceOf(OptimizedNodeBridge);
+    });
+
+    it('should reject legacy warmup command format', () => {
+      const createBridge = (): OptimizedNodeBridge =>
+        new OptimizedNodeBridge({
+          warmupCommands: [{ method: 'import', params: { module: 'os' } }],
+        });
+
+      expect(createBridge).toThrow(BridgeProtocolError);
+      expect(createBridge).toThrow(/legacy \{ method, params \} format is no longer supported/i);
     });
 
     it('should accept custom environment variables', () => {
