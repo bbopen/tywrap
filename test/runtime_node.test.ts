@@ -113,6 +113,19 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
     );
 
     it(
+      'should not timeout when args include nested id fields',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        const result = await bridge.call<string>('builtins', 'str', [{ id: 999, value: 'ok' }]);
+        expect(result).toContain("'id': 999");
+        expect(result).toContain("'value': 'ok'");
+      },
+      testTimeout
+    );
+
+    it(
       'should roundtrip Uint8Array as Python bytes',
       async () => {
         const pythonAvailable = await isPythonAvailable();
