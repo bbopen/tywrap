@@ -106,13 +106,27 @@ function sanitizeStderr(value: string): string {
 }
 
 /**
- * Extract message ID from a JSON string without full parsing.
+ * Extract top-level message ID from a JSON string.
  * Returns null if ID cannot be extracted.
  */
 function extractMessageId(json: string): number | null {
-  // Look for "id": <number> (integer IDs)
-  const match = json.match(/"id"\s*:\s*(-?\d+)/);
-  return match?.[1] ? parseInt(match[1], 10) : null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const id = (parsed as { id?: unknown }).id;
+  if (typeof id !== 'number' || !Number.isInteger(id)) {
+    return null;
+  }
+
+  return id;
 }
 
 // =============================================================================
@@ -227,7 +241,7 @@ export class ProcessIO extends BoundedContext implements Transport {
 
     // Extract message ID for response correlation
     const messageId = extractMessageId(message);
-    if (!messageId) {
+    if (messageId === null) {
       throw new BridgeProtocolError('Message must contain an "id" field');
     }
 
@@ -575,7 +589,7 @@ export class ProcessIO extends BoundedContext implements Transport {
   private handleResponseLine(line: string): void {
     // Extract ID to find pending request
     const messageId = extractMessageId(line);
-    if (!messageId) {
+    if (messageId === null) {
       this.handleProtocolError('Response missing "id" field', line);
       return;
     }
