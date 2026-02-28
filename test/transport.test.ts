@@ -1047,9 +1047,30 @@ describe('PyodideIO', () => {
         },
       };
 
-      const invalidMessage = JSON.stringify({ args: [] }); // Missing id and type
+      const invalidMessage = JSON.stringify({ args: [] }); // Missing id/method/protocol/params
       await expect(transport.send(invalidMessage, 1000)).rejects.toThrow(BridgeProtocolError);
       await expect(transport.send(invalidMessage, 1000)).rejects.toThrow(/missing required fields/);
+    });
+
+    it('rejects legacy type-only message envelopes', async () => {
+      const transport = new PyodideIO();
+
+      (transport as any)._state = 'ready';
+      (transport as any).py = {
+        globals: {
+          get: () => null,
+        },
+      };
+
+      const legacyMessage = JSON.stringify({
+        id: 1,
+        protocol: PROTOCOL_ID,
+        type: 'call',
+        module: 'math',
+      });
+
+      await expect(transport.send(legacyMessage, 1000)).rejects.toThrow(BridgeProtocolError);
+      await expect(transport.send(legacyMessage, 1000)).rejects.toThrow(/missing required fields/);
     });
 
     it('rejects when Pyodide not initialized', async () => {
@@ -1131,7 +1152,8 @@ describe('PyodideIO', () => {
       const transport = new PyodideIO();
 
       const errorResponse = JSON.stringify({
-        id: 'test-1',
+        id: 1,
+        protocol: PROTOCOL_ID,
         error: {
           type: 'ValueError',
           message: 'invalid argument',
@@ -1151,6 +1173,45 @@ describe('PyodideIO', () => {
 
       // Error responses are returned as-is; caller handles them
       expect(result).toBe(errorResponse);
+    });
+
+    it('returns unknown-method protocol error envelopes as-is', async () => {
+      const transport = new PyodideIO();
+      const mockDispatch = vi.fn().mockImplementation((message: string) => {
+        const parsed = JSON.parse(message);
+        return JSON.stringify({
+          id: parsed.id,
+          protocol: PROTOCOL_ID,
+          error: {
+            type: 'ValueError',
+            message: `Unknown method: ${parsed.method as string}`,
+          },
+        });
+      });
+
+      (transport as any)._state = 'ready';
+      (transport as any).py = {
+        globals: {
+          get: () => mockDispatch,
+        },
+      };
+
+      const unknownMethodMessage = JSON.stringify({
+        id: 1,
+        protocol: PROTOCOL_ID,
+        method: 'unknown_method',
+        params: {},
+      });
+
+      const response = await transport.send(unknownMethodMessage, 1000);
+      expect(JSON.parse(response)).toEqual({
+        id: 1,
+        protocol: PROTOCOL_ID,
+        error: {
+          type: 'ValueError',
+          message: 'Unknown method: unknown_method',
+        },
+      });
     });
 
     it('handles invalid JSON response from Python', async () => {
@@ -1177,9 +1238,7 @@ describe('PyodideIO', () => {
     it('call constructs and sends call message', async () => {
       const transport = new PyodideIO();
 
-      const mockDispatch = vi
-        .fn()
-        .mockReturnValue(JSON.stringify({ id: expect.any(String), result: 4 }));
+      const mockDispatch = vi.fn().mockReturnValue(JSON.stringify({ id: 1, result: 4 }));
 
       (transport as any)._state = 'ready';
       (transport as any).py = {
@@ -1303,7 +1362,7 @@ describe('PyodideIO', () => {
     it('generates unique IDs for each message', async () => {
       const transport = new PyodideIO();
 
-      const capturedIds: string[] = [];
+      const capturedIds: number[] = [];
       const mockDispatch = vi.fn().mockImplementation((msg: string) => {
         const parsed = JSON.parse(msg);
         capturedIds.push(parsed.id);
