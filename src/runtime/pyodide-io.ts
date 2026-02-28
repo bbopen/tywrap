@@ -75,6 +75,27 @@ import json
 import importlib
 
 __tywrap_instances = {}
+__tywrap_protocol = 'tywrap/1'
+
+def __tywrap_require_str(params, key):
+    value = params.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f'Missing {key}')
+    return value
+
+def __tywrap_coerce_list(value, key):
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f'Invalid {key}')
+    return value
+
+def __tywrap_coerce_dict(value, key):
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f'Invalid {key}')
+    return value
 
 def __tywrap_dispatch(message_json):
     """
@@ -87,48 +108,76 @@ def __tywrap_dispatch(message_json):
         JSON-encoded ProtocolResponse string
     """
     msg = None
+    msg_id = -1
     try:
         msg = json.loads(message_json)
-        msg_id = msg['id']
-        msg_type = msg['type']
+        if not isinstance(msg, dict):
+            raise ValueError('Invalid request payload')
 
-        if msg_type == 'call':
-            mod = importlib.import_module(msg['module'])
-            fn = getattr(mod, msg['functionName'])
-            result = fn(*msg.get('args', []), **msg.get('kwargs', {}))
-            return json.dumps({'id': msg_id, 'result': result})
+        msg_id = msg.get('id')
+        if not isinstance(msg_id, int):
+            raise ValueError(f'Invalid request id: {msg_id}')
 
-        elif msg_type == 'instantiate':
-            mod = importlib.import_module(msg['module'])
-            cls = getattr(mod, msg['className'])
-            obj = cls(*msg.get('args', []), **msg.get('kwargs', {}))
+        protocol = msg.get('protocol')
+        if protocol != __tywrap_protocol:
+            raise ValueError(f'Invalid protocol: {protocol}')
+
+        method = msg.get('method')
+        if not isinstance(method, str):
+            raise ValueError('Missing method')
+
+        params = __tywrap_coerce_dict(msg.get('params'), 'params')
+
+        if method == 'call':
+            module_name = __tywrap_require_str(params, 'module')
+            function_name = __tywrap_require_str(params, 'functionName')
+            args = __tywrap_coerce_list(params.get('args'), 'args')
+            kwargs = __tywrap_coerce_dict(params.get('kwargs'), 'kwargs')
+            mod = importlib.import_module(module_name)
+            fn = getattr(mod, function_name)
+            result = fn(*args, **kwargs)
+
+        elif method == 'instantiate':
+            module_name = __tywrap_require_str(params, 'module')
+            class_name = __tywrap_require_str(params, 'className')
+            args = __tywrap_coerce_list(params.get('args'), 'args')
+            kwargs = __tywrap_coerce_dict(params.get('kwargs'), 'kwargs')
+            mod = importlib.import_module(module_name)
+            cls = getattr(mod, class_name)
+            obj = cls(*args, **kwargs)
             handle = str(id(obj))
             __tywrap_instances[handle] = obj
-            return json.dumps({'id': msg_id, 'result': handle})
+            result = handle
 
-        elif msg_type == 'call_method':
-            obj = __tywrap_instances[msg['handle']]
-            method = getattr(obj, msg['methodName'])
-            result = method(*msg.get('args', []), **msg.get('kwargs', {}))
-            return json.dumps({'id': msg_id, 'result': result})
+        elif method == 'call_method':
+            handle = __tywrap_require_str(params, 'handle')
+            method_name = __tywrap_require_str(params, 'methodName')
+            args = __tywrap_coerce_list(params.get('args'), 'args')
+            kwargs = __tywrap_coerce_dict(params.get('kwargs'), 'kwargs')
+            if handle not in __tywrap_instances:
+                raise ValueError(f'Unknown instance handle: {handle}')
+            obj = __tywrap_instances[handle]
+            bound_method = getattr(obj, method_name)
+            result = bound_method(*args, **kwargs)
 
-        elif msg_type == 'dispose_instance':
-            __tywrap_instances.pop(msg['handle'], None)
-            return json.dumps({'id': msg_id, 'result': None})
+        elif method == 'dispose_instance':
+            handle = __tywrap_require_str(params, 'handle')
+            result = __tywrap_instances.pop(handle, None) is not None
 
         else:
-            return json.dumps({
-                'id': msg_id,
-                'error': {
-                    'type': 'ValueError',
-                    'message': f'Unknown message type: {msg_type}'
-                }
-            })
+            raise ValueError(f'Unknown method: {method}')
+
+        return json.dumps({
+            'id': msg_id,
+            'protocol': __tywrap_protocol,
+            'result': result
+        })
 
     except Exception as e:
         import traceback
         return json.dumps({
-            'id': msg.get('id', 'unknown') if msg else 'unknown',
+            'id': msg_id,
+            'protocol': __tywrap_protocol,
             'error': {
                 'type': type(e).__name__,
                 'message': str(e),
@@ -154,11 +203,10 @@ def __tywrap_dispatch(message_json):
  *
  * const response = await transport.send(
  *   JSON.stringify({
- *     id: '1',
- *     type: 'call',
- *     module: 'math',
- *     functionName: 'sqrt',
- *     args: [16]
+ *     id: 1,
+ *     protocol: 'tywrap/1',
+ *     method: 'call',
+ *     params: { module: 'math', functionName: 'sqrt', args: [16], kwargs: {} }
  *   }),
  *   5000
  * );
@@ -267,7 +315,13 @@ export class PyodideIO extends BoundedContext implements Transport {
         }
 
         // Validate required fields
-        if (!parsed.id || !parsed.method) {
+        if (typeof parsed.id !== 'number' || !Number.isInteger(parsed.id)) {
+          throw new BridgeProtocolError('Message missing required fields: id, method');
+        }
+        if (parsed.protocol !== PROTOCOL_ID || typeof parsed.method !== 'string') {
+          throw new BridgeProtocolError('Message missing required fields: id, method');
+        }
+        if (!parsed.params || typeof parsed.params !== 'object' || Array.isArray(parsed.params)) {
           throw new BridgeProtocolError('Message missing required fields: id, method');
         }
 
@@ -285,6 +339,14 @@ export class PyodideIO extends BoundedContext implements Transport {
           // Validate response is valid JSON
           try {
             const response = JSON.parse(responseJson) as ProtocolResponse;
+            if (typeof response.id !== 'number' || !Number.isInteger(response.id)) {
+              throw new BridgeProtocolError('Invalid response from Python: missing numeric id');
+            }
+            if (response.protocol !== undefined && response.protocol !== PROTOCOL_ID) {
+              throw new BridgeProtocolError(
+                `Invalid protocol version: expected "${PROTOCOL_ID}", got "${response.protocol}"`
+              );
+            }
             if (response.error) {
               // Return the response as-is; let the caller handle the error
               return responseJson;
