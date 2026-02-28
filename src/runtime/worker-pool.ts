@@ -409,12 +409,20 @@ export class WorkerPool extends BoundedContext {
       inFlightCount: 0,
     };
 
-    this.workers.push(worker);
-
-    // Call onWorkerReady callback if provided
-    if (this.options.onWorkerReady) {
-      await this.options.onWorkerReady(worker);
+    try {
+      // Call onWorkerReady callback if provided
+      if (this.options.onWorkerReady) {
+        await this.options.onWorkerReady(worker);
+      }
+    } catch (error) {
+      // Ensure partially initialized workers do not leak when warmup fails.
+      await transport.dispose().catch(() => {
+        // Ignore disposal failures during warmup failure handling.
+      });
+      throw error;
     }
+
+    this.workers.push(worker);
 
     return worker;
   }
