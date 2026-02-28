@@ -589,6 +589,55 @@ describe('ProcessIO', () => {
       await expect(secondPending).resolves.toContain(`"id":${secondId}`);
     });
 
+    it('correlates responses using the top-level request id when args contain nested id fields', async () => {
+      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+
+      const internals = transport as unknown as ProcessIOInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = {
+        stdin: {
+          write: (): boolean => true,
+        },
+      };
+
+      const requestId = 1;
+      const message = JSON.stringify(
+        createValidMessage({
+          id: requestId,
+          params: {
+            module: 'builtins',
+            functionName: 'str',
+            args: [{ id: 999, value: 'nested' }],
+          },
+        })
+      );
+
+      const pending = transport.send(message, 1000);
+      internals.handleResponseLine(JSON.stringify({ id: requestId, result: 'ok' }));
+
+      await expect(pending).resolves.toContain(`"id":${requestId}`);
+    });
+
+    it('accepts id=0 for request/response correlation', async () => {
+      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+
+      const internals = transport as unknown as ProcessIOInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = {
+        stdin: {
+          write: (): boolean => true,
+        },
+      };
+
+      const message = JSON.stringify(createValidMessage({ id: 0 }));
+      const pending = transport.send(message, 1000);
+
+      internals.handleResponseLine(JSON.stringify({ id: 0, result: 'zero' }));
+      await expect(pending).resolves.toContain('"id":0');
+    });
+
     it('includes stderr diagnostics when stdin write fails', async () => {
       const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
 
