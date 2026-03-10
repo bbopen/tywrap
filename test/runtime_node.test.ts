@@ -425,12 +425,15 @@ def get_bad():
         if (!pythonAvailable || !isBridgeScriptAvailable()) return;
 
         // Give the bridge enough time to recover (worker quarantine/replacement) after a timeout.
-        bridge = new NodeBridge({ scriptPath, timeoutMs: 2000 });
+        const timeoutMs = 3000;
+        const lateResponseWaitMs = 1500;
+        const sleepSeconds = (timeoutMs + lateResponseWaitMs) / 1000;
+        bridge = new NodeBridge({ scriptPath, timeoutMs });
 
-        await expect(bridge.call('time', 'sleep', [3])).rejects.toThrow(/timed out/i);
+        await expect(bridge.call('time', 'sleep', [sleepSeconds])).rejects.toThrow(/timed out/i);
 
-        // Wait for the Python process to eventually respond to the timed-out request.
-        await new Promise(resolve => setTimeout(resolve, 800));
+        // Wait for the timed-out worker to emit its stale response before verifying recovery.
+        await new Promise(resolve => setTimeout(resolve, lateResponseWaitMs + 250));
 
         // Note: With the unified bridge, timed-out workers are quarantined and replaced
         // per ADR-0001 (#101). The important thing is that the bridge recovers and works.
@@ -1145,7 +1148,7 @@ def get_bad():
     );
 
     it(
-      'should set VIRTUAL_ENV when virtualEnv is provided',
+      'should set VIRTUAL_ENV and PATH when virtualEnv is provided',
       async () => {
         const pythonAvailable = await isPythonAvailable();
         if (!pythonAvailable || !isBridgeScriptAvailable()) return;
@@ -1170,7 +1173,8 @@ def get_bad():
           expect(venvEnv).toBe(venvDir);
 
           const pathEnv = await bridge.call<string | null>('os', 'getenv', ['PATH']);
-          expect(pathEnv).toBeTruthy();
+          const pathEntries = (pathEnv ?? '').split(delimiter).filter(Boolean);
+          expect(pathEntries).toContain(binDir);
         } finally {
           await bridge?.dispose();
           if (tempDir) {
