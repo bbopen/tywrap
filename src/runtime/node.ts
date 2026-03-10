@@ -74,7 +74,8 @@ export interface NodeBridgeOptions {
 
   /** Commands to run on each process at startup for warming up. */
   warmupCommands?: Array<
-    { module: string; functionName: string; args?: unknown[] } | { method: string; params: unknown } // Legacy format for backwards compatibility
+    | { module: string; functionName: string; args?: unknown[] }
+    | { method: string; params: unknown } // Legacy shape preserved so runtime can surface a migration error
   >;
 
   // ===========================================================================
@@ -196,7 +197,14 @@ function assertSafeEnvOverrideKey(key: string): void {
 }
 
 function normalizeWarmupCommands(commands: NodeBridgeOptions['warmupCommands']): WarmupCommand[] {
-  const warmups = commands ?? [];
+  if (commands === undefined) {
+    return [];
+  }
+  if (!Array.isArray(commands)) {
+    throw new BridgeProtocolError('warmupCommands must be an array when provided');
+  }
+
+  const warmups = commands;
   return warmups.map((command, index) => {
     if (!command || typeof command !== 'object' || Array.isArray(command)) {
       throw new BridgeProtocolError(
@@ -549,17 +557,26 @@ function createWarmupCallback(
   return async (worker: PooledWorker) => {
     for (const [index, cmd] of warmupCommands.entries()) {
       const commandLabel = `${cmd.module}.${cmd.functionName}`;
-      const message = JSON.stringify({
-        id: generateWarmupId(),
-        protocol: PROTOCOL_ID,
-        method: 'call',
-        params: {
-          module: cmd.module,
-          functionName: cmd.functionName,
-          args: cmd.args ?? [],
-          kwargs: {},
-        },
-      });
+      const requestId = generateWarmupId();
+      let message: string;
+      try {
+        message = JSON.stringify({
+          id: requestId,
+          protocol: PROTOCOL_ID,
+          method: 'call',
+          params: {
+            module: cmd.module,
+            functionName: cmd.functionName,
+            args: cmd.args ?? [],
+            kwargs: {},
+          },
+        });
+      } catch (error) {
+        throw new BridgeExecutionError(
+          `Warmup command #${index + 1} (${commandLabel}) failed to encode request: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error instanceof Error ? error : undefined }
+        );
+      }
 
       let response: string;
       try {
@@ -581,8 +598,15 @@ function createWarmupCallback(
         );
       }
 
-      if (parsed && typeof parsed === 'object' && 'error' in parsed) {
-        const errorPayload = (parsed as { error?: unknown }).error;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new BridgeExecutionError(
+          `Warmup command #${index + 1} (${commandLabel}) returned malformed response envelope for request ${requestId}`
+        );
+      }
+
+      const envelope = parsed as { result?: unknown; error?: unknown };
+      if ('error' in envelope && envelope.error !== undefined && envelope.error !== null) {
+        const errorPayload = envelope.error;
         if (errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)) {
           const err = errorPayload as { type?: unknown; message?: unknown };
           const errType = typeof err.type === 'string' ? err.type : 'Error';
@@ -595,6 +619,12 @@ function createWarmupCallback(
 
         throw new BridgeExecutionError(
           `Warmup command #${index + 1} (${commandLabel}) failed with malformed error payload`
+        );
+      }
+
+      if (!('result' in envelope)) {
+        throw new BridgeExecutionError(
+          `Warmup command #${index + 1} (${commandLabel}) returned malformed response envelope for request ${requestId}`
         );
       }
     }

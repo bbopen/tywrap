@@ -86,6 +86,20 @@ describe('OptimizedNodeBridge', () => {
       expect(createBridge).toThrow(/legacy \{ method, params \} format is no longer supported/i);
     });
 
+    it('should reject non-array warmupCommands', () => {
+      const createBridge = (): OptimizedNodeBridge =>
+        new OptimizedNodeBridge({
+          warmupCommands: {
+            module: 'math',
+            functionName: 'sqrt',
+            args: [16],
+          } as unknown as Array<{ module: string; functionName: string; args?: unknown[] }>,
+        });
+
+      expect(createBridge).toThrow(BridgeProtocolError);
+      expect(createBridge).toThrow(/warmupCommands must be an array/i);
+    });
+
     it('should accept custom environment variables', () => {
       bridge = new OptimizedNodeBridge({
         env: {

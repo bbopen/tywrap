@@ -805,6 +805,82 @@ def get_bad():
       },
       testTimeout
     );
+
+    it(
+      'should surface warmup request encoding failures with command context',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        let warmupBridge: NodeBridge | undefined;
+        try {
+          warmupBridge = new NodeBridge({
+            scriptPath,
+            warmupCommands: [{ module: 'math', functionName: 'sqrt', args: [BigInt(16)] }],
+            timeoutMs: defaultTimeoutMs,
+          });
+
+          const initPromise = warmupBridge.init();
+          await expect(initPromise).rejects.toThrow(/Warmup command #1 \(math\.sqrt\)/);
+          await expect(initPromise).rejects.toThrow(/failed to encode request/i);
+          expect(warmupBridge.isReady).toBe(false);
+        } finally {
+          if (warmupBridge) {
+            await warmupBridge.dispose();
+          }
+        }
+      },
+      testTimeout
+    );
+
+    it(
+      'should reject malformed warmup success envelopes',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable) return;
+
+        let tempDir: string | undefined;
+        let warmupBridge: NodeBridge | undefined;
+        try {
+          tempDir = await mkdtemp(join(tmpdir(), 'tywrap-warmup-envelope-'));
+          const malformedBridgePath = join(tempDir, 'malformed_bridge.py');
+
+          await writeFile(
+            malformedBridgePath,
+            [
+              'import json',
+              'import sys',
+              '',
+              'for line in sys.stdin:',
+              '    request = json.loads(line)',
+              "    response = {'id': request.get('id'), 'protocol': request.get('protocol')}",
+              "    sys.stdout.write(json.dumps(response) + '\\n')",
+              '    sys.stdout.flush()',
+            ].join('\n'),
+            'utf-8'
+          );
+
+          warmupBridge = new NodeBridge({
+            scriptPath: malformedBridgePath,
+            warmupCommands: [{ module: 'math', functionName: 'sqrt', args: [16] }],
+            timeoutMs: defaultTimeoutMs,
+          });
+
+          const initPromise = warmupBridge.init();
+          await expect(initPromise).rejects.toThrow(/Warmup command #1 \(math\.sqrt\)/);
+          await expect(initPromise).rejects.toThrow(/malformed response envelope/i);
+          expect(warmupBridge.isReady).toBe(false);
+        } finally {
+          if (warmupBridge) {
+            await warmupBridge.dispose();
+          }
+          if (tempDir) {
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          }
+        }
+      },
+      testTimeout
+    );
   });
 
   describe('Data Transfer and Serialization', () => {
