@@ -162,12 +162,26 @@ function resolveVirtualEnv(
  * Get the environment variable key for PATH (case-insensitive on Windows).
  */
 function getPathKey(env: Record<string, string | undefined>): string {
+  if (Object.prototype.hasOwnProperty.call(env, 'PATH')) {
+    return 'PATH';
+  }
+
   for (const key of Object.keys(env)) {
     if (key.toLowerCase() === 'path') {
       return key;
     }
   }
   return 'PATH';
+}
+
+function setPathValue(env: Record<string, string>, value: string): void {
+  setEnvValue(env, 'PATH', value);
+
+  for (const key of Object.keys(env)) {
+    if (key !== 'PATH' && key.toLowerCase() === 'path') {
+      setEnvValue(env, key, value);
+    }
+  }
 }
 
 const DANGEROUS_ENV_OVERRIDE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
@@ -675,7 +689,7 @@ function buildProcessEnv(options: ResolvedOptions): Record<string, string> {
     env.VIRTUAL_ENV = venv.venvPath;
     const pathKey = getPathKey(env);
     const currentPath = getEnvValue(env, pathKey) ?? '';
-    setEnvValue(env, pathKey, `${venv.binDir}${delimiter}${currentPath}`);
+    setPathValue(env, `${venv.binDir}${delimiter}${currentPath}`);
   }
 
   // Add cwd to PYTHONPATH so Python can find modules in the working directory
