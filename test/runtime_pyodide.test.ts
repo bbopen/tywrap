@@ -16,6 +16,8 @@ interface MockPyodideInstance {
   loadPackage: (name: string | string[]) => Promise<void>;
 }
 
+const PROTOCOL_ID = 'tywrap/1';
+
 /**
  * Create a mock dispatch handler that can be customized per test.
  * The handler receives JSON message strings and returns JSON response strings.
@@ -26,16 +28,77 @@ const setMockDispatchHandler = (handler: (messageJson: string) => string) => {
   mockDispatchHandler = handler;
 };
 
+interface MockProtocolMessage {
+  id: number;
+  protocol: string;
+  method: string;
+  params: Record<string, unknown>;
+}
+
+function buildProtocolErrorResponse(id: number, message: string): string {
+  return JSON.stringify({
+    id,
+    protocol: PROTOCOL_ID,
+    error: {
+      type: 'ValueError',
+      message,
+    },
+  });
+}
+
+function parseAndValidateProtocolMessage(messageJson: string): MockProtocolMessage | string {
+  let message: unknown;
+  try {
+    message = JSON.parse(messageJson);
+  } catch {
+    return buildProtocolErrorResponse(-1, 'Invalid JSON payload');
+  }
+
+  if (!message || typeof message !== 'object' || Array.isArray(message)) {
+    return buildProtocolErrorResponse(-1, 'Invalid request payload');
+  }
+
+  const msg = message as Record<string, unknown>;
+  const id = msg.id;
+  if (typeof id !== 'number' || !Number.isInteger(id)) {
+    return buildProtocolErrorResponse(-1, `Invalid request id: ${String(id)}`);
+  }
+  if (msg.protocol !== PROTOCOL_ID) {
+    return buildProtocolErrorResponse(id, `Invalid protocol: ${String(msg.protocol)}`);
+  }
+  if (typeof msg.method !== 'string' || msg.method.length === 0) {
+    return buildProtocolErrorResponse(id, 'Missing method');
+  }
+  if (!msg.params || typeof msg.params !== 'object' || Array.isArray(msg.params)) {
+    return buildProtocolErrorResponse(id, 'Invalid params');
+  }
+
+  return {
+    id,
+    protocol: PROTOCOL_ID,
+    method: msg.method,
+    params: msg.params as Record<string, unknown>,
+  };
+}
+
 const createMockPyodide = (): MockPyodideInstance => {
   const globals = new Map<string, unknown>();
 
-  // Default dispatch function that returns success
   const defaultDispatch = (messageJson: string): string => {
+    const validated = parseAndValidateProtocolMessage(messageJson);
+    if (typeof validated === 'string') {
+      return validated;
+    }
+
     if (mockDispatchHandler) {
       return mockDispatchHandler(messageJson);
     }
-    const msg = JSON.parse(messageJson);
-    return JSON.stringify({ id: msg.id, result: null });
+
+    return JSON.stringify({
+      id: validated.id,
+      protocol: PROTOCOL_ID,
+      result: null,
+    });
   };
 
   return {
@@ -345,23 +408,52 @@ describe('Pyodide Runtime Bridge', () => {
   });
 
   describe('Bootstrap Helpers', () => {
-    it('should bootstrap helper functions correctly', async () => {
+    it('should bootstrap helper functions and dispatch protocol-compliant envelopes', async () => {
       const mockPyodide = createMockPyodide();
       const runPythonAsyncSpy = vi.spyOn(mockPyodide, 'runPythonAsync');
       mockLoadPyodide.mockResolvedValue(mockPyodide);
+      let capturedMessage: unknown = null;
 
       setMockDispatchHandler((msg: string) => {
         const parsed = JSON.parse(msg);
-        return JSON.stringify({ id: parsed.id, result: 4 });
+        capturedMessage = parsed;
+        return JSON.stringify({ id: parsed.id, protocol: PROTOCOL_ID, result: 4 });
       });
 
       bridge = new PyodideBridge();
-      await bridge.call('math', 'sqrt', [16]);
+      const result = await bridge.call('math', 'sqrt', [16]);
 
       // Verify that bootstrap code was executed (now uses single dispatch function)
       expect(runPythonAsyncSpy).toHaveBeenCalledWith(
         expect.stringContaining('def __tywrap_dispatch')
       );
+      expect(result).toBe(4);
+      expect(capturedMessage).toMatchObject({
+        protocol: PROTOCOL_ID,
+        method: 'call',
+        params: {
+          module: 'math',
+          functionName: 'sqrt',
+        },
+      });
+    });
+
+    it('should reject protocol-drift envelopes when using transport directly', async () => {
+      bridge = new PyodideBridge();
+
+      await expect(
+        (bridge as any).transport.send(
+          JSON.stringify({
+            id: 1,
+            protocol: PROTOCOL_ID,
+            type: 'call',
+            module: 'math',
+            functionName: 'sqrt',
+            args: [16],
+          }),
+          1000
+        )
+      ).rejects.toThrow(/missing required fields/i);
     });
   });
 

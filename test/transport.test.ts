@@ -1153,7 +1153,10 @@ describe('PyodideIO', () => {
     it('handles successful dispatch', async () => {
       const transport = new PyodideIO();
 
-      const expectedResponse = JSON.stringify(createValidResponse());
+      const expectedResponse = JSON.stringify({
+        ...createValidResponse(),
+        protocol: PROTOCOL_ID,
+      });
       const mockDispatch = vi.fn().mockReturnValue(expectedResponse);
 
       (transport as any)._state = 'ready';
@@ -1171,6 +1174,16 @@ describe('PyodideIO', () => {
       const message = JSON.stringify(createValidMessage());
       const result = await transport.send(message, 1000);
 
+      const parsedMessage = JSON.parse(message);
+      expect(parsedMessage).toMatchObject({
+        id: 1,
+        protocol: PROTOCOL_ID,
+        method: 'call',
+      });
+      expect(parsedMessage.params).toMatchObject({
+        module: 'math',
+        functionName: 'sqrt',
+      });
       expect(result).toBe(expectedResponse);
       expect(mockDispatch).toHaveBeenCalledWith(message);
     });
@@ -1277,6 +1290,29 @@ describe('PyodideIO', () => {
 
       const message = JSON.stringify(createValidMessage());
       await expect(transport.send(message, 1000)).rejects.toThrow(BridgeProtocolError);
+      await expect(transport.send(message, 1000)).rejects.toThrow(
+        /Invalid JSON response from Python/
+      );
+    });
+
+    it('rejects responses with invalid id types', async () => {
+      const transport = new PyodideIO();
+      const mockDispatch = vi.fn().mockReturnValue(
+        JSON.stringify({
+          id: 'not-a-number',
+          protocol: PROTOCOL_ID,
+          result: null,
+        })
+      );
+
+      (transport as any)._state = 'ready';
+      (transport as any).py = {
+        globals: {
+          get: () => mockDispatch,
+        },
+      };
+
+      const message = JSON.stringify(createValidMessage());
       await expect(transport.send(message, 1000)).rejects.toThrow(
         /Invalid JSON response from Python/
       );
