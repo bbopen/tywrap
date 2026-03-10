@@ -286,6 +286,25 @@ describe('WorkerPool', () => {
       expect(transports[0].initCalled).toBe(true);
     });
 
+    it('disposes transport and does not retain a worker when onWorkerReady fails', async () => {
+      const { factory, transports } = createMockTransportFactory();
+      const onWorkerReady = vi.fn().mockRejectedValue(new Error('warmup failed'));
+
+      pool = new WorkerPool({
+        createTransport: factory,
+        maxWorkers: 2,
+        onWorkerReady,
+      });
+
+      await pool.init();
+      await expect(pool.acquire()).rejects.toThrow('warmup failed');
+
+      expect(onWorkerReady).toHaveBeenCalledTimes(1);
+      expect(transports.length).toBe(1);
+      expect(transports[0]?.disposeCalled).toBe(true);
+      expect(pool.workerCount).toBe(0);
+    });
+
     it('returns same worker on second acquire if available', async () => {
       const { factory, transports } = createMockTransportFactory();
       pool = new WorkerPool({
