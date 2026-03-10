@@ -122,7 +122,12 @@ export interface ProtocolResponse {
  * await transport.init();
  *
  * const response = await transport.send(
- *   JSON.stringify({ id: '1', type: 'call', module: 'math', functionName: 'sqrt', args: [16] }),
+ *   JSON.stringify({
+ *     id: 1,
+ *     protocol: 'tywrap/1',
+ *     method: 'call',
+ *     params: { module: 'math', functionName: 'sqrt', args: [16], kwargs: {} },
+ *   }),
  *   5000
  * );
  *
