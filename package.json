@@ -1,7 +1,7 @@
 {
   "name": "tywrap",
   "version": "0.2.1",
-  "description": "TypeScript wrapper for Python libraries with full type safety (EXPERIMENTAL - v0.2.1)",
+  "description": "Generate type-safe TypeScript wrappers for any Python library — Node.js, Deno, Bun, and browsers via Pyodide.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -84,7 +84,17 @@
     "code-generation",
     "node",
     "deno",
-    "bun"
+    "bun",
+    "codegen",
+    "ffi",
+    "bindings",
+    "wrapper",
+    "numpy",
+    "pandas",
+    "scipy",
+    "python-wrapper",
+    "rpc",
+    "subprocess"
   ],
   "author": "tywrap contributors",
   "license": "MIT",
@@ -95,7 +105,7 @@
   "bugs": {
     "url": "https://github.com/bbopen/tywrap/issues"
   },
-  "homepage": "https://github.com/bbopen/tywrap#readme",
+  "homepage": "https://bbopen.github.io/tywrap",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
