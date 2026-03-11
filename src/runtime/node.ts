@@ -177,6 +177,10 @@ function getPathKey(env: Record<string, string | undefined>): string {
 function setPathValue(env: Record<string, string>, value: string): void {
   setEnvValue(env, 'PATH', value);
 
+  if (process.platform !== 'win32') {
+    return;
+  }
+
   for (const key of Object.keys(env)) {
     if (key !== 'PATH' && key.toLowerCase() === 'path') {
       setEnvValue(env, key, value);

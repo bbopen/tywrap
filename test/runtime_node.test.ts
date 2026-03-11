@@ -1187,6 +1187,48 @@ def get_bad():
       testTimeout
     );
 
+    it(
+      'should preserve distinct lowercase path env overrides on POSIX',
+      async () => {
+        if (process.platform === 'win32') return;
+
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        let tempDir: string | undefined;
+        try {
+          tempDir = await mkdtemp(join(tmpdir(), 'tywrap-venv-'));
+          const venvDir = join(tempDir, 'fake-venv');
+          const binDir = join(venvDir, getVenvBinDir());
+          await mkdir(binDir, { recursive: true });
+
+          const customPathAlias = '/custom/app/config/path';
+          const scriptAbsolutePath = join(process.cwd(), scriptPath);
+          bridge = new NodeBridge({
+            scriptPath: scriptAbsolutePath,
+            pythonPath: defaultPythonPath,
+            cwd: tempDir,
+            virtualEnv: 'fake-venv',
+            env: { path: customPathAlias },
+            timeoutMs: defaultTimeoutMs,
+          });
+
+          const pathEnv = await bridge.call<string | null>('os', 'getenv', ['PATH']);
+          const pathEntries = (pathEnv ?? '').split(delimiter).filter(Boolean);
+          expect(pathEntries).toContain(binDir);
+
+          const lowercasePathEnv = await bridge.call<string | null>('os', 'getenv', ['path']);
+          expect(lowercasePathEnv).toBe(customPathAlias);
+        } finally {
+          await bridge?.dispose();
+          if (tempDir) {
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          }
+        }
+      },
+      testTimeout
+    );
+
   });
 
   describe('Performance Characteristics', () => {
