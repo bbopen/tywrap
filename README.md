@@ -4,10 +4,13 @@
 [![PyPI version](https://img.shields.io/pypi/v/tywrap-ir.svg)](https://pypi.org/project/tywrap-ir/)
 [![CI](https://github.com/bbopen/tywrap/actions/workflows/ci.yml/badge.svg)](https://github.com/bbopen/tywrap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![npm downloads](https://img.shields.io/npm/dm/tywrap.svg)](https://www.npmjs.com/package/tywrap)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Docs](https://img.shields.io/badge/docs-bbopen.github.io%2Ftywrap-blue)](https://bbopen.github.io/tywrap)
 
 TypeScript wrapper for Python libraries with full type safety.
 
-> **⚠️ Experimental Software (v0.2.1)** - APIs may change between versions. Not recommended for production use until v1.0.0.
+> **⚠️ Experimental** — APIs may change before v1.0.0. See [CHANGELOG](./CHANGELOG.md) for breaking changes.
 
 ## Features
 
@@ -15,6 +18,16 @@ TypeScript wrapper for Python libraries with full type safety.
 - **Multi-Runtime** - Node.js (subprocess) and browsers (Pyodide)
 - **Rich Data Types** - numpy, pandas, scipy, torch, sklearn, and stdlib types
 - **Efficient Serialization** - Apache Arrow binary format with JSON fallback
+
+## Why tywrap?
+
+| Feature | tywrap | pythonia | node-calls-python | pymport |
+|---------|--------|----------|-------------------|---------|
+| Auto-generated TypeScript types | ✅ | ❌ | ❌ | ❌ |
+| Browser / WASM (Pyodide) | ✅ | ❌ | ❌ | ❌ |
+| numpy / pandas type mappings | ✅ | ❌ | ❌ | ❌ |
+| Node.js + Bun + Deno | All three | Node only | Node only | Node only |
+| Apache Arrow binary transport | ✅ | ❌ | ❌ | ❌ |
 
 ## Requirements
 
@@ -50,6 +63,8 @@ setRuntimeBridge(bridge);
 
 const result = await math.sqrt(16); // 4
 ```
+
+> If tywrap saves you time, a ⭐ on [GitHub](https://github.com/bbopen/tywrap) helps others find it.
 
 ## Runtime Bridges
 
