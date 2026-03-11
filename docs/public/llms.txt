@@ -1,0 +1,28 @@
+# tywrap
+
+> TypeScript wrapper generator for Python libraries. Auto-generates type-safe TypeScript
+> bindings from Python source via AST analysis. Supports Node.js, Bun, Deno (subprocess),
+> and browsers (Pyodide WebAssembly). Apache Arrow binary transport for numpy/pandas data.
+> Experimental (pre-v1.0.0) — APIs may change.
+
+## Docs
+
+- [Getting Started](https://bbopen.github.io/tywrap/guide/getting-started): Installation, quick start, first wrapper
+- [Configuration](https://bbopen.github.io/tywrap/guide/configuration): tywrap.config.ts / .json all options
+- [Runtime Comparison](https://bbopen.github.io/tywrap/guide/runtimes/comparison): Which bridge to use and when
+- [Node.js Runtime](https://bbopen.github.io/tywrap/guide/runtimes/node): NodeBridge setup, virtual envs, pooling, Docker
+- [Bun Runtime](https://bbopen.github.io/tywrap/guide/runtimes/bun): NodeBridge on Bun, bunfig.toml
+- [Deno Runtime](https://bbopen.github.io/tywrap/guide/runtimes/deno): npm: prefix, --allow-run, Deno Deploy limitation
+- [Browser Runtime (Pyodide)](https://bbopen.github.io/tywrap/guide/runtimes/browser): WebAssembly Python, no subprocess needed
+- [HTTP Bridge](https://bbopen.github.io/tywrap/guide/runtimes/http): Remote Python server, stateless HTTP POST
+- [CLI Reference](https://bbopen.github.io/tywrap/reference/cli): tywrap init, generate, generate --check
+- [Environment Variables](https://bbopen.github.io/tywrap/reference/env-vars): All TYWRAP_* variables with defaults
+- [Type Mapping](https://bbopen.github.io/tywrap/reference/type-mapping): Python→TypeScript type conversions (numpy, pandas, scipy, torch)
+- [Examples](https://bbopen.github.io/tywrap/examples/): Copy-pasteable runtime examples
+
+## Optional
+
+- [Troubleshooting](https://bbopen.github.io/tywrap/troubleshooting/): Common errors and fixes
+- [Changelog](https://github.com/bbopen/tywrap/blob/main/CHANGELOG.md): Version history and breaking changes
+- [Contributing](https://github.com/bbopen/tywrap/blob/main/CONTRIBUTING.md): Development setup, PR guidelines
+- [AGENTS.md](https://github.com/bbopen/tywrap/blob/main/AGENTS.md): AI coding agent build/test instructions

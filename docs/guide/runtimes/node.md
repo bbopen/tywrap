@@ -583,7 +583,7 @@ function getNextBridge() {
 
 ## Next Steps
 
-- [Configuration Guide](../configuration.md) - Complete configuration reference
-- [Examples](../examples/README.md) - Usage examples and patterns
-- [Troubleshooting](../troubleshooting/README.md) - Common issues and solutions
-- [API Reference](../api/README.md) - Complete API documentation
+- [Configuration Guide](/guide/configuration) - Complete configuration reference
+- [Examples](/examples/) - Usage examples and patterns
+- [Troubleshooting](/troubleshooting/) - Common issues and solutions
+- [API Reference](/reference/api/) - Complete API documentation

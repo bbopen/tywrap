@@ -644,6 +644,6 @@ npx tsc --noEmit --traceResolution
 ```
 
 This troubleshooting guide covers the most common issues. For runtime-specific detail, see:
-- [Node.js Runtime](../runtimes/nodejs.md)
-- [Browser Runtime (Pyodide)](../runtimes/browser.md)
+- [Node.js Runtime](/guide/runtimes/node)
+- [Browser Runtime (Pyodide)](/guide/runtimes/browser)
 - [Build Tool Issues](#build-tool-issues)
