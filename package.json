@@ -71,7 +71,10 @@
     "act": "node scripts/act.mjs",
     "act:clean": "node scripts/act.mjs --clean",
     "act:serial": "node scripts/act-matrix.mjs",
-    "docker:npm": "node scripts/node-docker.mjs npm"
+    "docker:npm": "node scripts/node-docker.mjs npm",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "keywords": [
     "typescript",
@@ -136,6 +139,7 @@
     "prettier": "^3.3.3",
     "tsd": "^0.33.0",
     "vite": "^7.3.0",
+    "vitepress": "^1.6.4",
     "vitest": "^4.0.16"
   },
   "peerDependencies": {
