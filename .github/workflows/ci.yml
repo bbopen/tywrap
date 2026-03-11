@@ -68,7 +68,15 @@ jobs:
         env:
           NODE_OPTIONS: --expose-gc
           TYWRAP_PERF_BUDGETS: '1'
-        run: npm test
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: matrix.node-version == 22 && matrix.python-version == '3.11'
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
 
   python-suite-core:
     if: github.event_name != 'schedule'
