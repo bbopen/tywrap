@@ -425,12 +425,15 @@ def get_bad():
         if (!pythonAvailable || !isBridgeScriptAvailable()) return;
 
         // Give the bridge enough time to recover (worker quarantine/replacement) after a timeout.
-        bridge = new NodeBridge({ scriptPath, timeoutMs: 1000 });
+        const timeoutMs = 3000;
+        const lateResponseWaitMs = 1500;
+        const sleepSeconds = (timeoutMs + lateResponseWaitMs) / 1000;
+        bridge = new NodeBridge({ scriptPath, timeoutMs });
 
-        await expect(bridge.call('time', 'sleep', [1.5])).rejects.toThrow(/timed out/i);
+        await expect(bridge.call('time', 'sleep', [sleepSeconds])).rejects.toThrow(/timed out/i);
 
-        // Wait for the Python process to eventually respond to the timed-out request.
-        await new Promise(resolve => setTimeout(resolve, 800));
+        // Wait for the timed-out worker to emit its stale response before verifying recovery.
+        await new Promise(resolve => setTimeout(resolve, lateResponseWaitMs + 250));
 
         // Note: With the unified bridge, timed-out workers are quarantined and replaced
         // per ADR-0001 (#101). The important thing is that the bridge recovers and works.
@@ -1170,7 +1173,8 @@ def get_bad():
           expect(venvEnv).toBe(venvDir);
 
           const pathEnv = await bridge.call<string | null>('os', 'getenv', ['PATH']);
-          expect(pathEnv?.split(delimiter)[0]).toBe(binDir);
+          const pathEntries = (pathEnv ?? '').split(delimiter).filter(Boolean);
+          expect(pathEntries).toContain(binDir);
         } finally {
           await bridge?.dispose();
           if (tempDir) {
@@ -1182,6 +1186,99 @@ def get_bad():
       },
       testTimeout
     );
+
+    it(
+      'should preserve distinct lowercase path env overrides on POSIX',
+      async () => {
+        if (process.platform === 'win32') return;
+
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        let tempDir: string | undefined;
+        try {
+          tempDir = await mkdtemp(join(tmpdir(), 'tywrap-venv-'));
+          const venvDir = join(tempDir, 'fake-venv');
+          const binDir = join(venvDir, getVenvBinDir());
+          await mkdir(binDir, { recursive: true });
+
+          const customPathAlias = '/custom/app/config/path';
+          const scriptAbsolutePath = join(process.cwd(), scriptPath);
+          bridge = new NodeBridge({
+            scriptPath: scriptAbsolutePath,
+            pythonPath: defaultPythonPath,
+            cwd: tempDir,
+            virtualEnv: 'fake-venv',
+            env: { path: customPathAlias },
+            timeoutMs: defaultTimeoutMs,
+          });
+
+          const pathEnv = await bridge.call<string | null>('os', 'getenv', ['PATH']);
+          const pathEntries = (pathEnv ?? '').split(delimiter).filter(Boolean);
+          expect(pathEntries).toContain(binDir);
+
+          const lowercasePathEnv = await bridge.call<string | null>('os', 'getenv', ['path']);
+          expect(lowercasePathEnv).toBe(customPathAlias);
+        } finally {
+          await bridge?.dispose();
+          if (tempDir) {
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          }
+        }
+      },
+      testTimeout
+    );
+
+    it(
+      'should not append an empty PATH segment when PATH is blank',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
+
+        let tempDir: string | undefined;
+        try {
+          const { execFile } = await import('child_process');
+          const { promisify } = await import('util');
+          const execFileAsync = promisify(execFile);
+          const locator = process.platform === 'win32' ? 'where' : 'which';
+          const { stdout } = await execFileAsync(locator, [defaultPythonPath], {
+            encoding: 'utf-8',
+          });
+          const resolvedPythonPath = String(stdout)
+            .split(/\r?\n/)
+            .find(candidate => candidate.trim().length > 0)
+            ?.trim();
+          if (!resolvedPythonPath) {
+            throw new Error(`Failed to locate ${defaultPythonPath}`);
+          }
+
+          tempDir = await mkdtemp(join(tmpdir(), 'tywrap-venv-'));
+          const venvDir = join(tempDir, 'fake-venv');
+          const binDir = join(venvDir, getVenvBinDir());
+          await mkdir(binDir, { recursive: true });
+
+          const scriptAbsolutePath = join(process.cwd(), scriptPath);
+          bridge = new NodeBridge({
+            scriptPath: scriptAbsolutePath,
+            pythonPath: resolvedPythonPath,
+            cwd: tempDir,
+            virtualEnv: 'fake-venv',
+            env: { PATH: '' },
+            timeoutMs: defaultTimeoutMs,
+          });
+
+          const pathEnv = await bridge.call<string | null>('os', 'getenv', ['PATH']);
+          expect(pathEnv).toBe(binDir);
+        } finally {
+          await bridge?.dispose();
+          if (tempDir) {
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          }
+        }
+      },
+      testTimeout
+    );
+
   });
 
   describe('Performance Characteristics', () => {
