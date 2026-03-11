@@ -692,8 +692,8 @@ function buildProcessEnv(options: ResolvedOptions): Record<string, string> {
     const venv = resolveVirtualEnv(options.virtualEnv, options.cwd);
     env.VIRTUAL_ENV = venv.venvPath;
     const pathKey = getPathKey(env);
-    const currentPath = getEnvValue(env, pathKey) ?? '';
-    setPathValue(env, `${venv.binDir}${delimiter}${currentPath}`);
+    const currentPath = getEnvValue(env, pathKey);
+    setPathValue(env, currentPath ? `${venv.binDir}${delimiter}${currentPath}` : venv.binDir);
   }
 
   // Add cwd to PYTHONPATH so Python can find modules in the working directory
