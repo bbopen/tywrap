@@ -16,7 +16,7 @@ maintainers = [
 requires-python = ">=3.10"
 dependencies = []
 license = { text = "MIT" }
-keywords = ["tywrap", "typescript", "python", "bridge", "code-generation", "ast", "ir"]
+keywords = ["tywrap", "typescript", "python", "bridge", "code-generation", "ast", "ir", "interop", "type-safe", "bindings", "ffi", "codegen"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -29,12 +29,15 @@ classifiers = [
   "Topic :: Software Development :: Code Generators",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Typing :: Typed",
+  "Topic :: Software Development :: Compilers",
+  "Topic :: Utilities",
+  "Environment :: Console",
 ]
 
 [project.urls]
 Homepage = "https://github.com/bbopen/tywrap"
 Repository = "https://github.com/bbopen/tywrap"
-Documentation = "https://github.com/bbopen/tywrap#readme"
+Documentation = "https://bbopen.github.io/tywrap"
 Issues = "https://github.com/bbopen/tywrap/issues"
 
 [project.scripts]
