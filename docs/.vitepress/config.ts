@@ -5,6 +5,7 @@ export default defineConfig({
   description: 'Generate type-safe TypeScript wrappers for any Python library — Node.js, Deno, Bun, and browsers via Pyodide.',
   base: '/tywrap/',
   cleanUrls: true,
+  srcExclude: ['**/plans/**'],
 
   themeConfig: {
     siteTitle: 'tywrap',

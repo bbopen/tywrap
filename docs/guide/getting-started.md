@@ -343,13 +343,13 @@ const batch = await mathBatch([
 
 ## Next Steps
 
-- [Configuration Guide](./configuration.md) - Complete configuration reference
-- [Runtime Guides](./runtimes/nodejs.md) - Platform-specific setup
-- [Examples](./examples/README.md) - Usage patterns and examples
-- [Troubleshooting](./troubleshooting/README.md) - Common issues and solutions
+- [Configuration Guide](/guide/configuration) - Complete configuration reference
+- [Runtime Guides](/guide/runtimes/node) - Platform-specific setup
+- [Examples](/examples/) - Usage patterns and examples
+- [Troubleshooting](/troubleshooting/) - Common issues and solutions
 
 ## Support
 
-- [Troubleshooting Guide](./troubleshooting/README.md)
+- [Troubleshooting Guide](/troubleshooting/)
 - [GitHub Issues](https://github.com/bbopen/tywrap/issues)
 - [GitHub Discussions](https://github.com/bbopen/tywrap/discussions)

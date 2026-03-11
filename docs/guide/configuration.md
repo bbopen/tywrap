@@ -531,10 +531,10 @@ python3 -c "import your_module; print(your_module.__file__)"
 }
 ```
 
-For more troubleshooting, see [Troubleshooting Guide](./troubleshooting/README.md).
+For more troubleshooting, see [Troubleshooting Guide](/troubleshooting/).
 
 ## Next Steps
 
-- [Runtime Guides](./runtimes/nodejs.md) - Platform-specific configuration
-- [Examples](./examples/README.md) - Configuration examples
-- [API Reference](./api/README.md) - Complete API documentation
+- [Runtime Guides](/guide/runtimes/node) - Platform-specific configuration
+- [Examples](/examples/) - Configuration examples
+- [API Reference](/reference/api/) - Complete API documentation
