@@ -49,6 +49,5 @@ library_integration_*.json
 node_modules/.vite/
 
 # VitePress
-.vitepress/
 docs/.vitepress/dist/
 docs/.vitepress/cache/

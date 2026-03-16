@@ -12,7 +12,7 @@ pip install tywrap-ir
 ## Basic Setup
 
 ```typescript
-import { NodeBridge } from 'tywrap';
+import { NodeBridge } from 'tywrap/node';
 import { setRuntimeBridge } from 'tywrap/runtime';
 
 setRuntimeBridge(new NodeBridge({
@@ -22,7 +22,7 @@ setRuntimeBridge(new NodeBridge({
 }));
 ```
 
-> **Note:** Import from `'tywrap'` directly (not `'tywrap/node'`). This is the main difference from Node.js.
+> **Note:** Both `'tywrap/node'` and `'tywrap'` work on Bun. Use `'tywrap/node'` for smaller bundles via tree-shaking.
 
 ## Configuration Options
 

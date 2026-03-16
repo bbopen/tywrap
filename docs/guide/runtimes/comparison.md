@@ -18,7 +18,7 @@ tywrap supports five runtime configurations. Choose based on your environment.
 | Runtime | Import |
 |---------|--------|
 | Node.js | `import { NodeBridge } from 'tywrap/node'` |
-| Bun | `import { NodeBridge } from 'tywrap'` |
+| Bun | `import { NodeBridge } from 'tywrap/node'` |
 | Deno | `import { NodeBridge } from 'npm:tywrap'` |
 | Browser | `import { PyodideBridge } from 'tywrap/pyodide'` |
 | HTTP | `import { HttpBridge } from 'tywrap/http'` |
@@ -40,6 +40,6 @@ Do you need subprocess-based Python execution?
 
 | Bridge | Export | Guide |
 |--------|--------|-------|
-| `NodeBridge` | `tywrap/node` (or `tywrap` on Bun) | [Node.js](./node) · [Bun](./bun) · [Deno](./deno) |
+| `NodeBridge` | `tywrap/node` | [Node.js](./node) · [Bun](./bun) · [Deno](./deno) |
 | `PyodideBridge` | `tywrap/pyodide` | [Browser](./browser) |
 | `HttpBridge` | `tywrap/http` | [HTTP](./http) |

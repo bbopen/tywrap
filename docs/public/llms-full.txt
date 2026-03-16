@@ -3130,3 +3130,57 @@ This troubleshooting guide covers the most common issues. For runtime-specific d
 
 
 ---
+
+# API Reference
+
+Public API for tywrap's programmatic interface and CLI.
+
+## Core API
+
+### `tywrap(options?: Partial<TywrapOptions>): Promise<TywrapInstance>`
+Creates a tywrap instance (advanced use).
+
+### `generate(options: Partial<TywrapOptions>)`
+Generates wrappers from configuration.
+
+### `defineConfig(config: TywrapConfig)`
+Type-safe helper for config files.
+
+### `resolveConfig({ configFile, overrides, requireConfig })`
+Loads a config file (JSON/JS/TS) and merges defaults with overrides.
+
+## Runtime Bridges
+
+### `NodeBridge`
+Python subprocess bridge for Node.js, Bun, and Deno.
+Import: `import { NodeBridge } from 'tywrap/node'`
+
+### `PyodideBridge`
+Browser WebAssembly runtime bridge.
+Import: `import { PyodideBridge } from 'tywrap/pyodide'`
+
+### `HttpBridge`
+HTTP runtime bridge (expects compatible server endpoints).
+Import: `import { HttpBridge } from 'tywrap/http'`
+
+## Codec Utilities
+
+- `decodeValue` / `decodeValueAsync` — decode Python return values
+- `autoRegisterArrowDecoder` — auto-detect and register Apache Arrow
+- `registerArrowDecoder` / `clearArrowDecoder` — manual Arrow decoder management
+
+## Error Types
+
+- `BridgeError` — base bridge error
+- `BridgeProtocolError` — protocol-level failures
+- `BridgeTimeoutError` — subprocess timeout
+- `BridgeDisposedError` — bridge already disposed
+- `BridgeExecutionError` — Python execution failure
+
+## CLI
+
+- `tywrap init` — scaffold a config file
+- `tywrap generate` — generate TypeScript wrappers
+- `tywrap generate --check` — dry-run validation
+
+---

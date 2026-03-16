@@ -11,7 +11,7 @@
 
 TypeScript wrapper for Python libraries with full type safety.
 
-> **⚠️ Experimental** — APIs may change before v1.0.0. See [CHANGELOG](./CHANGELOG.md) for breaking changes.
+> **⚠️ Experimental** — APIs may change before v1.0.0. See the [releases page](https://github.com/bbopen/tywrap/releases) for breaking changes.
 
 ## Features
 
@@ -149,10 +149,10 @@ registerArrowDecoder(bytes => tableFromIPC(bytes));
 
 ## Documentation
 
-- [Getting Started](./docs/getting-started.md)
-- [Configuration](./docs/configuration.md)
-- [API Reference](./docs/api/README.md)
-- [Troubleshooting](./docs/troubleshooting/README.md)
+- [Getting Started](https://bbopen.github.io/tywrap/guide/getting-started)
+- [Configuration](https://bbopen.github.io/tywrap/guide/configuration)
+- [API Reference](https://bbopen.github.io/tywrap/reference/api/)
+- [Troubleshooting](https://bbopen.github.io/tywrap/troubleshooting/)
 
 ## Contributing
 

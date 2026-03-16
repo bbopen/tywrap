@@ -18,6 +18,7 @@
 - [CLI Reference](https://bbopen.github.io/tywrap/reference/cli): tywrap init, generate, generate --check
 - [Environment Variables](https://bbopen.github.io/tywrap/reference/env-vars): All TYWRAP_* variables with defaults
 - [Type Mapping](https://bbopen.github.io/tywrap/reference/type-mapping): Python→TypeScript type conversions (numpy, pandas, scipy, torch)
+- [API Reference](https://bbopen.github.io/tywrap/reference/api/): Programmatic API, bridge classes, codec utilities, error types
 - [Examples](https://bbopen.github.io/tywrap/examples/): Copy-pasteable runtime examples
 
 ## Optional
