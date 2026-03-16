@@ -41,14 +41,9 @@ setRuntimeBridge(new HttpBridge({
 
 ## Running the Python Server
 
-Start the Python bridge server:
+`HttpBridge` expects a server that accepts POST requests with JSON/Arrow payloads. You must implement or deploy a compatible server endpoint. The protocol is stateless — each call is an independent POST request.
 
-```bash
-pip install tywrap-ir
-python -m tywrap_ir.server --port 8080
-```
-
-> **Note:** HTTP transport is stateless — each call is an independent POST request with no session state.
+> **Note:** A built-in server command is not yet available. See the [API reference](/reference/api/) for the expected request/response format.
 
 ## Apache Arrow
 

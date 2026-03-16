@@ -39,18 +39,40 @@ npm run test:python:suite:data  # Data libs (numpy, pandas, pyarrow)
 
 ```
 src/
+  index.ts            # Public API re-exports
+  tywrap.ts           # tywrap() factory and generate()
   cli.ts              # CLI entry point (tywrap init / generate)
-  runtime/
-    node.ts           # NodeBridge — subprocess-based (Node, Bun, Deno)
-    pyodide.ts        # PyodideBridge — browser WebAssembly
-    http.ts           # HttpBridge — remote Python server
-  utils/
-    runtime.ts        # detectRuntime(), isBun(), isDeno(), etc.
+  config/             # Config loading and validation
+  core/               # Code generation pipeline
+    generator.ts      #   TypeScript wrapper generator
+    mapper.ts         #   Python → TypeScript type mapper
+    analyzer.ts       #   Module analysis orchestrator
+    discovery.ts      #   Python module discovery
+    validation.ts     #   Config and IR validation
+    annotation-parser.ts  # Type annotation parser
+  runtime/            # Runtime bridges (see test/runtime_*.test.ts)
+    node.ts           #   NodeBridge — subprocess (Node, Bun, Deno)
+    pyodide.ts        #   PyodideBridge — browser WebAssembly
+    http.ts           #   HttpBridge — remote Python server
+    base.ts           #   Abstract base bridge
+    bridge-core.ts    #   Shared bridge logic
+    safe-codec.ts     #   Arrow/JSON codec with size limits
+    errors.ts         #   BridgeError, BridgeTimeoutError, etc.
+    process-io.ts     #   Subprocess I/O management
+    transport.ts      #   Transport abstraction layer
+  types/              # TypeScript type definitions
+  utils/              # Shared utilities
+    codec.ts          #   Arrow/JSON encode/decode
+    runtime.ts        #   detectRuntime(), isBun(), isDeno()
+    cache.ts          #   IR and module caching
+    python.ts         #   Python path/env resolution
+    logger.ts         #   Structured logging
 tywrap_ir/            # Python package: AST analysis → typed IR
   tywrap_ir/
     __main__.py       # CLI entry: tywrap-ir
 runtime/
   python_bridge.py    # Python subprocess server (JSONL protocol)
+  safe_codec.py       # Python-side codec
 test/                 # Vitest tests mirroring src/ structure
 test-d/               # TSD type tests
 docs/                 # Documentation (VitePress site)
@@ -94,3 +116,4 @@ Conventional commits with scope:
 | `TYWRAP_CODEC_PYTHON=python` | Python path for codec tests |
 | `TYWRAP_CODEC_MAX_BYTES` | Max response size (default 1MB) |
 | `TYWRAP_CODEC_FALLBACK=json` | Disable Arrow, use JSON only |
+| `TYWRAP_REQUEST_MAX_BYTES` | Max request payload size |

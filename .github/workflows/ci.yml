@@ -68,7 +68,7 @@ jobs:
         env:
           NODE_OPTIONS: --expose-gc
           TYWRAP_PERF_BUDGETS: '1'
-        run: npm run test:coverage
+        run: ${{ (matrix.node-version == 22 && matrix.python-version == '3.11') && 'npm run test:coverage' || 'npm test' }}
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
