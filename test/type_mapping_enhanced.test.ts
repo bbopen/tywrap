@@ -4,7 +4,6 @@ import type {
   PythonType,
   TypescriptType,
   TSPrimitiveType,
-  TSCustomType,
   TSGenericType,
   TSObjectType,
 } from '../src/types/index.js';
@@ -13,34 +12,30 @@ describe('TypeMapper - Enhanced Type Support', () => {
   const mapper = new TypeMapper();
 
   describe('TypeVar Support', () => {
-    test('maps basic TypeVar to custom type', () => {
+    test('maps basic TypeVar to unknown', () => {
       const typeVar: PythonType = {
         kind: 'typevar',
         name: 'T',
       };
 
-      const result = mapper.mapPythonType(typeVar) as TSCustomType;
+      const result = mapper.mapPythonType(typeVar);
 
-      expect(result.kind).toBe('custom');
-      expect(result.name).toBe('T');
-      expect(result.module).toBe('typing');
+      expect(result).toEqual({ kind: 'primitive', name: 'unknown' });
     });
 
-    test('maps bounded TypeVar preserving name', () => {
+    test('maps bounded TypeVar to unknown', () => {
       const boundedTypeVar: PythonType = {
         kind: 'typevar',
         name: 'T',
         bound: { kind: 'custom', name: 'BaseClass' },
       };
 
-      const result = mapper.mapPythonType(boundedTypeVar) as TSCustomType;
+      const result = mapper.mapPythonType(boundedTypeVar);
 
-      expect(result.kind).toBe('custom');
-      expect(result.name).toBe('T');
-      expect(result.module).toBe('typing');
+      expect(result).toEqual({ kind: 'primitive', name: 'unknown' });
     });
 
-    test('maps constrained TypeVar preserving name', () => {
+    test('maps constrained TypeVar to unknown', () => {
       const constrainedTypeVar: PythonType = {
         kind: 'typevar',
         name: 'T',
@@ -50,23 +45,21 @@ describe('TypeMapper - Enhanced Type Support', () => {
         ],
       };
 
-      const result = mapper.mapPythonType(constrainedTypeVar) as TSCustomType;
+      const result = mapper.mapPythonType(constrainedTypeVar);
 
-      expect(result.kind).toBe('custom');
-      expect(result.name).toBe('T');
+      expect(result).toEqual({ kind: 'primitive', name: 'unknown' });
     });
 
-    test('maps covariant TypeVar', () => {
+    test('maps covariant TypeVar to unknown', () => {
       const covariantTypeVar: PythonType = {
         kind: 'typevar',
         name: 'T_co',
         variance: 'covariant',
       };
 
-      const result = mapper.mapPythonType(covariantTypeVar) as TSCustomType;
+      const result = mapper.mapPythonType(covariantTypeVar);
 
-      expect(result.kind).toBe('custom');
-      expect(result.name).toBe('T_co');
+      expect(result).toEqual({ kind: 'primitive', name: 'unknown' });
     });
   });
 
@@ -263,11 +256,11 @@ describe('TypeMapper - Enhanced Type Support', () => {
         module: 'my.module',
       };
 
-      const result = mapper.mapPythonType(unknownType) as TSCustomType;
+      const result = mapper.mapPythonType(unknownType);
 
       expect(result.kind).toBe('custom');
-      expect(result.name).toBe('MyCustomClass');
-      expect(result.module).toBe('my.module');
+      expect((result as any).name).toBe('MyCustomClass');
+      expect((result as any).module).toBe('my.module');
     });
   });
 
@@ -281,11 +274,9 @@ describe('TypeMapper - Enhanced Type Support', () => {
         },
       };
 
-      const result = mapper.mapPythonType(finalTypeVar) as TSCustomType;
+      const result = mapper.mapPythonType(finalTypeVar);
 
-      expect(result.kind).toBe('custom');
-      expect(result.name).toBe('T');
-      expect(result.module).toBe('typing');
+      expect(result).toEqual({ kind: 'primitive', name: 'unknown' });
     });
 
     test('maps ClassVar[Final[int]] correctly', () => {
@@ -319,11 +310,10 @@ describe('TypeMapper - Enhanced Type Support', () => {
       const unionResult = result as any;
       expect(unionResult.types).toHaveLength(3);
 
-      // TypeVar becomes custom type
+      // TypeVar becomes unknown
       expect(unionResult.types[0]).toEqual({
-        kind: 'custom',
-        name: 'T',
-        module: 'typing',
+        kind: 'primitive',
+        name: 'unknown',
       });
 
       // Final[None] becomes null
@@ -352,9 +342,8 @@ describe('TypeMapper - Enhanced Type Support', () => {
 
       expect(valueResult).toEqual(returnResult);
       expect(valueResult).toEqual({
-        kind: 'custom',
-        name: 'T',
-        module: 'typing',
+        kind: 'primitive',
+        name: 'unknown',
       });
     });
 

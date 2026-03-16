@@ -1,45 +1,26 @@
 # API Reference
 
-Public API for tywrap’s programmatic interface and CLI.
+This page covers the public programmatic API exported by `tywrap`.
 
 ## Core API
 
-### `tywrap(options?: Partial<TywrapOptions>): Promise<TywrapInstance>`
-Creates a tywrap instance (advanced use).
+### `defineConfig(config)`
 
-```ts
-import { tywrap } from 'tywrap';
-
-const instance = await tywrap({
-  pythonModules: { math: { runtime: 'node', typeHints: 'strict' } },
-});
-```
-
-### `generate(options: Partial<TywrapOptions>)`
-Generates wrappers from configuration.
-
-```ts
-import { generate } from 'tywrap';
-
-await generate({
-  pythonModules: { math: { runtime: 'node', typeHints: 'strict' } },
-  output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false },
-});
-```
-
-### `defineConfig(config: TywrapConfig)`
-Type-safe helper for config files.
+Type-safe helper for `tywrap.config.ts`.
 
 ```ts
 import { defineConfig } from 'tywrap';
 
 export default defineConfig({
-  pythonModules: { math: { runtime: 'node', typeHints: 'strict' } },
+  pythonModules: {
+    math: { runtime: 'node', typeHints: 'strict' },
+  },
 });
 ```
 
-### `resolveConfig({ configFile, overrides, requireConfig })`
-Loads a config file (JSON/JS/TS) and merges defaults with overrides.
+### `resolveConfig(options?)`
+
+Loads a config file, merges defaults, and applies overrides.
 
 ```ts
 import { resolveConfig } from 'tywrap';
@@ -50,92 +31,184 @@ const config = await resolveConfig({
 });
 ```
 
-## Runtime Registry
+### `generate(options, runOptions?)`
 
-Generated wrappers call into a shared runtime bridge:
+Generates wrapper files from config.
 
 ```ts
-import { setRuntimeBridge } from 'tywrap/runtime';
+import { generate } from 'tywrap';
+
+await generate({
+  pythonModules: {
+    math: { runtime: 'node', typeHints: 'strict' },
+  },
+  output: {
+    dir: './generated',
+    format: 'esm',
+    declaration: false,
+    sourceMap: false,
+  },
+});
+```
+
+`runOptions.check` switches generation into compare-only mode, the same behavior
+used by `tywrap generate --check`.
+
+### `tywrap(options?)`
+
+Creates the lower-level mapper and generator objects for advanced use.
+
+```ts
+import { tywrap } from 'tywrap';
+
+const instance = await tywrap({
+  types: { presets: ['stdlib'] },
+});
+```
+
+## Runtime Registry
+
+Generated wrappers call into a shared runtime bridge.
+
+```ts
+import { setRuntimeBridge, clearRuntimeBridge } from 'tywrap/runtime';
 import { NodeBridge } from 'tywrap/node';
 
 const bridge = new NodeBridge({ pythonPath: 'python3' });
 setRuntimeBridge(bridge);
+
+// later
+clearRuntimeBridge();
 ```
 
 ## Runtime Bridges
 
-### `NodeBridge`
-Python subprocess bridge for Node.js.
+tywrap does not create bridges from config for you. Your application constructs
+one explicitly.
 
-Note: OptimizedNodeBridge is an experimental, performance-focused bridge and is not part of the
-public API exports yet. NodeBridge remains the default.
+### `NodeBridge`
+
+`NodeBridge` runs Python in a subprocess and is the default bridge for Node.js,
+Bun, and local Deno.
 
 ```ts
 import { NodeBridge } from 'tywrap/node';
 
 const bridge = new NodeBridge({
-  pythonPath: '/usr/bin/python3',
+  pythonPath: 'python3',
   virtualEnv: './venv',
+  timeoutMs: 30000,
 });
 
 const result = await bridge.call('math', 'sqrt', [16]);
 const info = await bridge.getBridgeInfo({ refresh: true });
 ```
 
-**Options**:
-```ts
-interface NodeBridgeOptions {
-  pythonPath?: string;
-  scriptPath?: string;
-  virtualEnv?: string;
-  cwd?: string;
-  timeoutMs?: number;
-  maxLineLength?: number;
-  inheritProcessEnv?: boolean;
-  enableJsonFallback?: boolean;
-  env?: Record<string, string | undefined>;
-}
-```
+| Option                    | Default         | Notes                                           |
+| ------------------------- | --------------- | ----------------------------------------------- |
+| `pythonPath`              | auto-detect     | Python executable                               |
+| `scriptPath`              | built-in bridge | Custom `python_bridge.py`                       |
+| `virtualEnv`              | —               | Virtual environment root                        |
+| `cwd`                     | `process.cwd()` | Subprocess working directory                    |
+| `timeoutMs`               | `30000`         | Per-call timeout                                |
+| `queueTimeoutMs`          | `30000`         | Wait time when the worker pool is saturated     |
+| `minProcesses`            | `1`             | Minimum worker count                            |
+| `maxProcesses`            | `1`             | Maximum worker count                            |
+| `maxConcurrentPerProcess` | `10`            | Concurrent requests per worker                  |
+| `inheritProcessEnv`       | `false`         | Pass full parent env through                    |
+| `enableCache`             | `false`         | Cache pure function results                     |
+| `env`                     | `{}`            | Extra subprocess env vars                       |
+| `codec`                   | —               | `CodecOptions` for validation and byte handling |
+| `warmupCommands`          | `[]`            | Per-worker startup calls                        |
+
+Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
+`maxRequestsPerProcess`, `enableJsonFallback`, and `maxLineLength`.
 
 ### `PyodideBridge`
-Browser WebAssembly runtime bridge.
+
+`PyodideBridge` runs Python in the browser through WebAssembly.
 
 ```ts
 import { PyodideBridge } from 'tywrap/pyodide';
 
 const bridge = new PyodideBridge({
-  indexURL: 'https://cdn.jsdelivr.net/pyodide/',
+  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
   packages: ['numpy'],
+  timeoutMs: 30000,
 });
 ```
 
-**Options**:
-```ts
-interface PyodideBridgeOptions {
-  indexURL?: string;
-  packages?: string[];
-}
-```
+| Option      | Default     | Notes                        |
+| ----------- | ----------- | ---------------------------- |
+| `indexURL`  | Pyodide CDN | Package index URL            |
+| `packages`  | `[]`        | Packages to load during init |
+| `timeoutMs` | `30000`     | Default operation timeout    |
+| `codec`     | —           | `CodecOptions`               |
 
 ### `HttpBridge`
-HTTP runtime bridge (expects compatible server endpoints).
+
+`HttpBridge` sends protocol messages over HTTP POST to a compatible server.
 
 ```ts
 import { HttpBridge } from 'tywrap/http';
 
 const bridge = new HttpBridge({
   baseURL: 'https://api.example.com/python',
-  timeout: 10000,
+  timeoutMs: 10000,
   headers: { Authorization: 'Bearer token' },
 });
 ```
 
-**Options**:
-```ts
-interface HttpBridgeOptions {
-  baseURL: string;
-  timeout?: number;
-  headers?: Record<string, string>;
+| Option      | Default  | Notes                   |
+| ----------- | -------- | ----------------------- |
+| `baseURL`   | required | Server endpoint URL     |
+| `headers`   | `{}`     | Extra request headers   |
+| `timeoutMs` | `30000`  | Default request timeout |
+| `codec`     | —        | `CodecOptions`          |
+
+## HTTP Server Contract
+
+`HttpBridge` sends the same JSON protocol used by the other transports. The
+request body is a serialized `ProtocolMessage`, and the server must reply with a
+serialized `ProtocolResponse`.
+
+Request shape:
+
+```json
+{
+  "id": 1,
+  "protocol": "tywrap/1",
+  "method": "call",
+  "params": {
+    "module": "math",
+    "functionName": "sqrt",
+    "args": [16],
+    "kwargs": {}
+  }
+}
+```
+
+Success response:
+
+```json
+{
+  "id": 1,
+  "protocol": "tywrap/1",
+  "result": 4
+}
+```
+
+Error response:
+
+```json
+{
+  "id": 1,
+  "protocol": "tywrap/1",
+  "error": {
+    "type": "ValueError",
+    "message": "math domain error",
+    "traceback": "..."
+  }
 }
 ```
 
@@ -143,29 +216,27 @@ interface HttpBridgeOptions {
 
 ```ts
 import {
-  decodeValue,
-  decodeValueAsync,
   autoRegisterArrowDecoder,
   registerArrowDecoder,
   clearArrowDecoder,
+  decodeValue,
+  decodeValueAsync,
 } from 'tywrap';
-
-// NodeBridge auto-registers when apache-arrow is installed.
-// If you're decoding outside the bridge, call autoRegisterArrowDecoder() or register manually:
-const arrowReady = await autoRegisterArrowDecoder();
-// if (!arrowReady) throw new Error('Install apache-arrow or enable JSON fallback');
-// registerArrowDecoder(bytes => bytes);
-
-const value = await decodeValueAsync(pythonValue);
 ```
 
-Arrow-encoded payloads throw unless a decoder is registered or JSON fallback is enabled on the Python bridge.
+- `autoRegisterArrowDecoder()` tries to load `apache-arrow` and register a
+  decoder.
+- `registerArrowDecoder(fn)` installs a custom Arrow decoder.
+- `clearArrowDecoder()` removes the current Arrow decoder.
+- `decodeValue()` and `decodeValueAsync()` decode runtime envelopes such as
+  ndarray, sparse matrix, torch tensor, and sklearn estimator payloads.
 
 ## Error Types
 
 ```ts
 import {
   BridgeError,
+  BridgeCodecError,
   BridgeProtocolError,
   BridgeTimeoutError,
   BridgeDisposedError,
@@ -173,47 +244,19 @@ import {
 } from 'tywrap';
 ```
 
-Use these to differentiate protocol issues from Python execution failures.
-
 ## Key Types
 
 ```ts
 interface TywrapOptions {
   pythonModules: Record<string, PythonModuleConfig>;
+  pythonImportPath?: string[];
   output: OutputConfig;
   runtime: RuntimeConfig;
   performance: PerformanceConfig;
   development: DevelopmentConfig;
+  types?: TypeMappingConfig;
   debug?: boolean;
 }
 ```
 
-For the full type surface, refer to `src/types/index.ts`.
-
-## CLI API
-
-```bash
-tywrap init [options]
-tywrap generate [options]
-tywrap --version
-```
-
-### `tywrap init`
-- `--format ts|json`
-- `--modules "math,numpy"`
-- `--runtime node|pyodide|http|auto`
-- `--output-dir ./generated`
-- `--force`
-
-### `tywrap generate`
-- `--config ./tywrap.config.ts`
-- `--modules "math,numpy"`
-- `--runtime node|pyodide|http|auto`
-- `--python /usr/bin/python3`
-- `--output-dir ./generated`
-- `--format esm|cjs|both`
-- `--declaration`
-- `--source-map`
-- `--cache/--no-cache`
-- `--debug`
-- `--fail-on-warn`
+For the full exported type surface, see `src/index.ts`.

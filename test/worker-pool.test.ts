@@ -927,6 +927,34 @@ describe('WorkerPool', () => {
         expect(worker.transport.isReady).toBe(true);
       });
     });
+
+    it('replaces timed-out workers in the background', async () => {
+      const { factory, transports } = createMockTransportFactory();
+      pool = new WorkerPool({
+        createTransport: factory,
+        maxWorkers: 1,
+        minWorkers: 1,
+      });
+
+      await pool.init();
+      expect(transports).toHaveLength(1);
+
+      await expect(
+        pool.withWorker(async () => {
+          throw new BridgeTimeoutError('timed out');
+        })
+      ).rejects.toThrow(BridgeTimeoutError);
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(transports).toHaveLength(2);
+      expect(transports[0]?.disposeCalled).toBe(true);
+      expect(pool.workerCount).toBe(1);
+
+      const worker = await pool.acquire();
+      expect(worker.transport).toBe(transports[1]);
+      pool.release(worker);
+    });
   });
 
   // ===========================================================================

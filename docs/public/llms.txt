@@ -16,7 +16,7 @@
 - [Browser Runtime (Pyodide)](https://bbopen.github.io/tywrap/guide/runtimes/browser): WebAssembly Python, no subprocess needed
 - [HTTP Bridge](https://bbopen.github.io/tywrap/guide/runtimes/http): Remote Python server, stateless HTTP POST
 - [CLI Reference](https://bbopen.github.io/tywrap/reference/cli): tywrap init, generate, generate --check
-- [Environment Variables](https://bbopen.github.io/tywrap/reference/env-vars): All TYWRAP_* variables with defaults
+- [Environment Variables](https://bbopen.github.io/tywrap/reference/env-vars): All TYWRAP\_\* variables with defaults
 - [Type Mapping](https://bbopen.github.io/tywrap/reference/type-mapping): Python→TypeScript type conversions (numpy, pandas, scipy, torch)
 - [API Reference](https://bbopen.github.io/tywrap/reference/api/): Programmatic API, bridge classes, codec utilities, error types
 - [Examples](https://bbopen.github.io/tywrap/examples/): Copy-pasteable runtime examples
@@ -24,6 +24,6 @@
 ## Optional
 
 - [Troubleshooting](https://bbopen.github.io/tywrap/troubleshooting/): Common errors and fixes
-- [Changelog](https://github.com/bbopen/tywrap/blob/main/CHANGELOG.md): Version history and breaking changes
+- [Releases](https://github.com/bbopen/tywrap/releases): Version history and breaking changes
 - [Contributing](https://github.com/bbopen/tywrap/blob/main/CONTRIBUTING.md): Development setup, PR guidelines
 - [AGENTS.md](https://github.com/bbopen/tywrap/blob/main/AGENTS.md): AI coding agent build/test instructions

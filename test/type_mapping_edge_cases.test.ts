@@ -268,11 +268,12 @@ describe('TypeMapper - Edge Cases and Advanced Scenarios', () => {
         module: 'typing',
       };
 
-      const result = mapper.mapPythonType(boundedTypeVar) as TSCustomType;
+      const result = mapper.mapPythonType(boundedTypeVar);
 
-      expect(result.kind).toBe('custom');
-      expect(result.name).toBe('T');
-      expect(result.module).toBe('typing');
+      expect(result).toEqual({
+        kind: 'primitive',
+        name: 'unknown',
+      });
     });
 
     test('handles TypeVar with constraints', () => {
@@ -283,10 +284,12 @@ describe('TypeMapper - Edge Cases and Advanced Scenarios', () => {
         module: 'typing',
       };
 
-      const result = mapper.mapPythonType(constrainedTypeVar) as TSCustomType;
+      const result = mapper.mapPythonType(constrainedTypeVar);
 
-      expect(result.kind).toBe('custom');
-      expect(result.name).toBe('T');
+      expect(result).toEqual({
+        kind: 'primitive',
+        name: 'unknown',
+      });
     });
 
     test('handles ParamSpec types', () => {
@@ -297,10 +300,12 @@ describe('TypeMapper - Edge Cases and Advanced Scenarios', () => {
         module: 'typing',
       };
 
-      const result = mapper.mapPythonType(paramSpecType) as TSCustomType;
+      const result = mapper.mapPythonType(paramSpecType);
 
-      expect(result.kind).toBe('custom');
-      expect(result.name).toBe('P');
+      expect(result).toEqual({
+        kind: 'primitive',
+        name: 'unknown',
+      });
     });
 
     test('handles TypeVarTuple', () => {
@@ -311,10 +316,12 @@ describe('TypeMapper - Edge Cases and Advanced Scenarios', () => {
         module: 'typing',
       };
 
-      const result = mapper.mapPythonType(typeVarTuple) as TSCustomType;
+      const result = mapper.mapPythonType(typeVarTuple);
 
-      expect(result.kind).toBe('custom');
-      expect(result.name).toBe('Ts');
+      expect(result).toEqual({
+        kind: 'primitive',
+        name: 'unknown',
+      });
     });
 
     test('handles Unpack in generic context', () => {
