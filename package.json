@@ -72,8 +72,9 @@
     "act:clean": "node scripts/act.mjs --clean",
     "act:serial": "node scripts/act-matrix.mjs",
     "docker:npm": "node scripts/node-docker.mjs npm",
+    "docs:sync-llms": "node scripts/generate-llms-full.mjs",
     "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs",
+    "docs:build": "npm run docs:sync-llms && vitepress build docs",
     "docs:preview": "vitepress preview docs"
   },
   "keywords": [

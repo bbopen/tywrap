@@ -8,7 +8,9 @@ area:runtime:
 area:codegen:
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/codegen/**'
+          - 'src/core/**'
+          - 'src/config/**'
+          - 'src/tywrap.ts'
           - 'src/cli.ts'
           - 'tywrap_ir/**'
           - 'test/python/**'

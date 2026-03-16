@@ -218,7 +218,7 @@ describe('CodeGenerator', () => {
       } as any,
       'm'
     );
-    expect(code.typescript).toMatch(
+    expect(code.typescript).not.toMatch(
       /export function f\(x: number, args\?: unknown\[], kwargs\?: Record<string, unknown>\): Promise<number>;/
     );
     expect(code.typescript).toMatch(

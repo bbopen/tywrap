@@ -1,58 +1,86 @@
 # Environment Variables
 
-All `TYWRAP_*` environment variables are read at runtime by the bridge.
+This page lists the implemented `TYWRAP_*` environment variables in the repo
+today.
 
-## Reference
+## Bridge and Codec
 
-| Variable | Runtimes | Default | Description |
-|----------|----------|---------|-------------|
-| `TYWRAP_PYTHON_PATH` | Node, Bun, Deno | auto-detect | Path to the Python executable (e.g. `/usr/bin/python3`) |
-| `TYWRAP_VIRTUAL_ENV` | Node, Bun, Deno | — | Path to a virtual environment directory |
-| `TYWRAP_CODEC_FALLBACK` | Node, HTTP | `arrow` | Set to `json` to disable Apache Arrow and use JSON-only transport |
-| `TYWRAP_CODEC_MAX_BYTES` | Node, HTTP | `1048576` (1 MB) | Maximum serialized response size in bytes. Requests exceeding this fail with an explicit error. |
-| `TYWRAP_REQUEST_MAX_BYTES` | Node, HTTP | — | Maximum serialized request size in bytes. Unbounded by default. |
-| `TYWRAP_TORCH_ALLOW_COPY` | Node, HTTP | `false` | Set to `true` to allow implicit GPU→CPU tensor copies when serializing `torch.Tensor`. |
-| `TYWRAP_PERF_BUDGETS` | Test suite | — | Set to `1` to enable performance budget assertions in the test suite. |
+These affect the Python bridge or decoded runtime behavior.
 
-## Usage Examples
+| Variable                   | Scope         | Default | Purpose                                                                        |
+| -------------------------- | ------------- | ------- | ------------------------------------------------------------------------------ |
+| `TYWRAP_CODEC_FALLBACK`    | Python bridge | unset   | Set to `json` to allow JSON fallback when Arrow encoding is unavailable        |
+| `TYWRAP_CODEC_MAX_BYTES`   | Python bridge | unset   | Reject response payloads larger than this byte count                           |
+| `TYWRAP_REQUEST_MAX_BYTES` | Python bridge | unset   | Reject request payloads larger than this byte count                            |
+| `TYWRAP_TORCH_ALLOW_COPY`  | Python bridge | off     | Allow GPU-to-CPU or contiguous-copy conversion when serializing `torch.Tensor` |
 
-### Explicit Python path
+## Logging
+
+These control the structured logger in the JavaScript runtime.
+
+| Variable           | Default | Purpose                                           |
+| ------------------ | ------- | ------------------------------------------------- |
+| `TYWRAP_LOG_LEVEL` | `WARN`  | One of `DEBUG`, `INFO`, `WARN`, `ERROR`, `SILENT` |
+| `TYWRAP_LOG_JSON`  | `false` | Set to `1` or `true` for JSON log output          |
+
+## Repo Test and Benchmark Knobs
+
+These are used by the tywrap test suite and maintenance workflows. They are not
+required for normal library use.
+
+| Variable                             | Purpose                                          |
+| ------------------------------------ | ------------------------------------------------ |
+| `TYWRAP_CODEC_PYTHON`                | Python executable for codec-heavy tests          |
+| `TYWRAP_PERF_BUDGETS`                | Enable performance budget suites                 |
+| `TYWRAP_PERF_TIME_BUDGET_MS`         | Time budget for generator performance tests      |
+| `TYWRAP_PERF_MEMORY_BUDGET_MB`       | Memory budget for generator performance tests    |
+| `TYWRAP_CODEC_PERF_ITERATIONS`       | Iteration count for codec performance tests      |
+| `TYWRAP_CODEC_PERF_TIME_BUDGET_MS`   | Time budget for codec performance tests          |
+| `TYWRAP_CODEC_PERF_MEMORY_BUDGET_MB` | Memory budget for codec performance tests        |
+| `TYWRAP_ADVERSARIAL`                 | Enable adversarial bridge tests                  |
+| `TYWRAP_ADVERSARIAL_PYTHON`          | Python executable override for adversarial tests |
+
+## Common Examples
+
+Use JSON fallback:
 
 ```bash
-TYWRAP_PYTHON_PATH=/opt/homebrew/bin/python3 node dist/app.js
+export TYWRAP_CODEC_FALLBACK=json
 ```
 
-### Virtual environment
+Cap response and request payload size:
 
 ```bash
-TYWRAP_VIRTUAL_ENV=.venv node dist/app.js
+export TYWRAP_CODEC_MAX_BYTES=10485760
+export TYWRAP_REQUEST_MAX_BYTES=1048576
 ```
 
-### JSON-only transport (disable Arrow)
+Enable JSON logs:
 
 ```bash
-TYWRAP_CODEC_FALLBACK=json node dist/app.js
+export TYWRAP_LOG_LEVEL=INFO
+export TYWRAP_LOG_JSON=1
 ```
 
-### Cap response size at 10 MB
+## Not Configured Through Env Vars
 
-```bash
-TYWRAP_CODEC_MAX_BYTES=10485760 node dist/app.js
+Python executable and virtual environment selection are configured through code
+or config files today:
+
+```ts
+new NodeBridge({ pythonPath: '/usr/bin/python3', virtualEnv: './venv' });
 ```
 
-## Precedence
+```ts
+import { defineConfig } from 'tywrap';
 
-Environment variables are fallbacks — constructor options take precedence:
-
-```typescript
-// Constructor option wins over TYWRAP_PYTHON_PATH
-new NodeBridge({ pythonPath: '/my/python' })
-```
-
-## Subprocess Environment Inheritance
-
-By default, `NodeBridge` inherits only `PATH`, `PYTHON*`, and `TYWRAP_*` from `process.env` to keep the subprocess environment minimal. To pass the full environment:
-
-```typescript
-new NodeBridge({ inheritProcessEnv: true })
+export default defineConfig({
+  runtime: {
+    node: {
+      pythonPath: 'python3',
+      virtualEnv: './venv',
+      timeout: 30000,
+    },
+  },
+});
 ```

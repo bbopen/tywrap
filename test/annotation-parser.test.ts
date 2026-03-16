@@ -47,4 +47,61 @@ describe('annotation parser', () => {
     expect((t as any).parameters[0].kind).toBe('custom');
     expect((t as any).parameters[0].name).toBe('...');
   });
+
+  it('parses Sequence[T] as a list-like collection', () => {
+    const t = parseAnnotationToPythonType('Sequence[bool]');
+    expect(t.kind).toBe('collection');
+    expect((t as any).name).toBe('list');
+    expect((t as any).itemTypes[0].name).toBe('bool');
+  });
+
+  it('parses collections.abc aliases used by advanced fixtures', () => {
+    const sequence = parseAnnotationToPythonType('collections.abc.Sequence[str]');
+    expect(sequence.kind).toBe('collection');
+    expect((sequence as any).name).toBe('list');
+    expect((sequence as any).itemTypes[0].name).toBe('str');
+
+    const mapping = parseAnnotationToPythonType('collections.abc.Mapping[str, int]');
+    expect(mapping.kind).toBe('collection');
+    expect((mapping as any).name).toBe('dict');
+    expect((mapping as any).itemTypes).toHaveLength(2);
+
+    const iterator = parseAnnotationToPythonType('collections.abc.AsyncIterator[bytes]');
+    expect(iterator.kind).toBe('generic');
+    expect((iterator as any).name).toBe('AsyncIterator');
+    expect((iterator as any).typeArgs[0].name).toBe('bytes');
+  });
+
+  it('parses TypeVar-like helpers into safe wrapper-friendly shapes', () => {
+    const typeVar = parseAnnotationToPythonType("TypeVar('T')");
+    expect(typeVar.kind).toBe('typevar');
+    expect((typeVar as any).name).toBe('T');
+
+    const paramSpec = parseAnnotationToPythonType("ParamSpec('P')");
+    expect(paramSpec.kind).toBe('custom');
+    expect((paramSpec as any).name).toBe('P');
+
+    const inferredTypeVar = parseAnnotationToPythonType('~T');
+    expect(inferredTypeVar.kind).toBe('typevar');
+    expect((inferredTypeVar as any).name).toBe('T');
+
+    const callable = parseAnnotationToPythonType('typing.Callable[~P, ~T]');
+    expect(callable.kind).toBe('callable');
+    expect((callable as any).parameters).toHaveLength(1);
+    expect((callable as any).parameters[0].name).toBe('...');
+    expect((callable as any).returnType.kind).toBe('typevar');
+
+    const args = parseAnnotationToPythonType('P.args');
+    expect(args.kind).toBe('collection');
+    expect((args as any).name).toBe('list');
+
+    const kwargs = parseAnnotationToPythonType('P.kwargs');
+    expect(kwargs.kind).toBe('collection');
+    expect((kwargs as any).name).toBe('dict');
+
+    const unpack = parseAnnotationToPythonType('Unpack[Ts]');
+    expect(unpack.kind).toBe('custom');
+    expect((unpack as any).name).toBe('Any');
+    expect((unpack as any).module).toBe('typing');
+  });
 });

@@ -1,78 +1,129 @@
 # CLI Reference
 
-The `tywrap` CLI generates TypeScript wrappers from Python source.
+The `tywrap` CLI has two commands: `init` and `generate`.
 
 ## Installation
 
 ```bash
-npm install tywrap        # local
-npm install -g tywrap     # global
+npm install tywrap
 ```
 
-Or use without installing:
+Or run it with `npx`:
 
 ```bash
 npx tywrap <command>
 ```
 
-## Commands
+## `tywrap init`
 
-### `tywrap init`
+Creates a starter config file in the current directory.
 
-Creates a `tywrap.config.ts` (or `.json`) in the current directory and adds `generate` and `check` scripts to `package.json` if one is present.
+- The default file is `tywrap.config.ts`.
+- If you do not pass `--modules`, the starter config wraps `math`.
+- If a `package.json` is present, tywrap adds `tywrap:generate` and
+  `tywrap:check` scripts unless you pass `--no-scripts`.
 
 ```bash
 npx tywrap init
+npx tywrap init --format json --modules math,numpy
 ```
 
-### `tywrap generate`
+| Flag                                  | Description                                            |
+| ------------------------------------- | ------------------------------------------------------ |
+| `--config`, `-c`                      | Path for the new config file                           |
+| `--format ts\|json`                   | Output format for the starter config                   |
+| `--modules`                           | Comma-separated Python modules to seed into the config |
+| `--runtime node\|pyodide\|http\|auto` | Runtime to use for seeded module entries               |
+| `--output-dir`                        | Generated wrapper directory in the starter config      |
+| `--force`                             | Overwrite an existing config file                      |
+| `--scripts`, `--no-scripts`           | Add or skip recommended `package.json` scripts         |
 
-Reads the config file and generates TypeScript wrappers for all configured Python modules.
+## `tywrap generate`
+
+Loads config, resolves Python IR, and writes generated wrapper files.
+
+When `--config` is omitted, the CLI searches in this order:
+
+1. `tywrap.config.ts`
+2. `tywrap.config.mts`
+3. `tywrap.config.js`
+4. `tywrap.config.mjs`
+5. `tywrap.config.cjs`
+6. `tywrap.config.json`
+
+If no config file is found, you can still generate wrappers by passing
+`--modules`.
 
 ```bash
 npx tywrap generate
-npx tywrap generate --config path/to/tywrap.config.json
+npx tywrap generate --config ./tywrap.config.json
+npx tywrap generate --modules math,statistics --runtime node
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--config <path>` | Path to config file (default: `tywrap.config.ts`) |
-| `--check` | Verify generated files match current Python source — exits 1 if anything changed (for CI) |
-| `--verbose` | Print detailed output |
+| Flag                                  | Description                                                         |
+| ------------------------------------- | ------------------------------------------------------------------- |
+| `--config`, `-c`                      | Config file path                                                    |
+| `--modules`                           | Comma-separated Python modules to wrap                              |
+| `--runtime node\|pyodide\|http\|auto` | Runtime to use when `--modules` is provided                         |
+| `--python`                            | Python executable path override                                     |
+| `--output-dir`                        | Override `output.dir`                                               |
+| `--format esm\|cjs\|both`             | Override `output.format`                                            |
+| `--declaration`                       | Override `output.declaration`                                       |
+| `--source-map`                        | Override `output.sourceMap`                                         |
+| `--cache`, `--no-cache`               | Enable or disable on-disk IR caching                                |
+| `--debug`                             | Enable debug logging                                                |
+| `--verbose`, `-v`                     | Alias for `--debug`                                                 |
+| `--fail-on-warn`                      | Exit non-zero when generation emits warnings                        |
+| `--check`                             | Compare generated output with what is on disk without writing files |
 
-### `tywrap generate --check`
+## `tywrap generate --check`
 
-Runs generation and compares output to files already on disk. Exits with code 1 if anything would change. Use in CI to prevent stale generated files:
+`--check` is for CI and upgrade verification. It does not write files.
 
 ```bash
 npx tywrap generate --check
 ```
 
-Add to CI:
+Exit codes:
+
+- `0`: generated files are up to date
+- `2`: generation succeeded but warnings were present and `--fail-on-warn` was
+  set
+- `3`: generated files are out of date
+- `1`: general failure, such as missing config, import failure, or write error
+
+Typical CI step:
 
 ```yaml
-- name: Check generated wrappers are up to date
+- name: Check generated wrappers
   run: npx tywrap generate --check
 ```
 
-## Config File
+## Starter Config Example
 
-```typescript
-// tywrap.config.ts
+```ts
 import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    'numpy': { alias: 'np' },
-    'pandas': { classes: ['DataFrame'], functions: ['read_csv'] },
-    'math': { functions: ['sqrt', 'pi'] },
+    math: { runtime: 'node', typeHints: 'strict' },
+    numpy: { runtime: 'node', typeHints: 'strict', alias: 'np' },
   },
   output: {
-    dir: './src/generated',
+    dir: './generated',
     format: 'esm',
-    declaration: true,
+    declaration: false,
+    sourceMap: false,
+  },
+  runtime: {
+    node: {
+      pythonPath: 'python3',
+    },
+  },
+  types: {
+    presets: ['stdlib'],
   },
 });
 ```
 
-See the [Configuration guide](/guide/configuration) for all options.
+See the [Configuration guide](/guide/configuration) for the full config surface.

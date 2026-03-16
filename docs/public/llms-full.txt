@@ -3,11 +3,66 @@
 > See /llms.txt for the structured index.
 
 ---
+<!-- Source: docs/index.md -->
+---
+layout: home
+
+hero:
+  name: tywrap
+  text: TypeScript wrappers for Python libraries
+  tagline: Auto-generate type-safe TypeScript bindings for any Python library — works in Node.js, Bun, Deno, and browsers via Pyodide.
+  actions:
+    - theme: brand
+      text: Get Started
+      link: /guide/getting-started
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/bbopen/tywrap
+
+features:
+  - icon: 🔒
+    title: Full Type Safety
+    details: TypeScript definitions generated directly from Python source analysis via AST — no manual type writing.
+  - icon: 🌐
+    title: Multi-Runtime
+    details: One API across Node.js, Bun, Deno (subprocess), and browsers (Pyodide WebAssembly).
+  - icon: ⚡
+    title: Rich Data Types
+    details: First-class support for numpy, pandas, scipy, torch, and sklearn with Apache Arrow binary transport.
+  - icon: 🛠
+    title: Zero-Config CLI
+    details: Run `npx tywrap generate` and get production-ready TypeScript wrappers with a single command.
+---
+
+## Quick Start
+
+```bash
+npm install tywrap
+pip install tywrap-ir
+npx tywrap init
+npx tywrap generate
+```
+
+```typescript
+import { NodeBridge } from 'tywrap/node';
+import { setRuntimeBridge } from 'tywrap/runtime';
+import * as math from './generated/math.generated.js';
+
+setRuntimeBridge(new NodeBridge({ pythonPath: 'python3' }));
+const result = await math.sqrt(16); // 4 — fully typed
+```
+
+> ⚠️ **Experimental** — APIs may change before v1.0.0. See [CHANGELOG](https://github.com/bbopen/tywrap/blob/main/CHANGELOG.md) for breaking changes.
+
+> If tywrap saves you time, a ⭐ on [GitHub](https://github.com/bbopen/tywrap) helps others find it.
+
+---
 
 <!-- Source: docs/guide/getting-started.md -->
 # Getting Started with tywrap
 
-This guide covers installation, basic configuration, and creating your first TypeScript wrapper for a Python library.
+This guide covers installation, basic configuration, and creating your first
+TypeScript wrapper for a Python library.
 
 ## Prerequisites
 
@@ -81,11 +136,16 @@ node -e "import('tywrap').then(async tw => { const cfg = await tw.resolveConfig(
 
 Run `tywrap generate --help` to see all available options and defaults.
 
-The CLI searches for `tywrap.config.ts`, `.mts`, `.js`, `.mjs`, `.cjs`, and `.json` when `--config` is not provided.
+The CLI searches for `tywrap.config.ts`, `.mts`, `.js`, `.mjs`, `.cjs`, and
+`.json` when `--config` is not provided.
+
+The config file drives code generation. Your application still creates a runtime
+bridge with `NodeBridge`, `PyodideBridge`, or `HttpBridge`.
 
 ## Usage
 
-After generation, import and use your Python library with full TypeScript support:
+After generation, import and use your Python library with full TypeScript
+support:
 
 ```typescript
 // Import the generated wrapper
@@ -99,10 +159,10 @@ setRuntimeBridge(bridge);
 // Use with full type safety
 async function example() {
   const result = await math.sqrt(16); // TypeScript knows this returns Promise<number>
-  const power = await math.pow(2, 3);  // Full autocompletion and type checking
-  
+  const power = await math.pow(2, 3); // Full autocompletion and type checking
+
   console.log(`√16 = ${result}`); // 4
-  console.log(`2³ = ${power}`);   // 8
+  console.log(`2³ = ${power}`); // 8
 }
 
 example().catch(console.error);
@@ -130,14 +190,14 @@ def calculate_area(width: float, height: float) -> float:
 
 class Calculator:
     """Simple calculator class."""
-    
+
     def __init__(self, precision: int = 2):
         self.precision = precision
-    
+
     def add(self, a: float, b: float) -> float:
         """Add two numbers."""
         return round(a + b, self.precision)
-    
+
     def multiply(self, a: float, b: float) -> float:
         """Multiply two numbers."""
         return round(a * b, self.precision)
@@ -151,15 +211,15 @@ Update your `tywrap.config.ts`:
 {
   "pythonImportPath": [],
   "pythonModules": {
-    "my_utils": { 
-      "runtime": "node", 
+    "my_utils": {
+      "runtime": "node",
       "typeHints": "strict",
       "watch": true
     }
   },
   "output": {
     "dir": "./generated",
-    "format": "esm", 
+    "format": "esm",
     "declaration": true,
     "sourceMap": true
   },
@@ -170,8 +230,8 @@ Update your `tywrap.config.ts`:
 }
 ```
 
-If `my_utils` is not importable from your current working directory or your Python environment,
-add the directory that contains it to `pythonImportPath`:
+If `my_utils` is not importable from your current working directory or your
+Python environment, add the directory that contains it to `pythonImportPath`:
 
 ```json
 {
@@ -191,26 +251,30 @@ npx tywrap generate
 ```typescript
 import { NodeBridge } from 'tywrap/node';
 import { setRuntimeBridge } from 'tywrap/runtime';
-import { greet, calculate_area, Calculator } from './generated/my_utils.generated.js';
+import {
+  greet,
+  calculate_area,
+  Calculator,
+} from './generated/my_utils.generated.js';
 
 const bridge = new NodeBridge({ pythonPath: 'python3' });
 setRuntimeBridge(bridge);
 
 async function demo() {
   // Function calls with type safety
-  const greeting = await greet("World", true);
+  const greeting = await greet('World', true);
   console.log(greeting); // "Hello, World! 🎉"
-  
+
   const area = await calculate_area(10.5, 8.2);
   console.log(`Area: ${area}`); // Area: 86.1
-  
+
   // Class instantiation and methods
   const calc = await Calculator.create(3);
   const sum = await calc.add(3.14159, 2.71828);
   const product = await calc.multiply(sum, 2);
   await calc.disposeHandle();
-  
-  console.log(`Sum: ${sum}`);     // Sum: 5.860
+
+  console.log(`Sum: ${sum}`); // Sum: 5.860
   console.log(`Product: ${product}`); // Product: 11.720
 }
 ```
@@ -218,6 +282,7 @@ async function demo() {
 ## Runtime Options
 
 ### Node.js (Default)
+
 ```json
 {
   "pythonModules": {
@@ -234,6 +299,7 @@ async function demo() {
 ```
 
 ### Browser (Pyodide)
+
 ```json
 {
   "pythonModules": {
@@ -249,6 +315,7 @@ async function demo() {
 ```
 
 ### HTTP API
+
 ```json
 {
   "pythonModules": {
@@ -269,6 +336,7 @@ async function demo() {
 ## Development Workflow
 
 ### With Hot Reload
+
 ```json
 {
   "development": {
@@ -280,14 +348,18 @@ async function demo() {
 ```
 
 ### Build Integration
-Run `tywrap generate --check` in CI to ensure generated wrappers are committed and up to date. After upgrading Python dependencies, run `tywrap generate` to refresh the generated surface.
 
-If you ran `tywrap init` in a Node project, it will also add `tywrap:generate` and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).
+Run `tywrap generate --check` in CI to ensure generated wrappers are committed
+and up to date. After upgrading Python dependencies, run `tywrap generate` to
+refresh the generated surface.
+
+If you ran `tywrap init` in a Node project, it will also add `tywrap:generate`
+and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).
 
 ## Performance Tips
 
 1. **Enable Caching**: Set `"caching": true` for faster rebuilds
-2. **Use Batching**: Set `"batching": true` for multiple modules  
+2. **Use Batching**: Set `"batching": true` for multiple modules
 3. **Smart Compression**: Use `"compression": "auto"` for optimal size
 4. **Selective Imports**: Specify only needed functions/classes
 
@@ -311,6 +383,7 @@ If you ran `tywrap init` in a Node project, it will also add `tywrap:generate` a
 ## Common Patterns
 
 ### Error Handling
+
 ```typescript
 try {
   const result = await math.sqrt(-1);
@@ -322,6 +395,7 @@ try {
 ```
 
 ### Working with Arrays
+
 ```typescript
 import { array, zeros } from './generated/numpy.generated.js';
 
@@ -332,19 +406,20 @@ const empty = await zeros([3, 3]);
 ```
 
 ### Async/Await Best Practices
+
 ```typescript
 // Good: Handle promises properly
 const results = await Promise.all([
   math.sin(Math.PI / 2),
   math.cos(0),
-  math.tan(Math.PI / 4)
+  math.tan(Math.PI / 4),
 ]);
 
-// Better: Batch related calls
-const batch = await mathBatch([
-  { function: 'sin', args: [Math.PI / 2] },
-  { function: 'cos', args: [0] },
-  { function: 'tan', args: [Math.PI / 4] }
+// Group independent calls with Promise.all
+const [sinValue, cosValue, tanValue] = await Promise.all([
+  math.sin(Math.PI / 2),
+  math.cos(0),
+  math.tan(Math.PI / 4),
 ]);
 ```
 
@@ -361,25 +436,25 @@ const batch = await mathBatch([
 - [GitHub Issues](https://github.com/bbopen/tywrap/issues)
 - [GitHub Discussions](https://github.com/bbopen/tywrap/discussions)
 
-
 ---
 
 <!-- Source: docs/guide/configuration.md -->
 # Configuration Guide
 
-Complete configuration reference covering all options from basic setup to advanced optimization.
+Complete configuration reference covering all options from basic setup to
+advanced optimization.
 
 ## Top-Level Fields
 
-| Field | Description |
-|-------|-------------|
-| `pythonModules` | Mapping of module names to wrapper configuration |
+| Field              | Description                                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `pythonModules`    | Mapping of module names to wrapper configuration                                                                         |
 | `pythonImportPath` | Extra directories to prepend to `PYTHONPATH` during IR generation (useful for local modules not installed into your env) |
-| `output` | Output directory, module format and artifact options |
-| `runtime` | Settings for Node, Pyodide or HTTP runtimes |
-| `performance` | Caching and optimization controls |
-| `development` | Development-time features like hot reloading |
-| `types` | Type mapping presets and customization |
+| `output`           | Output directory, module format and artifact options                                                                     |
+| `runtime`          | Settings for Node, Pyodide or HTTP runtimes                                                                              |
+| `performance`      | Caching and optimization controls                                                                                        |
+| `development`      | Development-time features like hot reloading                                                                             |
+| `types`            | Type mapping presets and customization                                                                                   |
 
 ## Configuration File Formats
 
@@ -394,6 +469,7 @@ When `--config` is omitted, the CLI searches for `tywrap.config.ts`, `.mts`,
 `.js`, `.mjs`, `.cjs`, and `.json` in that order.
 
 ### Basic JSON Configuration
+
 ```json
 {
   "pythonModules": {
@@ -407,6 +483,7 @@ When `--config` is omitted, the CLI searches for `tywrap.config.ts`, `.mts`,
 ```
 
 ### TypeScript Configuration
+
 ```typescript
 // tywrap.config.ts
 import { defineConfig } from 'tywrap';
@@ -414,45 +491,48 @@ import { defineConfig } from 'tywrap';
 export default defineConfig({
   pythonImportPath: ['./python', './vendor'],
   pythonModules: {
-    numpy: { 
+    numpy: {
       version: '1.24.0',
       runtime: 'pyodide',
       functions: ['array', 'zeros', 'ones'],
-      typeHints: 'strict'
+      typeHints: 'strict',
     },
     pandas: {
       runtime: 'node',
-      alias: 'pd'
-    }
+      alias: 'pd',
+    },
   },
   output: {
     dir: './src/generated',
     format: 'esm',
     declaration: true,
-    sourceMap: true
+    sourceMap: true,
   },
   performance: {
     caching: true,
     batching: true,
-    compression: 'auto'
-  }
+    compression: 'auto',
+  },
 });
 ```
 
 ## Local Modules and `pythonImportPath`
 
-If you're wrapping local modules/packages that are not installed into your Python environment, add one
-or more directories to `pythonImportPath`. tywrap will prepend these entries to `PYTHONPATH` when
-running the `tywrap_ir` subprocess. Existing `PYTHONPATH` (if set) is preserved.
+If you're wrapping local modules/packages that are not installed into your
+Python environment, add one or more directories to `pythonImportPath`. tywrap
+will prepend these entries to `PYTHONPATH` when running the `tywrap_ir`
+subprocess. Existing `PYTHONPATH` (if set) is preserved.
 
 Notes:
 
-- Paths are passed through as provided (use absolute paths or paths relative to where you run the CLI).
+- Paths are passed through as provided (use absolute paths or paths relative to
+  where you run the CLI).
 - This affects IR discovery/import, not your runtime bridge configuration.
 
 ## Python Modules Configuration
 
 ### Basic Module Setup
+
 ```json
 {
   "pythonModules": {
@@ -465,12 +545,13 @@ Notes:
 ```
 
 ### Advanced Module Configuration
+
 ```json
 {
   "pythonModules": {
     "numpy": {
       "version": "1.24.0",
-      "runtime": "pyodide", 
+      "runtime": "pyodide",
       "functions": ["array", "zeros", "ones", "eye"],
       "classes": ["ndarray", "matrix"],
       "alias": "np",
@@ -488,25 +569,27 @@ Notes:
 
 ### Module Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `runtime` | `'node' \| 'pyodide' \| 'http' \| 'auto'` | `'auto'` | Runtime environment |
-| `version` | `string` | Latest | Specific package version |
-| `functions` | `string[]` | All | Specific functions to wrap |
-| `classes` | `string[]` | All | Specific classes to wrap |
-| `exclude` | `string[]` | `[]` | Exclude specific exports by exact name |
-| `excludePatterns` | `string[]` | `[]` | Exclude exports by regex pattern |
-| `alias` | `string` | Module name | Import alias in generated code |
-| `typeHints` | `'strict' \| 'loose' \| 'ignore'` | `'strict'` | Type hint processing |
-| `watch` | `boolean` | `false` | Enable file watching in development |
+| Option            | Type                                      | Default     | Description                            |
+| ----------------- | ----------------------------------------- | ----------- | -------------------------------------- |
+| `runtime`         | `'node' \| 'pyodide' \| 'http' \| 'auto'` | `'auto'`    | Runtime environment                    |
+| `version`         | `string`                                  | Latest      | Specific package version               |
+| `functions`       | `string[]`                                | All         | Specific functions to wrap             |
+| `classes`         | `string[]`                                | All         | Specific classes to wrap               |
+| `exclude`         | `string[]`                                | `[]`        | Exclude specific exports by exact name |
+| `excludePatterns` | `string[]`                                | `[]`        | Exclude exports by regex pattern       |
+| `alias`           | `string`                                  | Module name | Import alias in generated code         |
+| `typeHints`       | `'strict' \| 'loose' \| 'ignore'`         | `'strict'`  | Type hint processing                   |
+| `watch`           | `boolean`                                 | `false`     | Enable file watching in development    |
 
-When `functions`/`classes` are not explicitly configured for a module, tywrap applies a small
-default exclude list to avoid generating wrappers for common decorator helpers:
-`dataclass`, `property`, `staticmethod`, `classmethod`, `abstractmethod`, `cached_property`.
+When `functions`/`classes` are not explicitly configured for a module, tywrap
+applies a small default exclude list to avoid generating wrappers for common
+decorator helpers: `dataclass`, `property`, `staticmethod`, `classmethod`,
+`abstractmethod`, `cached_property`.
 
 ## Output Configuration
 
 ### Format Options
+
 ```json
 {
   "output": {
@@ -521,17 +604,23 @@ default exclude list to avoid generating wrappers for common decorator helpers:
 
 ### Output Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `dir` | `string` | `'./generated'` | Output directory |
-| `format` | `'esm' \| 'cjs' \| 'both'` | `'esm'` | Module format |
-| `declaration` | `boolean` | `false` | Generate .d.ts files |
-| `sourceMap` | `boolean` | `false` | Generate source maps |
-| `annotatedJSDoc` | `boolean` | `false` | Include type annotations in JSDoc |
+| Option           | Type                       | Default         | Description                       |
+| ---------------- | -------------------------- | --------------- | --------------------------------- |
+| `dir`            | `string`                   | `'./generated'` | Output directory                  |
+| `format`         | `'esm' \| 'cjs' \| 'both'` | `'esm'`         | Module format                     |
+| `declaration`    | `boolean`                  | `false`         | Generate .d.ts files              |
+| `sourceMap`      | `boolean`                  | `false`         | Generate source maps              |
+| `annotatedJSDoc` | `boolean`                  | `false`         | Include type annotations in JSDoc |
 
 ## Runtime Configuration
 
+These fields are part of the typed config surface. Today the CLI uses
+`runtime.node.pythonPath`, `runtime.node.virtualEnv`, and `runtime.node.timeout`
+during IR extraction. Your application still creates `NodeBridge`,
+`PyodideBridge`, or `HttpBridge` itself at runtime.
+
 ### Node.js Runtime
+
 ```json
 {
   "runtime": {
@@ -545,6 +634,7 @@ default exclude list to avoid generating wrappers for common decorator helpers:
 ```
 
 ### Pyodide Runtime (Browser)
+
 ```json
 {
   "runtime": {
@@ -557,6 +647,7 @@ default exclude list to avoid generating wrappers for common decorator helpers:
 ```
 
 ### HTTP Runtime
+
 ```json
 {
   "runtime": {
@@ -575,28 +666,32 @@ default exclude list to avoid generating wrappers for common decorator helpers:
 ### Runtime Options
 
 #### Node.js Options
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `pythonPath` | `string` | `'python3'` | Path to Python executable |
-| `virtualEnv` | `string` | - | Virtual environment path |
-| `timeout` | `number` | `30000` | Subprocess timeout (ms) |
 
-#### Pyodide Options  
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `indexURL` | `string` | CDN URL | Pyodide package index |
-| `packages` | `string[]` | `[]` | Pre-installed packages |
+| Option       | Type     | Default     | Description               |
+| ------------ | -------- | ----------- | ------------------------- |
+| `pythonPath` | `string` | `'python3'` | Path to Python executable |
+| `virtualEnv` | `string` | -           | Virtual environment path  |
+| `timeout`    | `number` | `30000`     | Subprocess timeout (ms)   |
+
+#### Pyodide Options
+
+| Option     | Type       | Default | Description            |
+| ---------- | ---------- | ------- | ---------------------- |
+| `indexURL` | `string`   | CDN URL | Pyodide package index  |
+| `packages` | `string[]` | `[]`    | Pre-installed packages |
 
 #### HTTP Options
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `baseURL` | `string` | Required | API base URL |
-| `timeout` | `number` | `10000` | Request timeout (ms) |
-| `headers` | `Record<string, string>` | `{}` | HTTP headers |
+
+| Option    | Type                     | Default  | Description          |
+| --------- | ------------------------ | -------- | -------------------- |
+| `baseURL` | `string`                 | Required | API base URL         |
+| `timeout` | `number`                 | `10000`  | Request timeout (ms) |
+| `headers` | `Record<string, string>` | `{}`     | HTTP headers         |
 
 ## Performance Configuration
 
 ### Caching and Optimization
+
 ```json
 {
   "performance": {
@@ -621,27 +716,29 @@ Use presets to opt into richer mappings for common ecosystems.
 
 ### Type Mapping Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `presets` | `('numpy' \| 'pandas' \| 'pydantic' \| 'stdlib' \| 'scipy' \| 'torch' \| 'sklearn')[]` | `[]` | Enable opt-in mappings for specific libraries |
+| Option    | Type                                                                                   | Default | Description                                   |
+| --------- | -------------------------------------------------------------------------------------- | ------- | --------------------------------------------- |
+| `presets` | `('numpy' \| 'pandas' \| 'pydantic' \| 'stdlib' \| 'scipy' \| 'torch' \| 'sklearn')[]` | `[]`    | Enable opt-in mappings for specific libraries |
 
-`stdlib` maps common Python stdlib types (datetime, UUID, Decimal, Path) to JSON-friendly primitives.  
-`pandas` maps `DataFrame` and `Series` to record-shaped unions.
-`scipy` maps sparse matrix classes (csr/csc/coo) to structured sparse objects.  
+`stdlib` maps common Python stdlib types (datetime, UUID, Decimal, Path) to
+JSON-friendly primitives.  
+`pandas` maps `DataFrame` and `Series` to record-shaped unions. `scipy` maps
+sparse matrix classes (csr/csc/coo) to structured sparse objects.  
 `torch` maps `Tensor` to a structured tensor object.  
 `sklearn` maps `BaseEstimator` to estimator metadata objects.
 
 ### Performance Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `caching` | `boolean` | `false` | Enable IR caching |
-| `batching` | `boolean` | `false` | Batch multiple operations |
-| `compression` | `'auto' \| 'gzip' \| 'brotli' \| 'none'` | `'none'` | Output compression |
+| Option        | Type                                     | Default  | Description               |
+| ------------- | ---------------------------------------- | -------- | ------------------------- |
+| `caching`     | `boolean`                                | `false`  | Enable IR caching         |
+| `batching`    | `boolean`                                | `false`  | Batch multiple operations |
+| `compression` | `'auto' \| 'gzip' \| 'brotli' \| 'none'` | `'none'` | Output compression        |
 
 ## Development Configuration
 
 ### Development Options
+
 ```json
 {
   "development": {
@@ -652,11 +749,11 @@ Use presets to opt into richer mappings for common ecosystems.
 }
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `hotReload` | `boolean` | `false` | Enable hot reloading |
-| `sourceMap` | `boolean` | `false` | Generate source maps |
-| `validation` | `'runtime' \| 'compile' \| 'both' \| 'none'` | `'none'` | Validation level |
+| Option       | Type                                         | Default  | Description          |
+| ------------ | -------------------------------------------- | -------- | -------------------- |
+| `hotReload`  | `boolean`                                    | `false`  | Enable hot reloading |
+| `sourceMap`  | `boolean`                                    | `false`  | Generate source maps |
+| `validation` | `'runtime' \| 'compile' \| 'both' \| 'none'` | `'none'` | Validation level     |
 
 ## Extension Hooks
 
@@ -703,6 +800,7 @@ export TYWRAP_HOT_RELOAD="true"
 ## Advanced Configuration Patterns
 
 ### Multi-Environment Setup
+
 ```typescript
 // tywrap.config.ts
 import { defineConfig } from 'tywrap';
@@ -711,72 +809,74 @@ const isDev = process.env.NODE_ENV === 'development';
 
 export default defineConfig({
   pythonModules: {
-    numpy: { 
+    numpy: {
       runtime: isDev ? 'node' : 'pyodide',
-      typeHints: isDev ? 'loose' : 'strict'
-    }
+      typeHints: isDev ? 'loose' : 'strict',
+    },
   },
   output: {
     dir: isDev ? './dev-generated' : './dist/generated',
-    sourceMap: isDev
+    sourceMap: isDev,
   },
   development: {
     hotReload: isDev,
-    validation: isDev ? 'runtime' : 'none'
-  }
+    validation: isDev ? 'runtime' : 'none',
+  },
 });
 ```
 
 ### Monorepo Configuration
+
 ```typescript
 // packages/core/tywrap.config.ts
 export default defineConfig({
   pythonModules: {
     numpy: { runtime: 'node' },
-    scipy: { runtime: 'node' }
+    scipy: { runtime: 'node' },
   },
   output: {
     dir: './src/generated',
-    format: 'esm'
-  }
+    format: 'esm',
+  },
 });
 
-// packages/web/tywrap.config.ts  
+// packages/web/tywrap.config.ts
 export default defineConfig({
   pythonModules: {
     numpy: { runtime: 'pyodide' },
-    matplotlib: { runtime: 'pyodide' }
+    matplotlib: { runtime: 'pyodide' },
   },
   output: {
     dir: './src/generated',
-    format: 'esm'
+    format: 'esm',
   },
   runtime: {
     pyodide: {
-      packages: ['numpy', 'matplotlib']
-    }
-  }
+      packages: ['numpy', 'matplotlib'],
+    },
+  },
 });
 ```
 
 ### Conditional Module Loading
+
 ```typescript
 export default defineConfig({
   pythonModules: {
     // Core modules - always included
     math: { runtime: 'auto' },
-    
+
     // Optional modules - only if available
     ...(process.env.INCLUDE_ML && {
-      'sklearn': { runtime: 'node', typeHints: 'loose' },
-      'torch': { runtime: 'node', classes: ['Tensor'] }
+      sklearn: { runtime: 'node', typeHints: 'loose' },
+      torch: { runtime: 'node', classes: ['Tensor'] },
     }),
-    
+
     // Development-only modules
     ...(process.env.NODE_ENV === 'development' && {
-      'debug_utils': { runtime: 'node', watch: true }
-    })
-  }
+      debug_utils: { runtime: 'node', watch: true },
+    }),
+  },
 });
 ```
 
@@ -802,6 +902,7 @@ tywrap validates your configuration at build time:
 ## Configuration Merging
 
 Configurations are merged in this order:
+
 1. Default values
 2. Configuration file
 3. Environment variables
@@ -816,16 +917,18 @@ tywrap generate --output-dir ./custom --format cjs
 ## Best Practices
 
 ### 1. Environment-Specific Configs
+
 ```typescript
 // Use different configs per environment
 const config = {
   development: './tywrap.dev.config.ts',
   production: './tywrap.prod.config.ts',
-  test: './tywrap.test.config.ts'
+  test: './tywrap.test.config.ts',
 };
 ```
 
 ### 2. Module Organization
+
 ```json
 {
   "pythonModules": {
@@ -833,8 +936,8 @@ const config = {
     "numpy": { "runtime": "pyodide" },
     "scipy": { "runtime": "pyodide" },
     "matplotlib": { "runtime": "pyodide" },
-    
-    // Separate custom modules  
+
+    // Separate custom modules
     "./utils/math_helpers.py": { "runtime": "node" },
     "./utils/data_processing.py": { "runtime": "node" }
   }
@@ -842,17 +945,19 @@ const config = {
 ```
 
 ### 3. Performance Optimization
+
 ```json
 {
   "performance": {
-    "caching": true,        // Always enable in CI/CD
-    "batching": true,       // For multiple modules
-    "compression": "auto"   // Let tywrap decide
+    "caching": true, // Always enable in CI/CD
+    "batching": true, // For multiple modules
+    "compression": "auto" // Let tywrap decide
   }
 }
 ```
 
 ### 4. Type Safety
+
 ```json
 {
   "pythonModules": {
@@ -868,32 +973,35 @@ const config = {
 ### Common Issues
 
 **Module not found**:
+
 ```bash
 # Check Python path
 python3 -c "import sys; print(sys.path)"
 
-# Verify module installation  
+# Verify module installation
 python3 -c "import your_module; print(your_module.__file__)"
 ```
 
 **Type generation errors**:
+
 ```json
 {
   "pythonModules": {
     "problematic_module": {
-      "typeHints": "loose",  // Relax type checking
-      "functions": ["specific_function"]  // Limit scope
+      "typeHints": "loose", // Relax type checking
+      "functions": ["specific_function"] // Limit scope
     }
   }
 }
 ```
 
 **Performance issues**:
+
 ```json
 {
   "performance": {
-    "caching": true,          // Enable caching
-    "compression": "none"     // Disable compression
+    "caching": true, // Enable caching
+    "compression": "none" // Disable compression
   }
 }
 ```
@@ -905,7 +1013,6 @@ For more troubleshooting, see [Troubleshooting Guide](/troubleshooting/).
 - [Runtime Guides](/guide/runtimes/node) - Platform-specific configuration
 - [Examples](/examples/) - Configuration examples
 - [API Reference](/reference/api/) - Complete API documentation
-
 
 ---
 
@@ -930,7 +1037,7 @@ tywrap supports five runtime configurations. Choose based on your environment.
 | Runtime | Import |
 |---------|--------|
 | Node.js | `import { NodeBridge } from 'tywrap/node'` |
-| Bun | `import { NodeBridge } from 'tywrap'` |
+| Bun | `import { NodeBridge } from 'tywrap/node'` |
 | Deno | `import { NodeBridge } from 'npm:tywrap'` |
 | Browser | `import { PyodideBridge } from 'tywrap/pyodide'` |
 | HTTP | `import { HttpBridge } from 'tywrap/http'` |
@@ -952,22 +1059,25 @@ Do you need subprocess-based Python execution?
 
 | Bridge | Export | Guide |
 |--------|--------|-------|
-| `NodeBridge` | `tywrap/node` (or `tywrap` on Bun) | [Node.js](./node) · [Bun](./bun) · [Deno](./deno) |
+| `NodeBridge` | `tywrap/node` | [Node.js](./node) · [Bun](./bun) · [Deno](./deno) |
 | `PyodideBridge` | `tywrap/pyodide` | [Browser](./browser) |
 | `HttpBridge` | `tywrap/http` | [HTTP](./http) |
-
 
 ---
 
 <!-- Source: docs/guide/runtimes/node.md -->
 # Node.js Runtime Guide
 
-The Node.js runtime is tywrap's default and most feature-complete runtime environment. It uses child processes to execute Python code, providing excellent performance and compatibility.
+The Node.js runtime is tywrap's default and most feature-complete runtime
+environment. It uses child processes to execute Python code, providing excellent
+performance and compatibility.
 
 ## Overview
 
 The Node.js runtime:
-- **Executes Python via subprocess** - Spawns Python processes for code execution
+
+- **Executes Python via subprocess** - Spawns Python processes for code
+  execution
 - **High Performance** - Direct process communication with minimal overhead
 - **Full Feature Support** - Supports all tywrap features and Python libraries
 - **Development Friendly** - Excellent debugging and error reporting
@@ -975,21 +1085,25 @@ The Node.js runtime:
 
 ## Bridge Selection
 
-- **NodeBridge (default)**: correctness-first, simplest lifecycle, recommended for most users.
-- **OptimizedNodeBridge (experimental)**: process pooling + optional caching for throughput; not a drop-in
-  replacement yet and not part of the public API exports. See `ROADMAP.md` for the unification
-  plan and parity goals.
+- **NodeBridge (default)**: correctness-first, simplest lifecycle, recommended
+  for most users.
+- **OptimizedNodeBridge (experimental)**: process pooling + optional caching for
+  throughput; not a drop-in replacement yet and not part of the public API
+  exports. See `ROADMAP.md` for the unification plan and parity goals.
 
-Both bridges share the same JSONL core for protocol validation, timeouts, and stderr buffering.
+Both bridges share the same JSONL core for protocol validation, timeouts, and
+stderr buffering.
 
 ## Basic Setup
 
 ### Installation
+
 ```bash
 npm install tywrap
 ```
 
 ### Configuration
+
 ```json
 {
   "pythonModules": {
@@ -1006,6 +1120,7 @@ npm install tywrap
 ```
 
 ### Usage
+
 ```typescript
 import { NodeBridge } from 'tywrap/node';
 import { setRuntimeBridge } from 'tywrap/runtime';
@@ -1022,6 +1137,7 @@ async function example() {
 ```
 
 ### Bridge Diagnostics
+
 ```typescript
 const info = await bridge.getBridgeInfo({ refresh: true });
 console.log(info.protocol, info.pythonVersion, info.instances);
@@ -1029,62 +1145,74 @@ console.log(info.protocol, info.pythonVersion, info.instances);
 
 ## Configuration Options
 
-### Basic Options
+`tywrap.config.*` and `NodeBridge` do different jobs:
+
+- `tywrap.config.*` controls wrapper generation.
+- `new NodeBridge(...)` controls the live subprocess bridge in your app.
+
+### `tywrap.config.*` fields
+
 ```json
 {
   "runtime": {
     "node": {
       "pythonPath": "/usr/local/bin/python3",
-      "scriptPath": "./runtime/python_bridge.py",
-      "cwd": "./",
-      "timeoutMs": 30000
-    }
-  }
-}
-```
-
-### Advanced Options
-```json
-{
-  "runtime": {
-    "node": {
-      "pythonPath": "/usr/local/bin/python3.11",
       "virtualEnv": "./venv",
-      "scriptPath": "./custom_bridge.py",
-      "cwd": "./python_src",
-      "timeoutMs": 60000,
-      "maxLineLength": 10485760,
-      "inheritProcessEnv": true,
-      "enableJsonFallback": true,
-      "env": {
-        "PYTHONPATH": "./additional_modules",
-        "OMP_NUM_THREADS": "4"
-      }
+      "timeout": 30000
     }
   }
 }
 ```
 
-### Configuration Reference
+### `NodeBridge` constructor options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `pythonPath` | `string` | `'python3'` | Path to Python executable |
-| `virtualEnv` | `string` | - | Virtual environment directory |
-| `scriptPath` | `string` | Built-in bridge | Custom Python bridge script |
-| `cwd` | `string` | `process.cwd()` | Working directory for Python |
-| `timeoutMs` | `number` | `30000` | Subprocess timeout in milliseconds |
-| `maxLineLength` | `number` | `TYWRAP_CODEC_MAX_BYTES` or `1048576` | Max JSONL response line length |
-| `inheritProcessEnv` | `boolean` | `false` | Inherit full `process.env` into the Python subprocess |
-| `enableJsonFallback` | `boolean` | `false` | Use JSON for data transport fallback |
-| `env` | `Record<string, string>` | `{}` | Additional environment variables |
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: '/usr/local/bin/python3.11',
+  virtualEnv: './venv',
+  scriptPath: './custom_bridge.py',
+  cwd: './python_src',
+  timeoutMs: 60000,
+  queueTimeoutMs: 60000,
+  inheritProcessEnv: true,
+  env: {
+    PYTHONPATH: './additional_modules',
+    OMP_NUM_THREADS: '4',
+  },
+  codec: {
+    bytesHandling: 'base64',
+  },
+});
+```
 
-By default, the subprocess environment is minimal (PATH/PYTHON*/TYWRAP_* only).
+| Option                    | Type                                     | Default         | Description                              |
+| ------------------------- | ---------------------------------------- | --------------- | ---------------------------------------- |
+| `pythonPath`              | `string`                                 | auto-detect     | Path to the Python executable            |
+| `scriptPath`              | `string`                                 | built-in bridge | Custom `python_bridge.py` path           |
+| `virtualEnv`              | `string`                                 | —               | Virtual environment root                 |
+| `cwd`                     | `string`                                 | `process.cwd()` | Working directory for the subprocess     |
+| `timeoutMs`               | `number`                                 | `30000`         | Per-call timeout                         |
+| `queueTimeoutMs`          | `number`                                 | `30000`         | Queue timeout when the pool is saturated |
+| `minProcesses`            | `number`                                 | `1`             | Minimum worker count                     |
+| `maxProcesses`            | `number`                                 | `1`             | Maximum worker count                     |
+| `maxConcurrentPerProcess` | `number`                                 | `10`            | Concurrent requests per worker           |
+| `inheritProcessEnv`       | `boolean`                                | `false`         | Pass the full parent environment through |
+| `enableCache`             | `boolean`                                | `false`         | Cache pure function results              |
+| `env`                     | `Record<string, string \| undefined>`    | `{}`            | Extra subprocess env vars                |
+| `codec`                   | `CodecOptions`                           | —               | Codec validation and byte handling       |
+| `warmupCommands`          | `Array<{ module, functionName, args? }>` | `[]`            | Commands to run when each worker starts  |
+
+Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
+`maxRequestsPerProcess`, `enableJsonFallback`, and `maxLineLength`. Avoid them
+in new code.
+
+By default, the subprocess environment is minimal (PATH/PYTHON*/TYWRAP\_* only).
 Set `inheritProcessEnv: true` to pass through the full environment when needed.
 
 ## Python Environment Setup
 
 ### Using System Python
+
 ```json
 {
   "runtime": {
@@ -1096,6 +1224,7 @@ Set `inheritProcessEnv: true` to pass through the full environment when needed.
 ```
 
 ### Using Virtual Environment
+
 ```json
 {
   "runtime": {
@@ -1108,6 +1237,7 @@ Set `inheritProcessEnv: true` to pass through the full environment when needed.
 ```
 
 ### Using Conda Environment
+
 ```bash
 # Activate conda environment first
 conda activate myenv
@@ -1126,6 +1256,7 @@ conda activate myenv
 ```
 
 ### Using pyenv
+
 ```bash
 # Set Python version with pyenv
 pyenv local 3.11.0
@@ -1135,7 +1266,7 @@ pyenv local 3.11.0
 {
   "runtime": {
     "node": {
-      "pythonPath": "python3"  // pyenv will provide the right version
+      "pythonPath": "python3" // pyenv will provide the right version
     }
   }
 }
@@ -1144,6 +1275,7 @@ pyenv local 3.11.0
 ## Data Transport and Performance
 
 ### Arrow Transport (Default)
+
 For optimal performance with NumPy/Pandas data:
 
 ```bash
@@ -1172,34 +1304,24 @@ registerArrowDecoder(bytes => tableFromIPC(bytes));
 ```
 
 ### JSON Fallback
-For environments without Arrow support:
 
-```json
-{
-  "runtime": {
-    "node": {
-      "enableJsonFallback": true
-    }
-  }
-}
-```
+For environments without Arrow support, set the environment variable:
 
-Or set environment variable:
 ```bash
 export TYWRAP_CODEC_FALLBACK=json
 ```
 
 ### Payload Size Limit
 
-The subprocess bridge writes a single JSONL response per call. To prevent oversized payloads:
+The subprocess bridge writes a single JSONL response per call. To prevent
+oversized payloads:
 
 ```bash
 export TYWRAP_CODEC_MAX_BYTES=10485760  # 10 MB cap
 ```
 
-If a response exceeds `TYWRAP_CODEC_MAX_BYTES`, the call fails with an explicit error.
-`maxLineLength` defaults to the same value when set (otherwise 1MB) so the Node
-side and Python side stay aligned.
+If a response exceeds `TYWRAP_CODEC_MAX_BYTES`, the call fails with an explicit
+error. Use this instead of older line-length knobs.
 
 ### Request Size Limit
 
@@ -1209,7 +1331,8 @@ To cap incoming request payloads (JSONL request size in bytes):
 export TYWRAP_REQUEST_MAX_BYTES=1048576  # 1 MB cap
 ```
 
-If a request exceeds `TYWRAP_REQUEST_MAX_BYTES`, the call fails with an explicit error.
+If a request exceeds `TYWRAP_REQUEST_MAX_BYTES`, the call fails with an explicit
+error.
 
 ### Torch Tensor Copy Opt-in
 
@@ -1222,25 +1345,27 @@ export TYWRAP_TORCH_ALLOW_COPY=1
 ## Error Handling and Debugging
 
 ### Error Types
+
 ```typescript
 try {
   const result = await math.sqrt(-1);
 } catch (error) {
-  console.error('Error type:', error.name);        // ValueError
-  console.error('Error message:', error.message);  // math domain error
+  console.error('Error type:', error.name); // ValueError
+  console.error('Error message:', error.message); // math domain error
   console.error('Python traceback:', error.traceback);
 }
 ```
 
 ### Debugging Configuration
+
 ```json
 {
   "runtime": {
     "node": {
-      "timeoutMs": 0,  // Disable timeout for debugging
+      "timeoutMs": 0, // Disable timeout for debugging
       "env": {
-        "PYTHONUNBUFFERED": "1",     // Immediate stdout/stderr
-        "TYWRAP_DEBUG": "1"          // Enable debug logging
+        "PYTHONUNBUFFERED": "1", // Immediate stdout/stderr
+        "TYWRAP_DEBUG": "1" // Enable debug logging
       }
     }
   },
@@ -1251,18 +1376,21 @@ try {
 ### Common Error Scenarios
 
 **Module Import Error**:
+
 ```typescript
 // Error: ModuleNotFoundError: No module named 'numpy'
 // Solution: Install module or check PYTHONPATH
 ```
 
 **Timeout Error**:
+
 ```typescript
 // Error: Python call timed out
 // Solution: Increase timeoutMs or optimize Python code
 ```
 
 **Process Exit Error**:
+
 ```typescript
 // Error: Python process exited
 // Solution: Check Python path and permissions
@@ -1271,6 +1399,7 @@ try {
 ## Performance Optimization
 
 ### Process Reuse
+
 tywrap automatically reuses Python processes for better performance:
 
 ```typescript
@@ -1281,6 +1410,7 @@ const result = await numpy.add(a1, a2);
 ```
 
 ### Batching Operations
+
 ```typescript
 // Instead of multiple round trips
 const sin1 = await math.sin(1);
@@ -1290,19 +1420,20 @@ const sin3 = await math.sin(3);
 // Use Promise.all for concurrent execution
 const [sin1, sin2, sin3] = await Promise.all([
   math.sin(1),
-  math.sin(2), 
-  math.sin(3)
+  math.sin(2),
+  math.sin(3),
 ]);
 ```
 
 ### Memory Management
+
 ```json
 {
   "runtime": {
     "node": {
       "env": {
-        "PYTHONMALLOC": "malloc",    // Use system malloc
-        "OMP_NUM_THREADS": "4"       // Limit OpenMP threads
+        "PYTHONMALLOC": "malloc", // Use system malloc
+        "OMP_NUM_THREADS": "4" // Limit OpenMP threads
       }
     }
   }
@@ -1312,6 +1443,7 @@ const [sin1, sin2, sin3] = await Promise.all([
 ## Production Deployment
 
 ### Process Management
+
 ```typescript
 // Graceful shutdown
 process.on('SIGTERM', async () => {
@@ -1321,18 +1453,19 @@ process.on('SIGTERM', async () => {
 ```
 
 ### Resource Monitoring
+
 ```typescript
 import { NodeBridge } from 'tywrap/node';
 
 const bridge = new NodeBridge({
   pythonPath: 'python3',
-  timeoutMs: 30000
+  timeoutMs: 30000,
 });
 
 // Monitor process health
 setInterval(async () => {
   try {
-    await bridge.call('math', 'sqrt', [4]);  // Health check
+    await bridge.call('math', 'sqrt', [4]); // Health check
   } catch (error) {
     console.error('Python process unhealthy:', error);
     // Restart or alert
@@ -1341,6 +1474,7 @@ setInterval(async () => {
 ```
 
 ### Docker Configuration
+
 ```dockerfile
 # Dockerfile
 FROM node:20-slim
@@ -1372,12 +1506,13 @@ services:
     build: .
     environment:
       - TYWRAP_PYTHON_PATH=/usr/bin/python3
-      - TYWRAP_CODEC_FALLBACK=json  # For smaller containers
+      - TYWRAP_CODEC_FALLBACK=json # For smaller containers
     ports:
-      - "3000:3000"
+      - '3000:3000'
 ```
 
 ### Environment Variables
+
 ```bash
 # Production environment
 export NODE_ENV=production
@@ -1393,22 +1528,24 @@ export PYTHONUNBUFFERED=1
 ## Security Considerations
 
 ### Subprocess Security
+
 ```json
 {
   "runtime": {
     "node": {
-      "cwd": "/safe/directory",     // Restrict working directory
+      "cwd": "/safe/directory", // Restrict working directory
       "env": {
-        "PATH": "/usr/bin:/bin",    // Limit PATH
+        "PATH": "/usr/bin:/bin", // Limit PATH
         "PYTHONPATH": "/safe/python/libs"
       },
-      "timeoutMs": 10000            // Prevent hanging processes
+      "timeoutMs": 10000 // Prevent hanging processes
     }
   }
 }
 ```
 
 ### Input Validation
+
 ```typescript
 // Validate inputs before passing to Python
 function validateInput(value: unknown): boolean {
@@ -1429,6 +1566,7 @@ async function safeSqrt(value: number) {
 ### Common Issues
 
 **"Python not found"**:
+
 ```bash
 # Check Python installation
 which python3
@@ -1445,6 +1583,7 @@ python3 --version
 ```
 
 **"Module not found"**:
+
 ```bash
 # Check module installation
 python3 -c "import numpy; print(numpy.__version__)"
@@ -1454,6 +1593,7 @@ python3 -c "import sys; print(sys.path)"
 ```
 
 **"Permission denied"**:
+
 ```bash
 # Check executable permissions
 ls -la /usr/local/bin/python3
@@ -1463,13 +1603,14 @@ chmod +x /usr/local/bin/python3
 ```
 
 **"Process timeout"**:
+
 ```json
 {
   "runtime": {
     "node": {
-      "timeoutMs": 60000,  // Increase timeout
+      "timeoutMs": 60000, // Increase timeout
       "env": {
-        "OMP_NUM_THREADS": "1"  // Reduce parallelism
+        "OMP_NUM_THREADS": "1" // Reduce parallelism
       }
     }
   }
@@ -1477,6 +1618,7 @@ chmod +x /usr/local/bin/python3
 ```
 
 ### Debug Mode
+
 ```bash
 # Enable debug logging
 export TYWRAP_DEBUG=1
@@ -1489,6 +1631,7 @@ node --trace-warnings your-app.js
 ## Advanced Usage
 
 ### Custom Bridge Script
+
 Create your own Python bridge for specialized needs:
 
 ```python
@@ -1527,12 +1670,14 @@ if __name__ == '__main__':
 ```
 
 ### Process Pooling
+
 ```typescript
 import { NodeBridge } from 'tywrap/node';
 
 // Create multiple bridges for load balancing
-const bridges = Array.from({ length: 4 }, () => 
-  new NodeBridge({ pythonPath: 'python3' })
+const bridges = Array.from(
+  { length: 4 },
+  () => new NodeBridge({ pythonPath: 'python3' })
 );
 
 let currentBridge = 0;
@@ -1549,7 +1694,6 @@ function getNextBridge() {
 - [Examples](/examples/) - Usage examples and patterns
 - [Troubleshooting](/troubleshooting/) - Common issues and solutions
 - [API Reference](/reference/api/) - Complete API documentation
-
 
 ---
 
@@ -1568,7 +1712,7 @@ pip install tywrap-ir
 ## Basic Setup
 
 ```typescript
-import { NodeBridge } from 'tywrap';
+import { NodeBridge } from 'tywrap/node';
 import { setRuntimeBridge } from 'tywrap/runtime';
 
 setRuntimeBridge(new NodeBridge({
@@ -1578,7 +1722,7 @@ setRuntimeBridge(new NodeBridge({
 }));
 ```
 
-> **Note:** Import from `'tywrap'` directly (not `'tywrap/node'`). This is the main difference from Node.js.
+> **Note:** Both `'tywrap/node'` and `'tywrap'` work on Bun. Use `'tywrap/node'` for smaller bundles via tree-shaking.
 
 ## Configuration Options
 
@@ -1641,7 +1785,6 @@ The same `TYWRAP_*` env vars work under Bun. See the [environment variables refe
 **Subprocess times out** — Increase `timeoutMs`. Verify `pip install tywrap-ir` ran in the correct environment.
 
 See the [Node.js troubleshooting guide](./node) for additional patterns — all apply equally to Bun.
-
 
 ---
 
@@ -1725,7 +1868,6 @@ The same `TYWRAP_*` env vars work under Deno. See the [environment variables ref
 
 See the [Node.js troubleshooting guide](./node) for additional patterns.
 
-
 ---
 
 <!-- Source: docs/guide/runtimes/browser.md -->
@@ -1806,7 +1948,6 @@ registerArrowDecoder(bytes => bytes);
 
 Run `tywrap generate` during your build and load Pyodide at runtime (CDN or self-hosted).
 
-
 ---
 
 <!-- Source: docs/guide/runtimes/http.md -->
@@ -1853,14 +1994,9 @@ setRuntimeBridge(new HttpBridge({
 
 ## Running the Python Server
 
-Start the Python bridge server:
+`HttpBridge` expects a server that accepts POST requests with JSON/Arrow payloads. You must implement or deploy a compatible server endpoint. The protocol is stateless — each call is an independent POST request.
 
-```bash
-pip install tywrap-ir
-python -m tywrap_ir.server --port 8080
-```
-
-> **Note:** HTTP transport is stateless — each call is an independent POST request with no session state.
+> **Note:** A built-in server command is not yet available. See the [API reference](/reference/api/) for the expected request/response format.
 
 ## Apache Arrow
 
@@ -1888,508 +2024,669 @@ See the [environment variables reference](/reference/env-vars).
 - Set `Authorization` headers for server access control
 - Consider rate-limiting the Python server endpoint
 
-
 ---
 
 <!-- Source: docs/reference/cli.md -->
 # CLI Reference
 
-The `tywrap` CLI generates TypeScript wrappers from Python source.
+The `tywrap` CLI has two commands: `init` and `generate`.
 
 ## Installation
 
 ```bash
-npm install tywrap        # local
-npm install -g tywrap     # global
+npm install tywrap
 ```
 
-Or use without installing:
+Or run it with `npx`:
 
 ```bash
 npx tywrap <command>
 ```
 
-## Commands
+## `tywrap init`
 
-### `tywrap init`
+Creates a starter config file in the current directory.
 
-Creates a `tywrap.config.ts` (or `.json`) in the current directory and adds `generate` and `check` scripts to `package.json` if one is present.
+- The default file is `tywrap.config.ts`.
+- If you do not pass `--modules`, the starter config wraps `math`.
+- If a `package.json` is present, tywrap adds `tywrap:generate` and
+  `tywrap:check` scripts unless you pass `--no-scripts`.
 
 ```bash
 npx tywrap init
+npx tywrap init --format json --modules math,numpy
 ```
 
-### `tywrap generate`
+| Flag                                  | Description                                            |
+| ------------------------------------- | ------------------------------------------------------ |
+| `--config`, `-c`                      | Path for the new config file                           |
+| `--format ts\|json`                   | Output format for the starter config                   |
+| `--modules`                           | Comma-separated Python modules to seed into the config |
+| `--runtime node\|pyodide\|http\|auto` | Runtime to use for seeded module entries               |
+| `--output-dir`                        | Generated wrapper directory in the starter config      |
+| `--force`                             | Overwrite an existing config file                      |
+| `--scripts`, `--no-scripts`           | Add or skip recommended `package.json` scripts         |
 
-Reads the config file and generates TypeScript wrappers for all configured Python modules.
+## `tywrap generate`
+
+Loads config, resolves Python IR, and writes generated wrapper files.
+
+When `--config` is omitted, the CLI searches in this order:
+
+1. `tywrap.config.ts`
+2. `tywrap.config.mts`
+3. `tywrap.config.js`
+4. `tywrap.config.mjs`
+5. `tywrap.config.cjs`
+6. `tywrap.config.json`
+
+If no config file is found, you can still generate wrappers by passing
+`--modules`.
 
 ```bash
 npx tywrap generate
-npx tywrap generate --config path/to/tywrap.config.json
+npx tywrap generate --config ./tywrap.config.json
+npx tywrap generate --modules math,statistics --runtime node
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--config <path>` | Path to config file (default: `tywrap.config.ts`) |
-| `--check` | Verify generated files match current Python source — exits 1 if anything changed (for CI) |
-| `--verbose` | Print detailed output |
+| Flag                                  | Description                                                         |
+| ------------------------------------- | ------------------------------------------------------------------- |
+| `--config`, `-c`                      | Config file path                                                    |
+| `--modules`                           | Comma-separated Python modules to wrap                              |
+| `--runtime node\|pyodide\|http\|auto` | Runtime to use when `--modules` is provided                         |
+| `--python`                            | Python executable path override                                     |
+| `--output-dir`                        | Override `output.dir`                                               |
+| `--format esm\|cjs\|both`             | Override `output.format`                                            |
+| `--declaration`                       | Override `output.declaration`                                       |
+| `--source-map`                        | Override `output.sourceMap`                                         |
+| `--cache`, `--no-cache`               | Enable or disable on-disk IR caching                                |
+| `--debug`                             | Enable debug logging                                                |
+| `--verbose`, `-v`                     | Alias for `--debug`                                                 |
+| `--fail-on-warn`                      | Exit non-zero when generation emits warnings                        |
+| `--check`                             | Compare generated output with what is on disk without writing files |
 
-### `tywrap generate --check`
+## `tywrap generate --check`
 
-Runs generation and compares output to files already on disk. Exits with code 1 if anything would change. Use in CI to prevent stale generated files:
+`--check` is for CI and upgrade verification. It does not write files.
 
 ```bash
 npx tywrap generate --check
 ```
 
-Add to CI:
+Exit codes:
+
+- `0`: generated files are up to date
+- `2`: generation succeeded but warnings were present and `--fail-on-warn` was
+  set
+- `3`: generated files are out of date
+- `1`: general failure, such as missing config, import failure, or write error
+
+Typical CI step:
 
 ```yaml
-- name: Check generated wrappers are up to date
+- name: Check generated wrappers
   run: npx tywrap generate --check
 ```
 
-## Config File
+## Starter Config Example
 
-```typescript
-// tywrap.config.ts
+```ts
 import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    'numpy': { alias: 'np' },
-    'pandas': { classes: ['DataFrame'], functions: ['read_csv'] },
-    'math': { functions: ['sqrt', 'pi'] },
+    math: { runtime: 'node', typeHints: 'strict' },
+    numpy: { runtime: 'node', typeHints: 'strict', alias: 'np' },
   },
   output: {
-    dir: './src/generated',
+    dir: './generated',
     format: 'esm',
-    declaration: true,
+    declaration: false,
+    sourceMap: false,
+  },
+  runtime: {
+    node: {
+      pythonPath: 'python3',
+    },
+  },
+  types: {
+    presets: ['stdlib'],
   },
 });
 ```
 
-See the [Configuration guide](/guide/configuration) for all options.
-
+See the [Configuration guide](/guide/configuration) for the full config surface.
 
 ---
 
 <!-- Source: docs/reference/env-vars.md -->
 # Environment Variables
 
-All `TYWRAP_*` environment variables are read at runtime by the bridge.
+This page lists the implemented `TYWRAP_*` environment variables in the repo
+today.
 
-## Reference
+## Bridge and Codec
 
-| Variable | Runtimes | Default | Description |
-|----------|----------|---------|-------------|
-| `TYWRAP_PYTHON_PATH` | Node, Bun, Deno | auto-detect | Path to the Python executable (e.g. `/usr/bin/python3`) |
-| `TYWRAP_VIRTUAL_ENV` | Node, Bun, Deno | — | Path to a virtual environment directory |
-| `TYWRAP_CODEC_FALLBACK` | Node, HTTP | `arrow` | Set to `json` to disable Apache Arrow and use JSON-only transport |
-| `TYWRAP_CODEC_MAX_BYTES` | Node, HTTP | `1048576` (1 MB) | Maximum serialized response size in bytes. Requests exceeding this fail with an explicit error. |
-| `TYWRAP_REQUEST_MAX_BYTES` | Node, HTTP | — | Maximum serialized request size in bytes. Unbounded by default. |
-| `TYWRAP_TORCH_ALLOW_COPY` | Node, HTTP | `false` | Set to `true` to allow implicit GPU→CPU tensor copies when serializing `torch.Tensor`. |
-| `TYWRAP_PERF_BUDGETS` | Test suite | — | Set to `1` to enable performance budget assertions in the test suite. |
+These affect the Python bridge or decoded runtime behavior.
 
-## Usage Examples
+| Variable                   | Scope         | Default | Purpose                                                                        |
+| -------------------------- | ------------- | ------- | ------------------------------------------------------------------------------ |
+| `TYWRAP_CODEC_FALLBACK`    | Python bridge | unset   | Set to `json` to allow JSON fallback when Arrow encoding is unavailable        |
+| `TYWRAP_CODEC_MAX_BYTES`   | Python bridge | unset   | Reject response payloads larger than this byte count                           |
+| `TYWRAP_REQUEST_MAX_BYTES` | Python bridge | unset   | Reject request payloads larger than this byte count                            |
+| `TYWRAP_TORCH_ALLOW_COPY`  | Python bridge | off     | Allow GPU-to-CPU or contiguous-copy conversion when serializing `torch.Tensor` |
 
-### Explicit Python path
+## Logging
+
+These control the structured logger in the JavaScript runtime.
+
+| Variable           | Default | Purpose                                           |
+| ------------------ | ------- | ------------------------------------------------- |
+| `TYWRAP_LOG_LEVEL` | `WARN`  | One of `DEBUG`, `INFO`, `WARN`, `ERROR`, `SILENT` |
+| `TYWRAP_LOG_JSON`  | `false` | Set to `1` or `true` for JSON log output          |
+
+## Repo Test and Benchmark Knobs
+
+These are used by the tywrap test suite and maintenance workflows. They are not
+required for normal library use.
+
+| Variable                             | Purpose                                          |
+| ------------------------------------ | ------------------------------------------------ |
+| `TYWRAP_CODEC_PYTHON`                | Python executable for codec-heavy tests          |
+| `TYWRAP_PERF_BUDGETS`                | Enable performance budget suites                 |
+| `TYWRAP_PERF_TIME_BUDGET_MS`         | Time budget for generator performance tests      |
+| `TYWRAP_PERF_MEMORY_BUDGET_MB`       | Memory budget for generator performance tests    |
+| `TYWRAP_CODEC_PERF_ITERATIONS`       | Iteration count for codec performance tests      |
+| `TYWRAP_CODEC_PERF_TIME_BUDGET_MS`   | Time budget for codec performance tests          |
+| `TYWRAP_CODEC_PERF_MEMORY_BUDGET_MB` | Memory budget for codec performance tests        |
+| `TYWRAP_ADVERSARIAL`                 | Enable adversarial bridge tests                  |
+| `TYWRAP_ADVERSARIAL_PYTHON`          | Python executable override for adversarial tests |
+
+## Common Examples
+
+Use JSON fallback:
 
 ```bash
-TYWRAP_PYTHON_PATH=/opt/homebrew/bin/python3 node dist/app.js
+export TYWRAP_CODEC_FALLBACK=json
 ```
 
-### Virtual environment
+Cap response and request payload size:
 
 ```bash
-TYWRAP_VIRTUAL_ENV=.venv node dist/app.js
+export TYWRAP_CODEC_MAX_BYTES=10485760
+export TYWRAP_REQUEST_MAX_BYTES=1048576
 ```
 
-### JSON-only transport (disable Arrow)
+Enable JSON logs:
 
 ```bash
-TYWRAP_CODEC_FALLBACK=json node dist/app.js
+export TYWRAP_LOG_LEVEL=INFO
+export TYWRAP_LOG_JSON=1
 ```
 
-### Cap response size at 10 MB
+## Not Configured Through Env Vars
 
-```bash
-TYWRAP_CODEC_MAX_BYTES=10485760 node dist/app.js
+Python executable and virtual environment selection are configured through code
+or config files today:
+
+```ts
+new NodeBridge({ pythonPath: '/usr/bin/python3', virtualEnv: './venv' });
 ```
 
-## Precedence
+```ts
+import { defineConfig } from 'tywrap';
 
-Environment variables are fallbacks — constructor options take precedence:
-
-```typescript
-// Constructor option wins over TYWRAP_PYTHON_PATH
-new NodeBridge({ pythonPath: '/my/python' })
+export default defineConfig({
+  runtime: {
+    node: {
+      pythonPath: 'python3',
+      virtualEnv: './venv',
+      timeout: 30000,
+    },
+  },
+});
 ```
-
-## Subprocess Environment Inheritance
-
-By default, `NodeBridge` inherits only `PATH`, `PYTHON*`, and `TYWRAP_*` from `process.env` to keep the subprocess environment minimal. To pass the full environment:
-
-```typescript
-new NodeBridge({ inheritProcessEnv: true })
-```
-
 
 ---
 
 <!-- Source: docs/reference/type-mapping.md -->
-# Python → TypeScript Type Mapping Matrix
+# Python to TypeScript Type Mapping
 
-This document provides a comprehensive reference for how Python types are mapped to TypeScript types in tywrap.
+This page describes the TypeScript shapes tywrap generates and returns today.
 
-## Overview
+## Core Annotation Mapping
 
-The tywrap type mapper converts Python type annotations to TypeScript types while preserving semantic meaning and type safety. The mapping prioritizes:
+### Primitives
 
-1. **Type Safety**: Ensuring no invalid operations are possible
-2. **Semantic Equivalence**: Maintaining the meaning of the original type
-3. **TypeScript Compatibility**: Using idiomatic TypeScript patterns
-4. **Information Preservation**: Minimizing loss of type information
+| Python                    | TypeScript |
+| ------------------------- | ---------- |
+| `int`                     | `number`   |
+| `float`                   | `number`   |
+| `str`                     | `string`   |
+| `bool`                    | `boolean`  |
+| `bytes`                   | `string`   |
+| `None` in value position  | `null`     |
+| `None` in return position | `void`     |
 
-## Primitive Types
+### Collections
 
-| Python Type | TypeScript Type | Notes |
-|-------------|----------------|-------|
-| `int` | `number` | All Python integers map to TypeScript number |
-| `float` | `number` | All Python floats map to TypeScript number |
-| `str` | `string` | Direct mapping |
-| `bool` | `boolean` | Direct mapping |
-| `bytes` | `string` | Bytes are represented as strings in JavaScript |
-| `None` (value context) | `null` | Used in value positions |
-| `None` (return context) | `void` | Used in return type positions |
+| Python                     | TypeScript        | Notes                                        |
+| -------------------------- | ----------------- | -------------------------------------------- |
+| `list[T]`, `List[T]`       | `Array<T>`        |                                              |
+| `Sequence[T]`              | `Array<T>`        | Normalized to a list-like shape              |
+| `tuple[T1, T2]`            | `[T1, T2]`        | Exact tuple shape                            |
+| `Tuple[T, ...]`            | `Array<T>`        | Variable-length tuple                        |
+| `tuple[()]`                | `[undefined]`     | Empty tuple representation                   |
+| `set[T]`, `frozenset[T]`   | `Set<T>`          |                                              |
+| `dict[K, V]`, `Dict[K, V]` | `{ [key: K]: V }` | Index keys fall back to `string` when needed |
+| `Mapping[K, V]`            | `{ [key: K]: V }` | Normalized to a dict-like shape              |
 
-### Context-Sensitive Mappings
+### Unions and Literals
 
-The mapper uses context to determine the most appropriate TypeScript type:
+| Python                 | TypeScript      |
+| ---------------------- | --------------- |
+| `Union[A, B]`          | `A \| B`        |
+| `A \| B`               | `A \| B`        |
+| `Optional[T]`          | `T \| null`     |
+| `T \| None`            | `T \| null`     |
+| `Literal["a", "b"]`    | `"a" \| "b"`    |
+| `Literal[1, 2]`        | `1 \| 2`        |
+| `Literal[True, False]` | `true \| false` |
 
-```python
-# Python
-def func() -> None:  # Maps to: () => void
-    pass
+### Callables and Wrappers
 
-x: Optional[None]    # Maps to: null | null (simplified to null)
+| Python                          | TypeScript                  | Notes                                       |
+| ------------------------------- | --------------------------- | ------------------------------------------- |
+| `Callable[[A, B], R]`           | `(arg0: A, arg1: B) => R`   |                                             |
+| `Callable[..., R]`              | `(...args: unknown[]) => R` |                                             |
+| `Annotated[T, ...]`             | `T`                         | Metadata is stripped for the generated type |
+| `ClassVar[T]`                   | `T`                         |                                             |
+| `Final[T]`                      | `T`                         |                                             |
+| `Required[T]`, `NotRequired[T]` | `T`                         |                                             |
+
+### Special Names
+
+| Python                    | TypeScript         |
+| ------------------------- | ------------------ |
+| `Any`                     | `unknown`          |
+| `Never`, `NoReturn`       | `never`            |
+| `LiteralString`, `AnyStr` | `string`           |
+| `object`                  | `object`           |
+| `Awaitable`               | `Promise<unknown>` |
+| `Coroutine`               | `Promise<unknown>` |
+| `TypeVar('T')`            | `unknown`          |
+| `ParamSpec('P')`          | `unknown`          |
+| `TypeVarTuple('Ts')`      | `unknown`          |
+| `Unpack[Ts]`              | `unknown`          |
+
+## Preset Mappings
+
+Enable presets with `types.presets` in your config.
+
+### `stdlib`
+
+| Python                                                | TypeScript |
+| ----------------------------------------------------- | ---------- |
+| `datetime.datetime`, `datetime.date`, `datetime.time` | `string`   |
+| `datetime.timedelta`                                  | `number`   |
+| `decimal.Decimal`                                     | `string`   |
+| `uuid.UUID`                                           | `string`   |
+| `pathlib.Path` and related path types                 | `string`   |
+
+### `pandas`
+
+These are the decoded JavaScript shapes that tywrap exposes to TypeScript.
+
+| Python             | TypeScript                                                  |
+| ------------------ | ----------------------------------------------------------- |
+| `pandas.DataFrame` | `Record<string, unknown> \| Array<Record<string, unknown>>` |
+| `pandas.Series`    | `unknown[] \| Record<string, unknown>`                      |
+
+### `pydantic`
+
+| Python               | TypeScript                | Notes                                                                              |
+| -------------------- | ------------------------- | ---------------------------------------------------------------------------------- |
+| `pydantic.BaseModel` | `Record<string, unknown>` | Runtime serialization uses `model_dump(by_alias=True, mode='json')` when available |
+
+### `scipy`
+
+```ts
+type SparseMatrix =
+  | {
+      format: 'csr' | 'csc';
+      shape: number[];
+      data: unknown[];
+      indices: number[];
+      indptr: number[];
+      dtype?: string;
+    }
+  | {
+      format: 'coo';
+      shape: number[];
+      data: unknown[];
+      row: number[];
+      col: number[];
+      dtype?: string;
+    };
 ```
 
-## Collection Types
+### `torch`
 
-### Arrays and Lists
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `list[T]` | `Array<T>` | `list[int]` → `Array<number>` |
-| `List[T]` | `Array<T>` | `List[str]` → `Array<string>` |
-| `Sequence[T]` | `Array<T>` | `Sequence[bool]` → `Array<boolean>` |
-
-### Tuples
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `tuple[T1, T2, ...]` | `[T1, T2, ...]` | `tuple[int, str]` → `[number, string]` |
-| `tuple[()]` | `[undefined]` | Empty tuple becomes single undefined element |
-| `Tuple[T, ...]` | `Array<T>` | Variable-length tuple becomes array |
-
-### Sets
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `set[T]` | `Set<T>` | `set[str]` → `Set<string>` |
-| `frozenset[T]` | `Set<T>` | `frozenset[int]` → `Set<number>` |
-| `Set[T]` | `Set<T>` | `Set[bool]` → `Set<boolean>` |
-
-### Dictionaries and Mappings
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `dict[K, V]` | `{ [key: K]: V }` | `dict[str, int]` → `{ [key: string]: number }` |
-| `Dict[K, V]` | `{ [key: K]: V }` | `Dict[str, Any]` → `{ [key: string]: unknown }` |
-| `Mapping[K, V]` | `{ [key: K]: V }` | Read-only mapping concept preserved |
-
-#### Index Signature Key Types
-
-TypeScript only supports `string`, `number`, and `symbol` as index signature keys:
-
-| Python Key Type | TypeScript Key Type | Reason |
-|-----------------|--------------------|---------| 
-| `str` | `string` | Direct mapping |
-| `int` | `number` | Direct mapping |
-| `bool` | `string` | Fallback (bool not valid TS index key) |
-| `Any` | `string` | Fallback to string |
-
-## Union and Optional Types
-
-### Union Types
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `Union[T1, T2, ...]` | `T1 \| T2 \| ...` | `Union[int, str]` → `number \| string` |
-| `T1 \| T2` (Python 3.10+) | `T1 \| T2` | `int \| str` → `number \| string` |
-
-### Optional Types
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `Optional[T]` | `T \| null` | `Optional[str]` → `string \| null` |
-| `T \| None` | `T \| null` | `int \| None` → `number \| null` |
-
-### Literal Types
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `Literal["a", "b"]` | `"a" \| "b"` | String literal union |
-| `Literal[1, 2, 3]` | `1 \| 2 \| 3` | Numeric literal union |
-| `Literal[True, False]` | `true \| false` | Boolean literal union |
-
-## Generic Types
-
-### Basic Generics
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `Generic[T]` | `Generic<T>` | Type parameter preserved |
-| `List[T]` | `Array<T>` | Generic collections |
-| `Dict[K, V]` | `{ [key: K]: V }` | Generic mappings |
-
-### Type Variables
-
-| Python Type | TypeScript Type | Notes |
-|-------------|----------------|-------|
-| `TypeVar('T')` | `T` | Preserved as generic parameter |
-| `TypeVar('T', bound=Base)` | `T` | Bounds information not directly expressible |
-| `TypeVar('T', str, int)` | `T` | Constraints not directly expressible |
-
-### Advanced Generic Types
-
-| Python Type | TypeScript Type | Notes |
-|-------------|----------------|-------|
-| `ParamSpec('P')` | `P` | Preserved for function signatures |
-| `TypeVarTuple('Ts')` | `Ts` | Preserved for variadic generics |
-| `Unpack[Ts]` | `Unpack<Ts>` | Preserved as custom type |
-
-## Callable Types
-
-### Function Signatures
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `Callable[[T1, T2], R]` | `(arg0: T1, arg1: T2) => R` | Specific parameters |
-| `Callable[..., R]` | `(...args: unknown[]) => R` | Variable arguments |
-| `Callable` | `(...args: unknown[]) => unknown` | Unspecified signature |
-
-### Async Functions
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `Awaitable[T]` | `Promise<T>` | Async return type |
-| `Coroutine[Any, Any, T]` | `Promise<T>` | Coroutine simplified to Promise |
-
-## Special Types
-
-### Top and Bottom Types
-
-| Python Type | TypeScript Type | Context |
-|-------------|----------------|---------|
-| `Any` | `unknown` | Safe unknown type |
-| `Never` | `never` | Bottom type |
-| `NoReturn` | `never` | Functions that never return |
-| `object` | `object` | Base object type |
-
-### String Types
-
-| Python Type | TypeScript Type | Example |
-|-------------|----------------|---------|
-| `LiteralString` | `string` | Any literal string |
-| `AnyStr` | `string` | Simplified to string |
-
-### Forward References and Self Types
-
-| Python Type | TypeScript Type | Notes |
-|-------------|----------------|-------|
-| `'ClassName'` | `ClassName` | Forward reference preserved |
-| `Self` | `Self` | Preserved as custom type |
-
-## Preset Mappings (Opt-in)
-
-Enable presets via `types.presets` in your config to opt into additional mappings.
-
-### stdlib preset
-
-| Python Type | TypeScript Type | Notes |
-|-------------|----------------|-------|
-| `datetime.datetime` | `string` | ISO 8601 string |
-| `datetime.date` | `string` | ISO 8601 string |
-| `datetime.time` | `string` | ISO 8601 string |
-| `datetime.timedelta` | `number` | Total seconds |
-| `decimal.Decimal` | `string` | String to preserve precision |
-| `uuid.UUID` | `string` | UUID string |
-| `pathlib.Path` | `string` | Filesystem path |
-
-### pandas preset
-
-| Python Type | TypeScript Type | Notes |
-|-------------|----------------|-------|
-| `pandas.DataFrame` | `Record<string, unknown> \| Record<string, unknown>[]` | Arrow or JSON fallback |
-| `pandas.Series` | `unknown[] \| Record<string, unknown>` | List or object fallback |
-
-### scipy preset
-
-| Python Type | TypeScript Type | Notes |
-|-------------|----------------|-------|
-| `scipy.sparse.csr_matrix` | `{ format: "csr", shape: number[], data: unknown[], indices: number[], indptr: number[] }` | JSON sparse envelope |
-| `scipy.sparse.csc_matrix` | `{ format: "csc", shape: number[], data: unknown[], indices: number[], indptr: number[] }` | JSON sparse envelope |
-| `scipy.sparse.coo_matrix` | `{ format: "coo", shape: number[], data: unknown[], row: number[], col: number[] }` | JSON sparse envelope |
-| `scipy.sparse.spmatrix` | union of csr/csc/coo shapes | Base sparse type |
-
-### torch preset
-
-| Python Type | TypeScript Type | Notes |
-|-------------|----------------|-------|
-| `torch.Tensor` | Nested ndarray envelope with tensor metadata | See structure below |
-
-Torch tensors are wrapped in a special envelope containing an ndarray:
-```typescript
-{
-  __tywrap__: 'torch.tensor',
-  encoding: 'ndarray',
-  value: {
-    __tywrap__: 'ndarray',
-    encoding: 'json' | 'arrow',
-    value: number[] | Uint8Array,
-    shape: number[],
-    dtype: string
-  },
-  device: string  // e.g., 'cpu'
+```ts
+interface TorchTensor {
+  data: unknown;
+  shape: number[];
+  dtype?: string;
+  device?: string;
 }
 ```
 
-### pydantic preset
+### `sklearn`
 
-| Python Type | TypeScript Type | Notes |
-|-------------|----------------|-------|
-| `pydantic.BaseModel` | Serialized dict | Via `model_dump(by_alias=True, mode='json')` |
-| Fields with aliases | Uses alias name | `by_alias=True` default |
-
-Pydantic v2 models are serialized using `model_dump()` with `by_alias=True` and `mode='json'`
-to ensure JSON-safe output. Nested models are recursively serialized.
-
-### sklearn preset
-
-| Python Type | TypeScript Type | Notes |
-|-------------|----------------|-------|
-| `sklearn.base.BaseEstimator` | `{ className: string, module: string, version?: string, params: Record<string, unknown> }` | Estimator metadata |
-
-## Complex Nested Types
-
-### Real-World Examples
-
-#### JSON Type
-```python
-# Python
-JSON = Union[None, bool, int, float, str, List['JSON'], Dict[str, 'JSON']]
-
-# TypeScript
-type JSON = null | boolean | number | string | Array<JSON> | { [key: string]: JSON }
-```
-
-#### Tree Structure
-```python
-# Python  
-class TreeNode:
-    value: int
-    children: List['TreeNode']
-
-# TypeScript
-interface TreeNode {
-    value: number;
-    children: Array<TreeNode>;
+```ts
+interface SklearnEstimator {
+  className: string;
+  module: string;
+  version?: string;
+  params: Record<string, unknown>;
 }
 ```
 
-#### Generic Repository Pattern
-```python
-# Python
-T = TypeVar('T')
-class Repository(Generic[T]):
-    def find_by_id(self, id: int) -> Optional[T]: ...
-    def save(self, entity: T) -> T: ...
+## Limits and Fallbacks
 
-# TypeScript  
-interface Repository<T> {
-    findById(id: number): T | null;
-    save(entity: T): T;
-}
+- tywrap does not preserve Python numeric distinctions beyond `number`.
+- Complex user-defined generics that are not explicitly normalized stay as
+  custom TypeScript names.
+- Python typing placeholders such as `TypeVar`, `ParamSpec`, `TypeVarTuple`,
+  and `Unpack` are lowered to `unknown`-based shapes because generated wrappers
+  do not currently emit matching TypeScript generic parameters.
+- `Annotated[...]` metadata is not reflected in the generated type.
+- Runtime serialization can still shape values more narrowly than the static
+  annotation alone. `torch.Tensor` and `sklearn` values are examples of this.
+
+## Example
+
+```python
+from typing import Literal, Optional, Sequence
+
+def summarize(values: Sequence[int], mode: Literal["min", "max"]) -> Optional[int]:
+    ...
 ```
 
-## Annotated Types
+Generates a TypeScript signature shaped like:
 
-The `Annotated` type from Python's `typing` module is handled specially:
-
-| Python Type | TypeScript Type | Behavior |
-|-------------|----------------|----------|
-| `Annotated[T, ...]` | `T` | Metadata stripped, base type preserved |
-| `Annotated[str, Field(...)]` | `string` | Pydantic Field info ignored |
-| `Annotated[int, "doc"]` | `number` | Documentation metadata ignored |
-
-## Type Mapping Limitations
-
-### Lossy Conversions
-
-Some Python type information cannot be perfectly preserved in TypeScript:
-
-1. **Numeric Precision**: `int` vs `float` both become `number`
-2. **Type Variable Bounds**: `TypeVar('T', bound=BaseClass)` loses bound info
-3. **Callable Details**: Complex `ParamSpec` usage may be simplified
-4. **Protocol Details**: Structural type details may be lost
-
-### Unsupported Types
-
-Types that map to custom types but may need manual implementation:
-
-- `Protocol` with complex structural requirements
-- Advanced `Generic` with complex variance rules
-- `Final` type qualifier (no TypeScript equivalent)
-- `ClassVar` (becomes regular property)
-
-## Best Practices
-
-### For Python Developers
-
-1. **Use Explicit Types**: Avoid relying on inference where possible
-2. **Prefer Simple Unions**: Complex union hierarchies can be confusing
-3. **Document Constraints**: Use docstrings for type constraints not expressible in TypeScript
-
-### For TypeScript Consumers
-
-1. **Trust the Types**: Generated types are designed to be sound
-2. **Handle Nulls**: Python `Optional` becomes `T | null`, not `T | undefined`
-3. **Understand Number Mapping**: All Python numbers become TypeScript `number`
-
-## Validation and Testing
-
-The type mapping is validated through:
-
-1. **Unit Tests**: Direct mapping verification
-2. **Property-Based Tests**: Invariant checking with random inputs  
-3. **Integration Tests**: End-to-end type preservation
-4. **Edge Case Tests**: Recursive types, forward references, complex nesting
-
-## Future Enhancements
-
-Planned improvements to the type mapping system:
-
-1. **Better Generic Bounds**: Preserve more type variable constraint information
-2. **Protocol Mapping**: Better structural type support
-3. **Performance Types**: Map performance-related annotations
-4. **Custom Type Plugins**: Allow user-defined mapping rules
+```ts
+export async function summarize(
+  values: Array<number>,
+  mode: 'min' | 'max'
+): Promise<number | null>;
+```
 
 ---
 
-*Last updated: January 2026.*
+<!-- Source: docs/reference/api/index.md -->
+# API Reference
 
+This page covers the public programmatic API exported by `tywrap`.
+
+## Core API
+
+### `defineConfig(config)`
+
+Type-safe helper for `tywrap.config.ts`.
+
+```ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  pythonModules: {
+    math: { runtime: 'node', typeHints: 'strict' },
+  },
+});
+```
+
+### `resolveConfig(options?)`
+
+Loads a config file, merges defaults, and applies overrides.
+
+```ts
+import { resolveConfig } from 'tywrap';
+
+const config = await resolveConfig({
+  configFile: './tywrap.config.ts',
+  overrides: { debug: true },
+});
+```
+
+### `generate(options, runOptions?)`
+
+Generates wrapper files from config.
+
+```ts
+import { generate } from 'tywrap';
+
+await generate({
+  pythonModules: {
+    math: { runtime: 'node', typeHints: 'strict' },
+  },
+  output: {
+    dir: './generated',
+    format: 'esm',
+    declaration: false,
+    sourceMap: false,
+  },
+});
+```
+
+`runOptions.check` switches generation into compare-only mode, the same behavior
+used by `tywrap generate --check`.
+
+### `tywrap(options?)`
+
+Creates the lower-level mapper and generator objects for advanced use.
+
+```ts
+import { tywrap } from 'tywrap';
+
+const instance = await tywrap({
+  types: { presets: ['stdlib'] },
+});
+```
+
+## Runtime Registry
+
+Generated wrappers call into a shared runtime bridge.
+
+```ts
+import { setRuntimeBridge, clearRuntimeBridge } from 'tywrap/runtime';
+import { NodeBridge } from 'tywrap/node';
+
+const bridge = new NodeBridge({ pythonPath: 'python3' });
+setRuntimeBridge(bridge);
+
+// later
+clearRuntimeBridge();
+```
+
+## Runtime Bridges
+
+tywrap does not create bridges from config for you. Your application constructs
+one explicitly.
+
+### `NodeBridge`
+
+`NodeBridge` runs Python in a subprocess and is the default bridge for Node.js,
+Bun, and local Deno.
+
+```ts
+import { NodeBridge } from 'tywrap/node';
+
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  virtualEnv: './venv',
+  timeoutMs: 30000,
+});
+
+const result = await bridge.call('math', 'sqrt', [16]);
+const info = await bridge.getBridgeInfo({ refresh: true });
+```
+
+| Option                    | Default         | Notes                                           |
+| ------------------------- | --------------- | ----------------------------------------------- |
+| `pythonPath`              | auto-detect     | Python executable                               |
+| `scriptPath`              | built-in bridge | Custom `python_bridge.py`                       |
+| `virtualEnv`              | —               | Virtual environment root                        |
+| `cwd`                     | `process.cwd()` | Subprocess working directory                    |
+| `timeoutMs`               | `30000`         | Per-call timeout                                |
+| `queueTimeoutMs`          | `30000`         | Wait time when the worker pool is saturated     |
+| `minProcesses`            | `1`             | Minimum worker count                            |
+| `maxProcesses`            | `1`             | Maximum worker count                            |
+| `maxConcurrentPerProcess` | `10`            | Concurrent requests per worker                  |
+| `inheritProcessEnv`       | `false`         | Pass full parent env through                    |
+| `enableCache`             | `false`         | Cache pure function results                     |
+| `env`                     | `{}`            | Extra subprocess env vars                       |
+| `codec`                   | —               | `CodecOptions` for validation and byte handling |
+| `warmupCommands`          | `[]`            | Per-worker startup calls                        |
+
+Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
+`maxRequestsPerProcess`, `enableJsonFallback`, and `maxLineLength`.
+
+### `PyodideBridge`
+
+`PyodideBridge` runs Python in the browser through WebAssembly.
+
+```ts
+import { PyodideBridge } from 'tywrap/pyodide';
+
+const bridge = new PyodideBridge({
+  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
+  packages: ['numpy'],
+  timeoutMs: 30000,
+});
+```
+
+| Option      | Default     | Notes                        |
+| ----------- | ----------- | ---------------------------- |
+| `indexURL`  | Pyodide CDN | Package index URL            |
+| `packages`  | `[]`        | Packages to load during init |
+| `timeoutMs` | `30000`     | Default operation timeout    |
+| `codec`     | —           | `CodecOptions`               |
+
+### `HttpBridge`
+
+`HttpBridge` sends protocol messages over HTTP POST to a compatible server.
+
+```ts
+import { HttpBridge } from 'tywrap/http';
+
+const bridge = new HttpBridge({
+  baseURL: 'https://api.example.com/python',
+  timeoutMs: 10000,
+  headers: { Authorization: 'Bearer token' },
+});
+```
+
+| Option      | Default  | Notes                   |
+| ----------- | -------- | ----------------------- |
+| `baseURL`   | required | Server endpoint URL     |
+| `headers`   | `{}`     | Extra request headers   |
+| `timeoutMs` | `30000`  | Default request timeout |
+| `codec`     | —        | `CodecOptions`          |
+
+## HTTP Server Contract
+
+`HttpBridge` sends the same JSON protocol used by the other transports. The
+request body is a serialized `ProtocolMessage`, and the server must reply with a
+serialized `ProtocolResponse`.
+
+Request shape:
+
+```json
+{
+  "id": 1,
+  "protocol": "tywrap/1",
+  "method": "call",
+  "params": {
+    "module": "math",
+    "functionName": "sqrt",
+    "args": [16],
+    "kwargs": {}
+  }
+}
+```
+
+Success response:
+
+```json
+{
+  "id": 1,
+  "protocol": "tywrap/1",
+  "result": 4
+}
+```
+
+Error response:
+
+```json
+{
+  "id": 1,
+  "protocol": "tywrap/1",
+  "error": {
+    "type": "ValueError",
+    "message": "math domain error",
+    "traceback": "..."
+  }
+}
+```
+
+## Codec Utilities
+
+```ts
+import {
+  autoRegisterArrowDecoder,
+  registerArrowDecoder,
+  clearArrowDecoder,
+  decodeValue,
+  decodeValueAsync,
+} from 'tywrap';
+```
+
+- `autoRegisterArrowDecoder()` tries to load `apache-arrow` and register a
+  decoder.
+- `registerArrowDecoder(fn)` installs a custom Arrow decoder.
+- `clearArrowDecoder()` removes the current Arrow decoder.
+- `decodeValue()` and `decodeValueAsync()` decode runtime envelopes such as
+  ndarray, sparse matrix, torch tensor, and sklearn estimator payloads.
+
+## Error Types
+
+```ts
+import {
+  BridgeError,
+  BridgeCodecError,
+  BridgeProtocolError,
+  BridgeTimeoutError,
+  BridgeDisposedError,
+  BridgeExecutionError,
+} from 'tywrap';
+```
+
+## Key Types
+
+```ts
+interface TywrapOptions {
+  pythonModules: Record<string, PythonModuleConfig>;
+  pythonImportPath?: string[];
+  output: OutputConfig;
+  runtime: RuntimeConfig;
+  performance: PerformanceConfig;
+  development: DevelopmentConfig;
+  types?: TypeMappingConfig;
+  debug?: boolean;
+}
+```
+
+For the full exported type surface, see `src/index.ts`.
 
 ---
 
@@ -2473,7 +2770,6 @@ await counter.disposeHandle();
 - [Browser runtime](/guide/runtimes/browser)
 - [Troubleshooting](/troubleshooting/)
 - [Type mapping](/reference/type-mapping)
-
 
 ---
 
@@ -3127,60 +3423,3 @@ This troubleshooting guide covers the most common issues. For runtime-specific d
 - [Node.js Runtime](/guide/runtimes/node)
 - [Browser Runtime (Pyodide)](/guide/runtimes/browser)
 - [Build Tool Issues](#build-tool-issues)
-
-
----
-
-# API Reference
-
-Public API for tywrap's programmatic interface and CLI.
-
-## Core API
-
-### `tywrap(options?: Partial<TywrapOptions>): Promise<TywrapInstance>`
-Creates a tywrap instance (advanced use).
-
-### `generate(options: Partial<TywrapOptions>)`
-Generates wrappers from configuration.
-
-### `defineConfig(config: TywrapConfig)`
-Type-safe helper for config files.
-
-### `resolveConfig({ configFile, overrides, requireConfig })`
-Loads a config file (JSON/JS/TS) and merges defaults with overrides.
-
-## Runtime Bridges
-
-### `NodeBridge`
-Python subprocess bridge for Node.js, Bun, and Deno.
-Import: `import { NodeBridge } from 'tywrap/node'`
-
-### `PyodideBridge`
-Browser WebAssembly runtime bridge.
-Import: `import { PyodideBridge } from 'tywrap/pyodide'`
-
-### `HttpBridge`
-HTTP runtime bridge (expects compatible server endpoints).
-Import: `import { HttpBridge } from 'tywrap/http'`
-
-## Codec Utilities
-
-- `decodeValue` / `decodeValueAsync` — decode Python return values
-- `autoRegisterArrowDecoder` — auto-detect and register Apache Arrow
-- `registerArrowDecoder` / `clearArrowDecoder` — manual Arrow decoder management
-
-## Error Types
-
-- `BridgeError` — base bridge error
-- `BridgeProtocolError` — protocol-level failures
-- `BridgeTimeoutError` — subprocess timeout
-- `BridgeDisposedError` — bridge already disposed
-- `BridgeExecutionError` — Python execution failure
-
-## CLI
-
-- `tywrap init` — scaffold a config file
-- `tywrap generate` — generate TypeScript wrappers
-- `tywrap generate --check` — dry-run validation
-
----
