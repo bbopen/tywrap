@@ -39,6 +39,13 @@ export interface WorkerPoolOptions {
    * Use this for per-worker warmup (e.g., importing modules, running setup).
    */
   onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+
+  /**
+   * Optional callback used only for background replacement workers after a
+   * fatal timeout/crash. This lets callers publish a replacement only after it
+   * is proven ready, without charging hidden work to normal request startup.
+   */
+  onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
 }
 
 /**
@@ -99,8 +106,9 @@ interface QueuedWaiter {
  * ```
  */
 export class WorkerPool extends BoundedContext {
-  private readonly options: Omit<Required<WorkerPoolOptions>, 'onWorkerReady'> & {
+  private readonly options: Omit<Required<WorkerPoolOptions>, 'onWorkerReady' | 'onReplacementWorkerReady'> & {
     onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+    onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
   };
   private readonly workers: PooledWorker[] = [];
   private readonly waitQueue: QueuedWaiter[] = [];
@@ -135,6 +143,7 @@ export class WorkerPool extends BoundedContext {
       queueTimeoutMs: options.queueTimeoutMs ?? 30000,
       maxConcurrentPerWorker: options.maxConcurrentPerWorker ?? 1,
       onWorkerReady: options.onWorkerReady,
+      onReplacementWorkerReady: options.onReplacementWorkerReady,
     };
   }
 
@@ -353,6 +362,7 @@ export class WorkerPool extends BoundedContext {
       worker.transport.dispose().catch(() => {
         // Ignore disposal errors for dead workers
       });
+      this.scheduleReplacementWorker();
     }
   }
 
@@ -393,12 +403,41 @@ export class WorkerPool extends BoundedContext {
   }
 
   /**
+   * Replace a removed worker in the background so the next caller does not pay
+   * the full worker cold-start penalty after a timeout or crash.
+   */
+  private scheduleReplacementWorker(): void {
+    if (this.state !== 'ready') {
+      return;
+    }
+    if (this.workers.length + this.pendingCreations >= this.options.maxWorkers) {
+      return;
+    }
+
+    this.pendingCreations++;
+    const replacementReady = this.options.onReplacementWorkerReady ?? this.options.onWorkerReady;
+    this.createWorker(replacementReady)
+      .then(worker => {
+        // Reuse release() to wake queued callers if one is waiting.
+        this.release(worker);
+      })
+      .catch(() => {
+        // Ignore background replacement failures. A later acquire() can retry.
+      })
+      .finally(() => {
+        this.pendingCreations = Math.max(0, this.pendingCreations - 1);
+      });
+  }
+
+  /**
    * Create a new worker and add it to the pool.
    *
    * If onWorkerReady is configured, calls it after the transport is initialized.
    * This is useful for per-worker warmup (importing modules, running setup).
    */
-  private async createWorker(): Promise<PooledWorker> {
+  private async createWorker(
+    onWorkerReady = this.options.onWorkerReady
+  ): Promise<PooledWorker> {
     const transport = this.options.createTransport();
 
     // Initialize the transport
@@ -411,8 +450,8 @@ export class WorkerPool extends BoundedContext {
 
     try {
       // Call onWorkerReady callback if provided
-      if (this.options.onWorkerReady) {
-        await this.options.onWorkerReady(worker);
+      if (onWorkerReady) {
+        await onWorkerReady(worker);
       }
     } catch (error) {
       // Ensure partially initialized workers do not leak when warmup fails.
@@ -420,6 +459,13 @@ export class WorkerPool extends BoundedContext {
         // Ignore disposal failures during warmup failure handling.
       });
       throw error;
+    }
+
+    if (this.state === 'disposing' || this.state === 'disposed') {
+      await transport.dispose().catch(() => {
+        // Ignore disposal failures if the pool was torn down mid-creation.
+      });
+      throw new BridgeExecutionError('Pool disposed during worker creation');
     }
 
     this.workers.push(worker);

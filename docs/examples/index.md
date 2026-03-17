@@ -71,9 +71,9 @@ await counter.disposeHandle();
 
 ## More Docs
 
-- [Getting started](../getting-started.md)
-- [Configuration](../configuration.md)
-- [Node runtime](../runtimes/nodejs.md)
-- [Browser runtime](../runtimes/browser.md)
-- [Troubleshooting](../troubleshooting/README.md)
-- [Type mapping](../type-mapping-matrix.md)
+- [Getting started](/guide/getting-started)
+- [Configuration](/guide/configuration)
+- [Node runtime](/guide/runtimes/node)
+- [Browser runtime](/guide/runtimes/browser)
+- [Troubleshooting](/troubleshooting/)
+- [Type mapping](/reference/type-mapping)

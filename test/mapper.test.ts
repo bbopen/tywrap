@@ -108,4 +108,47 @@ describe('TypeMapper', () => {
     });
     expect(t.kind).toBe('object');
   });
+
+  it('maps pydantic BaseModel when the preset is enabled', () => {
+    const presetMapper = new TypeMapper({ presets: ['pydantic'] });
+    const mapped = presetMapper.mapPythonType({
+      kind: 'custom',
+      name: 'pydantic.BaseModel',
+    });
+    expect(mapped.kind).toBe('object');
+  });
+
+  it('maps TypeVar-style placeholders to unknown instead of undeclared TS identifiers', () => {
+    const mappedTypeVar = mapper.mapPythonType({
+      kind: 'typevar',
+      name: 'T',
+    } as any);
+    expect(mappedTypeVar).toEqual({
+      kind: 'primitive',
+      name: 'unknown',
+    });
+
+    const mappedParamSpec = mapper.mapPythonType({
+      kind: 'custom',
+      name: 'P',
+      module: 'typing',
+    } as any);
+    expect(mappedParamSpec).toEqual({
+      kind: 'primitive',
+      name: 'unknown',
+    });
+
+    const mappedCallable = mapper.mapPythonType({
+      kind: 'callable',
+      parameters: [{ kind: 'custom', name: '...' }],
+      returnType: { kind: 'typevar', name: 'T' },
+    } as any);
+    expect(mappedCallable.kind).toBe('function');
+    if (mappedCallable.kind === 'function') {
+      expect(mappedCallable.returnType).toEqual({
+        kind: 'primitive',
+        name: 'unknown',
+      });
+    }
+  });
 });

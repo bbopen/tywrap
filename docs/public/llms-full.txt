@@ -1,0 +1,3425 @@
+# tywrap — Full Documentation
+> Complete tywrap documentation for AI agent frameworks.
+> See /llms.txt for the structured index.
+
+---
+<!-- Source: docs/index.md -->
+---
+layout: home
+
+hero:
+  name: tywrap
+  text: TypeScript wrappers for Python libraries
+  tagline: Auto-generate type-safe TypeScript bindings for any Python library — works in Node.js, Bun, Deno, and browsers via Pyodide.
+  actions:
+    - theme: brand
+      text: Get Started
+      link: /guide/getting-started
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/bbopen/tywrap
+
+features:
+  - icon: 🔒
+    title: Full Type Safety
+    details: TypeScript definitions generated directly from Python source analysis via AST — no manual type writing.
+  - icon: 🌐
+    title: Multi-Runtime
+    details: One API across Node.js, Bun, Deno (subprocess), and browsers (Pyodide WebAssembly).
+  - icon: ⚡
+    title: Rich Data Types
+    details: First-class support for numpy, pandas, scipy, torch, and sklearn with Apache Arrow binary transport.
+  - icon: 🛠
+    title: Zero-Config CLI
+    details: Run `npx tywrap generate` and get production-ready TypeScript wrappers with a single command.
+---
+
+## Quick Start
+
+```bash
+npm install tywrap
+pip install tywrap-ir
+npx tywrap init
+npx tywrap generate
+```
+
+```typescript
+import { NodeBridge } from 'tywrap/node';
+import { setRuntimeBridge } from 'tywrap/runtime';
+import * as math from './generated/math.generated.js';
+
+setRuntimeBridge(new NodeBridge({ pythonPath: 'python3' }));
+const result = await math.sqrt(16); // 4 — fully typed
+```
+
+> ⚠️ **Experimental** — APIs may change before v1.0.0. See [CHANGELOG](https://github.com/bbopen/tywrap/blob/main/CHANGELOG.md) for breaking changes.
+
+> If tywrap saves you time, a ⭐ on [GitHub](https://github.com/bbopen/tywrap) helps others find it.
+
+---
+
+<!-- Source: docs/guide/getting-started.md -->
+# Getting Started with tywrap
+
+This guide covers installation, basic configuration, and creating your first
+TypeScript wrapper for a Python library.
+
+## Prerequisites
+
+- Node.js ≥20.0.0, Deno ≥1.46.0, or Bun ≥1.1.0
+- Python 3.10+ with target libraries installed
+- Basic TypeScript knowledge
+
+## Installation
+
+Choose your preferred package manager:
+
+```bash
+# npm
+npm install tywrap
+
+# pnpm
+pnpm add tywrap
+
+# yarn
+yarn add tywrap
+
+# bun
+bun add tywrap
+
+# deno
+deno add npm:tywrap
+```
+
+## Configuration
+
+Create a `tywrap.config.ts` in your project root (or run `npx tywrap init`):
+
+```ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  pythonModules: {
+    math: {
+      runtime: 'node',
+      typeHints: 'strict',
+    },
+  },
+  output: {
+    dir: './generated',
+    format: 'esm',
+    declaration: false,
+    sourceMap: false,
+  },
+  runtime: {
+    node: {
+      pythonPath: 'python3',
+    },
+  },
+});
+```
+
+## Generation
+
+Run the tywrap CLI to generate TypeScript wrappers:
+
+```bash
+# Using npx
+npx tywrap generate
+
+# Using the CLI directly (if installed globally)
+tywrap generate
+
+# Using programmatic API
+node -e "import('tywrap').then(async tw => { const cfg = await tw.resolveConfig({ configFile: './tywrap.config.ts' }); await tw.generate(cfg); })"
+```
+
+Run `tywrap generate --help` to see all available options and defaults.
+
+The CLI searches for `tywrap.config.ts`, `.mts`, `.js`, `.mjs`, `.cjs`, and
+`.json` when `--config` is not provided.
+
+The config file drives code generation. Your application still creates a runtime
+bridge with `NodeBridge`, `PyodideBridge`, or `HttpBridge`.
+
+## Usage
+
+After generation, import and use your Python library with full TypeScript
+support:
+
+```typescript
+// Import the generated wrapper
+import { NodeBridge } from 'tywrap/node';
+import { setRuntimeBridge } from 'tywrap/runtime';
+import * as math from './generated/math.generated.js';
+
+const bridge = new NodeBridge({ pythonPath: 'python3' });
+setRuntimeBridge(bridge);
+
+// Use with full type safety
+async function example() {
+  const result = await math.sqrt(16); // TypeScript knows this returns Promise<number>
+  const power = await math.pow(2, 3); // Full autocompletion and type checking
+
+  console.log(`√16 = ${result}`); // 4
+  console.log(`2³ = ${power}`); // 8
+}
+
+example().catch(console.error);
+```
+
+## Custom Module Example
+
+Create a wrapper for a custom Python module:
+
+### Python Module
+
+Create `my_utils.py`:
+
+```python
+"""Custom utility functions with type hints."""
+
+def greet(name: str, excited: bool = False) -> str:
+    """Generate a greeting message."""
+    message = f"Hello, {name}!"
+    return message + " 🎉" if excited else message
+
+def calculate_area(width: float, height: float) -> float:
+    """Calculate rectangular area."""
+    return width * height
+
+class Calculator:
+    """Simple calculator class."""
+
+    def __init__(self, precision: int = 2):
+        self.precision = precision
+
+    def add(self, a: float, b: float) -> float:
+        """Add two numbers."""
+        return round(a + b, self.precision)
+
+    def multiply(self, a: float, b: float) -> float:
+        """Multiply two numbers."""
+        return round(a * b, self.precision)
+```
+
+### Configuration
+
+Update your `tywrap.config.ts`:
+
+```json
+{
+  "pythonImportPath": [],
+  "pythonModules": {
+    "my_utils": {
+      "runtime": "node",
+      "typeHints": "strict",
+      "watch": true
+    }
+  },
+  "output": {
+    "dir": "./generated",
+    "format": "esm",
+    "declaration": true,
+    "sourceMap": true
+  },
+  "development": {
+    "hotReload": true,
+    "validation": "runtime"
+  }
+}
+```
+
+If `my_utils` is not importable from your current working directory or your
+Python environment, add the directory that contains it to `pythonImportPath`:
+
+```json
+{
+  "pythonImportPath": ["./python"],
+  "pythonModules": {
+    "my_utils": { "runtime": "node", "typeHints": "strict" }
+  }
+}
+```
+
+### Generate and Import
+
+```bash
+npx tywrap generate
+```
+
+```typescript
+import { NodeBridge } from 'tywrap/node';
+import { setRuntimeBridge } from 'tywrap/runtime';
+import {
+  greet,
+  calculate_area,
+  Calculator,
+} from './generated/my_utils.generated.js';
+
+const bridge = new NodeBridge({ pythonPath: 'python3' });
+setRuntimeBridge(bridge);
+
+async function demo() {
+  // Function calls with type safety
+  const greeting = await greet('World', true);
+  console.log(greeting); // "Hello, World! 🎉"
+
+  const area = await calculate_area(10.5, 8.2);
+  console.log(`Area: ${area}`); // Area: 86.1
+
+  // Class instantiation and methods
+  const calc = await Calculator.create(3);
+  const sum = await calc.add(3.14159, 2.71828);
+  const product = await calc.multiply(sum, 2);
+  await calc.disposeHandle();
+
+  console.log(`Sum: ${sum}`); // Sum: 5.860
+  console.log(`Product: ${product}`); // Product: 11.720
+}
+```
+
+## Runtime Options
+
+### Node.js (Default)
+
+```json
+{
+  "pythonModules": {
+    "numpy": { "runtime": "node" }
+  },
+  "runtime": {
+    "node": {
+      "pythonPath": "/usr/local/bin/python3",
+      "virtualEnv": "./venv",
+      "timeout": 30000
+    }
+  }
+}
+```
+
+### Browser (Pyodide)
+
+```json
+{
+  "pythonModules": {
+    "numpy": { "runtime": "pyodide" }
+  },
+  "runtime": {
+    "pyodide": {
+      "indexURL": "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/",
+      "packages": ["numpy", "scipy"]
+    }
+  }
+}
+```
+
+### HTTP API
+
+```json
+{
+  "pythonModules": {
+    "my_api": { "runtime": "http" }
+  },
+  "runtime": {
+    "http": {
+      "baseURL": "https://api.example.com/python",
+      "timeout": 10000,
+      "headers": {
+        "Authorization": "Bearer token"
+      }
+    }
+  }
+}
+```
+
+## Development Workflow
+
+### With Hot Reload
+
+```json
+{
+  "development": {
+    "hotReload": true,
+    "sourceMap": true,
+    "validation": "runtime"
+  }
+}
+```
+
+### Build Integration
+
+Run `tywrap generate --check` in CI to ensure generated wrappers are committed
+and up to date. After upgrading Python dependencies, run `tywrap generate` to
+refresh the generated surface.
+
+If you ran `tywrap init` in a Node project, it will also add `tywrap:generate`
+and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).
+
+## Performance Tips
+
+1. **Enable Caching**: Set `"caching": true` for faster rebuilds
+2. **Use Batching**: Set `"batching": true` for multiple modules
+3. **Smart Compression**: Use `"compression": "auto"` for optimal size
+4. **Selective Imports**: Specify only needed functions/classes
+
+```json
+{
+  "pythonModules": {
+    "numpy": {
+      "runtime": "node",
+      "functions": ["array", "zeros", "ones"],
+      "classes": ["ndarray"]
+    }
+  },
+  "performance": {
+    "caching": true,
+    "batching": true,
+    "compression": "auto"
+  }
+}
+```
+
+## Common Patterns
+
+### Error Handling
+
+```typescript
+try {
+  const result = await math.sqrt(-1);
+} catch (error) {
+  if (error.message.includes('ValueError')) {
+    console.error('Invalid input for sqrt');
+  }
+}
+```
+
+### Working with Arrays
+
+```typescript
+import { array, zeros } from './generated/numpy.generated.js';
+
+// Assumes setRuntimeBridge(...) has been called during app startup.
+// Create arrays with proper typing
+const arr = await array([1, 2, 3, 4, 5]);
+const empty = await zeros([3, 3]);
+```
+
+### Async/Await Best Practices
+
+```typescript
+// Good: Handle promises properly
+const results = await Promise.all([
+  math.sin(Math.PI / 2),
+  math.cos(0),
+  math.tan(Math.PI / 4),
+]);
+
+// Group independent calls with Promise.all
+const [sinValue, cosValue, tanValue] = await Promise.all([
+  math.sin(Math.PI / 2),
+  math.cos(0),
+  math.tan(Math.PI / 4),
+]);
+```
+
+## Next Steps
+
+- [Configuration Guide](/guide/configuration) - Complete configuration reference
+- [Runtime Guides](/guide/runtimes/node) - Platform-specific setup
+- [Examples](/examples/) - Usage patterns and examples
+- [Troubleshooting](/troubleshooting/) - Common issues and solutions
+
+## Support
+
+- [Troubleshooting Guide](/troubleshooting/)
+- [GitHub Issues](https://github.com/bbopen/tywrap/issues)
+- [GitHub Discussions](https://github.com/bbopen/tywrap/discussions)
+
+---
+
+<!-- Source: docs/guide/configuration.md -->
+# Configuration Guide
+
+Complete configuration reference covering all options from basic setup to
+advanced optimization.
+
+## Top-Level Fields
+
+| Field              | Description                                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `pythonModules`    | Mapping of module names to wrapper configuration                                                                         |
+| `pythonImportPath` | Extra directories to prepend to `PYTHONPATH` during IR generation (useful for local modules not installed into your env) |
+| `output`           | Output directory, module format and artifact options                                                                     |
+| `runtime`          | Settings for Node, Pyodide or HTTP runtimes                                                                              |
+| `performance`      | Caching and optimization controls                                                                                        |
+| `development`      | Development-time features like hot reloading                                                                             |
+| `types`            | Type mapping presets and customization                                                                                   |
+
+## Configuration File Formats
+
+tywrap supports multiple configuration formats:
+
+- **TypeScript**: `tywrap.config.ts` (recommended)
+- **JavaScript**: `tywrap.config.js`
+- **JSON**: `tywrap.config.json`
+- **Programmatic**: Direct API calls
+
+When `--config` is omitted, the CLI searches for `tywrap.config.ts`, `.mts`,
+`.js`, `.mjs`, `.cjs`, and `.json` in that order.
+
+### Basic JSON Configuration
+
+```json
+{
+  "pythonModules": {
+    "module_name": { "runtime": "node", "typeHints": "strict" }
+  },
+  "output": { "dir": "./generated", "format": "esm" },
+  "runtime": {},
+  "performance": { "caching": true },
+  "development": { "hotReload": false }
+}
+```
+
+### TypeScript Configuration
+
+```typescript
+// tywrap.config.ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  pythonImportPath: ['./python', './vendor'],
+  pythonModules: {
+    numpy: {
+      version: '1.24.0',
+      runtime: 'pyodide',
+      functions: ['array', 'zeros', 'ones'],
+      typeHints: 'strict',
+    },
+    pandas: {
+      runtime: 'node',
+      alias: 'pd',
+    },
+  },
+  output: {
+    dir: './src/generated',
+    format: 'esm',
+    declaration: true,
+    sourceMap: true,
+  },
+  performance: {
+    caching: true,
+    batching: true,
+    compression: 'auto',
+  },
+});
+```
+
+## Local Modules and `pythonImportPath`
+
+If you're wrapping local modules/packages that are not installed into your
+Python environment, add one or more directories to `pythonImportPath`. tywrap
+will prepend these entries to `PYTHONPATH` when running the `tywrap_ir`
+subprocess. Existing `PYTHONPATH` (if set) is preserved.
+
+Notes:
+
+- Paths are passed through as provided (use absolute paths or paths relative to
+  where you run the CLI).
+- This affects IR discovery/import, not your runtime bridge configuration.
+
+## Python Modules Configuration
+
+### Basic Module Setup
+
+```json
+{
+  "pythonModules": {
+    "math": {
+      "runtime": "node",
+      "typeHints": "strict"
+    }
+  }
+}
+```
+
+### Advanced Module Configuration
+
+```json
+{
+  "pythonModules": {
+    "numpy": {
+      "version": "1.24.0",
+      "runtime": "pyodide",
+      "functions": ["array", "zeros", "ones", "eye"],
+      "classes": ["ndarray", "matrix"],
+      "alias": "np",
+      "typeHints": "strict",
+      "watch": true
+    },
+    "./custom_module.py": {
+      "runtime": "node",
+      "typeHints": "loose",
+      "watch": true
+    }
+  }
+}
+```
+
+### Module Options
+
+| Option            | Type                                      | Default     | Description                            |
+| ----------------- | ----------------------------------------- | ----------- | -------------------------------------- |
+| `runtime`         | `'node' \| 'pyodide' \| 'http' \| 'auto'` | `'auto'`    | Runtime environment                    |
+| `version`         | `string`                                  | Latest      | Specific package version               |
+| `functions`       | `string[]`                                | All         | Specific functions to wrap             |
+| `classes`         | `string[]`                                | All         | Specific classes to wrap               |
+| `exclude`         | `string[]`                                | `[]`        | Exclude specific exports by exact name |
+| `excludePatterns` | `string[]`                                | `[]`        | Exclude exports by regex pattern       |
+| `alias`           | `string`                                  | Module name | Import alias in generated code         |
+| `typeHints`       | `'strict' \| 'loose' \| 'ignore'`         | `'strict'`  | Type hint processing                   |
+| `watch`           | `boolean`                                 | `false`     | Enable file watching in development    |
+
+When `functions`/`classes` are not explicitly configured for a module, tywrap
+applies a small default exclude list to avoid generating wrappers for common
+decorator helpers: `dataclass`, `property`, `staticmethod`, `classmethod`,
+`abstractmethod`, `cached_property`.
+
+## Output Configuration
+
+### Format Options
+
+```json
+{
+  "output": {
+    "dir": "./generated",
+    "format": "esm",
+    "declaration": true,
+    "sourceMap": true,
+    "annotatedJSDoc": true
+  }
+}
+```
+
+### Output Options
+
+| Option           | Type                       | Default         | Description                       |
+| ---------------- | -------------------------- | --------------- | --------------------------------- |
+| `dir`            | `string`                   | `'./generated'` | Output directory                  |
+| `format`         | `'esm' \| 'cjs' \| 'both'` | `'esm'`         | Module format                     |
+| `declaration`    | `boolean`                  | `false`         | Generate .d.ts files              |
+| `sourceMap`      | `boolean`                  | `false`         | Generate source maps              |
+| `annotatedJSDoc` | `boolean`                  | `false`         | Include type annotations in JSDoc |
+
+## Runtime Configuration
+
+These fields are part of the typed config surface. Today the CLI uses
+`runtime.node.pythonPath`, `runtime.node.virtualEnv`, and `runtime.node.timeout`
+during IR extraction. Your application still creates `NodeBridge`,
+`PyodideBridge`, or `HttpBridge` itself at runtime.
+
+### Node.js Runtime
+
+```json
+{
+  "runtime": {
+    "node": {
+      "pythonPath": "/usr/local/bin/python3",
+      "virtualEnv": "./venv",
+      "timeout": 30000
+    }
+  }
+}
+```
+
+### Pyodide Runtime (Browser)
+
+```json
+{
+  "runtime": {
+    "pyodide": {
+      "indexURL": "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/",
+      "packages": ["numpy", "scipy", "matplotlib"]
+    }
+  }
+}
+```
+
+### HTTP Runtime
+
+```json
+{
+  "runtime": {
+    "http": {
+      "baseURL": "https://api.example.com/python",
+      "timeout": 10000,
+      "headers": {
+        "Authorization": "Bearer your-token",
+        "Content-Type": "application/json"
+      }
+    }
+  }
+}
+```
+
+### Runtime Options
+
+#### Node.js Options
+
+| Option       | Type     | Default     | Description               |
+| ------------ | -------- | ----------- | ------------------------- |
+| `pythonPath` | `string` | `'python3'` | Path to Python executable |
+| `virtualEnv` | `string` | -           | Virtual environment path  |
+| `timeout`    | `number` | `30000`     | Subprocess timeout (ms)   |
+
+#### Pyodide Options
+
+| Option     | Type       | Default | Description            |
+| ---------- | ---------- | ------- | ---------------------- |
+| `indexURL` | `string`   | CDN URL | Pyodide package index  |
+| `packages` | `string[]` | `[]`    | Pre-installed packages |
+
+#### HTTP Options
+
+| Option    | Type                     | Default  | Description          |
+| --------- | ------------------------ | -------- | -------------------- |
+| `baseURL` | `string`                 | Required | API base URL         |
+| `timeout` | `number`                 | `10000`  | Request timeout (ms) |
+| `headers` | `Record<string, string>` | `{}`     | HTTP headers         |
+
+## Performance Configuration
+
+### Caching and Optimization
+
+```json
+{
+  "performance": {
+    "caching": true,
+    "batching": true,
+    "compression": "auto"
+  }
+}
+```
+
+## Type Mapping Configuration
+
+Use presets to opt into richer mappings for common ecosystems.
+
+```json
+{
+  "types": {
+    "presets": ["stdlib", "pandas"]
+  }
+}
+```
+
+### Type Mapping Options
+
+| Option    | Type                                                                                   | Default | Description                                   |
+| --------- | -------------------------------------------------------------------------------------- | ------- | --------------------------------------------- |
+| `presets` | `('numpy' \| 'pandas' \| 'pydantic' \| 'stdlib' \| 'scipy' \| 'torch' \| 'sklearn')[]` | `[]`    | Enable opt-in mappings for specific libraries |
+
+`stdlib` maps common Python stdlib types (datetime, UUID, Decimal, Path) to
+JSON-friendly primitives.  
+`pandas` maps `DataFrame` and `Series` to record-shaped unions. `scipy` maps
+sparse matrix classes (csr/csc/coo) to structured sparse objects.  
+`torch` maps `Tensor` to a structured tensor object.  
+`sklearn` maps `BaseEstimator` to estimator metadata objects.
+
+### Performance Options
+
+| Option        | Type                                     | Default  | Description               |
+| ------------- | ---------------------------------------- | -------- | ------------------------- |
+| `caching`     | `boolean`                                | `false`  | Enable IR caching         |
+| `batching`    | `boolean`                                | `false`  | Batch multiple operations |
+| `compression` | `'auto' \| 'gzip' \| 'brotli' \| 'none'` | `'none'` | Output compression        |
+
+## Development Configuration
+
+### Development Options
+
+```json
+{
+  "development": {
+    "hotReload": true,
+    "sourceMap": true,
+    "validation": "runtime"
+  }
+}
+```
+
+| Option       | Type                                         | Default  | Description          |
+| ------------ | -------------------------------------------- | -------- | -------------------- |
+| `hotReload`  | `boolean`                                    | `false`  | Enable hot reloading |
+| `sourceMap`  | `boolean`                                    | `false`  | Generate source maps |
+| `validation` | `'runtime' \| 'compile' \| 'both' \| 'none'` | `'none'` | Validation level     |
+
+## Extension Hooks
+
+tywrap supports a lightweight plugin system that allows hooking into the
+generation lifecycle:
+
+- `beforeGeneration(options)` – invoked before code generation begins.
+- `afterGeneration(result)` – called after generation completes.
+- `transformPythonType(type)` – modify analyzed Python types.
+- `transformTypescriptCode(code)` – post-process generated TypeScript.
+
+Hooks are optional; implement only what your plugin needs.
+
+## Environment Variables
+
+Override configuration with environment variables:
+
+```bash
+# Runtime configuration
+export TYWRAP_PYTHON_PATH="/usr/local/bin/python3.11"
+export TYWRAP_VIRTUAL_ENV="./venv"
+export TYWRAP_CODEC_FALLBACK="json"
+export TYWRAP_CODEC_MAX_BYTES="10485760"  # Max response payload size (bytes)
+export TYWRAP_REQUEST_MAX_BYTES="1048576"  # Max request payload size (bytes)
+export TYWRAP_TORCH_ALLOW_COPY="1"
+
+# Note: NodeBridge uses TYWRAP_CODEC_MAX_BYTES as the default maxLineLength when set.
+
+# Performance tuning
+export TYWRAP_CACHE_DIR="./.tywrap/cache"
+export TYWRAP_MEMORY_LIMIT="1024"
+export TYWRAP_PERF_BUDGETS="1"
+export TYWRAP_PERF_TIME_BUDGET_MS="2000"
+export TYWRAP_PERF_MEMORY_BUDGET_MB="64"
+export TYWRAP_CODEC_PERF_ITERATIONS="200"
+export TYWRAP_CODEC_PERF_TIME_BUDGET_MS="500"
+export TYWRAP_CODEC_PERF_MEMORY_BUDGET_MB="32"
+
+# Development
+export TYWRAP_VERBOSE="true"
+export TYWRAP_HOT_RELOAD="true"
+```
+
+## Advanced Configuration Patterns
+
+### Multi-Environment Setup
+
+```typescript
+// tywrap.config.ts
+import { defineConfig } from 'tywrap';
+
+const isDev = process.env.NODE_ENV === 'development';
+
+export default defineConfig({
+  pythonModules: {
+    numpy: {
+      runtime: isDev ? 'node' : 'pyodide',
+      typeHints: isDev ? 'loose' : 'strict',
+    },
+  },
+  output: {
+    dir: isDev ? './dev-generated' : './dist/generated',
+    sourceMap: isDev,
+  },
+  development: {
+    hotReload: isDev,
+    validation: isDev ? 'runtime' : 'none',
+  },
+});
+```
+
+### Monorepo Configuration
+
+```typescript
+// packages/core/tywrap.config.ts
+export default defineConfig({
+  pythonModules: {
+    numpy: { runtime: 'node' },
+    scipy: { runtime: 'node' },
+  },
+  output: {
+    dir: './src/generated',
+    format: 'esm',
+  },
+});
+
+// packages/web/tywrap.config.ts
+export default defineConfig({
+  pythonModules: {
+    numpy: { runtime: 'pyodide' },
+    matplotlib: { runtime: 'pyodide' },
+  },
+  output: {
+    dir: './src/generated',
+    format: 'esm',
+  },
+  runtime: {
+    pyodide: {
+      packages: ['numpy', 'matplotlib'],
+    },
+  },
+});
+```
+
+### Conditional Module Loading
+
+```typescript
+export default defineConfig({
+  pythonModules: {
+    // Core modules - always included
+    math: { runtime: 'auto' },
+
+    // Optional modules - only if available
+    ...(process.env.INCLUDE_ML && {
+      sklearn: { runtime: 'node', typeHints: 'loose' },
+      torch: { runtime: 'node', classes: ['Tensor'] },
+    }),
+
+    // Development-only modules
+    ...(process.env.NODE_ENV === 'development' && {
+      debug_utils: { runtime: 'node', watch: true },
+    }),
+  },
+});
+```
+
+## Configuration Validation
+
+tywrap validates your configuration at build time:
+
+```typescript
+// Invalid configuration will show helpful errors
+{
+  "pythonModules": {
+    "numpy": {
+      "runtime": "invalid", // ❌ Error: Invalid runtime
+      "typeHints": "maybe"  // ❌ Error: Invalid typeHints value
+    }
+  },
+  "output": {
+    "format": "umd" // ❌ Error: UMD format not supported
+  }
+}
+```
+
+## Configuration Merging
+
+Configurations are merged in this order:
+
+1. Default values
+2. Configuration file
+3. Environment variables
+4. CLI flags
+5. Programmatic overrides
+
+```bash
+# CLI overrides take highest precedence
+tywrap generate --output-dir ./custom --format cjs
+```
+
+## Best Practices
+
+### 1. Environment-Specific Configs
+
+```typescript
+// Use different configs per environment
+const config = {
+  development: './tywrap.dev.config.ts',
+  production: './tywrap.prod.config.ts',
+  test: './tywrap.test.config.ts',
+};
+```
+
+### 2. Module Organization
+
+```json
+{
+  "pythonModules": {
+    // Group related modules
+    "numpy": { "runtime": "pyodide" },
+    "scipy": { "runtime": "pyodide" },
+    "matplotlib": { "runtime": "pyodide" },
+
+    // Separate custom modules
+    "./utils/math_helpers.py": { "runtime": "node" },
+    "./utils/data_processing.py": { "runtime": "node" }
+  }
+}
+```
+
+### 3. Performance Optimization
+
+```json
+{
+  "performance": {
+    "caching": true, // Always enable in CI/CD
+    "batching": true, // For multiple modules
+    "compression": "auto" // Let tywrap decide
+  }
+}
+```
+
+### 4. Type Safety
+
+```json
+{
+  "pythonModules": {
+    "well_typed_module": { "typeHints": "strict" },
+    "legacy_module": { "typeHints": "loose" },
+    "untyped_module": { "typeHints": "ignore" }
+  }
+}
+```
+
+## Troubleshooting Configuration
+
+### Common Issues
+
+**Module not found**:
+
+```bash
+# Check Python path
+python3 -c "import sys; print(sys.path)"
+
+# Verify module installation
+python3 -c "import your_module; print(your_module.__file__)"
+```
+
+**Type generation errors**:
+
+```json
+{
+  "pythonModules": {
+    "problematic_module": {
+      "typeHints": "loose", // Relax type checking
+      "functions": ["specific_function"] // Limit scope
+    }
+  }
+}
+```
+
+**Performance issues**:
+
+```json
+{
+  "performance": {
+    "caching": true, // Enable caching
+    "compression": "none" // Disable compression
+  }
+}
+```
+
+For more troubleshooting, see [Troubleshooting Guide](/troubleshooting/).
+
+## Next Steps
+
+- [Runtime Guides](/guide/runtimes/node) - Platform-specific configuration
+- [Examples](/examples/) - Configuration examples
+- [API Reference](/reference/api/) - Complete API documentation
+
+---
+
+<!-- Source: docs/guide/runtimes/comparison.md -->
+# Runtime Comparison
+
+tywrap supports five runtime configurations. Choose based on your environment.
+
+## Feature Matrix
+
+| Feature | Node.js | Bun | Deno (local) | Browser (Pyodide) | HTTP |
+|---------|:-------:|:---:|:------------:|:-----------------:|:----:|
+| Python subprocess | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Deno Deploy / serverless | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Apache Arrow transport | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Virtual environment support | ✅ | ✅ | ✅ | ❌ | Server-side |
+| Process pooling (experimental) | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Tested in CI | ✅ | ✅ | Mocked | ✅ | ✅ |
+
+## Import Paths
+
+| Runtime | Import |
+|---------|--------|
+| Node.js | `import { NodeBridge } from 'tywrap/node'` |
+| Bun | `import { NodeBridge } from 'tywrap/node'` |
+| Deno | `import { NodeBridge } from 'npm:tywrap'` |
+| Browser | `import { PyodideBridge } from 'tywrap/pyodide'` |
+| HTTP | `import { HttpBridge } from 'tywrap/http'` |
+
+## Decision Guide
+
+```
+Do you need subprocess-based Python execution?
+├── Yes → Does your environment support subprocess?
+│   ├── Node.js or Bun → Use NodeBridge (import from 'tywrap/node' or 'tywrap')
+│   ├── Deno (local) → Use NodeBridge with --allow-run=python3
+│   └── Deno Deploy / serverless → Continue ↓
+└── No (browser, edge, serverless) →
+    ├── Can you load ~50MB WebAssembly? → Use PyodideBridge
+    └── Need heavy Python libs or can't load WASM → Use HttpBridge
+```
+
+## Bridge Reference
+
+| Bridge | Export | Guide |
+|--------|--------|-------|
+| `NodeBridge` | `tywrap/node` | [Node.js](./node) · [Bun](./bun) · [Deno](./deno) |
+| `PyodideBridge` | `tywrap/pyodide` | [Browser](./browser) |
+| `HttpBridge` | `tywrap/http` | [HTTP](./http) |
+
+---
+
+<!-- Source: docs/guide/runtimes/node.md -->
+# Node.js Runtime Guide
+
+The Node.js runtime is tywrap's default and most feature-complete runtime
+environment. It uses child processes to execute Python code, providing excellent
+performance and compatibility.
+
+## Overview
+
+The Node.js runtime:
+
+- **Executes Python via subprocess** - Spawns Python processes for code
+  execution
+- **High Performance** - Direct process communication with minimal overhead
+- **Full Feature Support** - Supports all tywrap features and Python libraries
+- **Development Friendly** - Excellent debugging and error reporting
+- **Production Ready** - Battle-tested with proper error handling and timeouts
+
+## Bridge Selection
+
+- **NodeBridge (default)**: correctness-first, simplest lifecycle, recommended
+  for most users.
+- **OptimizedNodeBridge (experimental)**: process pooling + optional caching for
+  throughput; not a drop-in replacement yet and not part of the public API
+  exports. See `ROADMAP.md` for the unification plan and parity goals.
+
+Both bridges share the same JSONL core for protocol validation, timeouts, and
+stderr buffering.
+
+## Basic Setup
+
+### Installation
+
+```bash
+npm install tywrap
+```
+
+### Configuration
+
+```json
+{
+  "pythonModules": {
+    "numpy": { "runtime": "node" },
+    "pandas": { "runtime": "node" }
+  },
+  "runtime": {
+    "node": {
+      "pythonPath": "python3",
+      "timeout": 30000
+    }
+  }
+}
+```
+
+### Usage
+
+```typescript
+import { NodeBridge } from 'tywrap/node';
+import { setRuntimeBridge } from 'tywrap/runtime';
+import { array, zeros } from './generated/numpy.generated.js';
+
+const bridge = new NodeBridge({ pythonPath: 'python3' });
+setRuntimeBridge(bridge);
+
+async function example() {
+  const arr = await array([1, 2, 3, 4, 5]);
+  const empty = await zeros([3, 3]);
+  console.log('Array created:', arr);
+}
+```
+
+### Bridge Diagnostics
+
+```typescript
+const info = await bridge.getBridgeInfo({ refresh: true });
+console.log(info.protocol, info.pythonVersion, info.instances);
+```
+
+## Configuration Options
+
+`tywrap.config.*` and `NodeBridge` do different jobs:
+
+- `tywrap.config.*` controls wrapper generation.
+- `new NodeBridge(...)` controls the live subprocess bridge in your app.
+
+### `tywrap.config.*` fields
+
+```json
+{
+  "runtime": {
+    "node": {
+      "pythonPath": "/usr/local/bin/python3",
+      "virtualEnv": "./venv",
+      "timeout": 30000
+    }
+  }
+}
+```
+
+### `NodeBridge` constructor options
+
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: '/usr/local/bin/python3.11',
+  virtualEnv: './venv',
+  scriptPath: './custom_bridge.py',
+  cwd: './python_src',
+  timeoutMs: 60000,
+  queueTimeoutMs: 60000,
+  inheritProcessEnv: true,
+  env: {
+    PYTHONPATH: './additional_modules',
+    OMP_NUM_THREADS: '4',
+  },
+  codec: {
+    bytesHandling: 'base64',
+  },
+});
+```
+
+| Option                    | Type                                     | Default         | Description                              |
+| ------------------------- | ---------------------------------------- | --------------- | ---------------------------------------- |
+| `pythonPath`              | `string`                                 | auto-detect     | Path to the Python executable            |
+| `scriptPath`              | `string`                                 | built-in bridge | Custom `python_bridge.py` path           |
+| `virtualEnv`              | `string`                                 | —               | Virtual environment root                 |
+| `cwd`                     | `string`                                 | `process.cwd()` | Working directory for the subprocess     |
+| `timeoutMs`               | `number`                                 | `30000`         | Per-call timeout                         |
+| `queueTimeoutMs`          | `number`                                 | `30000`         | Queue timeout when the pool is saturated |
+| `minProcesses`            | `number`                                 | `1`             | Minimum worker count                     |
+| `maxProcesses`            | `number`                                 | `1`             | Maximum worker count                     |
+| `maxConcurrentPerProcess` | `number`                                 | `10`            | Concurrent requests per worker           |
+| `inheritProcessEnv`       | `boolean`                                | `false`         | Pass the full parent environment through |
+| `enableCache`             | `boolean`                                | `false`         | Cache pure function results              |
+| `env`                     | `Record<string, string \| undefined>`    | `{}`            | Extra subprocess env vars                |
+| `codec`                   | `CodecOptions`                           | —               | Codec validation and byte handling       |
+| `warmupCommands`          | `Array<{ module, functionName, args? }>` | `[]`            | Commands to run when each worker starts  |
+
+Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
+`maxRequestsPerProcess`, `enableJsonFallback`, and `maxLineLength`. Avoid them
+in new code.
+
+By default, the subprocess environment is minimal (PATH/PYTHON*/TYWRAP\_* only).
+Set `inheritProcessEnv: true` to pass through the full environment when needed.
+
+## Python Environment Setup
+
+### Using System Python
+
+```json
+{
+  "runtime": {
+    "node": {
+      "pythonPath": "/usr/bin/python3"
+    }
+  }
+}
+```
+
+### Using Virtual Environment
+
+```json
+{
+  "runtime": {
+    "node": {
+      "pythonPath": "./venv/bin/python",
+      "virtualEnv": "./venv"
+    }
+  }
+}
+```
+
+### Using Conda Environment
+
+```bash
+# Activate conda environment first
+conda activate myenv
+
+# Then use conda's python
+```
+
+```json
+{
+  "runtime": {
+    "node": {
+      "pythonPath": "/opt/miniconda3/envs/myenv/bin/python"
+    }
+  }
+}
+```
+
+### Using pyenv
+
+```bash
+# Set Python version with pyenv
+pyenv local 3.11.0
+```
+
+```json
+{
+  "runtime": {
+    "node": {
+      "pythonPath": "python3" // pyenv will provide the right version
+    }
+  }
+}
+```
+
+## Data Transport and Performance
+
+### Arrow Transport (Default)
+
+For optimal performance with NumPy/Pandas data:
+
+```bash
+# Install Apache Arrow for Python
+pip install pyarrow
+
+# Install Apache Arrow for Node.js (optional, for decoding)
+npm install apache-arrow
+```
+
+Auto path (when apache-arrow is installed):
+
+```typescript
+import { autoRegisterArrowDecoder } from 'tywrap';
+
+await autoRegisterArrowDecoder();
+```
+
+Manual path (customize decoding outside NodeBridge):
+
+```typescript
+import { registerArrowDecoder } from 'tywrap';
+import { tableFromIPC } from 'apache-arrow';
+
+registerArrowDecoder(bytes => tableFromIPC(bytes));
+```
+
+### JSON Fallback
+
+For environments without Arrow support, set the environment variable:
+
+```bash
+export TYWRAP_CODEC_FALLBACK=json
+```
+
+### Payload Size Limit
+
+The subprocess bridge writes a single JSONL response per call. To prevent
+oversized payloads:
+
+```bash
+export TYWRAP_CODEC_MAX_BYTES=10485760  # 10 MB cap
+```
+
+If a response exceeds `TYWRAP_CODEC_MAX_BYTES`, the call fails with an explicit
+error. Use this instead of older line-length knobs.
+
+### Request Size Limit
+
+To cap incoming request payloads (JSONL request size in bytes):
+
+```bash
+export TYWRAP_REQUEST_MAX_BYTES=1048576  # 1 MB cap
+```
+
+If a request exceeds `TYWRAP_REQUEST_MAX_BYTES`, the call fails with an explicit
+error.
+
+### Torch Tensor Copy Opt-in
+
+For GPU tensors or non-contiguous tensors, enable explicit CPU/copy conversion:
+
+```bash
+export TYWRAP_TORCH_ALLOW_COPY=1
+```
+
+## Error Handling and Debugging
+
+### Error Types
+
+```typescript
+try {
+  const result = await math.sqrt(-1);
+} catch (error) {
+  console.error('Error type:', error.name); // ValueError
+  console.error('Error message:', error.message); // math domain error
+  console.error('Python traceback:', error.traceback);
+}
+```
+
+### Debugging Configuration
+
+```json
+{
+  "runtime": {
+    "node": {
+      "timeoutMs": 0, // Disable timeout for debugging
+      "env": {
+        "PYTHONUNBUFFERED": "1", // Immediate stdout/stderr
+        "TYWRAP_DEBUG": "1" // Enable debug logging
+      }
+    }
+  },
+  "debug": true
+}
+```
+
+### Common Error Scenarios
+
+**Module Import Error**:
+
+```typescript
+// Error: ModuleNotFoundError: No module named 'numpy'
+// Solution: Install module or check PYTHONPATH
+```
+
+**Timeout Error**:
+
+```typescript
+// Error: Python call timed out
+// Solution: Increase timeoutMs or optimize Python code
+```
+
+**Process Exit Error**:
+
+```typescript
+// Error: Python process exited
+// Solution: Check Python path and permissions
+```
+
+## Performance Optimization
+
+### Process Reuse
+
+tywrap automatically reuses Python processes for better performance:
+
+```typescript
+// These calls will reuse the same Python process
+const a1 = await numpy.array([1, 2, 3]);
+const a2 = await numpy.array([4, 5, 6]);
+const result = await numpy.add(a1, a2);
+```
+
+### Batching Operations
+
+```typescript
+// Instead of multiple round trips
+const sin1 = await math.sin(1);
+const sin2 = await math.sin(2);
+const sin3 = await math.sin(3);
+
+// Use Promise.all for concurrent execution
+const [sin1, sin2, sin3] = await Promise.all([
+  math.sin(1),
+  math.sin(2),
+  math.sin(3),
+]);
+```
+
+### Memory Management
+
+```json
+{
+  "runtime": {
+    "node": {
+      "env": {
+        "PYTHONMALLOC": "malloc", // Use system malloc
+        "OMP_NUM_THREADS": "4" // Limit OpenMP threads
+      }
+    }
+  }
+}
+```
+
+## Production Deployment
+
+### Process Management
+
+```typescript
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  // tywrap automatically cleans up Python processes
+  process.exit(0);
+});
+```
+
+### Resource Monitoring
+
+```typescript
+import { NodeBridge } from 'tywrap/node';
+
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  timeoutMs: 30000,
+});
+
+// Monitor process health
+setInterval(async () => {
+  try {
+    await bridge.call('math', 'sqrt', [4]); // Health check
+  } catch (error) {
+    console.error('Python process unhealthy:', error);
+    // Restart or alert
+  }
+}, 60000);
+```
+
+### Docker Configuration
+
+```dockerfile
+# Dockerfile
+FROM node:20-slim
+
+# Install Python and dependencies
+RUN apt-get update && apt-get install -y python3 python3-pip
+COPY requirements.txt .
+RUN pip3 install -r requirements.txt
+
+# Install Node.js dependencies
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Copy application
+COPY . .
+
+# Generate wrappers at build time
+RUN npm run build
+
+EXPOSE 3000
+CMD ["node", "dist/index.js"]
+```
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  app:
+    build: .
+    environment:
+      - TYWRAP_PYTHON_PATH=/usr/bin/python3
+      - TYWRAP_CODEC_FALLBACK=json # For smaller containers
+    ports:
+      - '3000:3000'
+```
+
+### Environment Variables
+
+```bash
+# Production environment
+export NODE_ENV=production
+export TYWRAP_PYTHON_PATH="/usr/local/bin/python3"
+export TYWRAP_CACHE_DIR="/tmp/tywrap-cache"
+export TYWRAP_MEMORY_LIMIT="2048"
+
+# Security
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONUNBUFFERED=1
+```
+
+## Security Considerations
+
+### Subprocess Security
+
+```json
+{
+  "runtime": {
+    "node": {
+      "cwd": "/safe/directory", // Restrict working directory
+      "env": {
+        "PATH": "/usr/bin:/bin", // Limit PATH
+        "PYTHONPATH": "/safe/python/libs"
+      },
+      "timeoutMs": 10000 // Prevent hanging processes
+    }
+  }
+}
+```
+
+### Input Validation
+
+```typescript
+// Validate inputs before passing to Python
+function validateInput(value: unknown): boolean {
+  // Add your validation logic
+  return typeof value === 'number' && isFinite(value);
+}
+
+async function safeSqrt(value: number) {
+  if (!validateInput(value) || value < 0) {
+    throw new Error('Invalid input for sqrt');
+  }
+  return await math.sqrt(value);
+}
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**"Python not found"**:
+
+```bash
+# Check Python installation
+which python3
+python3 --version
+
+# Update configuration
+{
+  "runtime": {
+    "node": {
+      "pythonPath": "/usr/local/bin/python3"
+    }
+  }
+}
+```
+
+**"Module not found"**:
+
+```bash
+# Check module installation
+python3 -c "import numpy; print(numpy.__version__)"
+
+# Check PYTHONPATH
+python3 -c "import sys; print(sys.path)"
+```
+
+**"Permission denied"**:
+
+```bash
+# Check executable permissions
+ls -la /usr/local/bin/python3
+
+# Fix permissions if needed
+chmod +x /usr/local/bin/python3
+```
+
+**"Process timeout"**:
+
+```json
+{
+  "runtime": {
+    "node": {
+      "timeoutMs": 60000, // Increase timeout
+      "env": {
+        "OMP_NUM_THREADS": "1" // Reduce parallelism
+      }
+    }
+  }
+}
+```
+
+### Debug Mode
+
+```bash
+# Enable debug logging
+export TYWRAP_DEBUG=1
+export TYWRAP_VERBOSE=1
+
+# Run with debug output
+node --trace-warnings your-app.js
+```
+
+## Advanced Usage
+
+### Custom Bridge Script
+
+Create your own Python bridge for specialized needs:
+
+```python
+# custom_bridge.py
+import sys
+import json
+import traceback
+
+def handle_request(request):
+    try:
+        # Your custom handling logic
+        result = process_request(request)
+        return {'result': result}
+    except Exception as e:
+        return {
+            'error': {
+                'type': type(e).__name__,
+                'message': str(e),
+                'traceback': traceback.format_exc()
+            }
+        }
+
+if __name__ == '__main__':
+    # Bridge implementation
+    pass
+```
+
+```json
+{
+  "runtime": {
+    "node": {
+      "scriptPath": "./custom_bridge.py"
+    }
+  }
+}
+```
+
+### Process Pooling
+
+```typescript
+import { NodeBridge } from 'tywrap/node';
+
+// Create multiple bridges for load balancing
+const bridges = Array.from(
+  { length: 4 },
+  () => new NodeBridge({ pythonPath: 'python3' })
+);
+
+let currentBridge = 0;
+function getNextBridge() {
+  const bridge = bridges[currentBridge];
+  currentBridge = (currentBridge + 1) % bridges.length;
+  return bridge;
+}
+```
+
+## Next Steps
+
+- [Configuration Guide](/guide/configuration) - Complete configuration reference
+- [Examples](/examples/) - Usage examples and patterns
+- [Troubleshooting](/troubleshooting/) - Common issues and solutions
+- [API Reference](/reference/api/) - Complete API documentation
+
+---
+
+<!-- Source: docs/guide/runtimes/bun.md -->
+# Bun Runtime Guide
+
+tywrap works with [Bun](https://bun.sh/) 1.1+ using the same `NodeBridge` as Node.js. No separate bridge is needed.
+
+## Installation
+
+```bash
+bun add tywrap
+pip install tywrap-ir
+```
+
+## Basic Setup
+
+```typescript
+import { NodeBridge } from 'tywrap/node';
+import { setRuntimeBridge } from 'tywrap/runtime';
+
+setRuntimeBridge(new NodeBridge({
+  pythonPath: 'python3',
+  virtualEnv: '.venv',
+  timeoutMs: 30000,
+}));
+```
+
+> **Note:** Both `'tywrap/node'` and `'tywrap'` work on Bun. Use `'tywrap/node'` for smaller bundles via tree-shaking.
+
+## Configuration Options
+
+`NodeBridge` accepts the same options under Bun as under Node.js. See the [Node.js guide](./node) for the full option reference.
+
+Key options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `pythonPath` | auto-detect | Path to `python3` executable |
+| `virtualEnv` | — | Path to virtual environment directory |
+| `timeoutMs` | `30000` | Request timeout in milliseconds |
+| `inheritProcessEnv` | `false` | Set `true` to pass full `process.env` to subprocess |
+
+## bunfig.toml
+
+tywrap ships with a `bunfig.toml` for build and run settings:
+
+```toml
+[build]
+target = "bun"
+format = "esm"
+splitting = true
+sourcemap = "external"
+external = ["pyodide"]
+
+[dev]
+hot = true
+```
+
+## Running Bun-Specific Tests
+
+```bash
+npm run test:bun
+```
+
+Or directly:
+
+```bash
+LC_ALL=C LANG=C bun run vitest --run test/runtime_bun.test.ts
+```
+
+## Virtual Environments
+
+```typescript
+setRuntimeBridge(new NodeBridge({
+  pythonPath: '.venv/bin/python',
+  virtualEnv: '.venv',
+}));
+```
+
+## Environment Variables
+
+The same `TYWRAP_*` env vars work under Bun. See the [environment variables reference](/reference/env-vars).
+
+## Troubleshooting
+
+**`python3: command not found`** — Set `pythonPath` explicitly or ensure Python is on `PATH`.
+
+**Subprocess times out** — Increase `timeoutMs`. Verify `pip install tywrap-ir` ran in the correct environment.
+
+See the [Node.js troubleshooting guide](./node) for additional patterns — all apply equally to Bun.
+
+---
+
+<!-- Source: docs/guide/runtimes/deno.md -->
+# Deno Runtime Guide
+
+tywrap works with [Deno](https://deno.land/) 1.46+ using the same `NodeBridge` as Node.js. Deno requires the `npm:` prefix for npm imports.
+
+## ⚠️ Deno Deploy Limitation
+
+**Deno Deploy does NOT support subprocess execution.** Because `NodeBridge` spawns a Python subprocess, it cannot run in Deno Deploy.
+
+**Alternatives for Deno Deploy:**
+- Use [`PyodideBridge`](/guide/runtimes/browser) — runs Python in-browser via WebAssembly (no subprocess)
+- Use [`HttpBridge`](/guide/runtimes/http) — connects to a remote Python server over HTTP
+
+## Installation
+
+```bash
+deno add npm:tywrap
+pip install tywrap-ir
+```
+
+## Basic Setup
+
+```typescript
+import { NodeBridge } from 'npm:tywrap';
+import { setRuntimeBridge } from 'npm:tywrap/runtime';
+
+setRuntimeBridge(new NodeBridge({
+  pythonPath: 'python3',
+  timeoutMs: 30000,
+}));
+```
+
+## Required Permissions
+
+Deno requires explicit permission flags for subprocess execution:
+
+```bash
+deno run \
+  --allow-run=python3 \
+  --allow-read \
+  --allow-env \
+  your-script.ts
+```
+
+| Flag | Reason |
+|------|--------|
+| `--allow-run=python3` | Spawn the Python subprocess |
+| `--allow-read` | Read Python scripts and config files |
+| `--allow-env` | Read `TYWRAP_*` and `PATH` environment variables |
+
+## Type Checking
+
+```bash
+deno check src/index.ts
+```
+
+## Configuration Options
+
+See the [Node.js guide](./node) for the full `NodeBridgeOptions` reference — all options work identically in Deno.
+
+## When to Use Each Bridge in Deno
+
+| Scenario | Bridge | Notes |
+|----------|--------|-------|
+| Local Deno script | `NodeBridge` | Needs `--allow-run` |
+| Deno Deploy | `PyodideBridge` | WebAssembly, no subprocess |
+| Deno Deploy + heavy Python libs | `HttpBridge` | Python runs on a separate server |
+
+## Environment Variables
+
+The same `TYWRAP_*` env vars work under Deno. See the [environment variables reference](/reference/env-vars).
+
+## Troubleshooting
+
+**`PermissionDenied: Requires run access to "python3"`** — Add `--allow-run=python3` to your `deno run` command.
+
+**`NotSupported: Subprocess access is not allowed`** — You are running in Deno Deploy. Switch to [`PyodideBridge`](/guide/runtimes/browser) or [`HttpBridge`](/guide/runtimes/http).
+
+See the [Node.js troubleshooting guide](./node) for additional patterns.
+
+---
+
+<!-- Source: docs/guide/runtimes/browser.md -->
+# Browser Runtime Guide
+
+Run Python in the browser using Pyodide WebAssembly.
+
+## Overview
+
+- WebAssembly Python in the browser
+- No server required for execution
+- Pre-built packages via Pyodide
+- Works well for notebooks, demos, and client-side analysis
+
+## Quick Start
+
+### Install
+```bash
+npm install tywrap pyodide
+```
+
+### Configure
+```json
+{
+  "pythonModules": {
+    "numpy": { "runtime": "pyodide" },
+    "matplotlib": { "runtime": "pyodide" }
+  },
+  "runtime": {
+    "pyodide": {
+      "indexURL": "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/",
+      "packages": ["numpy", "matplotlib", "scipy"]
+    }
+  }
+}
+```
+
+### Use
+```ts
+import { PyodideBridge } from 'tywrap/pyodide';
+import { setRuntimeBridge } from 'tywrap/runtime';
+import { array } from './generated/numpy.generated.js';
+
+const bridge = new PyodideBridge({
+  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
+  packages: ['numpy']
+});
+
+setRuntimeBridge(bridge);
+
+const arr = await array([1, 2, 3]);
+console.log(arr);
+```
+
+## Configuration Options
+
+```ts
+interface PyodideBridgeOptions {
+  indexURL?: string;
+  packages?: string[];
+}
+```
+
+The `packages` array is loaded during initialization. For additional package
+loading, rely on Pyodide directly.
+
+## Data Transport
+
+Arrow envelopes are supported in the browser if you register an Arrow decoder (Node auto-registers when `apache-arrow` is installed):
+
+```ts
+import { registerArrowDecoder } from 'tywrap';
+
+registerArrowDecoder(bytes => bytes);
+```
+
+## Build Integration
+
+Run `tywrap generate` during your build and load Pyodide at runtime (CDN or self-hosted).
+
+---
+
+<!-- Source: docs/guide/runtimes/http.md -->
+# HTTP Bridge Guide
+
+`HttpBridge` connects to a Python server over HTTP. Use it when Python must run separately — including Deno Deploy, serverless environments, or distributed architectures.
+
+## When to Use HttpBridge
+
+- You cannot spawn subprocesses (Deno Deploy, Cloudflare Workers, serverless)
+- Python must run on a dedicated server for resource reasons
+- You want to share one Python server across multiple TypeScript clients
+
+## Installation
+
+```bash
+npm install tywrap
+pip install tywrap-ir
+```
+
+## TypeScript Setup
+
+```typescript
+import { HttpBridge } from 'tywrap/http';
+import { setRuntimeBridge } from 'tywrap/runtime';
+
+setRuntimeBridge(new HttpBridge({
+  baseURL: 'http://localhost:8080',
+  timeoutMs: 30000,
+  headers: {
+    'Authorization': 'Bearer your-token',
+  },
+}));
+```
+
+## Options
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `baseURL` | Yes | — | Base URL of the Python bridge server |
+| `headers` | No | `{}` | Additional HTTP headers (auth, CORS, etc.) |
+| `timeoutMs` | No | `30000` | Request timeout in milliseconds |
+| `codec` | No | Arrow | Codec options |
+
+## Running the Python Server
+
+`HttpBridge` expects a server that accepts POST requests with JSON/Arrow payloads. You must implement or deploy a compatible server endpoint. The protocol is stateless — each call is an independent POST request.
+
+> **Note:** A built-in server command is not yet available. See the [API reference](/reference/api/) for the expected request/response format.
+
+## Apache Arrow
+
+Arrow binary transport works over HTTP. Register a decoder to enable it:
+
+```typescript
+import { registerArrowDecoder } from 'tywrap';
+import { tableFromIPC } from 'apache-arrow';
+
+registerArrowDecoder(bytes => tableFromIPC(bytes));
+```
+
+## Environment Variables
+
+| Var | Purpose |
+|-----|---------|
+| `TYWRAP_CODEC_FALLBACK=json` | Disable Arrow, use JSON only |
+| `TYWRAP_CODEC_MAX_BYTES` | Cap max response size |
+
+See the [environment variables reference](/reference/env-vars).
+
+## Security
+
+- Always use HTTPS in production
+- Set `Authorization` headers for server access control
+- Consider rate-limiting the Python server endpoint
+
+---
+
+<!-- Source: docs/reference/cli.md -->
+# CLI Reference
+
+The `tywrap` CLI has two commands: `init` and `generate`.
+
+## Installation
+
+```bash
+npm install tywrap
+```
+
+Or run it with `npx`:
+
+```bash
+npx tywrap <command>
+```
+
+## `tywrap init`
+
+Creates a starter config file in the current directory.
+
+- The default file is `tywrap.config.ts`.
+- If you do not pass `--modules`, the starter config wraps `math`.
+- If a `package.json` is present, tywrap adds `tywrap:generate` and
+  `tywrap:check` scripts unless you pass `--no-scripts`.
+
+```bash
+npx tywrap init
+npx tywrap init --format json --modules math,numpy
+```
+
+| Flag                                  | Description                                            |
+| ------------------------------------- | ------------------------------------------------------ |
+| `--config`, `-c`                      | Path for the new config file                           |
+| `--format ts\|json`                   | Output format for the starter config                   |
+| `--modules`                           | Comma-separated Python modules to seed into the config |
+| `--runtime node\|pyodide\|http\|auto` | Runtime to use for seeded module entries               |
+| `--output-dir`                        | Generated wrapper directory in the starter config      |
+| `--force`                             | Overwrite an existing config file                      |
+| `--scripts`, `--no-scripts`           | Add or skip recommended `package.json` scripts         |
+
+## `tywrap generate`
+
+Loads config, resolves Python IR, and writes generated wrapper files.
+
+When `--config` is omitted, the CLI searches in this order:
+
+1. `tywrap.config.ts`
+2. `tywrap.config.mts`
+3. `tywrap.config.js`
+4. `tywrap.config.mjs`
+5. `tywrap.config.cjs`
+6. `tywrap.config.json`
+
+If no config file is found, you can still generate wrappers by passing
+`--modules`.
+
+```bash
+npx tywrap generate
+npx tywrap generate --config ./tywrap.config.json
+npx tywrap generate --modules math,statistics --runtime node
+```
+
+| Flag                                  | Description                                                         |
+| ------------------------------------- | ------------------------------------------------------------------- |
+| `--config`, `-c`                      | Config file path                                                    |
+| `--modules`                           | Comma-separated Python modules to wrap                              |
+| `--runtime node\|pyodide\|http\|auto` | Runtime to use when `--modules` is provided                         |
+| `--python`                            | Python executable path override                                     |
+| `--output-dir`                        | Override `output.dir`                                               |
+| `--format esm\|cjs\|both`             | Override `output.format`                                            |
+| `--declaration`                       | Override `output.declaration`                                       |
+| `--source-map`                        | Override `output.sourceMap`                                         |
+| `--cache`, `--no-cache`               | Enable or disable on-disk IR caching                                |
+| `--debug`                             | Enable debug logging                                                |
+| `--verbose`, `-v`                     | Alias for `--debug`                                                 |
+| `--fail-on-warn`                      | Exit non-zero when generation emits warnings                        |
+| `--check`                             | Compare generated output with what is on disk without writing files |
+
+## `tywrap generate --check`
+
+`--check` is for CI and upgrade verification. It does not write files.
+
+```bash
+npx tywrap generate --check
+```
+
+Exit codes:
+
+- `0`: generated files are up to date
+- `2`: generation succeeded but warnings were present and `--fail-on-warn` was
+  set
+- `3`: generated files are out of date
+- `1`: general failure, such as missing config, import failure, or write error
+
+Typical CI step:
+
+```yaml
+- name: Check generated wrappers
+  run: npx tywrap generate --check
+```
+
+## Starter Config Example
+
+```ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  pythonModules: {
+    math: { runtime: 'node', typeHints: 'strict' },
+    numpy: { runtime: 'node', typeHints: 'strict', alias: 'np' },
+  },
+  output: {
+    dir: './generated',
+    format: 'esm',
+    declaration: false,
+    sourceMap: false,
+  },
+  runtime: {
+    node: {
+      pythonPath: 'python3',
+    },
+  },
+  types: {
+    presets: ['stdlib'],
+  },
+});
+```
+
+See the [Configuration guide](/guide/configuration) for the full config surface.
+
+---
+
+<!-- Source: docs/reference/env-vars.md -->
+# Environment Variables
+
+This page lists the implemented `TYWRAP_*` environment variables in the repo
+today.
+
+## Bridge and Codec
+
+These affect the Python bridge or decoded runtime behavior.
+
+| Variable                   | Scope         | Default | Purpose                                                                        |
+| -------------------------- | ------------- | ------- | ------------------------------------------------------------------------------ |
+| `TYWRAP_CODEC_FALLBACK`    | Python bridge | unset   | Set to `json` to allow JSON fallback when Arrow encoding is unavailable        |
+| `TYWRAP_CODEC_MAX_BYTES`   | Python bridge | unset   | Reject response payloads larger than this byte count                           |
+| `TYWRAP_REQUEST_MAX_BYTES` | Python bridge | unset   | Reject request payloads larger than this byte count                            |
+| `TYWRAP_TORCH_ALLOW_COPY`  | Python bridge | off     | Allow GPU-to-CPU or contiguous-copy conversion when serializing `torch.Tensor` |
+
+## Logging
+
+These control the structured logger in the JavaScript runtime.
+
+| Variable           | Default | Purpose                                           |
+| ------------------ | ------- | ------------------------------------------------- |
+| `TYWRAP_LOG_LEVEL` | `WARN`  | One of `DEBUG`, `INFO`, `WARN`, `ERROR`, `SILENT` |
+| `TYWRAP_LOG_JSON`  | `false` | Set to `1` or `true` for JSON log output          |
+
+## Repo Test and Benchmark Knobs
+
+These are used by the tywrap test suite and maintenance workflows. They are not
+required for normal library use.
+
+| Variable                             | Purpose                                          |
+| ------------------------------------ | ------------------------------------------------ |
+| `TYWRAP_CODEC_PYTHON`                | Python executable for codec-heavy tests          |
+| `TYWRAP_PERF_BUDGETS`                | Enable performance budget suites                 |
+| `TYWRAP_PERF_TIME_BUDGET_MS`         | Time budget for generator performance tests      |
+| `TYWRAP_PERF_MEMORY_BUDGET_MB`       | Memory budget for generator performance tests    |
+| `TYWRAP_CODEC_PERF_ITERATIONS`       | Iteration count for codec performance tests      |
+| `TYWRAP_CODEC_PERF_TIME_BUDGET_MS`   | Time budget for codec performance tests          |
+| `TYWRAP_CODEC_PERF_MEMORY_BUDGET_MB` | Memory budget for codec performance tests        |
+| `TYWRAP_ADVERSARIAL`                 | Enable adversarial bridge tests                  |
+| `TYWRAP_ADVERSARIAL_PYTHON`          | Python executable override for adversarial tests |
+
+## Common Examples
+
+Use JSON fallback:
+
+```bash
+export TYWRAP_CODEC_FALLBACK=json
+```
+
+Cap response and request payload size:
+
+```bash
+export TYWRAP_CODEC_MAX_BYTES=10485760
+export TYWRAP_REQUEST_MAX_BYTES=1048576
+```
+
+Enable JSON logs:
+
+```bash
+export TYWRAP_LOG_LEVEL=INFO
+export TYWRAP_LOG_JSON=1
+```
+
+## Not Configured Through Env Vars
+
+Python executable and virtual environment selection are configured through code
+or config files today:
+
+```ts
+new NodeBridge({ pythonPath: '/usr/bin/python3', virtualEnv: './venv' });
+```
+
+```ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  runtime: {
+    node: {
+      pythonPath: 'python3',
+      virtualEnv: './venv',
+      timeout: 30000,
+    },
+  },
+});
+```
+
+---
+
+<!-- Source: docs/reference/type-mapping.md -->
+# Python to TypeScript Type Mapping
+
+This page describes the TypeScript shapes tywrap generates and returns today.
+
+## Core Annotation Mapping
+
+### Primitives
+
+| Python                    | TypeScript |
+| ------------------------- | ---------- |
+| `int`                     | `number`   |
+| `float`                   | `number`   |
+| `str`                     | `string`   |
+| `bool`                    | `boolean`  |
+| `bytes`                   | `string`   |
+| `None` in value position  | `null`     |
+| `None` in return position | `void`     |
+
+### Collections
+
+| Python                     | TypeScript        | Notes                                        |
+| -------------------------- | ----------------- | -------------------------------------------- |
+| `list[T]`, `List[T]`       | `Array<T>`        |                                              |
+| `Sequence[T]`              | `Array<T>`        | Normalized to a list-like shape              |
+| `tuple[T1, T2]`            | `[T1, T2]`        | Exact tuple shape                            |
+| `Tuple[T, ...]`            | `Array<T>`        | Variable-length tuple                        |
+| `tuple[()]`                | `[undefined]`     | Empty tuple representation                   |
+| `set[T]`, `frozenset[T]`   | `Set<T>`          |                                              |
+| `dict[K, V]`, `Dict[K, V]` | `{ [key: K]: V }` | Index keys fall back to `string` when needed |
+| `Mapping[K, V]`            | `{ [key: K]: V }` | Normalized to a dict-like shape              |
+
+### Unions and Literals
+
+| Python                 | TypeScript      |
+| ---------------------- | --------------- |
+| `Union[A, B]`          | `A \| B`        |
+| `A \| B`               | `A \| B`        |
+| `Optional[T]`          | `T \| null`     |
+| `T \| None`            | `T \| null`     |
+| `Literal["a", "b"]`    | `"a" \| "b"`    |
+| `Literal[1, 2]`        | `1 \| 2`        |
+| `Literal[True, False]` | `true \| false` |
+
+### Callables and Wrappers
+
+| Python                          | TypeScript                  | Notes                                       |
+| ------------------------------- | --------------------------- | ------------------------------------------- |
+| `Callable[[A, B], R]`           | `(arg0: A, arg1: B) => R`   |                                             |
+| `Callable[..., R]`              | `(...args: unknown[]) => R` |                                             |
+| `Annotated[T, ...]`             | `T`                         | Metadata is stripped for the generated type |
+| `ClassVar[T]`                   | `T`                         |                                             |
+| `Final[T]`                      | `T`                         |                                             |
+| `Required[T]`, `NotRequired[T]` | `T`                         |                                             |
+
+### Special Names
+
+| Python                    | TypeScript         |
+| ------------------------- | ------------------ |
+| `Any`                     | `unknown`          |
+| `Never`, `NoReturn`       | `never`            |
+| `LiteralString`, `AnyStr` | `string`           |
+| `object`                  | `object`           |
+| `Awaitable`               | `Promise<unknown>` |
+| `Coroutine`               | `Promise<unknown>` |
+| `TypeVar('T')`            | `unknown`          |
+| `ParamSpec('P')`          | `unknown`          |
+| `TypeVarTuple('Ts')`      | `unknown`          |
+| `Unpack[Ts]`              | `unknown`          |
+
+## Preset Mappings
+
+Enable presets with `types.presets` in your config.
+
+### `stdlib`
+
+| Python                                                | TypeScript |
+| ----------------------------------------------------- | ---------- |
+| `datetime.datetime`, `datetime.date`, `datetime.time` | `string`   |
+| `datetime.timedelta`                                  | `number`   |
+| `decimal.Decimal`                                     | `string`   |
+| `uuid.UUID`                                           | `string`   |
+| `pathlib.Path` and related path types                 | `string`   |
+
+### `pandas`
+
+These are the decoded JavaScript shapes that tywrap exposes to TypeScript.
+
+| Python             | TypeScript                                                  |
+| ------------------ | ----------------------------------------------------------- |
+| `pandas.DataFrame` | `Record<string, unknown> \| Array<Record<string, unknown>>` |
+| `pandas.Series`    | `unknown[] \| Record<string, unknown>`                      |
+
+### `pydantic`
+
+| Python               | TypeScript                | Notes                                                                              |
+| -------------------- | ------------------------- | ---------------------------------------------------------------------------------- |
+| `pydantic.BaseModel` | `Record<string, unknown>` | Runtime serialization uses `model_dump(by_alias=True, mode='json')` when available |
+
+### `scipy`
+
+```ts
+type SparseMatrix =
+  | {
+      format: 'csr' | 'csc';
+      shape: number[];
+      data: unknown[];
+      indices: number[];
+      indptr: number[];
+      dtype?: string;
+    }
+  | {
+      format: 'coo';
+      shape: number[];
+      data: unknown[];
+      row: number[];
+      col: number[];
+      dtype?: string;
+    };
+```
+
+### `torch`
+
+```ts
+interface TorchTensor {
+  data: unknown;
+  shape: number[];
+  dtype?: string;
+  device?: string;
+}
+```
+
+### `sklearn`
+
+```ts
+interface SklearnEstimator {
+  className: string;
+  module: string;
+  version?: string;
+  params: Record<string, unknown>;
+}
+```
+
+## Limits and Fallbacks
+
+- tywrap does not preserve Python numeric distinctions beyond `number`.
+- Complex user-defined generics that are not explicitly normalized stay as
+  custom TypeScript names.
+- Python typing placeholders such as `TypeVar`, `ParamSpec`, `TypeVarTuple`,
+  and `Unpack` are lowered to `unknown`-based shapes because generated wrappers
+  do not currently emit matching TypeScript generic parameters.
+- `Annotated[...]` metadata is not reflected in the generated type.
+- Runtime serialization can still shape values more narrowly than the static
+  annotation alone. `torch.Tensor` and `sklearn` values are examples of this.
+
+## Example
+
+```python
+from typing import Literal, Optional, Sequence
+
+def summarize(values: Sequence[int], mode: Literal["min", "max"]) -> Optional[int]:
+    ...
+```
+
+Generates a TypeScript signature shaped like:
+
+```ts
+export async function summarize(
+  values: Array<number>,
+  mode: 'min' | 'max'
+): Promise<number | null>;
+```
+
+---
+
+<!-- Source: docs/reference/api/index.md -->
+# API Reference
+
+This page covers the public programmatic API exported by `tywrap`.
+
+## Core API
+
+### `defineConfig(config)`
+
+Type-safe helper for `tywrap.config.ts`.
+
+```ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  pythonModules: {
+    math: { runtime: 'node', typeHints: 'strict' },
+  },
+});
+```
+
+### `resolveConfig(options?)`
+
+Loads a config file, merges defaults, and applies overrides.
+
+```ts
+import { resolveConfig } from 'tywrap';
+
+const config = await resolveConfig({
+  configFile: './tywrap.config.ts',
+  overrides: { debug: true },
+});
+```
+
+### `generate(options, runOptions?)`
+
+Generates wrapper files from config.
+
+```ts
+import { generate } from 'tywrap';
+
+await generate({
+  pythonModules: {
+    math: { runtime: 'node', typeHints: 'strict' },
+  },
+  output: {
+    dir: './generated',
+    format: 'esm',
+    declaration: false,
+    sourceMap: false,
+  },
+});
+```
+
+`runOptions.check` switches generation into compare-only mode, the same behavior
+used by `tywrap generate --check`.
+
+### `tywrap(options?)`
+
+Creates the lower-level mapper and generator objects for advanced use.
+
+```ts
+import { tywrap } from 'tywrap';
+
+const instance = await tywrap({
+  types: { presets: ['stdlib'] },
+});
+```
+
+## Runtime Registry
+
+Generated wrappers call into a shared runtime bridge.
+
+```ts
+import { setRuntimeBridge, clearRuntimeBridge } from 'tywrap/runtime';
+import { NodeBridge } from 'tywrap/node';
+
+const bridge = new NodeBridge({ pythonPath: 'python3' });
+setRuntimeBridge(bridge);
+
+// later
+clearRuntimeBridge();
+```
+
+## Runtime Bridges
+
+tywrap does not create bridges from config for you. Your application constructs
+one explicitly.
+
+### `NodeBridge`
+
+`NodeBridge` runs Python in a subprocess and is the default bridge for Node.js,
+Bun, and local Deno.
+
+```ts
+import { NodeBridge } from 'tywrap/node';
+
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  virtualEnv: './venv',
+  timeoutMs: 30000,
+});
+
+const result = await bridge.call('math', 'sqrt', [16]);
+const info = await bridge.getBridgeInfo({ refresh: true });
+```
+
+| Option                    | Default         | Notes                                           |
+| ------------------------- | --------------- | ----------------------------------------------- |
+| `pythonPath`              | auto-detect     | Python executable                               |
+| `scriptPath`              | built-in bridge | Custom `python_bridge.py`                       |
+| `virtualEnv`              | —               | Virtual environment root                        |
+| `cwd`                     | `process.cwd()` | Subprocess working directory                    |
+| `timeoutMs`               | `30000`         | Per-call timeout                                |
+| `queueTimeoutMs`          | `30000`         | Wait time when the worker pool is saturated     |
+| `minProcesses`            | `1`             | Minimum worker count                            |
+| `maxProcesses`            | `1`             | Maximum worker count                            |
+| `maxConcurrentPerProcess` | `10`            | Concurrent requests per worker                  |
+| `inheritProcessEnv`       | `false`         | Pass full parent env through                    |
+| `enableCache`             | `false`         | Cache pure function results                     |
+| `env`                     | `{}`            | Extra subprocess env vars                       |
+| `codec`                   | —               | `CodecOptions` for validation and byte handling |
+| `warmupCommands`          | `[]`            | Per-worker startup calls                        |
+
+Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
+`maxRequestsPerProcess`, `enableJsonFallback`, and `maxLineLength`.
+
+### `PyodideBridge`
+
+`PyodideBridge` runs Python in the browser through WebAssembly.
+
+```ts
+import { PyodideBridge } from 'tywrap/pyodide';
+
+const bridge = new PyodideBridge({
+  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
+  packages: ['numpy'],
+  timeoutMs: 30000,
+});
+```
+
+| Option      | Default     | Notes                        |
+| ----------- | ----------- | ---------------------------- |
+| `indexURL`  | Pyodide CDN | Package index URL            |
+| `packages`  | `[]`        | Packages to load during init |
+| `timeoutMs` | `30000`     | Default operation timeout    |
+| `codec`     | —           | `CodecOptions`               |
+
+### `HttpBridge`
+
+`HttpBridge` sends protocol messages over HTTP POST to a compatible server.
+
+```ts
+import { HttpBridge } from 'tywrap/http';
+
+const bridge = new HttpBridge({
+  baseURL: 'https://api.example.com/python',
+  timeoutMs: 10000,
+  headers: { Authorization: 'Bearer token' },
+});
+```
+
+| Option      | Default  | Notes                   |
+| ----------- | -------- | ----------------------- |
+| `baseURL`   | required | Server endpoint URL     |
+| `headers`   | `{}`     | Extra request headers   |
+| `timeoutMs` | `30000`  | Default request timeout |
+| `codec`     | —        | `CodecOptions`          |
+
+## HTTP Server Contract
+
+`HttpBridge` sends the same JSON protocol used by the other transports. The
+request body is a serialized `ProtocolMessage`, and the server must reply with a
+serialized `ProtocolResponse`.
+
+Request shape:
+
+```json
+{
+  "id": 1,
+  "protocol": "tywrap/1",
+  "method": "call",
+  "params": {
+    "module": "math",
+    "functionName": "sqrt",
+    "args": [16],
+    "kwargs": {}
+  }
+}
+```
+
+Success response:
+
+```json
+{
+  "id": 1,
+  "protocol": "tywrap/1",
+  "result": 4
+}
+```
+
+Error response:
+
+```json
+{
+  "id": 1,
+  "protocol": "tywrap/1",
+  "error": {
+    "type": "ValueError",
+    "message": "math domain error",
+    "traceback": "..."
+  }
+}
+```
+
+## Codec Utilities
+
+```ts
+import {
+  autoRegisterArrowDecoder,
+  registerArrowDecoder,
+  clearArrowDecoder,
+  decodeValue,
+  decodeValueAsync,
+} from 'tywrap';
+```
+
+- `autoRegisterArrowDecoder()` tries to load `apache-arrow` and register a
+  decoder.
+- `registerArrowDecoder(fn)` installs a custom Arrow decoder.
+- `clearArrowDecoder()` removes the current Arrow decoder.
+- `decodeValue()` and `decodeValueAsync()` decode runtime envelopes such as
+  ndarray, sparse matrix, torch tensor, and sklearn estimator payloads.
+
+## Error Types
+
+```ts
+import {
+  BridgeError,
+  BridgeCodecError,
+  BridgeProtocolError,
+  BridgeTimeoutError,
+  BridgeDisposedError,
+  BridgeExecutionError,
+} from 'tywrap';
+```
+
+## Key Types
+
+```ts
+interface TywrapOptions {
+  pythonModules: Record<string, PythonModuleConfig>;
+  pythonImportPath?: string[];
+  output: OutputConfig;
+  runtime: RuntimeConfig;
+  performance: PerformanceConfig;
+  development: DevelopmentConfig;
+  types?: TypeMappingConfig;
+  debug?: boolean;
+}
+```
+
+For the full exported type surface, see `src/index.ts`.
+
+---
+
+<!-- Source: docs/examples/index.md -->
+# Examples
+
+Copy-pasteable examples for using tywrap with the supported runtimes.
+
+## Generate Wrappers
+
+Create `tywrap.config.ts`:
+
+```ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  pythonModules: {
+    math: { runtime: 'node', typeHints: 'strict' },
+    collections: { runtime: 'node', typeHints: 'strict' },
+  },
+  output: {
+    dir: './generated',
+    format: 'esm',
+    declaration: true,
+    sourceMap: true,
+  },
+});
+```
+
+Generate:
+
+```sh
+npx tywrap generate
+```
+
+## Node.js Runtime
+
+```ts
+import { NodeBridge } from 'tywrap/node';
+import { setRuntimeBridge } from 'tywrap/runtime';
+
+setRuntimeBridge(new NodeBridge({ pythonPath: 'python3' }));
+
+import { sqrt } from './generated/math.generated.js';
+console.log(await sqrt(16));
+```
+
+## Browser Runtime (Pyodide)
+
+```ts
+import { PyodideBridge } from 'tywrap/pyodide';
+import { setRuntimeBridge } from 'tywrap/runtime';
+
+setRuntimeBridge(
+  new PyodideBridge({
+    indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
+  })
+);
+
+import { sin, pi } from './generated/math.generated.js';
+console.log(await sin(pi / 4));
+```
+
+## Generated Classes
+
+Generated classes have an async `create(...)` constructor and an explicit `disposeHandle()`:
+
+```ts
+import { Counter } from './generated/collections.generated.js';
+
+const counter = await Counter.create([1, 2, 2]);
+console.log(await counter.mostCommon(1));
+await counter.disposeHandle();
+```
+
+## More Docs
+
+- [Getting started](/guide/getting-started)
+- [Configuration](/guide/configuration)
+- [Node runtime](/guide/runtimes/node)
+- [Browser runtime](/guide/runtimes/browser)
+- [Troubleshooting](/troubleshooting/)
+- [Type mapping](/reference/type-mapping)
+
+---
+
+<!-- Source: docs/troubleshooting/index.md -->
+# Troubleshooting Guide
+
+Common issues and solutions when using tywrap. This guide helps you diagnose and fix problems quickly.
+
+## Diagnostics
+
+### Health Check Script
+Create a `tywrap-health.js` file to quickly diagnose your setup:
+
+```javascript
+#!/usr/bin/env node
+
+import { execSync } from 'child_process';
+import { existsSync } from 'fs';
+
+console.log('tywrap Health Check\n');
+
+// Check Node.js version
+const nodeVersion = process.version;
+console.log(`Node.js: ${nodeVersion}`);
+
+// Check Python installation
+try {
+  const pythonVersion = execSync('python3 --version', { encoding: 'utf8' });
+  console.log(`Python: ${pythonVersion.trim()}`);
+} catch {
+  console.log('Python: Not found or not accessible');
+}
+
+// Check tywrap installation
+try {
+  const tywrapVersion = execSync('npx tywrap --version', { encoding: 'utf8' });
+  console.log(`tywrap: ${tywrapVersion.trim()}`);
+} catch {
+  console.log('tywrap: Not installed or not working');
+}
+
+// Check configuration
+const configCandidates = [
+  'tywrap.config.ts',
+  'tywrap.config.mts',
+  'tywrap.config.js',
+  'tywrap.config.mjs',
+  'tywrap.config.cjs',
+  'tywrap.config.json',
+];
+const configFile = configCandidates.find((name) => existsSync(name));
+console.log(
+  configFile ? `Configuration: Found ${configFile}` : 'Configuration: No config file found'
+);
+
+console.log('\nRun this script with: node tywrap-health.js');
+```
+
+```bash
+# Run health check
+node tywrap-health.js
+```
+
+## Common Error Categories
+
+### Installation Issues
+- [Module not found errors](#module-not-found)
+- [Python path issues](#python-path-issues)
+- [Permission problems](#permission-problems)
+
+### Configuration Issues  
+- [Invalid configuration](#invalid-configuration)
+- [Module resolution failures](#module-resolution)
+- [Type generation errors](#type-generation-errors)
+
+### Runtime Issues
+- [Process timeout errors](#process-timeouts)
+- [Memory issues](#memory-issues)
+- [Import errors](#import-errors)
+
+### Build Issues
+- [Generation failures](#generation-failures)
+- [TypeScript compilation errors](#typescript-errors)
+- [Build tool integration](#build-tool-issues)
+
+---
+
+## Installation Issues
+
+### Module Not Found
+**Error**: `Error: Cannot find module 'tywrap'`
+
+**Solutions**:
+```bash
+# Verify installation
+npm list tywrap
+
+# Reinstall if missing
+npm install tywrap
+
+# Clear cache if corrupted
+npm cache clean --force
+npm install tywrap
+
+# Check in different package manager
+yarn list tywrap
+pnpm list tywrap
+```
+
+### Python Path Issues
+**Error**: `Error: spawn python3 ENOENT` or `Python not found`
+
+**Solutions**:
+```bash
+# Check Python installation
+which python3
+python3 --version
+
+# Common Python locations
+/usr/bin/python3
+/usr/local/bin/python3
+/opt/homebrew/bin/python3
+~/.pyenv/shims/python3
+
+# Update configuration
+{
+  "runtime": {
+    "node": {
+      "pythonPath": "/usr/local/bin/python3"
+    }
+  }
+}
+
+# macOS with Homebrew
+brew install python3
+
+# Ubuntu/Debian
+sudo apt-get update && sudo apt-get install python3
+
+# Windows
+# Download from python.org or use Windows Store
+```
+
+### Permission Problems
+**Error**: `Error: spawn EACCES` or `Permission denied`
+
+**Solutions**:
+```bash
+# Check executable permissions
+ls -la $(which python3)
+
+# Fix permissions
+chmod +x /usr/local/bin/python3
+
+# Check directory permissions
+ls -la ~/.npm
+ls -la node_modules
+
+# Fix npm permissions (if needed)
+npm config set prefix ~/.npm-global
+export PATH=~/.npm-global/bin:$PATH
+```
+
+---
+
+## Configuration Issues
+
+### Invalid Configuration
+**Error**: `Invalid configuration` or schema validation errors
+
+**Solution**:
+```typescript
+// Use TypeScript config for validation
+// tywrap.config.ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  pythonModules: {
+    numpy: { 
+      runtime: 'node' as const,  // Correct type
+      typeHints: 'strict' as const
+    }
+  },
+  output: {
+    dir: './generated',
+    format: 'esm' as const
+  }
+});
+```
+
+```bash
+# Validate configuration
+npx tywrap validate-config
+```
+
+### Module Resolution
+**Error**: `ModuleNotFoundError: No module named 'xyz'`
+
+**Solutions**:
+```bash
+# Check Python module installation
+python3 -c "import sys; print(sys.path)"
+python3 -c "import numpy; print(numpy.__file__)"
+
+# Install missing module
+pip3 install numpy
+
+# Check virtual environment
+source venv/bin/activate
+pip list
+
+# Update configuration with correct path
+{
+  "runtime": {
+    "node": {
+      "pythonPath": "./venv/bin/python",
+      "virtualEnv": "./venv"
+    }
+  }
+}
+```
+
+### Type Generation Errors
+**Error**: Type analysis failures or incorrect types generated
+
+**Solutions**:
+```json
+// Relax type checking for problematic modules
+{
+  "pythonModules": {
+    "problematic_module": {
+      "typeHints": "loose",
+      "functions": ["specific_function"],  // Limit scope
+      "classes": []  // Skip classes if problematic
+    }
+  }
+}
+```
+
+```bash
+# Enable debug logging
+export TYWRAP_DEBUG=1
+npx tywrap generate
+```
+
+---
+
+## Runtime Issues
+
+### Process Timeouts
+**Error**: `Python call timed out` or hanging operations
+
+**Solutions**:
+```json
+{
+  "runtime": {
+    "node": {
+      "timeoutMs": 60000,  // Increase timeout
+      "env": {
+        "OMP_NUM_THREADS": "1",  // Reduce parallelism
+        "MKL_NUM_THREADS": "1"
+      }
+    }
+  }
+}
+```
+
+```typescript
+// Implement timeout handling
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]);
+}
+
+// Usage
+try {
+  const result = await withTimeout(math.complicated_calculation(), 10000);
+} catch (error) {
+  console.error('Operation timed out:', error);
+}
+```
+
+### Protocol Errors
+**Error**: `Protocol error from Python bridge`
+
+**Cause**: The Python process printed to stdout or returned malformed JSON.
+
+**Solutions**:
+- Remove `print()` statements or logging to stdout in Python code.
+- Ensure any debugging output goes to stderr.
+- Verify custom bridge scripts follow the JSON line protocol.
+
+### Memory Issues
+**Error**: Out of memory errors or process crashes
+
+**Solutions**:
+```json
+{
+  "runtime": {
+    "node": {
+      "env": {
+        "NODE_OPTIONS": "--max-old-space-size=4096"
+      }
+    }
+  }
+}
+```
+
+```bash
+# Monitor memory usage
+node --max-old-space-size=4096 your-app.js
+
+# Check system memory
+free -h  # Linux
+top      # General
+```
+
+### Import Errors
+**Error**: Import failures in generated TypeScript code
+
+**Solutions**:
+```typescript
+// Check generated code structure
+// generated/module.generated.ts should exist
+
+// Verify import paths
+import { function_name } from './generated/module.generated.js';
+//                                                        ^^^ Note .js extension
+
+// For TypeScript module resolution issues
+{
+  "compilerOptions": {
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
+  }
+}
+```
+
+---
+
+## Build Issues
+
+### Generation Failures
+**Error**: `Failed to generate wrappers` or empty output
+
+**Solutions**:
+```bash
+# Clean and regenerate
+rm -rf generated/
+rm -rf .tywrap/
+npx tywrap generate
+
+# Enable debug mode
+export TYWRAP_DEBUG=1
+export TYWRAP_VERBOSE=1
+npx tywrap generate
+
+# Check Python module structure
+python3 -c "
+import inspect
+import your_module
+print(dir(your_module))
+for name, obj in inspect.getmembers(your_module):
+    print(f'{name}: {type(obj)}')
+"
+```
+
+### TypeScript Errors
+**Error**: TypeScript compilation errors in generated code
+
+**Solutions**:
+```bash
+# Check TypeScript version compatibility
+npx tsc --version
+npm install typescript@latest
+
+# Update tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext", 
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": false,
+    "skipLibCheck": true
+  }
+}
+
+# Regenerate with correct output format
+{
+  "output": {
+    "format": "esm",
+    "declaration": true
+  }
+}
+```
+
+### Build Tool Issues
+**Error**: Vite, Webpack, or other bundler integration problems
+
+**Vite Solutions**:
+```typescript
+// vite.config.ts
+export default defineConfig({
+  optimizeDeps: {
+    exclude: ['tywrap']
+  },
+  build: {
+    commonjsOptions: {
+      include: [/tywrap/, /node_modules/]
+    }
+  }
+});
+```
+
+**Webpack Solutions**:
+```javascript
+// webpack.config.js
+module.exports = {
+  resolve: {
+    fallback: {
+      "child_process": false,
+      "fs": false,
+      "path": require.resolve("path-browserify")
+    }
+  }
+};
+```
+
+---
+
+## Platform-Specific Issues
+
+### macOS Issues
+```bash
+# Xcode Command Line Tools required
+xcode-select --install
+
+# Homebrew Python issues
+brew install python3
+brew link python3
+
+# Fix PATH issues
+echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc
+```
+
+### Windows Issues
+```powershell
+# Install Python from Microsoft Store or python.org
+# Add Python to PATH
+
+# PowerShell execution policy
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Use forward slashes in configuration
+{
+  "runtime": {
+    "node": {
+      "pythonPath": "C:/Python39/python.exe"
+    }
+  }
+}
+```
+
+### Linux Issues
+```bash
+# Install Python development headers
+sudo apt-get install python3-dev python3-pip
+
+# Fix library linking issues  
+sudo apt-get install build-essential
+
+# SELinux issues (if applicable)
+setsebool -P httpd_exec_mem 1
+```
+
+### Docker Issues
+```dockerfile
+# Dockerfile fixes
+FROM node:18-slim
+
+# Install Python
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python path
+ENV TYWRAP_PYTHON_PATH=/usr/bin/python3
+```
+
+---
+
+## Debug Mode and Logging
+
+### Enable Debug Mode
+```bash
+# Environment variables
+export TYWRAP_DEBUG=1
+export TYWRAP_VERBOSE=1
+export NODE_DEBUG=tywrap
+
+# Run with debug output
+npx tywrap generate 2>&1 | tee debug.log
+```
+
+### Custom Logging
+```typescript
+// Add logging to your application
+import { createLogger } from 'tywrap/utils';
+
+const logger = createLogger({
+  level: 'debug',
+  output: './logs/tywrap.log'
+});
+
+// Monitor bridge communication
+bridge.on('request', (req) => logger.debug('Request:', req));
+bridge.on('response', (res) => logger.debug('Response:', res));
+```
+
+---
+
+## Performance Debugging
+
+### Profile Generation Time
+```bash
+# Time the generation process
+time npx tywrap generate
+
+# Profile Node.js execution
+node --prof your-script.js
+node --prof-process isolate-*.log > profile.txt
+```
+
+### Monitor Runtime Performance
+```typescript
+// Monitor Python call performance
+const originalCall = bridge.call;
+bridge.call = async function(module, fn, args) {
+  const start = Date.now();
+  try {
+    const result = await originalCall.call(this, module, fn, args);
+    console.log(`${module}.${fn} took ${Date.now() - start}ms`);
+    return result;
+  } catch (error) {
+    console.error(`${module}.${fn} failed after ${Date.now() - start}ms`);
+    throw error;
+  }
+};
+```
+
+---
+
+## Getting Help
+
+### Information to Include
+When reporting issues, please include:
+
+```bash
+# System information
+node --version
+python3 --version
+npm list tywrap
+
+# Configuration
+cat tywrap.config.ts
+
+# Error logs
+npx tywrap generate 2>&1 | tee error.log
+
+# Environment
+env | grep -E "(TYWRAP|PYTHON|NODE)"
+```
+
+### Create Minimal Reproduction
+```bash
+# Create minimal test case
+mkdir tywrap-issue
+cd tywrap-issue
+npm init -y
+npm install tywrap
+
+# Create minimal config
+cat <<'EOF' > tywrap.config.ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  pythonModules: {
+    math: { runtime: 'node', typeHints: 'strict' }
+  },
+  output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false }
+});
+EOF
+
+# Test generation
+npx tywrap generate
+```
+
+### Community Resources
+- **GitHub Issues**: [Report bugs](https://github.com/bbopen/tywrap/issues)
+- **Discussions**: [Ask questions](https://github.com/bbopen/tywrap/discussions)
+- **Discord**: [Real-time help](https://discord.gg/tywrap)
+- **Stack Overflow**: Tag your questions with `tywrap`
+
+---
+
+## Advanced Debugging
+
+### Python Bridge Debug
+```python
+# Add to custom Python bridge
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
+import sys
+import traceback
+
+def debug_request(request):
+    print(f"DEBUG: Processing request: {request}", file=sys.stderr)
+    try:
+        # Process request
+        result = handle_request(request)
+        print(f"DEBUG: Request successful: {result}", file=sys.stderr)
+        return result
+    except Exception as e:
+        print(f"DEBUG: Request failed: {e}", file=sys.stderr)
+        print(f"DEBUG: Traceback: {traceback.format_exc()}", file=sys.stderr)
+        raise
+```
+
+### TypeScript Debug
+```typescript
+// Enable TypeScript compiler debugging
+{
+  "compilerOptions": {
+    "traceResolution": true,
+    "listFiles": true,
+    "extendedDiagnostics": true
+  }
+}
+
+// Run TypeScript compiler directly
+npx tsc --noEmit --traceResolution
+```
+
+This troubleshooting guide covers the most common issues. For runtime-specific detail, see:
+- [Node.js Runtime](/guide/runtimes/node)
+- [Browser Runtime (Pyodide)](/guide/runtimes/browser)
+- [Build Tool Issues](#build-tool-issues)

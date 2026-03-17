@@ -7,7 +7,7 @@
 
 import { tywrap } from './tywrap.js';
 
-export type { TywrapConfig } from './config/index.js';
+export type { TywrapConfig, ResolvedTywrapConfig } from './config/index.js';
 export { defineConfig, resolveConfig } from './config/index.js';
 // BoundedContext - unified abstraction for cross-boundary concerns
 export {
