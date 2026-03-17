@@ -123,7 +123,11 @@ describe('IR-only integration', () => {
       const checkResult = await generate(options as any, { check: true });
       expect((checkResult.outOfDate ?? []).includes(generatedTsPath as string)).toBe(true);
     } finally {
-      process.env.PYTHONPATH = originalPythonPath;
+      if (originalPythonPath === undefined) {
+        delete process.env.PYTHONPATH;
+      } else {
+        process.env.PYTHONPATH = originalPythonPath;
+      }
       process.chdir(originalCwd);
       await rm(tempDir, { recursive: true, force: true });
     }

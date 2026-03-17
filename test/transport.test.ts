@@ -659,6 +659,27 @@ describe('ProcessIO', () => {
       await expect(pending).rejects.toThrow(/Unexpected response id 999/);
     });
 
+    it('ignores late responses for requests that already timed out', async () => {
+      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+
+      const internals = transport as unknown as ProcessIOInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = {
+        stdin: {
+          write: (): boolean => true,
+        },
+      };
+
+      const messageId = 402;
+      const pending = transport.send(JSON.stringify(createValidMessage({ id: messageId })), 10);
+
+      await expect(pending).rejects.toThrow(BridgeTimeoutError);
+      expect(() =>
+        internals.handleResponseLine(JSON.stringify({ id: messageId, result: 'late result' }))
+      ).not.toThrow(BridgeProtocolError);
+    });
+
     it('includes stderr diagnostics when stdin write fails', async () => {
       const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
 
