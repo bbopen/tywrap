@@ -2,6 +2,7 @@ import type { PythonType } from '../types/index.js';
 
 export interface AnnotationParserOptions {
   onUnknownTypeName?: (name: string) => void;
+  knownTypeVarNames?: Iterable<string>;
 }
 
 export function parseAnnotationToPythonType(
@@ -9,6 +10,7 @@ export function parseAnnotationToPythonType(
   options: AnnotationParserOptions = {}
 ): PythonType {
   const onUnknownTypeName = options.onUnknownTypeName;
+  const knownTypeVarNames = new Set(options.knownTypeVarNames ?? []);
   const modulePrefixes = ['', 'typing.', 'typing_extensions.', 'collections.abc.'] as const;
 
   const unknownType = (): PythonType => ({ kind: 'custom', name: 'Any', module: 'typing' });
@@ -94,6 +96,11 @@ export function parseAnnotationToPythonType(
       .replace(/^~/, '')
       .replace(/^(typing\.|typing_extensions\.|collections\.abc\.)/, '')
       .trim();
+
+    if (knownTypeVarNames.has(n)) {
+      return { kind: 'typevar', name: n };
+    }
+
     if (n === 'int' || n === 'float' || n === 'str' || n === 'bool' || n === 'bytes') {
       return { kind: 'primitive', name: n };
     }
