@@ -79,6 +79,51 @@ describe('IR-only integration', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('generate() emits valid TypeScript for advanced typing fixtures', async () => {
+    const tempDir = await mkdtemp(join(process.cwd(), '.tmp-advanced-types-'));
+    try {
+      const outDir = join(tempDir, 'generated');
+      const res = await generate({
+        pythonModules: { advanced_types: { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: ['test/fixtures/python'],
+        output: { dir: outDir, format: 'esm', declaration: false, sourceMap: false },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+        development: { hotReload: false, sourceMap: false, validation: 'none' },
+      } as any);
+
+      expect(res.written.some(p => p.endsWith('advanced_types.generated.ts'))).toBe(true);
+
+      const generatedPath = join(outDir, 'advanced_types.generated.ts');
+      const tscPath = join(process.cwd(), 'node_modules', 'typescript', 'lib', 'tsc.js');
+      const compile = await processUtils.exec(
+        process.execPath,
+        [
+          tscPath,
+          '--noEmit',
+          '--pretty',
+          'false',
+          '--target',
+          'ES2022',
+          '--lib',
+          'ES2022,DOM,DOM.Iterable',
+          '--module',
+          'ESNext',
+          '--moduleResolution',
+          'bundler',
+          '--skipLibCheck',
+          generatedPath,
+        ],
+        { cwd: process.cwd(), timeoutMs: 30_000 }
+      );
+
+      expect(compile.code).toBe(0);
+      expect(compile.stderr).toBe('');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 describe('NodeBridge smoke', () => {

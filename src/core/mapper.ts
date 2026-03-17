@@ -20,7 +20,6 @@ import type {
   TSUnionType,
   TSFunctionType,
   TSGenericType,
-  TSCustomType,
   TSIndexSignature,
   TSLiteralType,
   TypePreset,
@@ -103,6 +102,17 @@ export class TypeMapper {
 
     // tuple[T1, T2, ...] -> [T1, T2, ...] (exact arity)
     if (type.name === 'tuple') {
+      if (
+        type.itemTypes.length === 2 &&
+        type.itemTypes[1]?.kind === 'custom' &&
+        (type.itemTypes[1] as { kind: 'custom'; name: string }).name === '...'
+      ) {
+        return {
+          kind: 'array',
+          elementType: this.mapPythonType(type.itemTypes[0] ?? { kind: 'primitive', name: 'None' }),
+        } satisfies TSArrayType;
+      }
+
       const elementTypes: TypescriptType[] =
         type.itemTypes.length > 0
           ? type.itemTypes.map(t => this.mapPythonType(t))
@@ -266,6 +276,13 @@ export class TypeMapper {
       return presetType;
     }
 
+    // The generator does not synthesize TS generic parameters from Python typing
+    // helpers, so unsupported placeholders must degrade to unknown instead of
+    // leaking undeclared identifiers like T, P, or Ts into emitted code.
+    if (type.module === 'typing' || type.module === 'typing_extensions') {
+      return { kind: 'primitive', name: 'unknown' };
+    }
+
     // Forward references and user types
     const normalized = this.normalizeCustomType(type);
     return { kind: 'custom', name: normalized.name, module: normalized.module };
@@ -311,13 +328,12 @@ export class TypeMapper {
     return { kind: 'literal', value: type.value };
   }
 
-  mapTypeVarType(type: PyTypeVarType, _context: MappingContext = 'value'): TSCustomType {
-    // TypeVar maps to a generic type parameter in TypeScript
-    // Bounds and constraints are not directly expressible in TypeScript type system
+  mapTypeVarType(_type: PyTypeVarType, _context: MappingContext = 'value'): TSPrimitiveType {
+    // Generated wrappers do not declare TypeScript generics that mirror Python
+    // TypeVar/ParamSpec scopes, so the sound fallback is unknown.
     return {
-      kind: 'custom',
-      name: type.name,
-      module: 'typing',
+      kind: 'primitive',
+      name: 'unknown',
     };
   }
 
@@ -446,6 +462,13 @@ export class TypeMapper {
           };
           return { kind: 'union', types: [valuesArray, recordObject] };
         }
+      }
+    }
+
+    if (this.hasPreset('pydantic')) {
+      const allowModule = !moduleName || moduleName.startsWith('pydantic');
+      if (allowModule && name === 'BaseModel') {
+        return recordObject;
       }
     }
 

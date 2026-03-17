@@ -117,7 +117,7 @@ export class CodeGenerator {
       hasVarKwArgs: boolean;
     }
   ): string {
-    const base = `typeof ${valueExpr} === 'object' && ${valueExpr} !== null && !Array.isArray(${valueExpr}) && (Object.getPrototypeOf(${valueExpr}) === Object.prototype || Object.getPrototypeOf(${valueExpr}) === null)`;
+    const base = `typeof ${valueExpr} === 'object' && ${valueExpr} !== null && !globalThis.Array.isArray(${valueExpr}) && (Object.getPrototypeOf(${valueExpr}) === Object.prototype || Object.getPrototypeOf(${valueExpr}) === null)`;
 
     const keyCheck = (() => {
       if (options.requiredKwOnlyNames.length > 0) {
@@ -275,7 +275,7 @@ export class CodeGenerator {
           );
         }
       }
-    } else if (firstOptionalIndex >= 0) {
+    } else if (firstOptionalIndex >= 0 && !varArgsParam && !needsKwargsParam) {
       for (let i = firstOptionalIndex; i <= positionalParams.length; i++) {
         const head = positionalParams.slice(0, i).map(p => renderPositionalParam(p));
         const rest: string[] = [];
@@ -367,7 +367,7 @@ export class CodeGenerator {
         });
         callPreludeLines.push(`  let __varargs: unknown[] = [];`);
         callPreludeLines.push(`  if (${vname} !== undefined) {`);
-        callPreludeLines.push(`    if (Array.isArray(${vname})) {`);
+        callPreludeLines.push(`    if (globalThis.Array.isArray(${vname})) {`);
         callPreludeLines.push(`      __varargs = ${vname};`);
         callPreludeLines.push(`    } else if (__kwargs === undefined && ${looksLikeKwargs}) {`);
         callPreludeLines.push(`      __kwargs = ${vname} as any;`);
@@ -593,7 +593,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
             });
             callPreludeLines.push(`    let __varargs: unknown[] = [];`);
             callPreludeLines.push(`    if (${vname} !== undefined) {`);
-            callPreludeLines.push(`      if (Array.isArray(${vname})) {`);
+            callPreludeLines.push(`      if (globalThis.Array.isArray(${vname})) {`);
             callPreludeLines.push(`        __varargs = ${vname};`);
             callPreludeLines.push(`      } else if (__kwargs === undefined && ${looksLikeKwargs}) {`);
             callPreludeLines.push(`        __kwargs = ${vname} as any;`);
@@ -780,7 +780,7 @@ ${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '
           });
           callPreludeLines.push(`    let __varargs: unknown[] = [];`);
           callPreludeLines.push(`    if (${vname} !== undefined) {`);
-          callPreludeLines.push(`      if (Array.isArray(${vname})) {`);
+          callPreludeLines.push(`      if (globalThis.Array.isArray(${vname})) {`);
           callPreludeLines.push(`        __varargs = ${vname};`);
           callPreludeLines.push(`      } else if (__kwargs === undefined && ${looksLikeKwargs}) {`);
           callPreludeLines.push(`        __kwargs = ${vname} as any;`);
@@ -980,6 +980,9 @@ ${ctorSpec.callPrelude}${ctorGuards}    const handle = await getRuntimeBridge().
       }
       case 'custom': {
         const c = type as { kind: 'custom'; name: string };
+        if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(c.name)) {
+          return 'unknown';
+        }
         return c.name;
       }
       case 'literal': {

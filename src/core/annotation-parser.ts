@@ -2,6 +2,7 @@ import type { PythonType } from '../types/index.js';
 
 export interface AnnotationParserOptions {
   onUnknownTypeName?: (name: string) => void;
+  knownTypeVarNames?: Iterable<string>;
 }
 
 export function parseAnnotationToPythonType(
@@ -9,6 +10,8 @@ export function parseAnnotationToPythonType(
   options: AnnotationParserOptions = {}
 ): PythonType {
   const onUnknownTypeName = options.onUnknownTypeName;
+  const knownTypeVarNames = new Set(options.knownTypeVarNames ?? []);
+  const modulePrefixes = ['', 'typing.', 'typing_extensions.', 'collections.abc.'] as const;
 
   const unknownType = (): PythonType => ({ kind: 'custom', name: 'Any', module: 'typing' });
 
@@ -39,8 +42,65 @@ export function parseAnnotationToPythonType(
     return { kind: 'custom', name: t } as PythonType;
   };
 
+  const parseTypingFactoryName = (text: string, name: string): string | null => {
+    for (const prefix of modulePrefixes) {
+      const start = `${prefix}${name}(`;
+      if (!text.startsWith(start) || !text.endsWith(')')) {
+        continue;
+      }
+
+      const inner = text.slice(start.length, -1).trim();
+      if (inner.length < 2) {
+        return null;
+      }
+
+      const quote = inner[0];
+      if ((quote !== "'" && quote !== '"') || inner[inner.length - 1] !== quote) {
+        return null;
+      }
+
+      const commaIndex = inner.indexOf(',');
+      const quoted = commaIndex === -1 ? inner : inner.slice(0, commaIndex).trimEnd();
+
+      if (quoted.length < 2 || quoted[quoted.length - 1] !== quote) {
+        return null;
+      }
+
+      return quoted.slice(1, -1);
+    }
+
+    return null;
+  };
+
+  const matchBracketedAlias = (
+    text: string,
+    aliases: readonly string[]
+  ): { alias: string; inner: string } | null => {
+    for (const prefix of modulePrefixes) {
+      for (const alias of aliases) {
+        const start = `${prefix}${alias}[`;
+        if (!text.startsWith(start) || !text.endsWith(']')) {
+          continue;
+        }
+        return {
+          alias,
+          inner: text.slice(start.length, -1),
+        };
+      }
+    }
+    return null;
+  };
+
   const mapSimpleName = (name: string): PythonType => {
-    const n = name.replace(/^typing\./, '').trim();
+    const n = name
+      .replace(/^~/, '')
+      .replace(/^(typing\.|typing_extensions\.|collections\.abc\.)/, '')
+      .trim();
+
+    if (knownTypeVarNames.has(n)) {
+      return { kind: 'typevar', name: n };
+    }
+
     if (n === 'int' || n === 'float' || n === 'str' || n === 'bool' || n === 'bytes') {
       return { kind: 'primitive', name: n };
     }
@@ -84,7 +144,7 @@ export function parseAnnotationToPythonType(
     raw: string
   ): { name: 'list' | 'dict' | 'tuple' | 'set' | 'frozenset'; inner?: string } | null => {
     const m = raw.match(
-      /^(typing\.)?(List|Dict|Tuple|Set|FrozenSet|list|dict|tuple|set|frozenset)\[(.*)\]$/
+      /^(typing\.|typing_extensions\.)?(List|Dict|Tuple|Set|FrozenSet|list|dict|tuple|set|frozenset)\[(.*)\]$/
     );
     if (!m) {
       return null;
@@ -175,7 +235,24 @@ export function parseAnnotationToPythonType(
     if (depth > 100) {
       return unknownType();
     }
-    const raw = String(ann).trim();
+    const rawText = String(ann).trim();
+    const raw = rawText.startsWith('~') ? rawText.slice(1).trim() : rawText;
+
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) && rawText.startsWith('~')) {
+      return { kind: 'typevar', name: raw };
+    }
+
+    if (/^[A-Za-z_][A-Za-z0-9_]*\.args$/.test(raw)) {
+      return { kind: 'collection', name: 'list', itemTypes: [unknownType()] };
+    }
+
+    if (/^[A-Za-z_][A-Za-z0-9_]*\.kwargs$/.test(raw)) {
+      return {
+        kind: 'collection',
+        name: 'dict',
+        itemTypes: [{ kind: 'primitive', name: 'str' }, unknownType()],
+      };
+    }
 
     // Handle built-in class repr: <class 'int'>
     const classMatch = raw.match(/^<class ['"][^'"]+['"]>$/);
@@ -204,16 +281,65 @@ export function parseAnnotationToPythonType(
     }
 
     // Optional[T]
-    if (raw.startsWith('typing.Optional[') || raw.startsWith('Optional[')) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const base = parse(inner, depth + 1);
+    const optionalAlias = matchBracketedAlias(raw, ['Optional']);
+    if (optionalAlias) {
+      const base = parse(optionalAlias.inner, depth + 1);
       return { kind: 'optional', type: base };
     }
 
-    // Literal[...] -> literal values union
-    if (raw.startsWith('typing.Literal[') || raw.startsWith('Literal[')) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const parts = splitTopLevel(inner, ',');
+    const sequenceAlias = matchBracketedAlias(raw, ['Sequence']);
+    if (sequenceAlias) {
+      return {
+        kind: 'collection',
+        name: 'list',
+        itemTypes: [parse(sequenceAlias.inner, depth + 1)],
+      };
+    }
+
+    const mappingAlias = matchBracketedAlias(raw, ['Mapping']);
+    if (mappingAlias) {
+      const parts = splitTopLevel(mappingAlias.inner, ',');
+      const itemTypes = parts.map(p => parse(p.trim(), depth + 1));
+      return { kind: 'collection', name: 'dict', itemTypes } as PythonType;
+    }
+
+    const iteratorAlias = matchBracketedAlias(raw, [
+      'Iterator',
+      'AsyncIterator',
+      'Iterable',
+      'AsyncIterable',
+    ]);
+    if (iteratorAlias) {
+      const parts = splitTopLevel(iteratorAlias.inner, ',');
+      return {
+        kind: 'generic',
+        name: iteratorAlias.alias,
+        typeArgs: parts.map(p => parse(p.trim(), depth + 1)),
+      };
+    }
+
+    const awaitableAlias = matchBracketedAlias(raw, ['Awaitable']);
+    if (awaitableAlias) {
+      return {
+        kind: 'generic',
+        name: 'Promise',
+        typeArgs: [parse(awaitableAlias.inner, depth + 1)],
+      };
+    }
+
+    const coroutineAlias = matchBracketedAlias(raw, ['Coroutine']);
+    if (coroutineAlias) {
+      const parts = splitTopLevel(coroutineAlias.inner, ',');
+      return {
+        kind: 'generic',
+        name: 'Promise',
+        typeArgs: [parse(parts[parts.length - 1] ?? 'Any', depth + 1)],
+      };
+    }
+
+    const literalAlias = matchBracketedAlias(raw, ['Literal']);
+    if (literalAlias) {
+      const parts = splitTopLevel(literalAlias.inner, ',');
       if (parts.length === 1) {
         return mapLiteral(String(parts[0] ?? '').trim());
       }
@@ -229,48 +355,61 @@ export function parseAnnotationToPythonType(
       return parse(inner, depth + 1);
     }
 
+    const typeVarName = parseTypingFactoryName(raw, 'TypeVar');
+    if (typeVarName) {
+      return { kind: 'typevar', name: typeVarName };
+    }
+
+    const paramSpecName = parseTypingFactoryName(raw, 'ParamSpec');
+    if (paramSpecName) {
+      return { kind: 'custom', name: paramSpecName, module: 'typing' };
+    }
+
+    const typeVarTupleName = parseTypingFactoryName(raw, 'TypeVarTuple');
+    if (typeVarTupleName) {
+      return { kind: 'custom', name: typeVarTupleName, module: 'typing' };
+    }
+
     // LiteralString
     if (raw === 'typing.LiteralString' || raw === 'LiteralString') {
       return { kind: 'primitive', name: 'str' } as PythonType;
     }
 
-    // Callable[[...], R]
-	    if (raw.startsWith('typing.Callable[') || raw.startsWith('Callable[')) {
-	      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-	      const parts = splitTopLevel(inner, ',');
-	      if (parts.length >= 2) {
-	        const paramsPart = (parts[0] ?? '').trim();
-	        const returnPart = parts.slice(1).join(',').trim();
-	        const paramInner =
-	          paramsPart.startsWith('[') && paramsPart.endsWith(']') ? paramsPart.slice(1, -1) : '';
-	        const paramTypes = ((): PythonType[] => {
-	          // Callable[..., R] uses a top-level Ellipsis.
-	          if (paramsPart === '...' || paramsPart === 'Ellipsis') {
-	            return [{ kind: 'custom', name: '...' } as PythonType];
-	          }
-	          const trimmed = paramInner.trim();
-	          if (trimmed === '...' || trimmed === 'Ellipsis') {
-	            return [{ kind: 'custom', name: '...' } as PythonType];
-	          }
-	          return trimmed ? splitTopLevel(trimmed, ',').map(p => parse(p.trim(), depth + 1)) : [];
-	        })();
-	        const returnType = parse(returnPart, depth + 1);
-	        return { kind: 'callable', parameters: paramTypes, returnType } as PythonType;
-	      }
-	    }
-
-    // Mapping[K, V] / Dict[K, V] normalization
-    if (raw.startsWith('typing.Mapping[') || raw.startsWith('Mapping[')) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const parts = splitTopLevel(inner, ',');
-      const itemTypes = parts.map(p => parse(p.trim(), depth + 1));
-      return { kind: 'collection', name: 'dict', itemTypes } as PythonType;
+    const callableAlias = matchBracketedAlias(raw, ['Callable']);
+    if (callableAlias) {
+      const parts = splitTopLevel(callableAlias.inner, ',');
+      if (parts.length >= 2) {
+        const paramsPart = (parts[0] ?? '').trim();
+        const returnPart = parts.slice(1).join(',').trim();
+        const paramInner =
+          paramsPart.startsWith('[') && paramsPart.endsWith(']') ? paramsPart.slice(1, -1) : '';
+        const paramTypes = ((): PythonType[] => {
+          // Callable[..., R] uses a top-level Ellipsis.
+          if (paramsPart === '...' || paramsPart === 'Ellipsis') {
+            return [{ kind: 'custom', name: '...' } as PythonType];
+          }
+          const trimmed = paramInner.trim();
+          if (trimmed === '...' || trimmed === 'Ellipsis') {
+            return [{ kind: 'custom', name: '...' } as PythonType];
+          }
+          if (!paramsPart.startsWith('[') || !paramsPart.endsWith(']')) {
+            return [{ kind: 'custom', name: '...' } as PythonType];
+          }
+          return trimmed ? splitTopLevel(trimmed, ',').map(p => parse(p.trim(), depth + 1)) : [];
+        })();
+        const returnType = parse(returnPart, depth + 1);
+        return { kind: 'callable', parameters: paramTypes, returnType } as PythonType;
+      }
     }
 
-    // Annotated[T, ...] -> annotated node with base and metadata
-    if (raw.startsWith('typing.Annotated[') || raw.startsWith('Annotated[')) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const parts = splitTopLevel(inner, ',');
+    const unpackAlias = matchBracketedAlias(raw, ['Unpack']);
+    if (unpackAlias) {
+      return unknownType();
+    }
+
+    const annotatedAlias = matchBracketedAlias(raw, ['Annotated']);
+    if (annotatedAlias) {
+      const parts = splitTopLevel(annotatedAlias.inner, ',');
       if (parts.length > 0) {
         const base = parse((parts[0] ?? '').trim(), depth + 1);
         const metaParts = parts.slice(1).map(p => String(p).trim());

@@ -47,3 +47,7 @@ library_integration_*.json
 # Vite/Vitest caches
 .vite/
 node_modules/.vite/
+
+# VitePress
+docs/.vitepress/dist/
+docs/.vitepress/cache/

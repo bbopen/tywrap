@@ -1,0 +1,39 @@
+area:runtime:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/runtime/**'
+          - 'test/runtime*'
+          - 'runtime/**'
+
+area:codegen:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/core/**'
+          - 'src/config/**'
+          - 'src/tywrap.ts'
+          - 'src/cli.ts'
+          - 'tywrap_ir/**'
+          - 'test/python/**'
+          - 'test/cli*'
+
+area:types:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/types/**'
+          - 'test-d/**'
+          - 'tsd.json'
+
+area:docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - '*.md'
+          - 'CONTRIBUTING.md'
+          - 'AGENTS.md'
+          - 'CLAUDE.md'
+
+area:ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - 'scripts/**'

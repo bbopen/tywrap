@@ -1,7 +1,7 @@
 {
   "name": "tywrap",
   "version": "0.2.1",
-  "description": "TypeScript wrapper for Python libraries with full type safety (EXPERIMENTAL - v0.2.1)",
+  "description": "Generate type-safe TypeScript wrappers for any Python library — Node.js, Deno, Bun, and browsers via Pyodide.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -71,7 +71,11 @@
     "act": "node scripts/act.mjs",
     "act:clean": "node scripts/act.mjs --clean",
     "act:serial": "node scripts/act-matrix.mjs",
-    "docker:npm": "node scripts/node-docker.mjs npm"
+    "docker:npm": "node scripts/node-docker.mjs npm",
+    "docs:sync-llms": "node scripts/generate-llms-full.mjs",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "npm run docs:sync-llms && vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "keywords": [
     "typescript",
@@ -84,7 +88,17 @@
     "code-generation",
     "node",
     "deno",
-    "bun"
+    "bun",
+    "codegen",
+    "ffi",
+    "bindings",
+    "wrapper",
+    "numpy",
+    "pandas",
+    "scipy",
+    "python-wrapper",
+    "rpc",
+    "subprocess"
   ],
   "author": "tywrap contributors",
   "license": "MIT",
@@ -95,7 +109,7 @@
   "bugs": {
     "url": "https://github.com/bbopen/tywrap/issues"
   },
-  "homepage": "https://github.com/bbopen/tywrap#readme",
+  "homepage": "https://bbopen.github.io/tywrap",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
@@ -126,6 +140,7 @@
     "prettier": "^3.3.3",
     "tsd": "^0.33.0",
     "vite": "^7.3.0",
+    "vitepress": "^1.6.4",
     "vitest": "^4.0.16"
   },
   "peerDependencies": {
@@ -139,6 +154,10 @@
   "trustedDependencies": [
     "pyodide"
   ],
+  "overrides": {
+    "@types/react": "^18.3.0",
+    "@types/prop-types": "^15.7.0"
+  },
   "bin": {
     "tywrap": "dist/cli.js"
   }

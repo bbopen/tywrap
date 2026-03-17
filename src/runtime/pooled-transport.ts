@@ -41,6 +41,11 @@ export interface PooledTransportOptions {
    * Use this for per-worker warmup (e.g., importing modules, running setup).
    */
   onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+
+  /**
+   * Optional callback used only for background replacement workers.
+   */
+  onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
 }
 
 // =============================================================================
@@ -78,8 +83,9 @@ export interface PooledTransportOptions {
  * ```
  */
 export class PooledTransport extends BoundedContext implements Transport {
-  private readonly poolOptions: Omit<Required<PooledTransportOptions>, 'onWorkerReady'> & {
+  private readonly poolOptions: Omit<Required<PooledTransportOptions>, 'onWorkerReady' | 'onReplacementWorkerReady'> & {
     onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+    onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
   };
   private pool?: WorkerPool;
 
@@ -102,6 +108,7 @@ export class PooledTransport extends BoundedContext implements Transport {
       queueTimeoutMs: options.queueTimeoutMs ?? 30000,
       maxConcurrentPerWorker: options.maxConcurrentPerWorker ?? 10,
       onWorkerReady: options.onWorkerReady,
+      onReplacementWorkerReady: options.onReplacementWorkerReady,
     };
   }
 
@@ -123,6 +130,7 @@ export class PooledTransport extends BoundedContext implements Transport {
       queueTimeoutMs: this.poolOptions.queueTimeoutMs,
       maxConcurrentPerWorker: this.poolOptions.maxConcurrentPerWorker,
       onWorkerReady: this.poolOptions.onWorkerReady,
+      onReplacementWorkerReady: this.poolOptions.onReplacementWorkerReady,
     });
 
     await this.pool.init();

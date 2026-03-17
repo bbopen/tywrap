@@ -74,8 +74,7 @@ export interface NodeBridgeOptions {
 
   /** Commands to run on each process at startup for warming up. */
   warmupCommands?: Array<
-    | { module: string; functionName: string; args?: unknown[] }
-    | { method: string; params: unknown } // Legacy shape preserved so runtime can surface a migration error
+    { module: string; functionName: string; args?: unknown[] } | { method: string; params: unknown } // Legacy shape preserved so runtime can surface a migration error
   >;
 
   // ===========================================================================
@@ -129,6 +128,8 @@ interface WarmupCommand {
   functionName: string;
   args?: unknown[];
 }
+
+const WORKER_READY_TIMEOUT_MS = 5000;
 
 // =============================================================================
 // UTILITIES
@@ -326,10 +327,14 @@ export class NodeBridge extends BridgeProtocol {
     const processEnv = buildProcessEnv(resolvedOptions);
 
     // Create warmup callback for per-worker initialization
-    const onWorkerReady =
+    const userWarmup =
       resolvedOptions.warmupCommands.length > 0
         ? createWarmupCallback(resolvedOptions.warmupCommands, resolvedOptions.timeoutMs)
         : undefined;
+    const replacementWorkerReady = createWorkerReadyCallback(
+      resolvedOptions.timeoutMs,
+      userWarmup
+    );
 
     // Create pooled transport with ProcessIO workers
     const transport = new PooledTransport({
@@ -344,7 +349,8 @@ export class NodeBridge extends BridgeProtocol {
       minWorkers: resolvedOptions.minProcesses,
       queueTimeoutMs: resolvedOptions.queueTimeoutMs,
       maxConcurrentPerWorker: resolvedOptions.maxConcurrentPerProcess,
-      onWorkerReady,
+      onWorkerReady: userWarmup,
+      onReplacementWorkerReady: replacementWorkerReady,
     });
 
     // Initialize BridgeProtocol with pooled transport
@@ -557,78 +563,148 @@ function createWarmupCallback(
   return async (worker: PooledWorker) => {
     for (const [index, cmd] of warmupCommands.entries()) {
       const commandLabel = `${cmd.module}.${cmd.functionName}`;
-      const requestId = generateWarmupId();
-      let message: string;
-      try {
-        message = JSON.stringify({
-          id: requestId,
-          protocol: PROTOCOL_ID,
-          method: 'call',
-          params: {
-            module: cmd.module,
-            functionName: cmd.functionName,
-            args: cmd.args ?? [],
-            kwargs: {},
-          },
-        });
-      } catch (error) {
-        throw new BridgeExecutionError(
-          `Warmup command #${index + 1} (${commandLabel}) failed to encode request: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error instanceof Error ? error : undefined }
-        );
-      }
-
-      let response: string;
-      try {
-        response = await worker.transport.send(message, timeoutMs);
-      } catch (error) {
-        throw new BridgeExecutionError(
-          `Warmup command #${index + 1} (${commandLabel}) failed to send: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error instanceof Error ? error : undefined }
-        );
-      }
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(response);
-      } catch (error) {
-        throw new BridgeExecutionError(
-          `Warmup command #${index + 1} (${commandLabel}) returned invalid JSON response`,
-          { cause: error instanceof Error ? error : undefined }
-        );
-      }
-
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw new BridgeExecutionError(
-          `Warmup command #${index + 1} (${commandLabel}) returned malformed response envelope for request ${requestId}`
-        );
-      }
-
-      const envelope = parsed as { result?: unknown; error?: unknown };
-      if ('error' in envelope && envelope.error !== undefined && envelope.error !== null) {
-        const errorPayload = envelope.error;
-        if (errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)) {
-          const err = errorPayload as { type?: unknown; message?: unknown };
-          const errType = typeof err.type === 'string' ? err.type : 'Error';
-          const errMessage =
-            typeof err.message === 'string' ? err.message : 'Unknown warmup error';
-          throw new BridgeExecutionError(
-            `Warmup command #${index + 1} (${commandLabel}) failed: ${errType}: ${errMessage}`
-          );
+      await executeWorkerCall(
+        worker,
+        {
+          module: cmd.module,
+          functionName: cmd.functionName,
+          args: cmd.args ?? [],
+        },
+        timeoutMs,
+        {
+          label: `Warmup command #${index + 1} (${commandLabel})`,
+          invalidJsonMessage: 'returned invalid JSON response',
+          malformedEnvelopeMessage: requestId =>
+            `returned malformed response envelope for request ${requestId}`,
+          pythonErrorMessage: (errorType, errorMessage) => `failed: ${errorType}: ${errorMessage}`,
+          malformedErrorPayloadMessage: 'failed with malformed error payload',
         }
-
-        throw new BridgeExecutionError(
-          `Warmup command #${index + 1} (${commandLabel}) failed with malformed error payload`
-        );
-      }
-
-      if (!('result' in envelope)) {
-        throw new BridgeExecutionError(
-          `Warmup command #${index + 1} (${commandLabel}) returned malformed response envelope for request ${requestId}`
-        );
-      }
+      );
     }
   };
+}
+
+function createWorkerReadyCallback(
+  timeoutMs: number,
+  extraWarmup?: (worker: PooledWorker) => Promise<void>
+): (worker: PooledWorker) => Promise<void> {
+  return async (worker: PooledWorker) => {
+    const result = await executeWorkerCall(
+      worker,
+      {
+        module: 'builtins',
+        functionName: 'len',
+        args: [[]],
+      },
+      Math.max(timeoutMs, WORKER_READY_TIMEOUT_MS),
+      {
+        label: 'Worker readiness probe (builtins.len)',
+        invalidJsonMessage: 'returned invalid JSON response',
+        malformedEnvelopeMessage: requestId =>
+          `returned malformed response envelope for request ${requestId}`,
+        pythonErrorMessage: (errorType, errorMessage) => `failed: ${errorType}: ${errorMessage}`,
+        malformedErrorPayloadMessage: 'failed with malformed error payload',
+      }
+    );
+
+    if (result !== 0) {
+      throw new BridgeExecutionError(
+        `Worker readiness probe (builtins.len) returned unexpected result: ${JSON.stringify(result)}`
+      );
+    }
+
+    await extraWarmup?.(worker);
+  };
+}
+
+interface WorkerCallSpec {
+  module: string;
+  functionName: string;
+  args: unknown[];
+}
+
+interface WorkerCallErrorMessages {
+  label: string;
+  invalidJsonMessage: string;
+  malformedEnvelopeMessage: (requestId: number) => string;
+  pythonErrorMessage: (errorType: string, errorMessage: string) => string;
+  malformedErrorPayloadMessage: string;
+}
+
+async function executeWorkerCall(
+  worker: PooledWorker,
+  request: WorkerCallSpec,
+  timeoutMs: number,
+  messages: WorkerCallErrorMessages
+): Promise<unknown> {
+  const requestId = generateWarmupId();
+  let message: string;
+  try {
+    message = JSON.stringify({
+      id: requestId,
+      protocol: PROTOCOL_ID,
+      method: 'call',
+      params: {
+        module: request.module,
+        functionName: request.functionName,
+        args: request.args,
+        kwargs: {},
+      },
+    });
+  } catch (error) {
+    throw new BridgeExecutionError(
+      `${messages.label} failed to encode request: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error instanceof Error ? error : undefined }
+    );
+  }
+
+  let response: string;
+  try {
+    response = await worker.transport.send(message, timeoutMs);
+  } catch (error) {
+    throw new BridgeExecutionError(
+      `${messages.label} failed to send: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error instanceof Error ? error : undefined }
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(response);
+  } catch (error) {
+    throw new BridgeExecutionError(`${messages.label} ${messages.invalidJsonMessage}`, {
+      cause: error instanceof Error ? error : undefined,
+    });
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new BridgeExecutionError(
+      `${messages.label} ${messages.malformedEnvelopeMessage(requestId)}`
+    );
+  }
+
+  const envelope = parsed as { result?: unknown; error?: unknown };
+  if ('error' in envelope && envelope.error !== undefined && envelope.error !== null) {
+    const errorPayload = envelope.error;
+    if (errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)) {
+      const err = errorPayload as { type?: unknown; message?: unknown };
+      const errType = typeof err.type === 'string' ? err.type : 'Error';
+      const errMessage = typeof err.message === 'string' ? err.message : 'Unknown error';
+      throw new BridgeExecutionError(
+        `${messages.label} ${messages.pythonErrorMessage(errType, errMessage)}`
+      );
+    }
+
+    throw new BridgeExecutionError(`${messages.label} ${messages.malformedErrorPayloadMessage}`);
+  }
+
+  if (!('result' in envelope)) {
+    throw new BridgeExecutionError(
+      `${messages.label} ${messages.malformedEnvelopeMessage(requestId)}`
+    );
+  }
+
+  return envelope.result;
 }
 
 // =============================================================================
