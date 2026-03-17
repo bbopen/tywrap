@@ -104,4 +104,18 @@ describe('annotation parser', () => {
     expect((unpack as any).name).toBe('Any');
     expect((unpack as any).module).toBe('typing');
   });
+
+  it('treats bare module-scoped typevar names as safe placeholders when provided', () => {
+    const bareTypeVar = parseAnnotationToPythonType('T', {
+      knownTypeVarNames: ['T', 'P'],
+    });
+    expect(bareTypeVar.kind).toBe('typevar');
+    expect((bareTypeVar as any).name).toBe('T');
+
+    const bareParamSpec = parseAnnotationToPythonType('P', {
+      knownTypeVarNames: ['T', 'P'],
+    });
+    expect(bareParamSpec.kind).toBe('typevar');
+    expect((bareParamSpec as any).name).toBe('P');
+  });
 });

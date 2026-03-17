@@ -381,6 +381,6 @@ async function safeReadFileAsync(path: string): Promise<string> {
 /**
  * Type helper for authoring tywrap configs with full type inference.
  */
-export function defineConfig(config: TywrapConfig): TywrapConfig {
+export function defineConfig<T extends TywrapConfig>(config: T): T {
   return config;
 }

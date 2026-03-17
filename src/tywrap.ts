@@ -412,13 +412,43 @@ async function fetchPythonIr(
 /**
  * Convert JSON IR from Python into the internal TypeScript model used by the generator.
  */
+function collectModuleTypeVarNames(obj: Record<string, unknown>): Set<string> {
+  const names = new Set<string>();
+  const constants = Array.isArray(obj.constants) ? (obj.constants as unknown[]) : [];
+
+  for (const constant of constants) {
+    const entry = constant as Record<string, unknown>;
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    if (!name) {
+      continue;
+    }
+
+    const valueRepr = typeof entry.value_repr === 'string' ? entry.value_repr.trim() : '';
+    if (/^~?[A-Za-z_][A-Za-z0-9_]*$/.test(valueRepr) && valueRepr.replace(/^~/, '') === name) {
+      names.add(name);
+      continue;
+    }
+
+    const annotation = typeof entry.annotation === 'string' ? entry.annotation.trim() : '';
+    if (/(^|\.)(TypeVar|ParamSpec|TypeVarTuple)(\[|\(|$)/.test(annotation)) {
+      names.add(name);
+    }
+  }
+
+  return names;
+}
+
 function transformIrToTsModel(ir: unknown): TSPythonModule {
   const obj: Record<string, unknown> =
     typeof ir === 'object' && ir !== null ? (ir as Record<string, unknown>) : {};
   const functions = (obj.functions as unknown[]) ?? [];
   const classes = (obj.classes as unknown[]) ?? [];
+  const moduleTypeVarNames = collectModuleTypeVarNames(obj);
   const parseType = (annotation: unknown): PythonType =>
-    parseAnnotationToPythonType(annotation, { onUnknownTypeName: recordUnknown });
+    parseAnnotationToPythonType(annotation, {
+      onUnknownTypeName: recordUnknown,
+      knownTypeVarNames: moduleTypeVarNames,
+    });
   const mapParam = (p: Record<string, unknown>): Parameter => ({
     name: String(p.name ?? ''),
     type: parseType(p.annotation),
