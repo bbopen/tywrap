@@ -41,7 +41,16 @@ jobs:
           cache: npm
           registry-url: 'https://registry.npmjs.org'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - run: npm ci --prefer-offline --no-audit
+
+      - name: Install Python dependencies
+        run: |
+          cd tywrap_ir
+          pip install -e .
 
       - run: npm run build
 
