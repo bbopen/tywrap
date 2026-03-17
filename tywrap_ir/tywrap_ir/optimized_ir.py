@@ -205,7 +205,8 @@ class OptimizedIRExtractor:
                          ir_version: str,
                          include_private: bool) -> Dict[str, Any]:
         """Extract IR components in parallel"""
-        
+
+        warnings: List[str] = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all extraction tasks
             futures = {
@@ -222,10 +223,14 @@ class OptimizedIRExtractor:
                 try:
                     results[key] = future.result(timeout=30)  # 30 second timeout
                 except concurrent.futures.TimeoutError:
-                    print(f"⚠️  Timeout extracting {key} from {module_name}", file=sys.stderr)
+                    warning = f"Timeout extracting {key} from {module_name}"
+                    print(f"⚠️  {warning}", file=sys.stderr)
+                    warnings.append(warning)
                     results[key] = [] if key != 'metadata' else {}
                 except Exception as e:
-                    print(f"❌ Error extracting {key} from {module_name}: {e}", file=sys.stderr)
+                    warning = f"Error extracting {key} from {module_name}: {e}"
+                    print(f"❌ {warning}", file=sys.stderr)
+                    warnings.append(warning)
                     results[key] = [] if key != 'metadata' else {}
         
         # Build IR module
@@ -237,7 +242,7 @@ class OptimizedIRExtractor:
             constants=results.get('constants', []),
             type_aliases=results.get('type_aliases', []),
             metadata=results.get('metadata', {}),
-            warnings=[]  # TODO: Collect warnings from parallel execution
+            warnings=warnings
         )
         
         # Update statistics
@@ -423,16 +428,19 @@ def extract_module_ir_optimized(module_name: str,
     Returns:
         Dictionary containing the IR module data
     """
-    
-    # Configure extractor if needed
-    if not enable_caching and _global_extractor.enable_caching:
-        _global_extractor._cache = None
-        _global_extractor.enable_caching = False
-    
-    if not enable_parallel and _global_extractor.enable_parallel:
-        _global_extractor.enable_parallel = False
-    
-    return _global_extractor.extract_module_ir_optimized(
+
+    # Preserve the shared optimized extractor for the default fast path.
+    # Non-default option combinations should not mutate global state for later calls.
+    if enable_caching and enable_parallel:
+        extractor = _global_extractor
+    else:
+        extractor = OptimizedIRExtractor(
+            enable_caching=enable_caching,
+            enable_parallel=enable_parallel,
+            max_workers=_global_extractor.max_workers,
+        )
+
+    return extractor.extract_module_ir_optimized(
         module_name,
         ir_version=ir_version,
         include_private=include_private

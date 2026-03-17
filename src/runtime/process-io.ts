@@ -21,6 +21,7 @@ import {
   BridgeTimeoutError,
   BridgeExecutionError,
 } from './errors.js';
+import { TimedOutRequestTracker } from './timed-out-request-tracker.js';
 import type { Transport } from './transport.js';
 
 // =============================================================================
@@ -35,6 +36,9 @@ const MAX_STDERR_BYTES = 8 * 1024;
 
 /** Default write queue timeout: 30 seconds */
 const DEFAULT_WRITE_QUEUE_TIMEOUT_MS = 30_000;
+
+/** Track timed-out/cancelled request IDs long enough to ignore late responses. */
+const TIMED_OUT_REQUEST_TTL_MS = 10 * 60 * 1000;
 
 /** Regex for ANSI escape sequences */
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
@@ -179,6 +183,9 @@ export class ProcessIO extends BoundedContext implements Transport {
 
   // Request tracking
   private readonly pending = new Map<number, PendingRequest>();
+  private readonly timedOutRequests = new TimedOutRequestTracker({
+    ttlMs: TIMED_OUT_REQUEST_TTL_MS,
+  });
   private requestCount = 0;
   private needsRestart = false;
 
@@ -260,6 +267,7 @@ export class ProcessIO extends BoundedContext implements Transport {
       if (timeoutMs > 0) {
         timer = setTimeout(() => {
           this.pending.delete(messageId);
+          this.timedOutRequests.mark(messageId);
           const stderrTail = this.getStderrTail();
           const baseMsg = `Operation timed out after ${timeoutMs}ms`;
           const msg = stderrTail ? `${baseMsg}. Recent stderr:\n${stderrTail}` : baseMsg;
@@ -273,6 +281,7 @@ export class ProcessIO extends BoundedContext implements Transport {
           clearTimeout(timer);
         }
         this.pending.delete(messageId);
+        this.timedOutRequests.mark(messageId);
         reject(new BridgeTimeoutError('Operation aborted'));
       };
 
@@ -359,6 +368,7 @@ export class ProcessIO extends BoundedContext implements Transport {
     // Clear buffers
     this.stdoutBuffer = '';
     this.stderrBuffer = '';
+    this.timedOutRequests.clear();
     this.requestCount = 0;
   }
 
@@ -596,8 +606,12 @@ export class ProcessIO extends BoundedContext implements Transport {
 
     const pending = this.pending.get(messageId);
     if (!pending) {
-      // Response for unknown request - could be for a timed-out request
-      // Log but don't fail
+      // Ignore expected late responses from timed-out/cancelled requests.
+      if (this.timedOutRequests.consume(messageId)) {
+        return;
+      }
+      // Unknown IDs while requests are pending indicate protocol desync.
+      this.handleProtocolError(`Unexpected response id ${messageId}`, line);
       return;
     }
 

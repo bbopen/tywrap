@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { generate } from '../src/tywrap.js';
 import { processUtils, fsUtils } from '../src/utils/runtime.js';
@@ -76,6 +76,55 @@ describe('IR-only integration', () => {
       expect(content).toContain('add');
       expect(content).not.toContain("call('local_module', 'dataclass'");
     } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('check mode bypasses stale IR cache when caching is enabled', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-check-cache-'));
+    const originalCwd = process.cwd();
+    const originalPythonPath = process.env.PYTHONPATH;
+    try {
+      const importDir = join(tempDir, 'py');
+      await mkdir(importDir, { recursive: true });
+      const modulePath = join(importDir, 'local_stale_cache.py');
+      await writeFile(modulePath, `def stable_value() -> int:\n  return 1\n`, 'utf-8');
+
+      process.chdir(tempDir);
+      const repoTywrapIr = join(originalCwd, 'tywrap_ir');
+      process.env.PYTHONPATH = originalPythonPath
+        ? `${repoTywrapIr}${delimiter}${originalPythonPath}`
+        : repoTywrapIr;
+
+      const options = {
+        pythonModules: { local_stale_cache: { runtime: 'node', typeHints: 'strict' as const } },
+        pythonImportPath: [importDir],
+        output: {
+          dir: join(tempDir, 'generated'),
+          format: 'esm' as const,
+          declaration: false,
+          sourceMap: false,
+        },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: true, batching: false, compression: 'none' as const },
+        development: { hotReload: false, sourceMap: false, validation: 'none' as const },
+      };
+
+      const firstRun = await generate(options as any);
+      const generatedTsPath = firstRun.written.find(p => p.endsWith('.generated.ts'));
+      expect(typeof generatedTsPath).toBe('string');
+
+      await writeFile(
+        modulePath,
+        `def stable_value() -> int:\n  return 1\n\ndef added_after_first_run() -> int:\n  return 2\n`,
+        'utf-8'
+      );
+
+      const checkResult = await generate(options as any, { check: true });
+      expect((checkResult.outOfDate ?? []).includes(generatedTsPath as string)).toBe(true);
+    } finally {
+      process.env.PYTHONPATH = originalPythonPath;
+      process.chdir(originalCwd);
       await rm(tempDir, { recursive: true, force: true });
     }
   }, 30_000);
