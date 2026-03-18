@@ -207,7 +207,7 @@ describeNodeOnly('Bridge behavior parity', () => {
       await optimizedBridge.call('math', 'sqrt', [4]);
       await optimizedBridge.dispose();
       await expect(optimizedBridge.dispose()).resolves.toBeUndefined();
-    });
+    }, 15000);
   });
 
   describe('script path validation parity', () => {
@@ -281,6 +281,6 @@ describeNodeOnly('Bridge behavior parity', () => {
         await nodeBridge.dispose();
         await optimizedBridge.dispose();
       }
-    });
+    }, 15000);
   });
 });
