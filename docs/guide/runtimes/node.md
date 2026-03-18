@@ -290,19 +290,30 @@ try {
 
 ### Debugging Configuration
 
-```json
-{
-  "runtime": {
-    "node": {
-      "timeoutMs": 0, // Disable timeout for debugging
-      "env": {
-        "PYTHONUNBUFFERED": "1", // Immediate stdout/stderr
-        "TYWRAP_DEBUG": "1" // Enable debug logging
-      }
-    }
+Use the CLI's debug flag when you are troubleshooting wrapper generation:
+
+```bash
+npx tywrap generate --debug
+```
+
+Use runtime log env vars for subprocess diagnostics:
+
+```bash
+export TYWRAP_LOG_LEVEL=DEBUG
+export TYWRAP_LOG_JSON=1
+```
+
+If you need to disable timeouts or pass extra Python env vars while debugging,
+do it on the bridge instance:
+
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  timeoutMs: 0,
+  env: {
+    PYTHONUNBUFFERED: '1',
   },
-  "debug": true
-}
+});
 ```
 
 ### Common Error Scenarios
@@ -359,17 +370,16 @@ const [sin1, sin2, sin3] = await Promise.all([
 
 ### Memory Management
 
-```json
-{
-  "runtime": {
-    "node": {
-      "env": {
-        "PYTHONMALLOC": "malloc", // Use system malloc
-        "OMP_NUM_THREADS": "4" // Limit OpenMP threads
-      }
-    }
-  }
-}
+Pass Python-specific tuning through `env` on the bridge:
+
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  env: {
+    PYTHONMALLOC: 'malloc',
+    OMP_NUM_THREADS: '4',
+  },
+});
 ```
 
 ## Production Deployment
@@ -437,8 +447,8 @@ services:
   app:
     build: .
     environment:
-      - TYWRAP_PYTHON_PATH=/usr/bin/python3
       - TYWRAP_CODEC_FALLBACK=json # For smaller containers
+      - TYWRAP_LOG_LEVEL=INFO
     ports:
       - '3000:3000'
 ```
@@ -448,32 +458,36 @@ services:
 ```bash
 # Production environment
 export NODE_ENV=production
-export TYWRAP_PYTHON_PATH="/usr/local/bin/python3"
-export TYWRAP_CACHE_DIR="/tmp/tywrap-cache"
-export TYWRAP_MEMORY_LIMIT="2048"
+export TYWRAP_CODEC_MAX_BYTES=10485760
+export TYWRAP_REQUEST_MAX_BYTES=1048576
+export TYWRAP_LOG_LEVEL=INFO
 
 # Security
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONUNBUFFERED=1
 ```
 
+Set the Python executable in config or when you construct the bridge:
+
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: '/usr/local/bin/python3',
+});
+```
+
 ## Security Considerations
 
 ### Subprocess Security
 
-```json
-{
-  "runtime": {
-    "node": {
-      "cwd": "/safe/directory", // Restrict working directory
-      "env": {
-        "PATH": "/usr/bin:/bin", // Limit PATH
-        "PYTHONPATH": "/safe/python/libs"
-      },
-      "timeoutMs": 10000 // Prevent hanging processes
-    }
-  }
-}
+```typescript
+const bridge = new NodeBridge({
+  cwd: '/safe/directory',
+  timeoutMs: 10000,
+  env: {
+    PATH: '/usr/bin:/bin',
+    PYTHONPATH: '/safe/python/libs',
+  },
+});
 ```
 
 ### Input Validation
@@ -536,25 +550,25 @@ chmod +x /usr/local/bin/python3
 
 **"Process timeout"**:
 
-```json
-{
-  "runtime": {
-    "node": {
-      "timeoutMs": 60000, // Increase timeout
-      "env": {
-        "OMP_NUM_THREADS": "1" // Reduce parallelism
-      }
-    }
-  }
-}
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  timeoutMs: 60000,
+  env: {
+    OMP_NUM_THREADS: '1',
+  },
+});
 ```
 
 ### Debug Mode
 
 ```bash
-# Enable debug logging
-export TYWRAP_DEBUG=1
-export TYWRAP_VERBOSE=1
+# Wrapper-generation diagnostics
+npx tywrap generate --debug
+
+# Runtime bridge diagnostics
+export TYWRAP_LOG_LEVEL=DEBUG
+export TYWRAP_LOG_JSON=1
 
 # Run with debug output
 node --trace-warnings your-app.js
@@ -591,14 +605,11 @@ if __name__ == '__main__':
     pass
 ```
 
-```json
-{
-  "runtime": {
-    "node": {
-      "scriptPath": "./custom_bridge.py"
-    }
-  }
-}
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  scriptPath: './custom_bridge.py',
+});
 ```
 
 ### Process Pooling

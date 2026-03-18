@@ -234,9 +234,8 @@ pip list
 ```
 
 ```bash
-# Enable debug logging
-export TYWRAP_DEBUG=1
-npx tywrap generate
+# Enable generator diagnostics
+npx tywrap generate --debug
 ```
 
 ---
@@ -247,18 +246,17 @@ npx tywrap generate
 **Error**: `Python call timed out` or hanging operations
 
 **Solutions**:
-```json
-{
-  "runtime": {
-    "node": {
-      "timeoutMs": 60000,  // Increase timeout
-      "env": {
-        "OMP_NUM_THREADS": "1",  // Reduce parallelism
-        "MKL_NUM_THREADS": "1"
-      }
-    }
-  }
-}
+```typescript
+import { NodeBridge } from 'tywrap/node';
+
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  timeoutMs: 60000,
+  env: {
+    OMP_NUM_THREADS: '1',
+    MKL_NUM_THREADS: '1',
+  },
+});
 ```
 
 ```typescript
@@ -292,21 +290,28 @@ try {
 **Error**: Out of memory errors or process crashes
 
 **Solutions**:
-```json
-{
-  "runtime": {
-    "node": {
-      "env": {
-        "NODE_OPTIONS": "--max-old-space-size=4096"
-      }
-    }
-  }
-}
+Large payloads and highly parallel native libraries are the usual causes. Tune
+the bridge and the host process separately:
+
+```typescript
+import { NodeBridge } from 'tywrap/node';
+
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  env: {
+    OMP_NUM_THREADS: '1',
+    MKL_NUM_THREADS: '1',
+  },
+});
 ```
 
 ```bash
-# Monitor memory usage
+# Increase the Node.js heap when your app process is the bottleneck
 node --max-old-space-size=4096 your-app.js
+
+# Cap bridge payload size so one call cannot blow up memory usage
+export TYWRAP_CODEC_MAX_BYTES=10485760
+export TYWRAP_REQUEST_MAX_BYTES=1048576
 
 # Check system memory
 free -h  # Linux
@@ -349,10 +354,8 @@ rm -rf generated/
 rm -rf .tywrap/
 npx tywrap generate
 
-# Enable debug mode
-export TYWRAP_DEBUG=1
-export TYWRAP_VERBOSE=1
-npx tywrap generate
+# Enable generator diagnostics
+npx tywrap generate --debug
 
 # Check Python module structure
 python3 -c "
@@ -484,9 +487,13 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python path
-ENV TYWRAP_PYTHON_PATH=/usr/bin/python3
+# Keep Python subprocess output predictable
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 ```
+
+If Python is not discoverable on `PATH` in your image, pass
+`pythonPath: '/usr/bin/python3'` when constructing `NodeBridge`.
 
 ---
 
@@ -494,28 +501,24 @@ ENV TYWRAP_PYTHON_PATH=/usr/bin/python3
 
 ### Enable Debug Mode
 ```bash
-# Environment variables
-export TYWRAP_DEBUG=1
-export TYWRAP_VERBOSE=1
-export NODE_DEBUG=tywrap
+# Generator diagnostics
+npx tywrap generate --debug
 
-# Run with debug output
-npx tywrap generate 2>&1 | tee debug.log
+# Runtime bridge diagnostics
+TYWRAP_LOG_LEVEL=DEBUG TYWRAP_LOG_JSON=1 node app.js 2>tywrap.log
+
+# Extra Node.js warning detail
+node --trace-warnings app.js
 ```
 
-### Custom Logging
+### Bridge Diagnostics
 ```typescript
-// Add logging to your application
-import { createLogger } from 'tywrap/utils';
+import { NodeBridge } from 'tywrap/node';
 
-const logger = createLogger({
-  level: 'debug',
-  output: './logs/tywrap.log'
-});
+const bridge = new NodeBridge({ pythonPath: 'python3' });
 
-// Monitor bridge communication
-bridge.on('request', (req) => logger.debug('Request:', req));
-bridge.on('response', (res) => logger.debug('Response:', res));
+const info = await bridge.getBridgeInfo({ refresh: true });
+console.error(info);
 ```
 
 ---

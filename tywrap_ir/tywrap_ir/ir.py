@@ -232,7 +232,9 @@ def _extract_function(obj: Any, qualname: str) -> Optional[IRFunction]:
 
     returns = hints.get("return", sig.return_annotation)
     is_async = inspect.iscoroutinefunction(obj) or inspect.isasyncgenfunction(obj)
-    is_generator = inspect.isgeneratorfunction(obj)
+    # Async generators must be marked as generators so callers can distinguish
+    # them from plain coroutines.
+    is_generator = inspect.isgeneratorfunction(obj) or inspect.isasyncgenfunction(obj)
 
     return IRFunction(
         name=getattr(obj, "__name__", qualname.split(".")[-1]),
