@@ -503,8 +503,9 @@ export class ParallelProcessor extends EventEmitter {
 
     // Setup worker error handling
     worker.on('error', error => {
-      log.error('Worker error', { workerId, error: String(error) });
-      this.handleWorkerError(workerId, error);
+      const workerError = error instanceof Error ? error : new Error(String(error));
+      log.error('Worker error', { workerId, error: String(workerError) });
+      this.handleWorkerError(workerId, workerError);
     });
 
     // Setup worker exit handling
