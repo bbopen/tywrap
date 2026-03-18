@@ -1,5 +1,5 @@
 import unittest
-from typing import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator
 
 from tywrap_ir.ir import _extract_function
 
