@@ -147,7 +147,7 @@ export async function generate(
     const cacheKey = await computeCacheKey(moduleKey, resolvedOptions);
     let ir: unknown | null = null;
     let irError: string | undefined;
-    if (caching && fsUtils.isAvailable()) {
+    if (caching && fsUtils.isAvailable() && !checkMode) {
       try {
         const cached = await fsUtils.readFile(pathUtils.join(cacheDir, cacheKey));
         ir = JSON.parse(cached);

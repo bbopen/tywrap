@@ -328,33 +328,40 @@ Hooks are optional; implement only what your plugin needs.
 
 ## Environment Variables
 
-Override configuration with environment variables:
+Most tywrap behavior is configured in `tywrap.config.*` or when you construct a
+runtime bridge in application code. The supported `TYWRAP_*` environment
+variables are mostly codec guardrails, logging, and repo test knobs:
 
 ```bash
-# Runtime configuration
-export TYWRAP_PYTHON_PATH="/usr/local/bin/python3.11"
-export TYWRAP_VIRTUAL_ENV="./venv"
 export TYWRAP_CODEC_FALLBACK="json"
-export TYWRAP_CODEC_MAX_BYTES="10485760"  # Max response payload size (bytes)
+export TYWRAP_CODEC_MAX_BYTES="10485760"   # Max response payload size (bytes)
 export TYWRAP_REQUEST_MAX_BYTES="1048576"  # Max request payload size (bytes)
 export TYWRAP_TORCH_ALLOW_COPY="1"
-
-# Note: NodeBridge uses TYWRAP_CODEC_MAX_BYTES as the default maxLineLength when set.
-
-# Performance tuning
-export TYWRAP_CACHE_DIR="./.tywrap/cache"
-export TYWRAP_MEMORY_LIMIT="1024"
-export TYWRAP_PERF_BUDGETS="1"
-export TYWRAP_PERF_TIME_BUDGET_MS="2000"
-export TYWRAP_PERF_MEMORY_BUDGET_MB="64"
-export TYWRAP_CODEC_PERF_ITERATIONS="200"
-export TYWRAP_CODEC_PERF_TIME_BUDGET_MS="500"
-export TYWRAP_CODEC_PERF_MEMORY_BUDGET_MB="32"
-
-# Development
-export TYWRAP_VERBOSE="true"
-export TYWRAP_HOT_RELOAD="true"
+export TYWRAP_LOG_LEVEL="INFO"
+export TYWRAP_LOG_JSON="1"
 ```
+
+Repo tests and benchmarks also use additional `TYWRAP_*` variables such as
+`TYWRAP_PERF_BUDGETS`.
+
+Python executable and virtual environment selection are not configured through
+environment variables today. Set them in `tywrap.config.*` or on the bridge:
+
+```ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  runtime: {
+    node: {
+      pythonPath: '/usr/local/bin/python3',
+      virtualEnv: './venv',
+      timeout: 30000,
+    },
+  },
+});
+```
+
+See [Environment Variables](/reference/env-vars) for the full implemented list.
 
 ## Advanced Configuration Patterns
 
