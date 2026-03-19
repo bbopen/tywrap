@@ -9,7 +9,13 @@ import type {
   UnionType as PyUnionType,
   OptionalType as PyOptionalType,
   GenericType as PyGenericType,
+  CallableType as PyCallableType,
   TypeVarType as PyTypeVarType,
+  ParamSpecType as PyParamSpecType,
+  ParamSpecArgsType as PyParamSpecArgsType,
+  ParamSpecKwargsType as PyParamSpecKwargsType,
+  TypeVarTupleType as PyTypeVarTupleType,
+  UnpackType as PyUnpackType,
   FinalType as PyFinalType,
   ClassVarType as PyClassVarType,
   TypescriptType,
@@ -61,6 +67,16 @@ export class TypeMapper {
         return this.mapPythonType(pythonType.base, context);
       case 'typevar':
         return this.mapTypeVarType(pythonType, context);
+      case 'paramspec':
+        return this.mapParamSpecType(pythonType);
+      case 'paramspec_args':
+        return this.mapParamSpecArgsType(pythonType);
+      case 'paramspec_kwargs':
+        return this.mapParamSpecKwargsType();
+      case 'typevartuple':
+        return this.mapTypeVarTupleType(pythonType);
+      case 'unpack':
+        return this.mapUnpackType(pythonType, context);
       case 'final':
         return this.mapFinalType(pythonType, context);
       case 'classvar':
@@ -178,9 +194,10 @@ export class TypeMapper {
   }
 
   mapGenericType(type: PyGenericType, context: MappingContext = 'value'): TSGenericType {
+    const normalized = this.normalizeCustomType({ name: type.name, module: type.module });
     return {
       kind: 'generic',
-      name: type.name,
+      name: normalized.name,
       typeArgs: type.typeArgs.map(t => this.mapPythonType(t, context)),
     };
   }
@@ -288,11 +305,7 @@ export class TypeMapper {
     return { kind: 'custom', name: normalized.name, module: normalized.module };
   }
 
-  mapCallableType(type: {
-    kind: 'callable';
-    parameters: PythonType[];
-    returnType: PythonType;
-  }): TSFunctionType {
+  mapCallableType(type: PyCallableType): TSFunctionType {
     // Support Callable[[...], R] → (...args: unknown[]) => R
     const onlyEllipsis =
       type.parameters.length === 1 &&
@@ -302,21 +315,30 @@ export class TypeMapper {
     return {
       kind: 'function',
       isAsync: false,
-      parameters: onlyEllipsis
+      parameters: type.parameterSpec
         ? ([
             {
               name: 'args',
-              type: { kind: 'array', elementType: { kind: 'primitive', name: 'unknown' } },
+              type: this.mapParamSpecType(type.parameterSpec),
               optional: false,
               rest: true,
             },
           ] as const satisfies TSFunctionType['parameters'])
-        : type.parameters.map((p, i) => ({
-            name: `arg${i}`,
-            type: this.mapPythonType(p, 'value'),
-            optional: false,
-            rest: false,
-          })),
+        : onlyEllipsis
+          ? ([
+              {
+                name: 'args',
+                type: { kind: 'array', elementType: { kind: 'primitive', name: 'unknown' } },
+                optional: false,
+                rest: true,
+              },
+            ] as const satisfies TSFunctionType['parameters'])
+          : type.parameters.map((p, i) => ({
+              name: `arg${i}`,
+              type: this.mapPythonType(p, 'value'),
+              optional: false,
+              rest: false,
+            })),
       returnType: this.mapPythonType(type.returnType, 'return'),
     } satisfies TSFunctionType;
   }
@@ -335,6 +357,40 @@ export class TypeMapper {
       kind: 'primitive',
       name: 'unknown',
     };
+  }
+
+  mapParamSpecType(type: PyParamSpecType): TSCustomType {
+    return {
+      kind: 'custom',
+      name: type.name,
+      module: 'typing',
+    };
+  }
+
+  mapParamSpecArgsType(_type: PyParamSpecArgsType): TSArrayType {
+    return {
+      kind: 'array',
+      elementType: { kind: 'primitive', name: 'unknown' },
+    };
+  }
+
+  mapParamSpecKwargsType(): TSObjectType {
+    return {
+      kind: 'object',
+      properties: [],
+      indexSignature: {
+        keyType: { kind: 'primitive', name: 'string' },
+        valueType: { kind: 'primitive', name: 'unknown' },
+      },
+    };
+  }
+
+  mapTypeVarTupleType(_type: PyTypeVarTupleType): TSPrimitiveType {
+    return { kind: 'primitive', name: 'unknown' };
+  }
+
+  mapUnpackType(_type: PyUnpackType, _context: MappingContext = 'value'): TSPrimitiveType {
+    return { kind: 'primitive', name: 'unknown' };
   }
 
   mapFinalType(type: PyFinalType, context: MappingContext = 'value'): TypescriptType {

@@ -175,6 +175,80 @@ describe('IR Extraction - Complex Fixture Files', () => {
   });
 });
 
+describe('IR Extraction - Generic Metadata', () => {
+  it('extracts ordered type parameters for functions, classes, and type aliases', async () => {
+    createTempModule(
+      'generic_type_params',
+      `
+from __future__ import annotations
+
+from typing import Callable, Generic, ParamSpec, TypeVar, TypeVarTuple, Unpack
+
+T = TypeVar("T")
+K = TypeVar("K")
+V = TypeVar("V")
+P = ParamSpec("P")
+Ts = TypeVarTuple("Ts")
+
+Pair = tuple[T, T]
+Transform = Callable[P, T]
+Variadic = tuple[Unpack[Ts]]
+
+def identity(x: T) -> T:
+    return x
+
+class Container(Generic[T]):
+    def __init__(self, value: T) -> None:
+        self.value = value
+
+    def get(self) -> T:
+        return self.value
+
+class KeyValueStore(Generic[K, V]):
+    def __init__(self) -> None:
+        self._data: dict[K, V] = {}
+
+    def put(self, key: K, value: V) -> None:
+        self._data[key] = value
+`
+    );
+
+    const ir = await extractIR('generic_type_params');
+    const summarizeParams = (params: Array<{ name: string; kind: string }>) =>
+      params.map(param => ({ name: param.name, kind: param.kind }));
+
+    const identity = ir.functions.find((f: any) => f.name === 'identity');
+    expect(identity).toBeDefined();
+    expect(summarizeParams(identity.type_params)).toEqual([{ name: 'T', kind: 'typevar' }]);
+
+    const container = ir.classes.find((c: any) => c.name === 'Container');
+    expect(container).toBeDefined();
+    expect(summarizeParams(container.type_params)).toEqual([{ name: 'T', kind: 'typevar' }]);
+
+    const keyValueStore = ir.classes.find((c: any) => c.name === 'KeyValueStore');
+    expect(keyValueStore).toBeDefined();
+    expect(summarizeParams(keyValueStore.type_params)).toEqual([
+      { name: 'K', kind: 'typevar' },
+      { name: 'V', kind: 'typevar' },
+    ]);
+
+    const pair = ir.type_aliases.find((alias: any) => alias.name === 'Pair');
+    expect(pair).toBeDefined();
+    expect(summarizeParams(pair.type_params)).toEqual([{ name: 'T', kind: 'typevar' }]);
+
+    const transform = ir.type_aliases.find((alias: any) => alias.name === 'Transform');
+    expect(transform).toBeDefined();
+    expect(summarizeParams(transform.type_params)).toEqual([
+      { name: 'P', kind: 'paramspec' },
+      { name: 'T', kind: 'typevar' },
+    ]);
+
+    const variadic = ir.type_aliases.find((alias: any) => alias.name === 'Variadic');
+    expect(variadic).toBeDefined();
+    expect(summarizeParams(variadic.type_params)).toEqual([{ name: 'Ts', kind: 'typevartuple' }]);
+  });
+});
+
 describe('IR Extraction - Metadata and Version Info', () => {
   it('should include correct metadata in IR output', async () => {
     const ir = await extractIR('math'); // Use built-in module

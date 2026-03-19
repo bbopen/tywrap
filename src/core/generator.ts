@@ -3,15 +3,31 @@
  */
 
 import type {
+  PythonGenericParameter,
   PythonFunction,
   PythonClass,
   PythonModule,
+  PythonType,
+  PythonTypeAlias,
   GeneratedCode,
   TypescriptType,
 } from '../types/index.js';
 import { globalCache } from '../utils/cache.js';
 
 import { TypeMapper } from './mapper.js';
+
+interface GenericRenderParam {
+  name: string;
+  declaration: string;
+}
+
+interface GenericRenderContext {
+  currentModule?: string;
+  declaration: string;
+  typeArguments: string;
+  emittedNames: Set<string>;
+  emittedParamSpecs: Set<string>;
+}
 
 export class CodeGenerator {
   private readonly mapper: TypeMapper;
@@ -109,6 +125,170 @@ export class CodeGenerator {
       });
   }
 
+  private getTypeParameters(
+    typeParameters?: readonly PythonGenericParameter[]
+  ): readonly PythonGenericParameter[] {
+    return typeParameters ?? [];
+  }
+
+  private buildGenericRenderContext(
+    typeParameters: readonly PythonGenericParameter[],
+    types: readonly PythonType[],
+    currentModule?: string
+  ): GenericRenderContext {
+    const callableParamSpecs = new Set<string>();
+    types.forEach(type => this.collectCallableParamSpecs(type, callableParamSpecs));
+
+    const emitted: GenericRenderParam[] = [];
+    const emittedNames = new Set<string>();
+    const emittedParamSpecs = new Set<string>();
+
+    typeParameters.forEach(param => {
+      if (
+        param.kind === 'typevar' &&
+        !param.bound &&
+        !(param.constraints && param.constraints.length > 0) &&
+        (!param.variance || param.variance === 'invariant')
+      ) {
+        emitted.push({ name: param.name, declaration: param.name });
+        emittedNames.add(param.name);
+        return;
+      }
+
+      if (param.kind === 'paramspec' && callableParamSpecs.has(param.name)) {
+        emitted.push({ name: param.name, declaration: `${param.name} extends unknown[]` });
+        emittedNames.add(param.name);
+        emittedParamSpecs.add(param.name);
+      }
+    });
+
+    return {
+      currentModule,
+      declaration:
+        emitted.length > 0 ? `<${emitted.map(param => param.declaration).join(', ')}>` : '',
+      typeArguments: emitted.length > 0 ? `<${emitted.map(param => param.name).join(', ')}>` : '',
+      emittedNames,
+      emittedParamSpecs,
+    };
+  }
+
+  private collectCallableParamSpecs(type: PythonType, out: Set<string>): void {
+    switch (type.kind) {
+      case 'collection':
+        type.itemTypes.forEach(item => this.collectCallableParamSpecs(item, out));
+        break;
+      case 'union':
+        type.types.forEach(item => this.collectCallableParamSpecs(item, out));
+        break;
+      case 'optional':
+        this.collectCallableParamSpecs(type.type, out);
+        break;
+      case 'generic':
+        type.typeArgs.forEach(item => this.collectCallableParamSpecs(item, out));
+        break;
+      case 'callable':
+        if (type.parameterSpec?.kind === 'paramspec') {
+          out.add(type.parameterSpec.name);
+        }
+        type.parameters.forEach(item => this.collectCallableParamSpecs(item, out));
+        this.collectCallableParamSpecs(type.returnType, out);
+        break;
+      case 'annotated':
+        this.collectCallableParamSpecs(type.base, out);
+        break;
+      case 'final':
+      case 'classvar':
+        this.collectCallableParamSpecs(type.type, out);
+        break;
+      case 'unpack':
+        this.collectCallableParamSpecs(type.type, out);
+        break;
+      default:
+        break;
+    }
+  }
+
+  private sanitizeType(type: PythonType, ctx: GenericRenderContext): PythonType {
+    const unknownType = (): PythonType => ({ kind: 'custom', name: 'Any', module: 'typing' });
+
+    switch (type.kind) {
+      case 'primitive':
+      case 'literal':
+        return type;
+      case 'custom':
+        return type;
+      case 'collection':
+        return {
+          ...type,
+          itemTypes: type.itemTypes.map(item => this.sanitizeType(item, ctx)),
+        };
+      case 'union':
+        return {
+          ...type,
+          types: type.types.map(item => this.sanitizeType(item, ctx)),
+        };
+      case 'optional':
+        return { ...type, type: this.sanitizeType(type.type, ctx) };
+      case 'generic':
+        return {
+          ...type,
+          module: type.module === ctx.currentModule ? undefined : type.module,
+          typeArgs: type.typeArgs.map(item => this.sanitizeType(item, ctx)),
+        };
+      case 'callable':
+        if (type.parameterSpec && !ctx.emittedParamSpecs.has(type.parameterSpec.name)) {
+          return {
+            ...type,
+            parameters: [{ kind: 'custom', name: '...' }],
+            parameterSpec: undefined,
+            returnType: this.sanitizeType(type.returnType, ctx),
+          };
+        }
+        return {
+          ...type,
+          parameters: type.parameters.map(item => this.sanitizeType(item, ctx)),
+          parameterSpec:
+            type.parameterSpec && ctx.emittedParamSpecs.has(type.parameterSpec.name)
+              ? type.parameterSpec
+              : undefined,
+          returnType: this.sanitizeType(type.returnType, ctx),
+        };
+      case 'annotated':
+        return { ...type, base: this.sanitizeType(type.base, ctx) };
+      case 'typevar':
+      case 'paramspec':
+        return ctx.emittedNames.has(type.name) ? type : unknownType();
+      case 'paramspec_args':
+        return {
+          kind: 'collection',
+          name: 'list',
+          itemTypes: [unknownType()],
+        };
+      case 'paramspec_kwargs':
+        return {
+          kind: 'collection',
+          name: 'dict',
+          itemTypes: [{ kind: 'primitive', name: 'str' }, unknownType()],
+        };
+      case 'typevartuple':
+        return unknownType();
+      case 'unpack':
+        return unknownType();
+      case 'final':
+        return { ...type, type: this.sanitizeType(type.type, ctx) };
+      case 'classvar':
+        return { ...type, type: this.sanitizeType(type.type, ctx) };
+    }
+  }
+
+  private typeToTsFromPython(
+    type: PythonType,
+    ctx: GenericRenderContext,
+    mappingContext: 'value' | 'return'
+  ): string {
+    return this.typeToTs(this.mapper.mapPythonType(this.sanitizeType(type, ctx), mappingContext));
+  }
+
   private renderLooksLikeKwargsExpr(
     valueExpr: string,
     options: {
@@ -122,9 +302,7 @@ export class CodeGenerator {
     const keyCheck = (() => {
       if (options.requiredKwOnlyNames.length > 0) {
         return options.requiredKwOnlyNames
-          .map(
-            k => `Object.prototype.hasOwnProperty.call(${valueExpr}, ${JSON.stringify(k)})`
-          )
+          .map(k => `Object.prototype.hasOwnProperty.call(${valueExpr}, ${JSON.stringify(k)})`)
           .join(' && ');
       }
       if (options.hasVarKwArgs) {
@@ -133,9 +311,7 @@ export class CodeGenerator {
       }
       if (options.keywordOnlyNames.length > 0) {
         return options.keywordOnlyNames
-          .map(
-            k => `Object.prototype.hasOwnProperty.call(${valueExpr}, ${JSON.stringify(k)})`
-          )
+          .map(k => `Object.prototype.hasOwnProperty.call(${valueExpr}, ${JSON.stringify(k)})`)
           .join(' || ');
       }
       return 'false';
@@ -163,9 +339,15 @@ export class CodeGenerator {
     const needsVarArgsArray = Boolean(varArgsParam) && needsKwargsParam;
 
     const positionalParams = filteredParams.filter(p => !p.keywordOnly && !p.varArgs && !p.kwArgs);
+    const genericContext = this.buildGenericRenderContext(
+      this.getTypeParameters(func.typeParameters),
+      [func.returnType, ...filteredParams.map(param => param.type)],
+      moduleName
+    );
+    const typeParamDecl = genericContext.declaration;
 
     const tsTypeForValue = (p: (typeof filteredParams)[number]): string =>
-      this.typeToTs(this.mapper.mapPythonType(p.type, 'value'));
+      this.typeToTsFromPython(p.type, genericContext, 'value');
 
     const kwargsType = (() => {
       if (!needsKwargsParam) {
@@ -225,7 +407,7 @@ export class CodeGenerator {
     const paramDecl = implParams.join(', ');
 
     const hasKwArgs = needsKwargsParam;
-    const returnType = this.typeToTs(this.mapper.mapPythonType(func.returnType, 'return'));
+    const returnType = this.typeToTsFromPython(func.returnType, genericContext, 'return');
     const fname = this.escapeIdentifier(func.name);
     const moduleId = moduleName ?? '__main__';
 
@@ -266,12 +448,12 @@ export class CodeGenerator {
           rest.push(k);
         }
         overloads.push(
-          `export function ${fname}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`
+          `export function ${fname}${typeParamDecl}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`
         );
         if (varArgsParam && needsVarArgsArray) {
           // Also allow callers to omit the varargs surrogate parameter entirely (i.e. `fn(kwargs)`).
           overloads.push(
-            `export function ${fname}(${[...head, renderKwargsParam(true)].join(', ')}): Promise<${returnType}>;`
+            `export function ${fname}${typeParamDecl}(${[...head, renderKwargsParam(true)].join(', ')}): Promise<${returnType}>;`
           );
         }
       }
@@ -288,7 +470,7 @@ export class CodeGenerator {
           rest.push(k);
         }
         overloads.push(
-          `export function ${fname}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`
+          `export function ${fname}${typeParamDecl}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`
         );
       }
     }
@@ -349,7 +531,9 @@ export class CodeGenerator {
         requiredKwOnlyNames,
         hasVarKwArgs,
       });
-      callPreludeLines.push(`  if (__kwargs === undefined && __args.length > ${requiredPosCount}) {`);
+      callPreludeLines.push(
+        `  if (__kwargs === undefined && __args.length > ${requiredPosCount}) {`
+      );
       callPreludeLines.push(`    const __candidate = __args[__args.length - 1];`);
       callPreludeLines.push(`    if (${looksLikeKwargs}) {`);
       callPreludeLines.push(`      __kwargs = __candidate as any;`);
@@ -384,14 +568,19 @@ export class CodeGenerator {
     }
     const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
 
-    const ts = `${jsdoc}${overloadDecl}export async function ${fname}(${paramDecl}): Promise<${returnType}> {
+    const ts = `${jsdoc}${overloadDecl}export async function ${fname}${typeParamDecl}(${paramDecl}): Promise<${returnType}> {
 ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', __args${
       hasKwArgs ? ', __kwargs' : ''
     });
 }
 `;
 
-    return this.wrap(ts, [func.name]);
+    const declarationBody =
+      overloads.length > 0
+        ? overloadDecl
+        : `export function ${fname}${typeParamDecl}(${paramDecl}): Promise<${returnType}>;\n`;
+
+    return this.wrap(ts, `${jsdoc}${declarationBody}`, [func.name]);
   }
 
   generateClassWrapper(
@@ -400,37 +589,52 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
     _annotatedJSDoc = false
   ): GeneratedCode {
     const jsdoc = this.generateJsDoc(cls.docstring);
-    // Structural type aliases for special kinds
+    const classGenericContext = this.buildGenericRenderContext(
+      this.getTypeParameters(cls.typeParameters),
+      [
+        ...cls.properties.map(property => property.type),
+        ...cls.methods.flatMap(method => [
+          method.returnType,
+          ...method.parameters.map(p => p.type),
+        ]),
+      ],
+      moduleName
+    );
+    const classTypeParamDecl = classGenericContext.declaration;
+    const cname = this.escapeIdentifier(cls.name);
+    const classSelfType = `${cname}${classGenericContext.typeArguments}`;
+    const tsValueType = (p: (typeof cls.methods)[number]['parameters'][number]): string =>
+      this.typeToTsFromPython(p.type, classGenericContext, 'value');
+
+    const wrapAlias = (body: string): GeneratedCode => {
+      const ts = `${jsdoc}export type ${cname}${classTypeParamDecl} = ${body}\n`;
+      return this.wrap(ts, ts, [cls.name]);
+    };
+
     if (cls.decorators.includes('__typed_dict__') || cls.kind === 'typed_dict') {
       const props = cls.properties
         .map(p => {
           const pname = this.escapeIdentifier(p.name);
           const opt = (p as unknown as { optional?: boolean }).optional === true ? '?' : '';
-          const t = this.typeToTs(this.mapper.mapPythonType(p.type, 'value'));
+          const t = this.typeToTsFromPython(p.type, classGenericContext, 'value');
           return `${pname}${opt}: ${t};`;
         })
         .join(' ');
-      const cname = this.escapeIdentifier(cls.name);
-      const ts = `${jsdoc}export type ${cname} = { ${props} }\n`;
-      return this.wrap(ts, [cls.name]);
+      return wrapAlias(`{ ${props} }`);
     }
 
     if (cls.kind === 'namedtuple') {
-      // NamedTuple -> readonly tuple type alias `[T1, T2, ...]`
       const elements = cls.properties.map(p =>
-        this.typeToTs(this.mapper.mapPythonType(p.type, 'value'))
+        this.typeToTsFromPython(p.type, classGenericContext, 'value')
       );
-      const cname = this.escapeIdentifier(cls.name);
-      const ts = `${jsdoc}export type ${cname} = readonly [${elements.join(', ')}]\n`;
-      return this.wrap(ts, [cls.name]);
+      return wrapAlias(`readonly [${elements.join(', ')}]`);
     }
 
     if (cls.kind === 'protocol') {
-      // Protocol -> structural interface-like type alias for attributes and callables (subset)
       const props = cls.properties
         .map(
           p =>
-            `${this.escapeIdentifier(p.name)}: ${this.typeToTs(this.mapper.mapPythonType(p.type, 'value'))};`
+            `${this.escapeIdentifier(p.name)}: ${this.typeToTsFromPython(p.type, classGenericContext, 'value')};`
         )
         .join(' ');
       const methods = cls.methods
@@ -439,42 +643,36 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
           const paramsDecl = fparams
             .map(
               p =>
-                `${this.escapeIdentifier(p.name)}${p.optional ? '?' : ''}: ${this.typeToTs(this.mapper.mapPythonType(p.type, 'value'))}`
+                `${this.escapeIdentifier(p.name)}${p.optional ? '?' : ''}: ${this.typeToTsFromPython(p.type, classGenericContext, 'value')}`
             )
             .join(', ');
-          const returnType = this.typeToTs(this.mapper.mapPythonType(m.returnType, 'return'));
+          const returnType = this.typeToTsFromPython(m.returnType, classGenericContext, 'return');
           return `${this.escapeIdentifier(m.name)}: (${paramsDecl}) => ${returnType};`;
         })
         .join(' ');
-      const cname = this.escapeIdentifier(cls.name);
-      const ts = `${jsdoc}export type ${cname} = { ${props} ${methods} }\n`;
-      return this.wrap(ts, [cls.name]);
+      return wrapAlias(`{ ${props} ${methods} }`);
     }
 
     if (cls.kind === 'dataclass' || cls.kind === 'pydantic') {
-      // Data containers -> object type alias
       const props = cls.properties
         .map(p => {
           const pname = this.escapeIdentifier(p.name);
           const opt = (p as unknown as { optional?: boolean }).optional === true ? '?' : '';
-          const t = this.typeToTs(this.mapper.mapPythonType(p.type, 'value'));
+          const t = this.typeToTsFromPython(p.type, classGenericContext, 'value');
           return `${pname}${opt}: ${t};`;
         })
         .join(' ');
-      const cname = this.escapeIdentifier(cls.name);
-      const ts = `${jsdoc}export type ${cname} = { ${props} }\n`;
-      return this.wrap(ts, [cls.name]);
+      return wrapAlias(`{ ${props} }`);
     }
-    const cname = this.escapeIdentifier(cls.name);
+
     const sortedMethods = [...cls.methods].sort((a, b) => a.name.localeCompare(b.name));
-    const tsValueType = (p: (typeof cls.methods)[number]['parameters'][number]): string =>
-      this.typeToTs(this.mapper.mapPythonType(p.type, 'value'));
+    const methodBodies: string[] = [];
+    const methodDeclarations: string[] = [];
 
-    const methodBodies = sortedMethods
-      .filter(m => m.name !== '__init__')
-      .map(m => {
-        const fparams = m.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
-
+    sortedMethods
+      .filter(method => method.name !== '__init__')
+      .forEach(method => {
+        const fparams = method.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
         const keywordOnlyParams = fparams.filter(p => p.keywordOnly);
         const positionalOnlyNames = fparams.filter(p => p.positionalOnly).map(p => p.name);
         const hasVarKwArgs = fparams.some(p => p.kwArgs);
@@ -511,9 +709,9 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
         })();
 
         const paramsDeclParts: string[] = [];
-        for (const p of positionalParams) {
+        positionalParams.forEach(p => {
           paramsDeclParts.push(renderPositionalParam(p));
-        }
+        });
         if (varArgsParam) {
           const vname = this.escapeIdentifier(varArgsParam.name);
           paramsDeclParts.push(
@@ -526,8 +724,12 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
         const paramsDecl = paramsDeclParts.join(', ');
 
         const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
-        const returnType = this.typeToTs(this.mapper.mapPythonType(m.returnType, 'return'));
-        const mname = this.escapeIdentifier(m.name);
+        const returnType = this.typeToTsFromPython(
+          method.returnType,
+          classGenericContext,
+          'return'
+        );
+        const mname = this.escapeIdentifier(method.name);
 
         const overloads: string[] = [];
         if (needsKwargsParam && requiredKwOnlyNames.length > 0) {
@@ -595,11 +797,13 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
             callPreludeLines.push(`    if (${vname} !== undefined) {`);
             callPreludeLines.push(`      if (globalThis.Array.isArray(${vname})) {`);
             callPreludeLines.push(`        __varargs = ${vname};`);
-            callPreludeLines.push(`      } else if (__kwargs === undefined && ${looksLikeKwargs}) {`);
+            callPreludeLines.push(
+              `      } else if (__kwargs === undefined && ${looksLikeKwargs}) {`
+            );
             callPreludeLines.push(`        __kwargs = ${vname} as any;`);
             callPreludeLines.push(`      } else {`);
             callPreludeLines.push(
-              `        throw new Error(\`${m.name} expected ${varArgsParam.name} to be an array\`);`
+              `        throw new Error(\`${method.name} expected ${varArgsParam.name} to be an array\`);`
             );
             callPreludeLines.push(`      }`);
             callPreludeLines.push(`    }`);
@@ -609,6 +813,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
           }
         }
         const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
+
         const guardLines: string[] = [];
         if (needsKwargsParam && positionalOnlyNames.length > 0) {
           guardLines.push(
@@ -619,7 +824,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
             `      if (__kwargs && Object.prototype.hasOwnProperty.call(__kwargs, key)) {`
           );
           guardLines.push(
-            `        throw new Error(\`${m.name} does not accept positional-only argument "\${key}" as a keyword argument\`);`
+            `        throw new Error(\`${method.name} does not accept positional-only argument "\${key}" as a keyword argument\`);`
           );
           guardLines.push(`      }`);
           guardLines.push(`    }`);
@@ -638,26 +843,28 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
           guardLines.push(`    }`);
           guardLines.push(`    if (__missing.length > 0) {`);
           guardLines.push(
-            `      throw new Error(\`Missing required keyword-only arguments for ${m.name}: \${__missing.join(', ')}\`);`
+            `      throw new Error(\`Missing required keyword-only arguments for ${method.name}: \${__missing.join(', ')}\`);`
           );
           guardLines.push(`    }`);
         }
         const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
 
-        return `${overloadDecl}  async ${mname}(${paramsDecl}): Promise<${returnType}> {
-${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '${m.name}', __args${
-    needsKwargsParam ? ', __kwargs' : ''
-  });
-		  }`;
-      })
-      .join('\n');
+        methodBodies.push(`${overloadDecl}  async ${mname}(${paramsDecl}): Promise<${returnType}> {
+${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '${method.name}', __args${
+          needsKwargsParam ? ', __kwargs' : ''
+        });
+  }`);
+        methodDeclarations.push(
+          `${overloadDecl}${overloads.length > 0 ? '' : `  ${mname}(${paramsDecl}): Promise<${returnType}>;\n`}`
+        );
+      });
 
-    // Constructor typing from __init__
     const init = cls.methods.find(m => m.name === '__init__');
     const ctorSpec = (() => {
       if (!init) {
         return {
           overloadDecl: '',
+          declaration: `  static create${classTypeParamDecl}(...args: unknown[]): Promise<${classSelfType}>;\n`,
           paramsDecl: `...args: unknown[]`,
           callPrelude: `    const __args: unknown[] = [...args];\n`,
           hasKwargs: false,
@@ -702,9 +909,9 @@ ${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '
       })();
 
       const paramsDeclParts: string[] = [];
-      for (const p of positionalParams) {
+      positionalParams.forEach(p => {
         paramsDeclParts.push(renderPositionalParam(p));
-      }
+      });
       if (varArgsParam) {
         const vname = this.escapeIdentifier(varArgsParam.name);
         paramsDeclParts.push(needsVarArgsArray ? `${vname}?: unknown[]` : `...${vname}: unknown[]`);
@@ -730,17 +937,23 @@ ${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '
             );
           }
           rest.push(`kwargs: ${kwargsType}`);
-          overloads.push(`  static create(${[...head, ...rest].join(', ')}): Promise<${cname}>;`);
+          overloads.push(
+            `  static create${classTypeParamDecl}(${[...head, ...rest].join(', ')}): Promise<${classSelfType}>;`
+          );
           if (varArgsParam && needsVarArgsArray) {
             overloads.push(
-              `  static create(${[...head, `kwargs: ${kwargsType}`].join(', ')}): Promise<${cname}>;`
+              `  static create${classTypeParamDecl}(${[...head, `kwargs: ${kwargsType}`].join(', ')}): Promise<${classSelfType}>;`
             );
           }
         }
       }
       const overloadDecl = overloads.length > 0 ? `${overloads.join('\n')}\n` : '';
-      const guardLines: string[] = [];
+      const declaration =
+        overloads.length > 0
+          ? overloadDecl
+          : `  static create${classTypeParamDecl}(${paramsDecl}): Promise<${classSelfType}>;\n`;
 
+      const guardLines: string[] = [];
       const callPreludeLines: string[] = [];
       if (needsKwargsParam) {
         callPreludeLines.push(`    let __kwargs = kwargs;`);
@@ -796,6 +1009,7 @@ ${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '
         }
       }
       const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
+
       if (needsKwargsParam && positionalOnlyNames.length > 0) {
         guardLines.push(
           `    const __positionalOnly = ${JSON.stringify(positionalOnlyNames)} as const;`
@@ -829,26 +1043,55 @@ ${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '
         guardLines.push(`    }`);
       }
 
-      return { overloadDecl, paramsDecl, callPrelude, hasKwargs: needsKwargsParam, guardLines };
+      return {
+        overloadDecl,
+        declaration,
+        paramsDecl,
+        callPrelude,
+        hasKwargs: needsKwargsParam,
+        guardLines,
+      };
     })();
 
     const moduleId = moduleName ?? '__main__';
-    const methodsSection = methodBodies ? `\n${methodBodies}\n` : '\n';
+    const methodsSection = methodBodies.length > 0 ? `\n${methodBodies.join('\n')}\n` : '\n';
+    const declarationMethodsSection =
+      methodDeclarations.length > 0 ? `\n${methodDeclarations.join('')}\n` : '\n';
     const ctorGuards = ctorSpec.guardLines.length > 0 ? `${ctorSpec.guardLines.join('\n')}\n` : '';
-    const ts = `${jsdoc}export class ${cname} {
-		  private readonly __handle: string;
-		  private constructor(handle: string) { this.__handle = handle; }
-		${ctorSpec.overloadDecl}  static async create(${ctorSpec.paramsDecl}): Promise<${cname}> {
+    const newClassExpr = `new ${cname}${classGenericContext.typeArguments}(handle)`;
+    const ts = `${jsdoc}export class ${cname}${classTypeParamDecl} {
+  private readonly __handle: string;
+  private constructor(handle: string) { this.__handle = handle; }
+${ctorSpec.overloadDecl}  static async create${classTypeParamDecl}(${ctorSpec.paramsDecl}): Promise<${classSelfType}> {
 ${ctorSpec.callPrelude}${ctorGuards}    const handle = await getRuntimeBridge().instantiate<string>('${moduleId}', '${cls.name}', __args${
       ctorSpec.hasKwargs ? ', __kwargs' : ''
     });
-		    return new ${cname}(handle);
+    return ${newClassExpr};
   }
-  static fromHandle(handle: string): ${cname} { return new ${cname}(handle); }${methodsSection}  async disposeHandle(): Promise<void> { await getRuntimeBridge().disposeInstance(this.__handle); }
+  static fromHandle${classTypeParamDecl}(handle: string): ${classSelfType} { return ${newClassExpr}; }${methodsSection}  async disposeHandle(): Promise<void> { await getRuntimeBridge().disposeInstance(this.__handle); }
 }
 `;
 
-    return this.wrap(ts, [cls.name]);
+    const declaration = `${jsdoc}export class ${cname}${classTypeParamDecl} {
+  private readonly __handle: string;
+  private constructor(handle: string);
+${ctorSpec.declaration}  static fromHandle${classTypeParamDecl}(handle: string): ${classSelfType};${declarationMethodsSection}  disposeHandle(): Promise<void>;
+}
+`;
+
+    return this.wrap(ts, declaration, [cls.name]);
+  }
+
+  generateTypeAlias(alias: PythonTypeAlias, moduleName?: string): GeneratedCode {
+    const genericContext = this.buildGenericRenderContext(
+      this.getTypeParameters(alias.typeParameters),
+      [alias.type],
+      moduleName
+    );
+    const aliasName = this.escapeIdentifier(alias.name, { preserveCase: true });
+    const body = this.typeToTsFromPython(alias.type, genericContext, 'value');
+    const ts = `export type ${aliasName}${genericContext.declaration} = ${body}\n`;
+    return this.wrap(ts, ts, [alias.name]);
   }
 
   /**
@@ -877,16 +1120,22 @@ ${ctorSpec.callPrelude}${ctorGuards}    const handle = await getRuntimeBridge().
   }
 
   generateModuleDefinition(module: PythonModule, annotatedJSDoc = false): GeneratedCode {
-    const functionCodes = [...module.functions]
+    const functionResults = [...module.functions]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map(f => this.generateFunctionWrapper(f, module.name, annotatedJSDoc).typescript)
-      .join('\n');
-    const classCodes = [...module.classes]
+      .map(f => this.generateFunctionWrapper(f, module.name, annotatedJSDoc));
+    const classResults = [...module.classes]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map(c => this.generateClassWrapper(c, module.name, annotatedJSDoc).typescript)
-      .join('\n');
+      .map(c => this.generateClassWrapper(c, module.name, annotatedJSDoc));
+    const typeAliasResults = [...(module.typeAliases ?? [])]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(alias => this.generateTypeAlias(alias, module.name));
+
+    const functionCodes = functionResults.map(result => result.typescript).join('\n');
+    const classCodes = classResults.map(result => result.typescript).join('\n');
+    const typeAliasCodes = typeAliasResults.map(result => result.typescript).join('\n');
 
     const header = `// Generated by tywrap\n// Module: ${module.name}\n// DO NOT EDIT MANUALLY\n\n`;
+    const declarationHeader = `// Generated by tywrap\n// Type Declarations\n// DO NOT EDIT MANUALLY\n\n`;
     const hasRuntimeClasses = module.classes.some(c => {
       const kind = c.kind ?? 'class';
       return kind === 'class' && !c.decorators.includes('__typed_dict__');
@@ -894,8 +1143,14 @@ ${ctorSpec.callPrelude}${ctorGuards}    const handle = await getRuntimeBridge().
     const needsRuntime = module.functions.length > 0 || hasRuntimeClasses;
     const bridgeDecl = needsRuntime ? `import { getRuntimeBridge } from 'tywrap/runtime';\n\n` : '';
 
-    const ts = `${header + bridgeDecl + functionCodes}\n${classCodes}`;
-    return this.wrap(ts, [module.name]);
+    const ts =
+      `${header + bridgeDecl + functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd() + '\n';
+    const declaration =
+      `${declarationHeader}${functionResults.map(result => result.declaration).join('\n')}\n${classResults
+        .map(result => result.declaration)
+        .join('\n')}\n${typeAliasResults.map(result => result.declaration).join('\n')}`.trimEnd() +
+      '\n';
+    return this.wrap(ts, declaration, [module.name]);
   }
 
   private generateJsDoc(doc?: string, paramAnnotations?: readonly string[]): string {
@@ -915,10 +1170,10 @@ ${ctorSpec.callPrelude}${ctorGuards}    const handle = await getRuntimeBridge().
     return `/**\n${lines.join('\n')}\n */\n`;
   }
 
-  private wrap(typescript: string, _sources: string[]): GeneratedCode {
+  private wrap(typescript: string, declaration: string, _sources: string[]): GeneratedCode {
     return {
       typescript,
-      declaration: '',
+      declaration,
       sourceMap: undefined,
       metadata: {
         generatedAt: new Date(),
