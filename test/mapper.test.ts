@@ -118,24 +118,35 @@ describe('TypeMapper', () => {
     expect(mapped.kind).toBe('object');
   });
 
-  it('maps TypeVar-style placeholders to unknown instead of undeclared TS identifiers', () => {
+  it('preserves dedicated generic placeholders for later sanitization', () => {
     const mappedTypeVar = mapper.mapPythonType({
       kind: 'typevar',
       name: 'T',
     } as any);
     expect(mappedTypeVar).toEqual({
+      kind: 'custom',
+      name: 'T',
+      module: 'typing',
+    });
+
+    const mappedRawTypingPlaceholder = mapper.mapPythonType({
+      kind: 'custom',
+      name: 'P',
+      module: 'typing',
+    } as any);
+    expect(mappedRawTypingPlaceholder).toEqual({
       kind: 'primitive',
       name: 'unknown',
     });
 
     const mappedParamSpec = mapper.mapPythonType({
+      kind: 'paramspec',
+      name: 'P',
+    } as any);
+    expect(mappedParamSpec).toEqual({
       kind: 'custom',
       name: 'P',
       module: 'typing',
-    } as any);
-    expect(mappedParamSpec).toEqual({
-      kind: 'primitive',
-      name: 'unknown',
     });
 
     const mappedCallable = mapper.mapPythonType({
@@ -146,8 +157,9 @@ describe('TypeMapper', () => {
     expect(mappedCallable.kind).toBe('function');
     if (mappedCallable.kind === 'function') {
       expect(mappedCallable.returnType).toEqual({
-        kind: 'primitive',
-        name: 'unknown',
+        kind: 'custom',
+        name: 'T',
+        module: 'typing',
       });
     }
   });

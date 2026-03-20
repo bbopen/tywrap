@@ -3,6 +3,7 @@ import { TypeMapper } from '../src/core/mapper.js';
 import type {
   PythonType,
   TypescriptType,
+  TSArrayType,
   TSPrimitiveType,
   TSCustomType,
   TSGenericType,
@@ -198,18 +199,17 @@ describe('TypeMapper - Enhanced Type Support', () => {
       expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'unknown' }]);
     });
 
-    test('maps typing.Sequence to Array generic', () => {
+    test('maps typing.Sequence to an array shape', () => {
       const sequenceType: PythonType = {
         kind: 'custom',
         name: 'Sequence',
         module: 'typing',
       };
 
-      const result = mapper.mapPythonType(sequenceType) as TSGenericType;
+      const result = mapper.mapPythonType(sequenceType) as TSArrayType;
 
-      expect(result.kind).toBe('generic');
-      expect(result.name).toBe('Array');
-      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'unknown' }]);
+      expect(result.kind).toBe('array');
+      expect(result.elementType).toEqual({ kind: 'primitive', name: 'unknown' });
     });
 
     test('maps typing.Mapping to object with index signature', () => {
@@ -244,7 +244,7 @@ describe('TypeMapper - Enhanced Type Support', () => {
       expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'string' }]);
     });
 
-    test('maps generic typing.Sequence[T] to Array<T>', () => {
+    test('maps generic typing.Sequence[T] to T[]', () => {
       const sequenceType: PythonType = {
         kind: 'generic',
         name: 'Sequence',
@@ -252,14 +252,13 @@ describe('TypeMapper - Enhanced Type Support', () => {
         typeArgs: [{ kind: 'primitive', name: 'int' }],
       };
 
-      const result = mapper.mapPythonType(sequenceType) as TSGenericType;
+      const result = mapper.mapPythonType(sequenceType) as TSArrayType;
 
-      expect(result.kind).toBe('generic');
-      expect(result.name).toBe('Array');
-      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'number' }]);
+      expect(result.kind).toBe('array');
+      expect(result.elementType).toEqual({ kind: 'primitive', name: 'number' });
     });
 
-    test('maps generic collections.abc.Sequence[T] to Array<T>', () => {
+    test('maps generic collections.abc.Sequence[T] to T[]', () => {
       const sequenceType: PythonType = {
         kind: 'generic',
         name: 'Sequence',
@@ -267,11 +266,10 @@ describe('TypeMapper - Enhanced Type Support', () => {
         typeArgs: [{ kind: 'primitive', name: 'bool' }],
       };
 
-      const result = mapper.mapPythonType(sequenceType) as TSGenericType;
+      const result = mapper.mapPythonType(sequenceType) as TSArrayType;
 
-      expect(result.kind).toBe('generic');
-      expect(result.name).toBe('Array');
-      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'boolean' }]);
+      expect(result.kind).toBe('array');
+      expect(result.elementType).toEqual({ kind: 'primitive', name: 'boolean' });
     });
 
     test('maps generic typing_extensions.Mapping[K, V] to an object index signature', () => {

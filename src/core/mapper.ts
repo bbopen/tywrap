@@ -414,10 +414,9 @@ export class TypeMapper {
 
     if (type.name === 'Sequence') {
       return {
-        kind: 'generic',
-        name: 'Array',
-        typeArgs: [typeArgs[0] ?? unknownType],
-      } satisfies TSGenericType;
+        kind: 'array',
+        elementType: typeArgs[0] ?? unknownType,
+      } satisfies TSArrayType;
     }
 
     if (type.name === 'Mapping') {
