@@ -1,18 +1,6 @@
 ---
 layout: home
 
-hero:
-  name: tywrap
-  text: TypeScript wrappers for Python libraries
-  tagline: Auto-generate type-safe TypeScript bindings for any Python library — works in Node.js, Bun, Deno, and browsers via Pyodide.
-  actions:
-    - theme: brand
-      text: Get Started
-      link: /guide/getting-started
-    - theme: alt
-      text: View on GitHub
-      link: https://github.com/bbopen/tywrap
-
 features:
   - icon: 🔒
     title: Full Type Safety

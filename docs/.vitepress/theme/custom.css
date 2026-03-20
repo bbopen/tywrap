@@ -1,0 +1,16 @@
+/* Custom theme overrides for tywrap docs */
+
+/* Hide VitePress default hero — replaced by Hero3D component */
+.VPHome > .VPHero {
+  display: none;
+}
+
+/* Ensure home page has dark background for the hero */
+.VPHome {
+  background-color: #0a0c10;
+}
+
+/* Features section inherits dark theme on home */
+.VPHome .VPFeatures {
+  background-color: #0a0c10;
+}

@@ -117,6 +117,8 @@
   "dependencies": {
     "@babel/parser": "^7.25.6",
     "@babel/types": "^7.25.6",
+    "postprocessing": "^6.38.3",
+    "three": "^0.183.2",
     "tree-sitter": "^0.21.0",
     "tree-sitter-python": "^0.21.0",
     "typescript": "^5.6.2",
@@ -126,6 +128,7 @@
   "devDependencies": {
     "@types/bun": "^1.2.19",
     "@types/node": "^22.5.4",
+    "@types/three": "^0.183.1",
     "@types/yargs": "^17.0.33",
     "@typescript-eslint/eslint-plugin": "^8.5.0",
     "@typescript-eslint/parser": "^8.5.0",
