@@ -20,7 +20,9 @@
   background-color: transparent !important;
 }
 
-/* Optional: restrict the max width of the features/content to the left like the hero text */
+/* Restrict features/content to the left to match the hero text layout.
+   Targets internal VitePress classes (.VPFeatures .container, .VPHomeContent .container)
+   verified against VitePress 1.x — may need updating if VitePress changes its markup. */
 @media (min-width: 960px) {
   .VPHome .VPFeatures .container,
   .VPHome .VPHomeContent .container {

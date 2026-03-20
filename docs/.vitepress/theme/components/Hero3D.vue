@@ -57,12 +57,12 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- Fixed Background Canvas -->
-  <canvas ref="canvasRef" class="hero-canvas" />
+  <canvas ref="canvasRef" class="hero-canvas" aria-hidden="true" />
   <!-- Gradient overlay to ensure text legibility -->
   <div class="hero-overlay" />
 
   <!-- Interactive Content Container -->
-  <section class="hero-section">
+  <section class="hero-section" aria-label="tywrap hero — wrap Python in TypeScript safety">
     <div class="hero-content">
       <h1 class="hero-headline fade-up">
         Wrap Python in <br />

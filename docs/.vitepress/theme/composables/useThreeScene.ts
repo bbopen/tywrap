@@ -201,7 +201,9 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   scene.add(coreGroup)
 
   // --- Massive Plasma Core Particles ---
-  const PARTICLE_COUNT = 15000
+  // Reduce particle count on mobile / low-end devices to avoid frame drops
+  const isMobile = width < 768
+  const PARTICLE_COUNT = isMobile ? 5000 : 15000
   const positions = new Float32Array(PARTICLE_COUNT * 3)
   const colors = new Float32Array(PARTICLE_COUNT * 3)
   const sizes = new Float32Array(PARTICLE_COUNT)
