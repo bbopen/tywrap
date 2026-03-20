@@ -25,8 +25,14 @@ function onScroll() {
   }
 }
 
+const prefersReducedMotion = () =>
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
 onMounted(() => {
   if (!canvasRef.value) return
+
+  // Skip all canvas animation when the user prefers reduced motion
+  if (prefersReducedMotion()) return
 
   const w = window.innerWidth
   const h = window.innerHeight
@@ -36,6 +42,7 @@ onMounted(() => {
     width: w,
     height: h,
   })
+  threeScene.onScroll(window.scrollY)
   threeScene.start()
 
   window.addEventListener('resize', onResize)
@@ -294,5 +301,15 @@ onBeforeUnmount(() => {
 
 .delay-2 {
   animation-delay: 0.4s;
+}
+
+/* Disable all decorative animations for motion-sensitive users */
+@media (prefers-reduced-motion: reduce) {
+  .fade-up {
+    animation: none;
+  }
+  .hero-gradient-text {
+    animation: none;
+  }
 }
 </style>
