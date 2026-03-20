@@ -32,6 +32,47 @@ export interface ThreeSceneReturn {
   resize: (w: number, h: number) => void
 }
 
+// drei "city" preset HDR environment map URL
+// This is the same file drei loads for <Environment preset="city" />
+const CITY_HDR_URL =
+  'https://raw.githubusercontent.com/pmndrs/drei-assets/master/hdri/city.hdr'
+
+/**
+ * Load HDR environment map and apply to scene.
+ * Falls back to fill lights if loading fails.
+ */
+function loadEnvironment(
+  scene: THREE.Scene,
+  renderer: THREE.WebGLRenderer,
+): void {
+  import('three/addons/loaders/RGBELoader.js').then(({ RGBELoader }) => {
+    const pmremGenerator = new THREE.PMREMGenerator(renderer)
+    pmremGenerator.compileEquirectangularShader()
+
+    new RGBELoader().load(
+      CITY_HDR_URL,
+      (hdrTexture) => {
+        const envMap = pmremGenerator.fromEquirectangular(hdrTexture).texture
+        scene.environment = envMap
+        hdrTexture.dispose()
+        pmremGenerator.dispose()
+      },
+      undefined,
+      () => {
+        // Fallback: add fill lights if HDR fails to load
+        const fill1 = new THREE.DirectionalLight(0xfff0dd, 0.4)
+        fill1.position.set(-5, 5, 5)
+        scene.add(fill1)
+
+        const fill2 = new THREE.DirectionalLight(0xd0e0ff, 0.3)
+        fill2.position.set(5, -3, -5)
+        scene.add(fill2)
+        pmremGenerator.dispose()
+      },
+    )
+  })
+}
+
 export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   const { canvas, width, height } = options
 
@@ -45,7 +86,7 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   // Camera — fov=45, position=[0,0,12], near=0.1, far=100
   // -----------------------------------------------------------------------
   const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100)
-  camera.position.set(0, 0, 12)
+  camera.position.set(0, -3, 16)
 
   // -----------------------------------------------------------------------
   // Renderer — antialias=false, alpha=true, powerPreference='high-performance'
@@ -61,6 +102,8 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   renderer.setPixelRatio(dpr)
   renderer.setSize(width, height)
   renderer.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.toneMappingExposure = 0.8
+  renderer.outputColorSpace = THREE.SRGBColorSpace
 
   // -----------------------------------------------------------------------
   // Lights
@@ -80,25 +123,22 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   pointLight2.position.set(-10, -10, -10)
   scene.add(pointLight2)
 
-  // Two fill lights approximating drei "city" Environment preset
-  const fillLight1 = new THREE.DirectionalLight(0xfff0dd, 0.4)
-  fillLight1.position.set(-5, 5, 5)
-  scene.add(fillLight1)
-
-  const fillLight2 = new THREE.DirectionalLight(0xd0e0ff, 0.3)
-  fillLight2.position.set(5, -3, -5)
-  scene.add(fillLight2)
+  // Environment map — load drei "city" preset HDR for realistic reflections
+  // This is critical for MeshPhysicalMaterial (glass shield) to look correct
+  loadEnvironment(scene, renderer)
 
   // -----------------------------------------------------------------------
   // Post-processing: EffectComposer + RenderPass + BloomEffect
   // -----------------------------------------------------------------------
-  const composer = new EffectComposer(renderer)
+  const composer = new EffectComposer(renderer, {
+    frameBufferType: THREE.HalfFloatType,
+  })
   composer.addPass(new RenderPass(scene, camera))
 
   const bloomEffect = new BloomEffect({
-    luminanceThreshold: 1,
+    luminanceThreshold: 1.2,
     mipmapBlur: true,
-    intensity: 1.0,
+    intensity: 0.4,
   })
   composer.addPass(new EffectPass(camera, bloomEffect))
 
@@ -147,9 +187,9 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   // Inner Sphere — SphereGeometry(0.7, 32, 32)
   const innerSphereGeo = new THREE.SphereGeometry(0.7, 32, 32)
   const innerSphereMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    emissive: 0xffffff,
-    emissiveIntensity: 1,
+    color: 0xddeeff,
+    emissive: 0xddeeff,
+    emissiveIntensity: 0.6,
     toneMapped: false,
   })
   const innerSphere = new THREE.Mesh(innerSphereGeo, innerSphereMat)
@@ -160,22 +200,20 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   // -----------------------------------------------------------------------
   const shieldGeo = new THREE.IcosahedronGeometry(2.4, 1)
   const shieldMat = new THREE.MeshPhysicalMaterial({
-    transmission: 1,
-    roughness: 0.05,
-    thickness: 2,
-    ior: 1.5,
-    clearcoat: 1,
-    clearcoatRoughness: 0.1,
-    color: 0xe0f2fe,
+    color: 0x3b82f6,
     transparent: true,
-    opacity: 0.8,
+    opacity: 0.03,
+    roughness: 0.3,
+    metalness: 0.1,
+    envMapIntensity: 0.1,
+    side: THREE.DoubleSide,
   })
   const shieldMesh = new THREE.Mesh(shieldGeo, shieldMat)
   floatGroup.add(shieldMesh)
 
   // Edges on the shield — threshold=15, color=#3b82f6
   const edgesGeo = new THREE.EdgesGeometry(shieldGeo, 15)
-  const edgesMat = new THREE.LineBasicMaterial({ color: 0x3b82f6 })
+  const edgesMat = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.12 })
   const edgesLine = new THREE.LineSegments(edgesGeo, edgesMat)
   shieldMesh.add(edgesLine)
 
@@ -210,24 +248,24 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     const curve = new THREE.CatmullRomCurve3(curvePoints)
 
     // Tube mesh — TubeGeometry(curve, 200, 0.03, 8, false)
-    const tubeGeo = new THREE.TubeGeometry(curve, 200, 0.03, 8, false)
+    const tubeGeo = new THREE.TubeGeometry(curve, 200, 0.02, 8, false)
     const tubeMat = new THREE.MeshStandardMaterial({
       color,
       emissive: color,
       emissiveIntensity: intensity,
       toneMapped: false,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.6,
     })
     const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat)
     group.add(tubeMesh)
 
-    // End spheres — SphereGeometry(0.12, 16, 16), emissiveIntensity = intensity*2
-    const endSphereGeo = new THREE.SphereGeometry(0.12, 16, 16)
+    // End spheres — small glowing caps at curve endpoints
+    const endSphereGeo = new THREE.SphereGeometry(0.08, 16, 16)
     const endSphereMat = new THREE.MeshStandardMaterial({
       color,
       emissive: color,
-      emissiveIntensity: intensity * 2,
+      emissiveIntensity: intensity * 0.8,
       toneMapped: false,
     })
 
@@ -243,27 +281,27 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     return group
   }
 
-  // Amber LightStream
+  // Amber LightStream — compact spiral, subtle glow
   floatGroup.add(
     createLightStream({
       color: 0xf59e0b,
-      speed: 0.8,
+      speed: 0.6,
       offset: 0,
-      radius: 3.5,
-      height: 8,
-      intensity: 5,
+      radius: 3,
+      height: 5,
+      intensity: 1.8,
     }),
   )
 
-  // Blue LightStream
+  // Blue LightStream — compact spiral, subtle glow
   floatGroup.add(
     createLightStream({
       color: 0x3b82f6,
-      speed: -1,
+      speed: -0.7,
       offset: Math.PI,
-      radius: 4,
-      height: 8,
-      intensity: 5,
+      radius: 3.5,
+      height: 5,
+      intensity: 1.8,
     }),
   )
 
@@ -354,26 +392,26 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     return new THREE.Points(geometry, material)
   }
 
-  // Blue sparkles: count=200, scale=15, size=2, speed=0.2, opacity=0.5
+  // Blue sparkles — subtle background stars
   scene.add(
     createSparkles({
-      count: 200,
-      scale: 15,
-      size: 2,
-      speed: 0.2,
-      opacity: 0.5,
+      count: 120,
+      scale: 18,
+      size: 1.5,
+      speed: 0.15,
+      opacity: 0.3,
       color: new THREE.Color(0x3b82f6),
     }),
   )
 
-  // Amber sparkles: count=100, scale=15, size=3, speed=0.4, opacity=0.3
+  // Amber sparkles — subtle background stars
   scene.add(
     createSparkles({
-      count: 100,
-      scale: 15,
-      size: 3,
-      speed: 0.4,
-      opacity: 0.3,
+      count: 60,
+      scale: 18,
+      size: 2,
+      speed: 0.3,
+      opacity: 0.2,
       color: new THREE.Color(0xf59e0b),
     }),
   )
@@ -387,9 +425,9 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     rafId = requestAnimationFrame(animate)
     const elapsed = clock.getElapsedTime()
 
-    // Core rotation
-    coreGroup.rotation.x = elapsed * 0.4
-    coreGroup.rotation.y = elapsed * 0.3
+    // Core rotation — slowed for elegance
+    coreGroup.rotation.x = elapsed * 0.2
+    coreGroup.rotation.y = elapsed * 0.15
 
     // GlassShield rotation
     shieldMesh.rotation.y = elapsed * 0.1

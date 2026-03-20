@@ -144,7 +144,7 @@ onBeforeUnmount(() => {
   padding-left: 1.5rem;
   padding-right: 1.5rem;
   text-align: center;
-  margin-top: 16rem;
+  margin-top: 20rem;
 }
 
 .hero-headline {
