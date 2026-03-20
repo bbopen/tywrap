@@ -161,7 +161,6 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     targetMouse.x = (event.clientX / window.innerWidth) * 2 - 1
     targetMouse.y = -(event.clientY / window.innerHeight) * 2 + 1
   }
-  window.addEventListener('mousemove', onMouseMove)
   function onScroll(scrollY: number) { scrollState.target = scrollY }
 
   const dpr = Math.min(Math.max(1, window.devicePixelRatio), 2)
@@ -329,6 +328,7 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
 
   // --- Animation loop ---
   let rafId: number | null = null
+  let started = false
 
   function animate() {
     rafId = requestAnimationFrame(animate)
@@ -364,6 +364,9 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   }
 
   function start() {
+    if (started) return
+    started = true
+    window.addEventListener('mousemove', onMouseMove)
     clock.start()
     animate()
   }

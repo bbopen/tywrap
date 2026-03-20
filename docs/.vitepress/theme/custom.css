@@ -28,6 +28,6 @@
   .VPHome .VPHomeContent .container {
     max-width: 60%;
     margin-left: 0;
-    padding-left: 4rem;
+    padding-left: max(24px, calc((100vw - var(--vp-layout-max-width, 1152px)) / 2));
   }
 }

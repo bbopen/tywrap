@@ -7,6 +7,7 @@ const { site } = useData()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let threeScene: ThreeSceneReturn | null = null
 let scrollTicking = false
+let scrollRafId: number | null = null
 
 function getBase(): string {
   return site.value.base || '/'
@@ -15,11 +16,12 @@ function getBase(): string {
 // Ensure the scroll event is throttled by requestAnimationFrame
 function onScroll() {
   if (!scrollTicking && threeScene && threeScene.onScroll) {
-    window.requestAnimationFrame(() => {
-      threeScene!.onScroll(window.scrollY)
-      scrollTicking = false
-    })
     scrollTicking = true
+    scrollRafId = window.requestAnimationFrame(() => {
+      scrollRafId = null
+      scrollTicking = false
+      threeScene?.onScroll(window.scrollY)
+    })
   }
 }
 
@@ -46,6 +48,11 @@ function onResize() {
 }
 
 onBeforeUnmount(() => {
+  if (scrollRafId !== null) {
+    window.cancelAnimationFrame(scrollRafId)
+    scrollRafId = null
+  }
+  scrollTicking = false
   window.removeEventListener('resize', onResize)
   window.removeEventListener('scroll', onScroll)
   if (threeScene) {
