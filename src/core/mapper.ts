@@ -26,6 +26,7 @@ import type {
   TSUnionType,
   TSFunctionType,
   TSGenericType,
+  TSCustomType,
   TSIndexSignature,
   TSLiteralType,
   TypePreset,
@@ -325,12 +326,12 @@ export class TypeMapper {
     return { kind: 'literal', value: type.value };
   }
 
-  mapTypeVarType(_type: PyTypeVarType, _context: MappingContext = 'value'): TSPrimitiveType {
-    // Generated wrappers do not declare TypeScript generics that mirror Python
-    // TypeVar/ParamSpec scopes, so the sound fallback is unknown.
+  mapTypeVarType(type: PyTypeVarType, _context: MappingContext = 'value'): TSCustomType {
+    // TypeVar maps to a generic type parameter in TypeScript.
     return {
-      kind: 'primitive',
-      name: 'unknown',
+      kind: 'custom',
+      name: type.name,
+      module: 'typing',
     };
   }
 
