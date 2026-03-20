@@ -1,0 +1,33 @@
+/* Custom theme overrides for tywrap docs */
+
+/* Hide VitePress default hero — replaced by Hero3D component */
+.VPHome > .VPHero {
+  display: none;
+}
+
+/* Ensure home page has transparent background for the 3D canvas */
+.VPHome {
+  background-color: transparent !important;
+}
+
+/* Features section inherits transparent theme on home */
+.VPHome .VPFeatures {
+  background-color: transparent !important;
+}
+
+/* Ensure the main markdown content container is transparent */
+.VPHome .VPHomeContent {
+  background-color: transparent !important;
+}
+
+/* Restrict features/content to the left to match the hero text layout.
+   Targets internal VitePress classes (.VPFeatures .container, .VPHomeContent .container)
+   verified against VitePress 1.x — may need updating if VitePress changes its markup. */
+@media (min-width: 960px) {
+  .VPHome .VPFeatures .container,
+  .VPHome .VPHomeContent .container {
+    max-width: 60%;
+    margin-left: 0;
+    padding-left: max(24px, calc((100vw - var(--vp-layout-max-width, 1152px)) / 2));
+  }
+}
