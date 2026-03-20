@@ -685,7 +685,106 @@ describe('CodeGenerator', () => {
     expect(code.declaration).toContain('export function coalesce<T>(x: T): Promise<T>;');
   });
 
+  it('generates protocol aliases without init helpers and preserves method generics', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Mapper',
+        bases: ['Protocol'],
+        methods: [
+          {
+            name: '__init__',
+            signature: {
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+              returnType: { kind: 'primitive', name: 'None' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'None' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+          {
+            name: 'map',
+            signature: {
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+                {
+                  name: 'x',
+                  type: { kind: 'typevar', name: 'U' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+              returnType: { kind: 'typevar', name: 'U' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            typeParameters: [{ name: 'U', kind: 'typevar', variance: 'invariant' }],
+            returnType: { kind: 'typevar', name: 'U' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'x',
+                type: { kind: 'typevar', name: 'U' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+        ],
+        properties: [],
+        docstring: undefined,
+        decorators: [],
+        kind: 'protocol',
+      } as any,
+      'protocol_module'
+    );
+
+    expect(code.typescript).toContain('export type Mapper =');
+    expect(code.typescript).toContain('map: <U>(x: U) => U;');
+    expect(code.typescript).not.toContain('__init__');
+    expect(code.typescript).not.toContain('NoInitOrReplaceInit');
+  });
+
   it('emits generic classes and type aliases with safe fallbacks', () => {
+    const typeP = { name: 'P', kind: 'paramspec' } as const;
     const typeT = { name: 'T', kind: 'typevar', variance: 'invariant' } as const;
     const code = gen.generateModuleDefinition({
       name: 'generic_module',
@@ -735,6 +834,70 @@ describe('CodeGenerator', () => {
                 name: 'Container',
                 module: 'generic_module',
                 typeArgs: [{ kind: 'typevar', name: 'T' }],
+              },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+          ],
+        },
+        {
+          name: 'accept_transform',
+          signature: {
+            parameters: [
+              {
+                name: 'transform',
+                type: {
+                  kind: 'generic',
+                  name: 'Transform',
+                  module: 'generic_module',
+                  typeArgs: [
+                    { kind: 'paramspec', name: 'P' },
+                    { kind: 'typevar', name: 'T' },
+                  ],
+                },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+            returnType: {
+              kind: 'generic',
+              name: 'Transform',
+              module: 'generic_module',
+              typeArgs: [
+                { kind: 'paramspec', name: 'P' },
+                { kind: 'typevar', name: 'T' },
+              ],
+            },
+            isAsync: false,
+            isGenerator: false,
+          },
+          docstring: undefined,
+          decorators: [],
+          isAsync: false,
+          isGenerator: false,
+          typeParameters: [typeP, typeT],
+          returnType: {
+            kind: 'generic',
+            name: 'Transform',
+            module: 'generic_module',
+            typeArgs: [
+              { kind: 'paramspec', name: 'P' },
+              { kind: 'typevar', name: 'T' },
+            ],
+          },
+          parameters: [
+            {
+              name: 'transform',
+              type: {
+                kind: 'generic',
+                name: 'Transform',
+                module: 'generic_module',
+                typeArgs: [
+                  { kind: 'paramspec', name: 'P' },
+                  { kind: 'typevar', name: 'T' },
+                ],
               },
               optional: false,
               varArgs: false,
@@ -834,6 +997,66 @@ describe('CodeGenerator', () => {
                 },
               ],
             },
+            {
+              name: 'id',
+              signature: {
+                parameters: [
+                  {
+                    name: 'self',
+                    type: { kind: 'primitive', name: 'None' },
+                    optional: false,
+                    varArgs: false,
+                    kwArgs: false,
+                  },
+                  {
+                    name: 'x',
+                    type: { kind: 'typevar', name: 'U' },
+                    optional: false,
+                    varArgs: false,
+                    kwArgs: false,
+                  },
+                ],
+                returnType: {
+                  kind: 'collection',
+                  name: 'tuple',
+                  itemTypes: [
+                    { kind: 'typevar', name: 'T' },
+                    { kind: 'typevar', name: 'U' },
+                  ],
+                },
+                isAsync: false,
+                isGenerator: false,
+              },
+              docstring: undefined,
+              decorators: [],
+              isAsync: false,
+              isGenerator: false,
+              typeParameters: [{ name: 'U', kind: 'typevar', variance: 'invariant' }],
+              returnType: {
+                kind: 'collection',
+                name: 'tuple',
+                itemTypes: [
+                  { kind: 'typevar', name: 'T' },
+                  { kind: 'typevar', name: 'U' },
+                ],
+              },
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+                {
+                  name: 'x',
+                  type: { kind: 'typevar', name: 'U' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+            },
           ],
           properties: [],
           docstring: undefined,
@@ -887,11 +1110,15 @@ describe('CodeGenerator', () => {
     } as any);
 
     expect(code.typescript).toContain('export async function forward<T>(container: Container<T>)');
+    expect(code.typescript).toContain(
+      'export async function acceptTransform<P extends unknown[], T>(transform: Transform<P, T>): Promise<Transform<P, T>>'
+    );
     expect(code.typescript).toContain('Promise<Container<T>>');
     expect(code.typescript).toContain('export class Container<T>');
     expect(code.typescript).toContain('static async create<T>(value: T): Promise<Container<T>>');
     expect(code.typescript).toContain('static fromHandle<T>(handle: string): Container<T>');
     expect(code.typescript).toContain('async clone(): Promise<Container<T>>');
+    expect(code.typescript).toContain('async id<U>(x: U): Promise<[T, U]>');
     expect(code.typescript).toContain('export type Pair<T> = [T, T]');
     expect(code.typescript).toContain(
       'export type Transform<P extends unknown[], T> = (...args: P) => T'
@@ -900,8 +1127,12 @@ describe('CodeGenerator', () => {
     expect(code.typescript).not.toContain('~T');
     expect(code.typescript).not.toContain('~P');
     expect(code.typescript).not.toContain('Unpack[');
-    expect(code.typescript).not.toContain('Ts');
+    expect(code.typescript).not.toMatch(/\bTs\b/);
     expect(code.declaration).toContain('export type Pair<T> = [T, T]');
+    expect(code.declaration).toContain(
+      'export function acceptTransform<P extends unknown[], T>(transform: Transform<P, T>): Promise<Transform<P, T>>;'
+    );
+    expect(code.declaration).toContain('id<U>(x: U): Promise<[T, U]>;');
     expect(code.declaration).not.toContain('getRuntimeBridge');
   });
 

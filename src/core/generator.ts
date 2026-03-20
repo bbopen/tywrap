@@ -172,10 +172,26 @@ export class CodeGenerator {
     };
   }
 
+  private mergeGenericRenderContexts(
+    outer: GenericRenderContext,
+    inner: GenericRenderContext
+  ): GenericRenderContext {
+    return {
+      currentModule: inner.currentModule ?? outer.currentModule,
+      declaration: inner.declaration,
+      typeArguments: inner.typeArguments,
+      emittedNames: new Set([...outer.emittedNames, ...inner.emittedNames]),
+      emittedParamSpecs: new Set([...outer.emittedParamSpecs, ...inner.emittedParamSpecs]),
+    };
+  }
+
   private collectCallableParamSpecs(type: PythonType, out: Set<string>): void {
     switch (type.kind) {
       case 'collection':
         type.itemTypes.forEach(item => this.collectCallableParamSpecs(item, out));
+        break;
+      case 'paramspec':
+        out.add(type.name);
         break;
       case 'union':
         type.types.forEach(item => this.collectCallableParamSpecs(item, out));
@@ -638,16 +654,27 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
         )
         .join(' ');
       const methods = cls.methods
+        .filter(m => m.name !== '__init__')
         .map(m => {
           const fparams = m.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
+          const methodOwnGenericContext = this.buildGenericRenderContext(
+            this.getTypeParameters(m.typeParameters),
+            [m.returnType, ...fparams.map(param => param.type)],
+            moduleName
+          );
+          const methodGenericContext = this.mergeGenericRenderContexts(
+            classGenericContext,
+            methodOwnGenericContext
+          );
+          const methodTypeParamDecl = methodOwnGenericContext.declaration;
           const paramsDecl = fparams
             .map(
               p =>
-                `${this.escapeIdentifier(p.name)}${p.optional ? '?' : ''}: ${this.typeToTsFromPython(p.type, classGenericContext, 'value')}`
+                `${this.escapeIdentifier(p.name)}${p.optional ? '?' : ''}: ${this.typeToTsFromPython(p.type, methodGenericContext, 'value')}`
             )
             .join(', ');
-          const returnType = this.typeToTsFromPython(m.returnType, classGenericContext, 'return');
-          return `${this.escapeIdentifier(m.name)}: (${paramsDecl}) => ${returnType};`;
+          const returnType = this.typeToTsFromPython(m.returnType, methodGenericContext, 'return');
+          return `${this.escapeIdentifier(m.name)}: ${methodTypeParamDecl}(${paramsDecl}) => ${returnType};`;
         })
         .join(' ');
       return wrapAlias(`{ ${props} ${methods} }`);
@@ -673,6 +700,18 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
       .filter(method => method.name !== '__init__')
       .forEach(method => {
         const fparams = method.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
+        const methodOwnGenericContext = this.buildGenericRenderContext(
+          this.getTypeParameters(method.typeParameters),
+          [method.returnType, ...fparams.map(param => param.type)],
+          moduleName
+        );
+        const methodGenericContext = this.mergeGenericRenderContexts(
+          classGenericContext,
+          methodOwnGenericContext
+        );
+        const methodTypeParamDecl = methodOwnGenericContext.declaration;
+        const methodTsValueType = (p: (typeof fparams)[number]): string =>
+          this.typeToTsFromPython(p.type, methodGenericContext, 'value');
         const keywordOnlyParams = fparams.filter(p => p.keywordOnly);
         const positionalOnlyNames = fparams.filter(p => p.positionalOnly).map(p => p.name);
         const hasVarKwArgs = fparams.some(p => p.kwArgs);
@@ -691,7 +730,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
         ): string => {
           const pname = this.escapeIdentifier(p.name);
           const opt = !forceRequired && p.optional ? '?' : '';
-          return `${pname}${opt}: ${tsValueType(p)}`;
+          return `${pname}${opt}: ${methodTsValueType(p)}`;
         };
 
         const kwargsType = (() => {
@@ -702,7 +741,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
             return 'Record<string, unknown>';
           }
           const props = keywordOnlyParams
-            .map(p => `${JSON.stringify(p.name)}${p.optional ? '?' : ''}: ${tsValueType(p)};`)
+            .map(p => `${JSON.stringify(p.name)}${p.optional ? '?' : ''}: ${methodTsValueType(p)};`)
             .join(' ');
           const obj = `{ ${props} }`;
           return hasVarKwArgs ? `(${obj} & Record<string, unknown>)` : obj;
@@ -726,7 +765,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
         const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
         const returnType = this.typeToTsFromPython(
           method.returnType,
-          classGenericContext,
+          methodGenericContext,
           'return'
         );
         const mname = this.escapeIdentifier(method.name);
@@ -746,10 +785,12 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
               );
             }
             rest.push(`kwargs: ${kwargsType}`);
-            overloads.push(`  ${mname}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`);
+            overloads.push(
+              `  ${mname}${methodTypeParamDecl}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`
+            );
             if (varArgsParam && needsVarArgsArray) {
               overloads.push(
-                `  ${mname}(${[...head, `kwargs: ${kwargsType}`].join(', ')}): Promise<${returnType}>;`
+                `  ${mname}${methodTypeParamDecl}(${[...head, `kwargs: ${kwargsType}`].join(', ')}): Promise<${returnType}>;`
               );
             }
           }
@@ -849,13 +890,13 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
         }
         const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
 
-        methodBodies.push(`${overloadDecl}  async ${mname}(${paramsDecl}): Promise<${returnType}> {
+        methodBodies.push(`${overloadDecl}  async ${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}> {
 ${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '${method.name}', __args${
           needsKwargsParam ? ', __kwargs' : ''
         });
   }`);
         methodDeclarations.push(
-          `${overloadDecl}${overloads.length > 0 ? '' : `  ${mname}(${paramsDecl}): Promise<${returnType}>;\n`}`
+          `${overloadDecl}${overloads.length > 0 ? '' : `  ${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}>;\n`}`
         );
       });
 
@@ -1143,13 +1184,12 @@ ${ctorSpec.declaration}  static fromHandle${classTypeParamDecl}(handle: string):
     const needsRuntime = module.functions.length > 0 || hasRuntimeClasses;
     const bridgeDecl = needsRuntime ? `import { getRuntimeBridge } from 'tywrap/runtime';\n\n` : '';
 
-    const ts =
-      `${header + bridgeDecl + functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd() + '\n';
-    const declaration =
-      `${declarationHeader}${functionResults.map(result => result.declaration).join('\n')}\n${classResults
-        .map(result => result.declaration)
-        .join('\n')}\n${typeAliasResults.map(result => result.declaration).join('\n')}`.trimEnd() +
-      '\n';
+    const ts = `${`${header}${bridgeDecl}${functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd()}\n`;
+    const declaration = `${`${declarationHeader}${functionResults
+      .map(result => result.declaration)
+      .join('\n')}\n${classResults
+      .map(result => result.declaration)
+      .join('\n')}\n${typeAliasResults.map(result => result.declaration).join('\n')}`.trimEnd()}\n`;
     return this.wrap(ts, declaration, [module.name]);
   }
 

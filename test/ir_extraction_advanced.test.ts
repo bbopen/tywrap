@@ -65,6 +65,39 @@ function createTempModule(name: string, content: string): void {
   }
 }
 
+async function supportsVariadicTypingFeatures(): Promise<boolean> {
+  const result = await processUtils.exec(PYTHON_EXECUTABLE, [
+    '-c',
+    `
+try:
+    from typing import ParamSpec, TypeVarTuple, Unpack
+except ImportError:
+    try:
+        from typing_extensions import ParamSpec, TypeVarTuple, Unpack
+    except ImportError:
+        raise SystemExit(1)
+raise SystemExit(0)
+`,
+  ]);
+  return result.code === 0;
+}
+
+async function supportsTypingExtensionsBackports(): Promise<boolean> {
+  const result = await processUtils.exec(PYTHON_EXECUTABLE, [
+    '-c',
+    'from typing_extensions import ParamSpec, TypeVarTuple, Unpack',
+  ]);
+  return result.code === 0;
+}
+
+async function supportsPep695Syntax(): Promise<boolean> {
+  const result = await processUtils.exec(PYTHON_EXECUTABLE, [
+    '-c',
+    'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)',
+  ]);
+  return result.code === 0;
+}
+
 beforeAll(async () => {
   // Ensure test fixtures exist
   if (!existsSync(FIXTURES_DIR)) {
@@ -177,12 +210,20 @@ describe('IR Extraction - Complex Fixture Files', () => {
 
 describe('IR Extraction - Generic Metadata', () => {
   it('extracts ordered type parameters for functions, classes, and type aliases', async () => {
+    if (!(await supportsVariadicTypingFeatures())) {
+      return;
+    }
+
     createTempModule(
       'generic_type_params',
       `
 from __future__ import annotations
 
-from typing import Callable, Generic, ParamSpec, TypeVar, TypeVarTuple, Unpack
+from typing import Callable, Generic, TypeVar
+try:
+    from typing import ParamSpec, TypeVarTuple, Unpack
+except ImportError:
+    from typing_extensions import ParamSpec, TypeVarTuple, Unpack
 
 T = TypeVar("T")
 K = TypeVar("K")
@@ -246,6 +287,125 @@ class KeyValueStore(Generic[K, V]):
     const variadic = ir.type_aliases.find((alias: any) => alias.name === 'Variadic');
     expect(variadic).toBeDefined();
     expect(summarizeParams(variadic.type_params)).toEqual([{ name: 'Ts', kind: 'typevartuple' }]);
+  });
+
+  it('extracts backported generic markers from typing_extensions when available', async () => {
+    if (!(await supportsTypingExtensionsBackports())) {
+      return;
+    }
+
+    createTempModule(
+      'generic_type_params_backport',
+      `
+from __future__ import annotations
+
+from typing import Callable, TypeVar
+from typing_extensions import ParamSpec, TypeVarTuple, Unpack
+
+T = TypeVar("T")
+P = ParamSpec("P")
+Ts = TypeVarTuple("Ts")
+
+Transform = Callable[P, T]
+Variadic = tuple[Unpack[Ts]]
+`
+    );
+
+    const ir = await extractIR('generic_type_params_backport');
+    const summarizeParams = (params: Array<{ name: string; kind: string }>) =>
+      params.map(param => ({ name: param.name, kind: param.kind }));
+
+    const transform = ir.type_aliases.find((alias: any) => alias.name === 'Transform');
+    expect(transform).toBeDefined();
+    expect(summarizeParams(transform.type_params)).toEqual([
+      { name: 'P', kind: 'paramspec' },
+      { name: 'T', kind: 'typevar' },
+    ]);
+
+    const variadic = ir.type_aliases.find((alias: any) => alias.name === 'Variadic');
+    expect(variadic).toBeDefined();
+    expect(summarizeParams(variadic.type_params)).toEqual([{ name: 'Ts', kind: 'typevartuple' }]);
+  });
+
+  it('extracts PEP 695 type parameters from functions, classes, and type aliases on Python 3.12+', async () => {
+    if (!(await supportsPep695Syntax())) {
+      return;
+    }
+
+    createTempModule(
+      'generic_type_params_pep695',
+      `
+from __future__ import annotations
+
+type Pair[T] = tuple[T, T]
+
+def identity[T](x: T) -> T:
+    return x
+
+class Box[T]:
+    def __init__(self, value: T) -> None:
+        self.value = value
+
+    def id[U](self, x: U) -> tuple[T, U]:
+        return (self.value, x)
+`
+    );
+
+    const ir = await extractIR('generic_type_params_pep695');
+    const summarizeParams = (params: Array<{ name: string; kind: string }>) =>
+      params.map(param => ({ name: param.name, kind: param.kind }));
+
+    const identity = ir.functions.find((f: any) => f.name === 'identity');
+    expect(identity).toBeDefined();
+    expect(summarizeParams(identity.type_params)).toEqual([{ name: 'T', kind: 'typevar' }]);
+
+    const box = ir.classes.find((c: any) => c.name === 'Box');
+    expect(box).toBeDefined();
+    expect(summarizeParams(box.type_params)).toEqual([{ name: 'T', kind: 'typevar' }]);
+    const boxId = box.methods.find((method: any) => method.name === 'id');
+    expect(boxId).toBeDefined();
+    expect(summarizeParams(boxId.type_params)).toEqual([{ name: 'U', kind: 'typevar' }]);
+
+    const pair = ir.type_aliases.find((alias: any) => alias.name === 'Pair');
+    expect(pair).toBeDefined();
+    expect(pair.definition).toBe('tuple[T, T]');
+    expect(summarizeParams(pair.type_params)).toEqual([{ name: 'T', kind: 'typevar' }]);
+  });
+
+  it('preserves protocol method names and generic metadata on Python 3.12+', async () => {
+    if (!(await supportsPep695Syntax())) {
+      return;
+    }
+
+    createTempModule(
+      'protocol_method_generics_pep695',
+      `
+from __future__ import annotations
+
+from typing import Protocol
+
+class Mapper(Protocol):
+    def map[U](self, x: U) -> U:
+        ...
+`
+    );
+
+    const ir = await extractIR('protocol_method_generics_pep695');
+    const summarizeParams = (params: Array<{ name: string; kind: string }>) =>
+      params.map(param => ({ name: param.name, kind: param.kind }));
+
+    const mapper = ir.classes.find((c: any) => c.name === 'Mapper');
+    expect(mapper).toBeDefined();
+    expect(mapper.is_protocol).toBe(true);
+
+    const mapMethod = mapper.methods.find((method: any) => method.name === 'map');
+    expect(mapMethod).toBeDefined();
+    expect(summarizeParams(mapMethod.type_params)).toEqual([{ name: 'U', kind: 'typevar' }]);
+
+    const initMethod = mapper.methods.find((method: any) => method.qualname.endsWith('.__init__'));
+    if (initMethod) {
+      expect(initMethod.name).toBe('__init__');
+    }
   });
 });
 

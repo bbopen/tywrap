@@ -299,6 +299,7 @@ export function parseAnnotationToPythonType(
       const baseName = paramspecArgsMatch[1];
       const known = mapKnownTypeParameter(baseName);
       if (known?.kind === 'paramspec' || rawText.startsWith('~')) {
+      if (known?.kind === 'paramspec' || rawText.startsWith('~')) {
         return paramspecArgsMatch[2] === 'args'
           ? ({ kind: 'paramspec_args', name: baseName } satisfies PythonType)
           : ({ kind: 'paramspec_kwargs', name: baseName } satisfies PythonType);
@@ -379,7 +380,6 @@ export function parseAnnotationToPythonType(
         }
       );
     }
-
     if (
       raw === 'typing.LiteralString' ||
       raw === 'typing_extensions.LiteralString' ||

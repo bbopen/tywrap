@@ -122,7 +122,7 @@ def _type_param_kind(value: Any) -> str | None:
     cls = type(value)
     name = getattr(cls, "__name__", "")
     module = getattr(cls, "__module__", "")
-    if module == "typing" and name in {"TypeVar", "ParamSpec", "TypeVarTuple"}:
+    if module in {"typing", "typing_extensions"} and name in {"TypeVar", "ParamSpec", "TypeVarTuple"}:
         return name.lower()
     return None
 
@@ -167,11 +167,32 @@ def _append_type_param(value: Any, seen: set[str], out: List[IRTypeParam]) -> No
     param = _serialize_type_param(value)
     if param is None:
         return
-    key = f"{param.kind}:{param.name}"
+    key = _type_param_key(param)
     if key in seen:
         return
     seen.add(key)
     out.append(param)
+
+
+def _type_param_key(param: IRTypeParam) -> str:
+    return f"{param.kind}:{param.name}"
+
+
+def _append_declared_type_params(obj: Any, seen: set[str], out: List[IRTypeParam]) -> None:
+    for attr_name in ("__type_params__", "__parameters__"):
+        try:
+            params = getattr(obj, attr_name, ())
+        except Exception:
+            continue
+        for param in params or ():
+            _append_type_param(param, seen, out)
+
+
+def _collect_declared_type_params(obj: Any) -> List[IRTypeParam]:
+    seen: set[str] = set()
+    out: List[IRTypeParam] = []
+    _append_declared_type_params(obj, seen, out)
+    return out
 
 
 def _collect_type_params_from_annotation(
@@ -196,21 +217,68 @@ def _collect_type_params_from_annotation(
         _collect_type_params_from_annotation(arg, seen, out)
 
     text = _stringify_annotation(annotation) or ""
-    paramspec_match = text.split(".", 1)[0] if text.endswith(".args") or text.endswith(".kwargs") else None
+    paramspec_match = text.split(".", 1)[0] if text.endswith((".args", ".kwargs")) else None
     if paramspec_match:
         inferred = IRTypeParam(name=paramspec_match.replace("~", ""), kind="paramspec")
-        key = f"{inferred.kind}:{inferred.name}"
+        key = _type_param_key(inferred)
         if key not in seen:
             seen.add(key)
             out.append(inferred)
 
 
-def _collect_type_params_from_annotations(*annotations: Any) -> List[IRTypeParam]:
+def _collect_annotation_type_params(*annotations: Any) -> List[IRTypeParam]:
     seen: set[str] = set()
     out: List[IRTypeParam] = []
     for annotation in annotations:
         _collect_type_params_from_annotation(annotation, seen, out)
     return out
+
+
+def _merge_type_params(*groups: List[IRTypeParam]) -> List[IRTypeParam]:
+    seen: set[str] = set()
+    out: List[IRTypeParam] = []
+    for group in groups:
+        for param in group:
+            key = _type_param_key(param)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(param)
+    return out
+
+
+def _collect_type_params_from_object_and_annotations(obj: Any, *annotations: Any) -> List[IRTypeParam]:
+    return _merge_type_params(
+        _collect_declared_type_params(obj),
+        _collect_annotation_type_params(*annotations),
+    )
+
+
+def _collect_scoped_type_params(
+    obj: Any,
+    *annotations: Any,
+    inherited_type_params: List[IRTypeParam] | None = None,
+) -> List[IRTypeParam]:
+    declared = _collect_declared_type_params(obj)
+    annotation_params = _collect_annotation_type_params(*annotations)
+    if not inherited_type_params:
+        return _merge_type_params(declared, annotation_params)
+
+    inherited_keys = {_type_param_key(param) for param in inherited_type_params}
+    scoped_annotation_params = [
+        param for param in annotation_params if _type_param_key(param) not in inherited_keys
+    ]
+    return _merge_type_params(declared, scoped_annotation_params)
+
+
+def _unwrap_type_alias_value(value: Any) -> Any:
+    type_alias_type = getattr(typing, "TypeAliasType", None)
+    if type_alias_type is None or not isinstance(value, type_alias_type):
+        return value
+    try:
+        return value.__value__
+    except Exception:
+        return value
 
 
 def _top_level_assigned_names(module: Any) -> set[str]:
@@ -322,8 +390,9 @@ def _extract_type_aliases(module: Any, module_name: str, include_private: bool) 
         if not _is_type_alias_value(value) and not is_type_alias_annotation:
             continue
 
-        type_params = _collect_type_params_from_annotations(value)
-        definition = _stringify_annotation(value) or annotation_str or str(value)
+        unwrapped_value = _unwrap_type_alias_value(value)
+        type_params = _collect_type_params_from_object_and_annotations(value, unwrapped_value)
+        definition = _stringify_annotation(unwrapped_value) or annotation_str or str(unwrapped_value)
         type_aliases.append(
             IRTypeAlias(
                 name=name,
@@ -341,6 +410,8 @@ def _extract_function(
     qualname: str,
     *,
     include_type_params: bool = True,
+    inherited_type_params: List[IRTypeParam] | None = None,
+    display_name: str | None = None,
 ) -> Optional[IRFunction]:
     try:
         sig = inspect.signature(obj)
@@ -374,11 +445,19 @@ def _extract_function(
     # Async generators must be marked as generators so callers can distinguish
     # them from plain coroutines.
     is_generator = inspect.isgeneratorfunction(obj) or inspect.isasyncgenfunction(obj)
-    type_params = _collect_type_params_from_annotations(*annotations_for_params, returns) if include_type_params else []
-    
+    type_params = (
+        _collect_scoped_type_params(
+            obj,
+            *annotations_for_params,
+            returns,
+            inherited_type_params=inherited_type_params,
+        )
+        if include_type_params
+        else []
+    )
 
     return IRFunction(
-        name=getattr(obj, "__name__", qualname.split(".")[-1]),
+        name=display_name or getattr(obj, "__name__", qualname.split(".")[-1]),
         qualname=qualname,
         docstring=inspect.getdoc(obj),
         parameters=params,
@@ -397,7 +476,7 @@ def _extract_class(cls: type, module_name: str, include_private: bool) -> Option
         return None
 
     bases = [b.__name__ for b in getattr(cls, "__bases__", []) if hasattr(b, "__name__")]
-    class_type_params = _collect_type_params_from_annotations(*getattr(cls, "__parameters__", ()))
+    class_type_params = _collect_type_params_from_object_and_annotations(cls)
 
     methods: List[IRFunction] = []
     for meth_name, value in inspect.getmembers(
@@ -409,7 +488,8 @@ def _extract_class(cls: type, module_name: str, include_private: bool) -> Option
         fn = _extract_function(
             value,
             f"{module_name}.{cls.__name__}.{meth_name}",
-            include_type_params=False,
+            inherited_type_params=class_type_params,
+            display_name=meth_name,
         )
         if fn is not None:
             methods.append(fn)

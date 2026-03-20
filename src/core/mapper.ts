@@ -193,12 +193,17 @@ export class TypeMapper {
     };
   }
 
-  mapGenericType(type: PyGenericType, context: MappingContext = 'value'): TSGenericType {
+  mapGenericType(type: PyGenericType, context: MappingContext = 'value'): TypescriptType {
     const normalized = this.normalizeCustomType({ name: type.name, module: type.module });
+    const typeArgs = type.typeArgs.map(t => this.mapPythonType(t, context));
+    const knownGenericType = this.mapKnownGenericType(normalized, typeArgs);
+    if (knownGenericType) {
+      return knownGenericType;
+    }
     return {
       kind: 'generic',
       name: normalized.name,
-      typeArgs: type.typeArgs.map(t => this.mapPythonType(t, context)),
+      typeArgs,
     };
   }
 
@@ -253,39 +258,9 @@ export class TypeMapper {
       };
     }
 
-    // Async types
-    if (name === 'Awaitable' || fullName === 'typing.Awaitable') {
-      return {
-        kind: 'generic',
-        name: 'Promise',
-        typeArgs: [{ kind: 'primitive', name: 'unknown' }],
-      };
-    }
-    if (name === 'Coroutine' || fullName === 'typing.Coroutine') {
-      return {
-        kind: 'generic',
-        name: 'Promise',
-        typeArgs: [{ kind: 'primitive', name: 'unknown' }],
-      };
-    }
-
-    // Collection types that should be generics
-    if (name === 'Sequence' || fullName === 'typing.Sequence') {
-      return {
-        kind: 'generic',
-        name: 'Array',
-        typeArgs: [{ kind: 'primitive', name: 'unknown' }],
-      };
-    }
-    if (name === 'Mapping' || fullName === 'typing.Mapping') {
-      return {
-        kind: 'object',
-        properties: [],
-        indexSignature: {
-          keyType: { kind: 'primitive', name: 'string' },
-          valueType: { kind: 'primitive', name: 'unknown' },
-        },
-      };
+    const knownGenericType = this.mapKnownGenericType(this.normalizeCustomType(type));
+    if (knownGenericType) {
+      return knownGenericType;
     }
 
     const presetType = this.mapPresetType(type);
@@ -403,6 +378,59 @@ export class TypeMapper {
     // ClassVar[T] maps to T in TypeScript (class variables are just properties)
     // The ClassVar qualifier is more of a static analysis hint
     return this.mapPythonType(type.type, context);
+  }
+
+  private mapKnownGenericType(
+    type: { name: string; module?: string },
+    typeArgs: TypescriptType[] = []
+  ): TypescriptType | undefined {
+    const unknownType: TSPrimitiveType = { kind: 'primitive', name: 'unknown' };
+    const isKnownTypingModule =
+      type.module === undefined ||
+      type.module === 'typing' ||
+      type.module === 'typing_extensions' ||
+      type.module === 'collections.abc';
+
+    if (!isKnownTypingModule) {
+      return undefined;
+    }
+
+    if (type.name === 'Awaitable') {
+      return {
+        kind: 'generic',
+        name: 'Promise',
+        typeArgs: [typeArgs[0] ?? unknownType],
+      } satisfies TSGenericType;
+    }
+
+    if (type.name === 'Coroutine') {
+      return {
+        kind: 'generic',
+        name: 'Promise',
+        typeArgs: [typeArgs[typeArgs.length - 1] ?? unknownType],
+      } satisfies TSGenericType;
+    }
+
+    if (type.name === 'Sequence') {
+      return {
+        kind: 'generic',
+        name: 'Array',
+        typeArgs: [typeArgs[0] ?? unknownType],
+      } satisfies TSGenericType;
+    }
+
+    if (type.name === 'Mapping') {
+      return {
+        kind: 'object',
+        properties: [],
+        indexSignature: {
+          keyType: this.asIndexKeyType(typeArgs[0] ?? unknownType),
+          valueType: typeArgs[1] ?? unknownType,
+        },
+      } satisfies TSObjectType;
+    }
+
+    return undefined;
   }
 
   private asIndexKeyType(key: TypescriptType): TSPrimitiveType {

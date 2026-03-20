@@ -221,6 +221,146 @@ describe('TypeMapper - Enhanced Type Support', () => {
         valueType: { kind: 'primitive', name: 'unknown' },
       });
     });
+
+    test('maps generic typing.Awaitable[T] to Promise<T>', () => {
+      const awaitableType: PythonType = {
+        kind: 'generic',
+        name: 'Awaitable',
+        module: 'typing',
+        typeArgs: [{ kind: 'primitive', name: 'str' }],
+      };
+
+      const result = mapper.mapPythonType(awaitableType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Promise');
+      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'string' }]);
+    });
+
+    test('maps generic typing.Sequence[T] to Array<T>', () => {
+      const sequenceType: PythonType = {
+        kind: 'generic',
+        name: 'Sequence',
+        module: 'typing',
+        typeArgs: [{ kind: 'primitive', name: 'int' }],
+      };
+
+      const result = mapper.mapPythonType(sequenceType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Array');
+      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'number' }]);
+    });
+
+    test('maps generic collections.abc.Sequence[T] to Array<T>', () => {
+      const sequenceType: PythonType = {
+        kind: 'generic',
+        name: 'Sequence',
+        module: 'collections.abc',
+        typeArgs: [{ kind: 'primitive', name: 'bool' }],
+      };
+
+      const result = mapper.mapPythonType(sequenceType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Array');
+      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'boolean' }]);
+    });
+
+    test('maps generic typing_extensions.Mapping[K, V] to an object index signature', () => {
+      const mappingType: PythonType = {
+        kind: 'generic',
+        name: 'Mapping',
+        module: 'typing_extensions',
+        typeArgs: [
+          { kind: 'primitive', name: 'str' },
+          { kind: 'primitive', name: 'int' },
+        ],
+      };
+
+      const result = mapper.mapPythonType(mappingType) as TSObjectType;
+
+      expect(result.kind).toBe('object');
+      expect(result.properties).toEqual([]);
+      expect(result.indexSignature).toEqual({
+        keyType: { kind: 'primitive', name: 'string' },
+        valueType: { kind: 'primitive', name: 'number' },
+      });
+    });
+
+    test('preserves third-party Sequence generics', () => {
+      const sequenceType: PythonType = {
+        kind: 'generic',
+        name: 'Sequence',
+        module: 'pkg',
+        typeArgs: [{ kind: 'primitive', name: 'int' }],
+      };
+
+      const result = mapper.mapPythonType(sequenceType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Sequence');
+      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'number' }]);
+    });
+
+    test('preserves third-party Awaitable generics', () => {
+      const awaitableType: PythonType = {
+        kind: 'generic',
+        name: 'Awaitable',
+        module: 'pkg',
+        typeArgs: [{ kind: 'primitive', name: 'str' }],
+      };
+
+      const result = mapper.mapPythonType(awaitableType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Awaitable');
+      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'string' }]);
+    });
+
+    test('preserves third-party Coroutine generics', () => {
+      const coroutineType: PythonType = {
+        kind: 'generic',
+        name: 'Coroutine',
+        module: 'vendor',
+        typeArgs: [
+          { kind: 'primitive', name: 'int' },
+          { kind: 'primitive', name: 'int' },
+          { kind: 'primitive', name: 'str' },
+        ],
+      };
+
+      const result = mapper.mapPythonType(coroutineType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Coroutine');
+      expect(result.typeArgs).toEqual([
+        { kind: 'primitive', name: 'number' },
+        { kind: 'primitive', name: 'number' },
+        { kind: 'primitive', name: 'string' },
+      ]);
+    });
+
+    test('preserves third-party Mapping generics', () => {
+      const mappingType: PythonType = {
+        kind: 'generic',
+        name: 'Mapping',
+        module: 'vendor',
+        typeArgs: [
+          { kind: 'primitive', name: 'str' },
+          { kind: 'primitive', name: 'int' },
+        ],
+      };
+
+      const result = mapper.mapPythonType(mappingType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Mapping');
+      expect(result.typeArgs).toEqual([
+        { kind: 'primitive', name: 'string' },
+        { kind: 'primitive', name: 'number' },
+      ]);
+    });
   });
 
   describe('Module-qualified Type Names', () => {
