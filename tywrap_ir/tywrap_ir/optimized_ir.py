@@ -158,7 +158,7 @@ class OptimizedIRExtractor:
     def extract_module_ir_optimized(self,
                                    module_name: str,
                                    *,
-                                   ir_version: str = "0.1.0",
+                                   ir_version: str = "0.2.0",
                                    include_private: bool = False) -> Dict[str, Any]:
         """
         Extract IR with performance optimizations
@@ -411,7 +411,7 @@ _global_extractor = OptimizedIRExtractor()
 
 def extract_module_ir_optimized(module_name: str,
                                 *,
-                                ir_version: str = "0.1.0",
+                                ir_version: str = "0.2.0",
                                 include_private: bool = False,
                                 enable_caching: bool = True,
                                 enable_parallel: bool = True) -> Dict[str, Any]:

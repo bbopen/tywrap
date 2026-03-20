@@ -8,9 +8,11 @@ import { parseAnnotationToPythonType } from './core/annotation-parser.js';
 import { createConfig } from './config/index.js';
 import type {
   TywrapOptions,
+  PythonGenericParameter,
   PythonFunction,
   PythonModule as TSPythonModule,
   PythonClass,
+  PythonTypeAlias,
   Parameter,
   PythonType,
 } from './types/index.js';
@@ -19,6 +21,8 @@ import { globalCache } from './utils/cache.js';
 import { globalParallelProcessor } from './utils/parallel-processor.js';
 import { resolvePythonExecutable } from './utils/python.js';
 import { computeIrCacheFilename } from './utils/ir-cache.js';
+
+const TYWRAP_IR_VERSION = '0.2.0';
 
 // Collect unknown typing constructs encountered during annotation parsing (per-generate run)
 let unknownTypeNamesCollector: Map<string, number> = new Map();
@@ -241,6 +245,10 @@ export async function generate(
       } else {
         moduleModel.classes = moduleModel.classes.filter(c => !shouldExclude(c.name, true));
       }
+
+      moduleModel.typeAliases = (moduleModel.typeAliases ?? []).filter(
+        alias => !shouldExclude(alias.name, false)
+      );
     }
 
     // Generate module code
@@ -256,7 +264,7 @@ export async function generate(
     if (resolvedOptions.output?.declaration) {
       filesToEmit.push({
         path: pathUtils.join(outputDir, `${baseName}.generated.d.ts`),
-        content: renderDts(gen.typescript),
+        content: gen.declaration,
       });
     }
 
@@ -346,7 +354,7 @@ async function fetchPythonIr(
   try {
     const result = await processUtils.exec(
       pythonPath,
-      ['-m', 'tywrap_ir', '--module', moduleName, '--no-pretty'],
+      ['-m', 'tywrap_ir', '--module', moduleName, '--ir-version', TYWRAP_IR_VERSION, '--no-pretty'],
       { timeoutMs: options.timeoutMs, env }
     );
     if (result.code === 0) {
@@ -387,7 +395,7 @@ async function fetchPythonIr(
 
     const fallback = await processUtils.exec(
       pythonPath,
-      [localMain, '--module', moduleName, '--no-pretty'],
+      [localMain, '--module', moduleName, '--ir-version', TYWRAP_IR_VERSION, '--no-pretty'],
       { timeoutMs: options.timeoutMs, env }
     );
     if (fallback.code !== 0) {
@@ -443,15 +451,43 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
     typeof ir === 'object' && ir !== null ? (ir as Record<string, unknown>) : {};
   const functions = (obj.functions as unknown[]) ?? [];
   const classes = (obj.classes as unknown[]) ?? [];
+  const aliases = (obj.type_aliases as unknown[]) ?? [];
   const moduleTypeVarNames = collectModuleTypeVarNames(obj);
-  const parseType = (annotation: unknown): PythonType =>
+  const parseType = (
+    annotation: unknown,
+    typeParameters: readonly PythonGenericParameter[] = []
+  ): PythonType =>
     parseAnnotationToPythonType(annotation, {
       onUnknownTypeName: recordUnknown,
       knownTypeVarNames: moduleTypeVarNames,
+      typeParameters,
     });
-  const mapParam = (p: Record<string, unknown>): Parameter => ({
+  const mapTypeParameters = (value: Record<string, unknown>): PythonGenericParameter[] =>
+    Array.isArray(value.type_params)
+      ? (value.type_params as unknown[]).map(v => {
+          const param = (v ?? {}) as Record<string, unknown>;
+          return {
+            name: String(param.name ?? ''),
+            kind: String(param.kind ?? 'typevar') as PythonGenericParameter['kind'],
+            bound: param.bound ? parseType(param.bound) : undefined,
+            constraints: Array.isArray(param.constraints)
+              ? (param.constraints as unknown[]).map(item => parseType(item))
+              : undefined,
+            variance:
+              param.variance === 'covariant' ||
+              param.variance === 'contravariant' ||
+              param.variance === 'invariant'
+                ? param.variance
+                : undefined,
+          } satisfies PythonGenericParameter;
+        })
+      : [];
+  const mapParam = (
+    p: Record<string, unknown>,
+    typeParameters: readonly PythonGenericParameter[] = []
+  ): Parameter => ({
     name: String(p.name ?? ''),
-    type: parseType(p.annotation),
+    type: parseType(p.annotation, typeParameters),
     optional: Boolean(p.default),
     varArgs: p.kind === 'VAR_POSITIONAL',
     kwArgs: p.kind === 'VAR_KEYWORD',
@@ -459,60 +495,86 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
     keywordOnly: p.kind === 'KEYWORD_ONLY',
   });
 
-  const mapFunc = (f: Record<string, unknown>): PythonFunction => ({
-    name: String(f.name ?? ''),
-    signature: {
-      parameters: Array.isArray(f.parameters)
-        ? (f.parameters as unknown[]).map(v => mapParam((v ?? {}) as Record<string, unknown>))
-        : [],
-      returnType: parseType(f.returns),
+  const mapFunc = (
+    f: Record<string, unknown>,
+    inheritedTypeParameters: readonly PythonGenericParameter[] = []
+  ): PythonFunction => {
+    const localTypeParameters = mapTypeParameters(f);
+    const annotationTypeParameters = [...inheritedTypeParameters, ...localTypeParameters];
+    return {
+      name: String(f.name ?? ''),
+      signature: {
+        parameters: Array.isArray(f.parameters)
+          ? (f.parameters as unknown[]).map(v =>
+              mapParam((v ?? {}) as Record<string, unknown>, annotationTypeParameters)
+            )
+          : [],
+        returnType: parseType(f.returns, annotationTypeParameters),
+        isAsync: Boolean(f.is_async),
+        isGenerator: Boolean(f.is_generator),
+      },
+      docstring: (f.docstring as string | undefined) ?? undefined,
+      decorators: [],
       isAsync: Boolean(f.is_async),
       isGenerator: Boolean(f.is_generator),
-    },
-    docstring: (f.docstring as string | undefined) ?? undefined,
-    decorators: [],
-    isAsync: Boolean(f.is_async),
-    isGenerator: Boolean(f.is_generator),
-    returnType: parseType(f.returns),
-    parameters: Array.isArray(f.parameters)
-      ? (f.parameters as unknown[]).map(v => mapParam((v ?? {}) as Record<string, unknown>))
-      : [],
-  });
+      typeParameters: [...localTypeParameters],
+      returnType: parseType(f.returns, annotationTypeParameters),
+      parameters: Array.isArray(f.parameters)
+        ? (f.parameters as unknown[]).map(v =>
+            mapParam((v ?? {}) as Record<string, unknown>, annotationTypeParameters)
+          )
+        : [],
+    };
+  };
 
-  const mapClass = (c: Record<string, unknown>): PythonClass => ({
-    name: String(c.name ?? ''),
-    bases: Array.isArray(c.bases) ? (c.bases as string[]) : [],
-    methods: Array.isArray(c.methods)
-      ? (c.methods as unknown[]).map(v => mapFunc((v ?? {}) as Record<string, unknown>))
-      : [],
-    properties: Array.isArray(c.fields)
-      ? ((c.fields as unknown[]).map(v => {
-          const p = (v ?? {}) as Record<string, unknown>;
-          const optional = Boolean(p.default);
-          return {
-            name: String(p.name ?? ''),
-            type: parseType(p.annotation),
-            readonly: false,
-            setter: false,
-            getter: true,
-            optional,
-          } as unknown as never;
-        }) as unknown as PythonClass['properties'])
-      : [],
-    docstring: (c.docstring as string | undefined) ?? undefined,
-    decorators: (c.typed_dict as boolean) ? ['__typed_dict__'] : [],
-    kind: (c.typed_dict as boolean)
-      ? 'typed_dict'
-      : (c.is_protocol as boolean)
-        ? 'protocol'
-        : (c.is_namedtuple as boolean)
-          ? 'namedtuple'
-          : (c.is_dataclass as boolean)
-            ? 'dataclass'
-            : (c.is_pydantic as boolean)
-              ? 'pydantic'
-              : 'class',
-  });
+  const mapClass = (c: Record<string, unknown>): PythonClass => {
+    const classTypeParameters = mapTypeParameters(c);
+    return {
+      name: String(c.name ?? ''),
+      bases: Array.isArray(c.bases) ? (c.bases as string[]) : [],
+      methods: Array.isArray(c.methods)
+        ? (c.methods as unknown[]).map(v =>
+            mapFunc((v ?? {}) as Record<string, unknown>, classTypeParameters)
+          )
+        : [],
+      properties: Array.isArray(c.fields)
+        ? (c.fields as unknown[]).map(v => {
+            const p = (v ?? {}) as Record<string, unknown>;
+            return {
+              name: String(p.name ?? ''),
+              type: parseType(p.annotation, classTypeParameters),
+              readonly: false,
+              setter: false,
+              getter: true,
+              optional: Boolean(p.default),
+            };
+          })
+        : [],
+      docstring: (c.docstring as string | undefined) ?? undefined,
+      decorators: (c.typed_dict as boolean) ? ['__typed_dict__'] : [],
+      kind: (c.typed_dict as boolean)
+        ? 'typed_dict'
+        : (c.is_protocol as boolean)
+          ? 'protocol'
+          : (c.is_namedtuple as boolean)
+            ? 'namedtuple'
+            : (c.is_dataclass as boolean)
+              ? 'dataclass'
+              : (c.is_pydantic as boolean)
+                ? 'pydantic'
+                : 'class',
+      typeParameters: classTypeParameters,
+    };
+  };
+
+  const mapTypeAlias = (alias: Record<string, unknown>): PythonTypeAlias => {
+    const typeParameters = mapTypeParameters(alias);
+    return {
+      name: String(alias.name ?? ''),
+      type: parseType(alias.definition, typeParameters),
+      typeParameters,
+    };
+  };
 
   const moduleModel: TSPythonModule = {
     name: (obj.module as string) ?? 'module',
@@ -523,6 +585,7 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
         : undefined,
     functions: functions.map(v => mapFunc((v ?? {}) as Record<string, unknown>)),
     classes: classes.map(v => mapClass((v ?? {}) as Record<string, unknown>)),
+    typeAliases: aliases.map(v => mapTypeAlias((v ?? {}) as Record<string, unknown>)),
     imports: [],
     exports: [],
   };
@@ -546,6 +609,7 @@ async function computeCacheKey(
   const keyObject = {
     module: moduleName,
     moduleVersion: moduleConfig?.version ?? null,
+    irVersion: TYWRAP_IR_VERSION,
     pythonImportPath: options.pythonImportPath ?? [],
     runtime: {
       pythonPath: runtimePython,
@@ -563,44 +627,6 @@ async function computeCacheKey(
     typeHints: moduleConfig?.typeHints ?? 'strict',
   } as const;
   return await computeIrCacheFilename(keyObject);
-}
-
-/**
- * Very lightweight .d.ts emitter derived from generated TS wrappers
- * This is intentionally minimal and stable for our wrappers shape.
- */
-function renderDts(generatedTs: string): string {
-  const header = `// Generated by tywrap\n// Type Declarations\n// DO NOT EDIT MANUALLY\n\n`;
-  const lines: string[] = [header];
-  // Extract function exports
-  const funcRegex = /export\s+async\s+function\s+(\w+)\s*\(([^)]*)\)\s*:\s*Promise<([^>]+)>/g;
-  let m: RegExpExecArray | null;
-  while ((m = funcRegex.exec(generatedTs)) !== null) {
-    const name = m[1];
-    const params = m[2];
-    const ret = m[3];
-    lines.push(`export function ${name}(${params}): Promise<${ret}>;`);
-  }
-  // Extract class exports and methods
-  const classRegex = /export\s+class\s+(\w+)\s*\{([\s\S]*?)\n\}/g;
-  while ((m = classRegex.exec(generatedTs)) !== null) {
-    const className = String(m[1] ?? '');
-    const body = String(m[2] ?? '');
-    // Constructor is always variadic unknown[] in current generator
-    const methods: string[] = [];
-    const methodRegex = /\n\s+async\s+(\w+)\s*\(([^)]*)\)\s*:\s*Promise<([^>]+)>/g;
-    let mm: RegExpExecArray | null;
-    while ((mm = methodRegex.exec(body)) !== null) {
-      methods.push(`  ${mm[1]}(${mm[2]}): Promise<${mm[3]}>;`);
-    }
-    lines.push(`export class ${className} {`);
-    lines.push(`  constructor(...args: unknown[]);`);
-    if (methods.length > 0) {
-      lines.push(methods.join('\n'));
-    }
-    lines.push('}');
-  }
-  return `${lines.join('\n')}\n`;
 }
 
 /**

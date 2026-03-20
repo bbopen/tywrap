@@ -3,6 +3,7 @@ import { hashUtils } from './runtime.js';
 export interface IrCacheKeyObject {
   module: string;
   moduleVersion: string | null;
+  irVersion: string;
   pythonImportPath?: readonly string[];
   runtime: {
     pythonPath: string;

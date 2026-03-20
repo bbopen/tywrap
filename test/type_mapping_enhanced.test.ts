@@ -3,7 +3,9 @@ import { TypeMapper } from '../src/core/mapper.js';
 import type {
   PythonType,
   TypescriptType,
+  TSArrayType,
   TSPrimitiveType,
+  TSCustomType,
   TSGenericType,
   TSObjectType,
 } from '../src/types/index.js';
@@ -12,30 +14,34 @@ describe('TypeMapper - Enhanced Type Support', () => {
   const mapper = new TypeMapper();
 
   describe('TypeVar Support', () => {
-    test('maps basic TypeVar to unknown', () => {
+    test('maps basic TypeVar to custom type', () => {
       const typeVar: PythonType = {
         kind: 'typevar',
         name: 'T',
       };
 
-      const result = mapper.mapPythonType(typeVar);
+      const result = mapper.mapPythonType(typeVar) as TSCustomType;
 
-      expect(result).toEqual({ kind: 'primitive', name: 'unknown' });
+      expect(result.kind).toBe('custom');
+      expect(result.name).toBe('T');
+      expect(result.module).toBe('typing');
     });
 
-    test('maps bounded TypeVar to unknown', () => {
+    test('maps bounded TypeVar preserving name', () => {
       const boundedTypeVar: PythonType = {
         kind: 'typevar',
         name: 'T',
         bound: { kind: 'custom', name: 'BaseClass' },
       };
 
-      const result = mapper.mapPythonType(boundedTypeVar);
+      const result = mapper.mapPythonType(boundedTypeVar) as TSCustomType;
 
-      expect(result).toEqual({ kind: 'primitive', name: 'unknown' });
+      expect(result.kind).toBe('custom');
+      expect(result.name).toBe('T');
+      expect(result.module).toBe('typing');
     });
 
-    test('maps constrained TypeVar to unknown', () => {
+    test('maps constrained TypeVar preserving name', () => {
       const constrainedTypeVar: PythonType = {
         kind: 'typevar',
         name: 'T',
@@ -45,21 +51,23 @@ describe('TypeMapper - Enhanced Type Support', () => {
         ],
       };
 
-      const result = mapper.mapPythonType(constrainedTypeVar);
+      const result = mapper.mapPythonType(constrainedTypeVar) as TSCustomType;
 
-      expect(result).toEqual({ kind: 'primitive', name: 'unknown' });
+      expect(result.kind).toBe('custom');
+      expect(result.name).toBe('T');
     });
 
-    test('maps covariant TypeVar to unknown', () => {
+    test('maps covariant TypeVar', () => {
       const covariantTypeVar: PythonType = {
         kind: 'typevar',
         name: 'T_co',
         variance: 'covariant',
       };
 
-      const result = mapper.mapPythonType(covariantTypeVar);
+      const result = mapper.mapPythonType(covariantTypeVar) as TSCustomType;
 
-      expect(result).toEqual({ kind: 'primitive', name: 'unknown' });
+      expect(result.kind).toBe('custom');
+      expect(result.name).toBe('T_co');
     });
   });
 
@@ -191,18 +199,17 @@ describe('TypeMapper - Enhanced Type Support', () => {
       expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'unknown' }]);
     });
 
-    test('maps typing.Sequence to Array generic', () => {
+    test('maps typing.Sequence to an array shape', () => {
       const sequenceType: PythonType = {
         kind: 'custom',
         name: 'Sequence',
         module: 'typing',
       };
 
-      const result = mapper.mapPythonType(sequenceType) as TSGenericType;
+      const result = mapper.mapPythonType(sequenceType) as TSArrayType;
 
-      expect(result.kind).toBe('generic');
-      expect(result.name).toBe('Array');
-      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'unknown' }]);
+      expect(result.kind).toBe('array');
+      expect(result.elementType).toEqual({ kind: 'primitive', name: 'unknown' });
     });
 
     test('maps typing.Mapping to object with index signature', () => {
@@ -220,6 +227,144 @@ describe('TypeMapper - Enhanced Type Support', () => {
         keyType: { kind: 'primitive', name: 'string' },
         valueType: { kind: 'primitive', name: 'unknown' },
       });
+    });
+
+    test('maps generic typing.Awaitable[T] to Promise<T>', () => {
+      const awaitableType: PythonType = {
+        kind: 'generic',
+        name: 'Awaitable',
+        module: 'typing',
+        typeArgs: [{ kind: 'primitive', name: 'str' }],
+      };
+
+      const result = mapper.mapPythonType(awaitableType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Promise');
+      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'string' }]);
+    });
+
+    test('maps generic typing.Sequence[T] to T[]', () => {
+      const sequenceType: PythonType = {
+        kind: 'generic',
+        name: 'Sequence',
+        module: 'typing',
+        typeArgs: [{ kind: 'primitive', name: 'int' }],
+      };
+
+      const result = mapper.mapPythonType(sequenceType) as TSArrayType;
+
+      expect(result.kind).toBe('array');
+      expect(result.elementType).toEqual({ kind: 'primitive', name: 'number' });
+    });
+
+    test('maps generic collections.abc.Sequence[T] to T[]', () => {
+      const sequenceType: PythonType = {
+        kind: 'generic',
+        name: 'Sequence',
+        module: 'collections.abc',
+        typeArgs: [{ kind: 'primitive', name: 'bool' }],
+      };
+
+      const result = mapper.mapPythonType(sequenceType) as TSArrayType;
+
+      expect(result.kind).toBe('array');
+      expect(result.elementType).toEqual({ kind: 'primitive', name: 'boolean' });
+    });
+
+    test('maps generic typing_extensions.Mapping[K, V] to an object index signature', () => {
+      const mappingType: PythonType = {
+        kind: 'generic',
+        name: 'Mapping',
+        module: 'typing_extensions',
+        typeArgs: [
+          { kind: 'primitive', name: 'str' },
+          { kind: 'primitive', name: 'int' },
+        ],
+      };
+
+      const result = mapper.mapPythonType(mappingType) as TSObjectType;
+
+      expect(result.kind).toBe('object');
+      expect(result.properties).toEqual([]);
+      expect(result.indexSignature).toEqual({
+        keyType: { kind: 'primitive', name: 'string' },
+        valueType: { kind: 'primitive', name: 'number' },
+      });
+    });
+
+    test('preserves third-party Sequence generics', () => {
+      const sequenceType: PythonType = {
+        kind: 'generic',
+        name: 'Sequence',
+        module: 'pkg',
+        typeArgs: [{ kind: 'primitive', name: 'int' }],
+      };
+
+      const result = mapper.mapPythonType(sequenceType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Sequence');
+      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'number' }]);
+    });
+
+    test('preserves third-party Awaitable generics', () => {
+      const awaitableType: PythonType = {
+        kind: 'generic',
+        name: 'Awaitable',
+        module: 'pkg',
+        typeArgs: [{ kind: 'primitive', name: 'str' }],
+      };
+
+      const result = mapper.mapPythonType(awaitableType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Awaitable');
+      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'string' }]);
+    });
+
+    test('preserves third-party Coroutine generics', () => {
+      const coroutineType: PythonType = {
+        kind: 'generic',
+        name: 'Coroutine',
+        module: 'vendor',
+        typeArgs: [
+          { kind: 'primitive', name: 'int' },
+          { kind: 'primitive', name: 'int' },
+          { kind: 'primitive', name: 'str' },
+        ],
+      };
+
+      const result = mapper.mapPythonType(coroutineType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Coroutine');
+      expect(result.typeArgs).toEqual([
+        { kind: 'primitive', name: 'number' },
+        { kind: 'primitive', name: 'number' },
+        { kind: 'primitive', name: 'string' },
+      ]);
+    });
+
+    test('preserves third-party Mapping generics', () => {
+      const mappingType: PythonType = {
+        kind: 'generic',
+        name: 'Mapping',
+        module: 'vendor',
+        typeArgs: [
+          { kind: 'primitive', name: 'str' },
+          { kind: 'primitive', name: 'int' },
+        ],
+      };
+
+      const result = mapper.mapPythonType(mappingType) as TSGenericType;
+
+      expect(result.kind).toBe('generic');
+      expect(result.name).toBe('Mapping');
+      expect(result.typeArgs).toEqual([
+        { kind: 'primitive', name: 'string' },
+        { kind: 'primitive', name: 'number' },
+      ]);
     });
   });
 
@@ -256,11 +401,11 @@ describe('TypeMapper - Enhanced Type Support', () => {
         module: 'my.module',
       };
 
-      const result = mapper.mapPythonType(unknownType);
+      const result = mapper.mapPythonType(unknownType) as TSCustomType;
 
       expect(result.kind).toBe('custom');
-      expect((result as any).name).toBe('MyCustomClass');
-      expect((result as any).module).toBe('my.module');
+      expect(result.name).toBe('MyCustomClass');
+      expect(result.module).toBe('my.module');
     });
   });
 
@@ -274,9 +419,11 @@ describe('TypeMapper - Enhanced Type Support', () => {
         },
       };
 
-      const result = mapper.mapPythonType(finalTypeVar);
+      const result = mapper.mapPythonType(finalTypeVar) as TSCustomType;
 
-      expect(result).toEqual({ kind: 'primitive', name: 'unknown' });
+      expect(result.kind).toBe('custom');
+      expect(result.name).toBe('T');
+      expect(result.module).toBe('typing');
     });
 
     test('maps ClassVar[Final[int]] correctly', () => {
@@ -310,10 +457,11 @@ describe('TypeMapper - Enhanced Type Support', () => {
       const unionResult = result as any;
       expect(unionResult.types).toHaveLength(3);
 
-      // TypeVar becomes unknown
+      // TypeVar becomes custom type
       expect(unionResult.types[0]).toEqual({
-        kind: 'primitive',
-        name: 'unknown',
+        kind: 'custom',
+        name: 'T',
+        module: 'typing',
       });
 
       // Final[None] becomes null
@@ -342,8 +490,9 @@ describe('TypeMapper - Enhanced Type Support', () => {
 
       expect(valueResult).toEqual(returnResult);
       expect(valueResult).toEqual({
-        kind: 'primitive',
-        name: 'unknown',
+        kind: 'custom',
+        name: 'T',
+        module: 'typing',
       });
     });
 

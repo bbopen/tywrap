@@ -10,7 +10,7 @@ def main() -> None:
     parser.add_argument("--module", help="Python module name, e.g. math or pandas")
     parser.add_argument("--package", help="Python package name (alias of --module for now)")
     parser.add_argument("--output", help="Write JSON IR to file instead of stdout")
-    parser.add_argument("--ir-version", default="0.1.0", help="IR schema version")
+    parser.add_argument("--ir-version", default="0.2.0", help="IR schema version")
     parser.add_argument("--include-private", action="store_true", help="Include private members (leading _)")
     parser.add_argument("--no-pretty", action="store_true", help="Disable pretty JSON formatting")
     args = parser.parse_args()
