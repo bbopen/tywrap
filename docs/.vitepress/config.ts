@@ -4,6 +4,7 @@ export default defineConfig({
   title: 'tywrap',
   description: 'Generate type-safe TypeScript wrappers for any Python library — Node.js, Deno, Bun, and browsers via Pyodide.',
   base: '/tywrap/',
+  appearance: 'force-dark',
   cleanUrls: true,
   srcExclude: ['**/plans/**', 'release.md', 'codec-roadmap.md'],
 

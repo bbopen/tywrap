@@ -9,6 +9,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Plans (local only)
+docs/plans/
+
 # Build outputs
 /dist/
 /coverage/
