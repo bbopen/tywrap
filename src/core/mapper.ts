@@ -9,7 +9,13 @@ import type {
   UnionType as PyUnionType,
   OptionalType as PyOptionalType,
   GenericType as PyGenericType,
+  CallableType as PyCallableType,
   TypeVarType as PyTypeVarType,
+  ParamSpecType as PyParamSpecType,
+  ParamSpecArgsType as PyParamSpecArgsType,
+  ParamSpecKwargsType as PyParamSpecKwargsType,
+  TypeVarTupleType as PyTypeVarTupleType,
+  UnpackType as PyUnpackType,
   FinalType as PyFinalType,
   ClassVarType as PyClassVarType,
   TypescriptType,
@@ -20,6 +26,7 @@ import type {
   TSUnionType,
   TSFunctionType,
   TSGenericType,
+  TSCustomType,
   TSIndexSignature,
   TSLiteralType,
   TypePreset,
@@ -61,6 +68,16 @@ export class TypeMapper {
         return this.mapPythonType(pythonType.base, context);
       case 'typevar':
         return this.mapTypeVarType(pythonType, context);
+      case 'paramspec':
+        return this.mapParamSpecType(pythonType);
+      case 'paramspec_args':
+        return this.mapParamSpecArgsType(pythonType);
+      case 'paramspec_kwargs':
+        return this.mapParamSpecKwargsType();
+      case 'typevartuple':
+        return this.mapTypeVarTupleType(pythonType);
+      case 'unpack':
+        return this.mapUnpackType(pythonType, context);
       case 'final':
         return this.mapFinalType(pythonType, context);
       case 'classvar':
@@ -177,11 +194,17 @@ export class TypeMapper {
     };
   }
 
-  mapGenericType(type: PyGenericType, context: MappingContext = 'value'): TSGenericType {
+  mapGenericType(type: PyGenericType, context: MappingContext = 'value'): TypescriptType {
+    const normalized = this.normalizeCustomType({ name: type.name, module: type.module });
+    const typeArgs = type.typeArgs.map(t => this.mapPythonType(t, context));
+    const knownGenericType = this.mapKnownGenericType(normalized, typeArgs);
+    if (knownGenericType) {
+      return knownGenericType;
+    }
     return {
       kind: 'generic',
-      name: type.name,
-      typeArgs: type.typeArgs.map(t => this.mapPythonType(t, context)),
+      name: normalized.name,
+      typeArgs,
     };
   }
 
@@ -236,39 +259,9 @@ export class TypeMapper {
       };
     }
 
-    // Async types
-    if (name === 'Awaitable' || fullName === 'typing.Awaitable') {
-      return {
-        kind: 'generic',
-        name: 'Promise',
-        typeArgs: [{ kind: 'primitive', name: 'unknown' }],
-      };
-    }
-    if (name === 'Coroutine' || fullName === 'typing.Coroutine') {
-      return {
-        kind: 'generic',
-        name: 'Promise',
-        typeArgs: [{ kind: 'primitive', name: 'unknown' }],
-      };
-    }
-
-    // Collection types that should be generics
-    if (name === 'Sequence' || fullName === 'typing.Sequence') {
-      return {
-        kind: 'generic',
-        name: 'Array',
-        typeArgs: [{ kind: 'primitive', name: 'unknown' }],
-      };
-    }
-    if (name === 'Mapping' || fullName === 'typing.Mapping') {
-      return {
-        kind: 'object',
-        properties: [],
-        indexSignature: {
-          keyType: { kind: 'primitive', name: 'string' },
-          valueType: { kind: 'primitive', name: 'unknown' },
-        },
-      };
+    const knownGenericType = this.mapKnownGenericType(this.normalizeCustomType(type));
+    if (knownGenericType) {
+      return knownGenericType;
     }
 
     const presetType = this.mapPresetType(type);
@@ -288,11 +281,7 @@ export class TypeMapper {
     return { kind: 'custom', name: normalized.name, module: normalized.module };
   }
 
-  mapCallableType(type: {
-    kind: 'callable';
-    parameters: PythonType[];
-    returnType: PythonType;
-  }): TSFunctionType {
+  mapCallableType(type: PyCallableType): TSFunctionType {
     // Support Callable[[...], R] → (...args: unknown[]) => R
     const onlyEllipsis =
       type.parameters.length === 1 &&
@@ -302,21 +291,30 @@ export class TypeMapper {
     return {
       kind: 'function',
       isAsync: false,
-      parameters: onlyEllipsis
+      parameters: type.parameterSpec
         ? ([
             {
               name: 'args',
-              type: { kind: 'array', elementType: { kind: 'primitive', name: 'unknown' } },
+              type: this.mapParamSpecType(type.parameterSpec),
               optional: false,
               rest: true,
             },
           ] as const satisfies TSFunctionType['parameters'])
-        : type.parameters.map((p, i) => ({
-            name: `arg${i}`,
-            type: this.mapPythonType(p, 'value'),
-            optional: false,
-            rest: false,
-          })),
+        : onlyEllipsis
+          ? ([
+              {
+                name: 'args',
+                type: { kind: 'array', elementType: { kind: 'primitive', name: 'unknown' } },
+                optional: false,
+                rest: true,
+              },
+            ] as const satisfies TSFunctionType['parameters'])
+          : type.parameters.map((p, i) => ({
+              name: `arg${i}`,
+              type: this.mapPythonType(p, 'value'),
+              optional: false,
+              rest: false,
+            })),
       returnType: this.mapPythonType(type.returnType, 'return'),
     } satisfies TSFunctionType;
   }
@@ -328,13 +326,47 @@ export class TypeMapper {
     return { kind: 'literal', value: type.value };
   }
 
-  mapTypeVarType(_type: PyTypeVarType, _context: MappingContext = 'value'): TSPrimitiveType {
-    // Generated wrappers do not declare TypeScript generics that mirror Python
-    // TypeVar/ParamSpec scopes, so the sound fallback is unknown.
+  mapTypeVarType(type: PyTypeVarType, _context: MappingContext = 'value'): TSCustomType {
+    // TypeVar maps to a generic type parameter in TypeScript.
     return {
-      kind: 'primitive',
-      name: 'unknown',
+      kind: 'custom',
+      name: type.name,
+      module: 'typing',
     };
+  }
+
+  mapParamSpecType(type: PyParamSpecType): TSCustomType {
+    return {
+      kind: 'custom',
+      name: type.name,
+      module: 'typing',
+    };
+  }
+
+  mapParamSpecArgsType(_type: PyParamSpecArgsType): TSArrayType {
+    return {
+      kind: 'array',
+      elementType: { kind: 'primitive', name: 'unknown' },
+    };
+  }
+
+  mapParamSpecKwargsType(): TSObjectType {
+    return {
+      kind: 'object',
+      properties: [],
+      indexSignature: {
+        keyType: { kind: 'primitive', name: 'string' },
+        valueType: { kind: 'primitive', name: 'unknown' },
+      },
+    };
+  }
+
+  mapTypeVarTupleType(_type: PyTypeVarTupleType): TSPrimitiveType {
+    return { kind: 'primitive', name: 'unknown' };
+  }
+
+  mapUnpackType(_type: PyUnpackType, _context: MappingContext = 'value'): TSPrimitiveType {
+    return { kind: 'primitive', name: 'unknown' };
   }
 
   mapFinalType(type: PyFinalType, context: MappingContext = 'value'): TypescriptType {
@@ -347,6 +379,58 @@ export class TypeMapper {
     // ClassVar[T] maps to T in TypeScript (class variables are just properties)
     // The ClassVar qualifier is more of a static analysis hint
     return this.mapPythonType(type.type, context);
+  }
+
+  private mapKnownGenericType(
+    type: { name: string; module?: string },
+    typeArgs: TypescriptType[] = []
+  ): TypescriptType | undefined {
+    const unknownType: TSPrimitiveType = { kind: 'primitive', name: 'unknown' };
+    const isKnownTypingModule =
+      type.module === undefined ||
+      type.module === 'typing' ||
+      type.module === 'typing_extensions' ||
+      type.module === 'collections.abc';
+
+    if (!isKnownTypingModule) {
+      return undefined;
+    }
+
+    if (type.name === 'Awaitable') {
+      return {
+        kind: 'generic',
+        name: 'Promise',
+        typeArgs: [typeArgs[0] ?? unknownType],
+      } satisfies TSGenericType;
+    }
+
+    if (type.name === 'Coroutine') {
+      return {
+        kind: 'generic',
+        name: 'Promise',
+        typeArgs: [typeArgs[typeArgs.length - 1] ?? unknownType],
+      } satisfies TSGenericType;
+    }
+
+    if (type.name === 'Sequence') {
+      return {
+        kind: 'array',
+        elementType: typeArgs[0] ?? unknownType,
+      } satisfies TSArrayType;
+    }
+
+    if (type.name === 'Mapping') {
+      return {
+        kind: 'object',
+        properties: [],
+        indexSignature: {
+          keyType: this.asIndexKeyType(typeArgs[0] ?? unknownType),
+          valueType: typeArgs[1] ?? unknownType,
+        },
+      } satisfies TSObjectType;
+    }
+
+    return undefined;
   }
 
   private asIndexKeyType(key: TypescriptType): TSPrimitiveType {

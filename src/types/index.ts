@@ -8,6 +8,7 @@ export interface PythonModule {
   version?: string;
   functions: PythonFunction[];
   classes: PythonClass[];
+  typeAliases?: PythonTypeAlias[];
   imports: PythonImport[];
   exports: string[];
 }
@@ -19,6 +20,7 @@ export interface PythonFunction {
   decorators: string[];
   isAsync: boolean;
   isGenerator: boolean;
+  typeParameters?: PythonGenericParameter[];
   returnType: PythonType;
   parameters: Parameter[];
 }
@@ -31,6 +33,23 @@ export interface PythonClass {
   docstring?: string;
   decorators: string[];
   kind?: 'class' | 'protocol' | 'typed_dict' | 'namedtuple' | 'dataclass' | 'pydantic';
+  typeParameters?: PythonGenericParameter[];
+}
+
+export interface PythonTypeAlias {
+  name: string;
+  type: PythonType;
+  typeParameters?: PythonGenericParameter[];
+}
+
+export type PythonGenericParameterKind = 'typevar' | 'paramspec' | 'typevartuple';
+
+export interface PythonGenericParameter {
+  name: string;
+  kind: PythonGenericParameterKind;
+  bound?: PythonType;
+  constraints?: PythonType[];
+  variance?: 'covariant' | 'contravariant' | 'invariant';
 }
 
 export interface PythonImport {
@@ -55,6 +74,7 @@ export interface Property {
   name: string;
   type: PythonType;
   readonly: boolean;
+  optional?: boolean;
   setter?: boolean;
   getter?: boolean;
 }
@@ -78,6 +98,11 @@ export type PythonType =
   | AnnotatedType
   | CustomType
   | TypeVarType
+  | ParamSpecType
+  | ParamSpecArgsType
+  | ParamSpecKwargsType
+  | TypeVarTupleType
+  | UnpackType
   | FinalType
   | ClassVarType;
 
@@ -105,6 +130,7 @@ export interface OptionalType {
 export interface GenericType {
   kind: 'generic';
   name: string;
+  module?: string;
   typeArgs: PythonType[];
 }
 
@@ -117,6 +143,7 @@ export interface CustomType {
 export interface CallableType {
   kind: 'callable';
   parameters: PythonType[];
+  parameterSpec?: ParamSpecType;
   returnType: PythonType;
 }
 
@@ -137,6 +164,31 @@ export interface TypeVarType {
   bound?: PythonType;
   constraints?: PythonType[];
   variance?: 'covariant' | 'contravariant' | 'invariant';
+}
+
+export interface ParamSpecType {
+  kind: 'paramspec';
+  name: string;
+}
+
+export interface ParamSpecArgsType {
+  kind: 'paramspec_args';
+  name: string;
+}
+
+export interface ParamSpecKwargsType {
+  kind: 'paramspec_kwargs';
+  name: string;
+}
+
+export interface TypeVarTupleType {
+  kind: 'typevartuple';
+  name: string;
+}
+
+export interface UnpackType {
+  kind: 'unpack';
+  type: PythonType;
 }
 
 export interface FinalType {

@@ -18,6 +18,31 @@ const nodeBridgeTimeoutMs = isCi ? 60000 : 30000;
 const nodeBridgeTestTimeoutMs = isCi ? 60000 : 30000;
 const defaultPythonPath = getDefaultPythonPath();
 
+async function supportsVariadicTypingFeatures(): Promise<boolean> {
+  const result = await processUtils.exec(defaultPythonPath, [
+    '-c',
+    `
+try:
+    from typing import ParamSpec, TypeVarTuple, Unpack
+except ImportError:
+    try:
+        from typing_extensions import ParamSpec, TypeVarTuple, Unpack
+    except ImportError:
+        raise SystemExit(1)
+raise SystemExit(0)
+`,
+  ]);
+  return result.code === 0;
+}
+
+async function supportsPep695Syntax(): Promise<boolean> {
+  const result = await processUtils.exec(defaultPythonPath, [
+    '-c',
+    'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)',
+  ]);
+  return result.code === 0;
+}
+
 describe('IR-only integration', () => {
   it('tywrap_ir emits JSON IR for math', async () => {
     const result = await processUtils.exec(defaultPythonPath, [
@@ -173,6 +198,292 @@ describe('IR-only integration', () => {
 
       expect(compile.code).toBe(0);
       expect(compile.stderr).toBe('');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('generates safe generic wrappers and declaration files that typecheck', async () => {
+    if (!(await supportsVariadicTypingFeatures())) {
+      return;
+    }
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-generics-'));
+    try {
+      const importDir = join(tempDir, 'py');
+      await mkdir(importDir, { recursive: true });
+      await writeFile(
+        join(importDir, 'generic_module.py'),
+        `from __future__ import annotations
+
+from typing import Callable, Generic, TypeVar
+try:
+    from typing import ParamSpec, TypeVarTuple, Unpack
+except ImportError:
+    from typing_extensions import ParamSpec, TypeVarTuple, Unpack
+
+T = TypeVar("T")
+U = TypeVar("U")
+P = ParamSpec("P")
+Ts = TypeVarTuple("Ts")
+
+Pair = tuple[T, T]
+Transform = Callable[P, T]
+Variadic = tuple[Unpack[Ts]]
+
+def identity(x: T, fallback: T | None = None) -> T:
+    return x if fallback is None else fallback
+
+def forward(container: Container[T]) -> Container[T]:
+    return container
+
+def accept_transform(transform: Transform[P, T]) -> Transform[P, T]:
+    return transform
+
+def passthrough(*args: P.args, **kwargs: P.kwargs) -> None:
+    return None
+
+class Container(Generic[T]):
+    def __init__(self, value: T) -> None:
+        self.value = value
+
+    def get(self) -> T:
+        return self.value
+
+    def clone(self) -> Container[T]:
+        return Container(self.value)
+
+    def id(self, x: U) -> tuple[T, U]:
+        return (self.value, x)
+`,
+        'utf-8'
+      );
+
+      const outDir = join(tempDir, 'generated');
+      const res = await generate({
+        pythonModules: { generic_module: { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: [importDir],
+        output: { dir: outDir, format: 'esm', declaration: true, sourceMap: false },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+        development: { hotReload: false, sourceMap: false, validation: 'none' },
+      } as any);
+
+      expect(res.written.some(p => p.endsWith('generic_module.generated.ts'))).toBe(true);
+      expect(res.written.some(p => p.endsWith('generic_module.generated.d.ts'))).toBe(true);
+
+      const typescript = await fsUtils.readFile(join(outDir, 'generic_module.generated.ts'));
+      const declaration = await fsUtils.readFile(join(outDir, 'generic_module.generated.d.ts'));
+
+      expect(typescript).toContain('export function identity<T>(x: T): Promise<T>;');
+      expect(typescript).toContain(
+        'export async function forward<T>(container: Container<T>): Promise<Container<T>>'
+      );
+      expect(typescript).toContain(
+        'export async function acceptTransform<P extends unknown[], T>('
+      );
+      expect(typescript).not.toContain('Transform<unknown, T>');
+      expect(typescript).toContain('export async function passthrough(args?: unknown[]');
+      expect(typescript).toContain('kwargs?: Record<string, unknown>');
+      expect(typescript).toContain('export class Container<T>');
+      expect(typescript).toContain('static async create<T>(value: T): Promise<Container<T>>');
+      expect(typescript).toContain('static fromHandle<T>(handle: string): Container<T>');
+      expect(typescript).toContain('async id<U>(x: U): Promise<[T, U]>');
+      expect(typescript).toContain('export type Pair<T> = [T, T]');
+      expect(typescript).toContain(
+        'export type Transform<P extends unknown[], T> = (...args: P) => T'
+      );
+      expect(typescript).toContain('export type Variadic = [unknown]');
+      expect(typescript).not.toContain('~T');
+      expect(typescript).not.toContain('~P');
+      expect(typescript).not.toContain('Unpack[');
+      expect(declaration).toContain('export type Pair<T> = [T, T]');
+      expect(declaration).toContain('export class Container<T>');
+      expect(declaration).toContain('export function acceptTransform<P extends unknown[], T>(');
+      expect(declaration).toContain('id<U>(x: U): Promise<[T, U]>;');
+      expect(declaration).not.toContain('getRuntimeBridge');
+
+      const compileDir = join(tempDir, 'compile');
+      await mkdir(compileDir, { recursive: true });
+      await writeFile(
+        join(compileDir, 'runtime-stub.d.ts'),
+        `// Minimal stub covering only the bridge methods generated wrappers call.
+// The real RuntimeExecution also has dispose() and other members; expand this if codegen starts using them.
+export interface RuntimeBridge {
+  call<T = unknown>(module: string, functionName: string, args: unknown[], kwargs?: Record<string, unknown>): Promise<T>;
+  instantiate<T = unknown>(module: string, className: string, args: unknown[], kwargs?: Record<string, unknown>): Promise<T>;
+  callMethod<T = unknown>(handle: string, methodName: string, args: unknown[], kwargs?: Record<string, unknown>): Promise<T>;
+  disposeInstance(handle: string): Promise<void>;
+}
+
+export declare function getRuntimeBridge(): RuntimeBridge;
+`,
+        'utf-8'
+      );
+      await writeFile(
+        join(compileDir, 'consumer.ts'),
+        `import { Container, Pair, Transform, acceptTransform, forward, identity, passthrough } from '../generated/generic_module.generated.js';
+
+const pair: Pair<string> = ['a', 'b'];
+const transform: Transform<[number], string> = (...args) => String(args[0]);
+const container = Container.fromHandle<number>('handle');
+const accepted: Promise<Transform<[number], string>> = acceptTransform<[number], string>(transform);
+const forwarded: Promise<Container<number>> = forward<number>(container);
+const resolved: Promise<number> = identity<number>(1);
+const cloned: Promise<Container<number>> = container.clone();
+const identified: Promise<[number, string]> = container.id<string>('value');
+const passthroughResult: Promise<void> = passthrough([1, 2], { flag: true });
+
+void pair;
+void transform;
+void accepted;
+void forwarded;
+void resolved;
+void cloned;
+void identified;
+void passthroughResult;
+`,
+        'utf-8'
+      );
+      await writeFile(
+        join(compileDir, 'tsconfig.json'),
+        JSON.stringify(
+          {
+            compilerOptions: {
+              target: 'ES2022',
+              module: 'NodeNext',
+              moduleResolution: 'NodeNext',
+              strict: true,
+              noEmit: true,
+              skipLibCheck: false,
+              baseUrl: '.',
+              paths: {
+                'tywrap/runtime': ['./runtime-stub'],
+              },
+            },
+            include: [
+              './consumer.ts',
+              './runtime-stub.d.ts',
+              '../generated/generic_module.generated.ts',
+              '../generated/generic_module.generated.d.ts',
+            ],
+          },
+          null,
+          2
+        ),
+        'utf-8'
+      );
+
+      const tscPath = join(process.cwd(), 'node_modules', 'typescript', 'lib', 'tsc.js');
+      const compile = await processUtils.exec(process.execPath, [
+        tscPath,
+        '-p',
+        join(compileDir, 'tsconfig.json'),
+        '--pretty',
+        'false',
+      ]);
+      expect(compile.code, compile.stdout || compile.stderr).toBe(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('generates protocol aliases without leaking init helpers and preserves method generics', async () => {
+    if (!(await supportsPep695Syntax())) {
+      return;
+    }
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-protocol-generics-'));
+    try {
+      const importDir = join(tempDir, 'py');
+      await mkdir(importDir, { recursive: true });
+      await writeFile(
+        join(importDir, 'protocol_module.py'),
+        `from __future__ import annotations
+
+from typing import Protocol
+
+class Mapper(Protocol):
+    def map[U](self, x: U) -> U:
+        ...
+`,
+        'utf-8'
+      );
+
+      const outDir = join(tempDir, 'generated');
+      const res = await generate({
+        pythonModules: { protocol_module: { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: [importDir],
+        output: { dir: outDir, format: 'esm', declaration: true, sourceMap: false },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+        development: { hotReload: false, sourceMap: false, validation: 'none' },
+      } as any);
+
+      expect(res.written.some(p => p.endsWith('protocol_module.generated.ts'))).toBe(true);
+      expect(res.written.some(p => p.endsWith('protocol_module.generated.d.ts'))).toBe(true);
+
+      const typescript = await fsUtils.readFile(join(outDir, 'protocol_module.generated.ts'));
+      const declaration = await fsUtils.readFile(join(outDir, 'protocol_module.generated.d.ts'));
+
+      expect(typescript).toContain('export type Mapper =');
+      expect(typescript).toContain('map: <U>(x: U) => U;');
+      expect(typescript).not.toContain('NoInitOrReplaceInit');
+      expect(typescript).not.toContain('__init__');
+      expect(typescript).not.toContain('getRuntimeBridge');
+      expect(declaration).toContain('map: <U>(x: U) => U;');
+      expect(declaration).not.toContain('NoInitOrReplaceInit');
+
+      const compileDir = join(tempDir, 'compile');
+      await mkdir(compileDir, { recursive: true });
+      await writeFile(
+        join(compileDir, 'consumer.ts'),
+        `import type { Mapper } from '../generated/protocol_module.generated.js';
+
+const mapper: Mapper = {
+  map: <U>(x: U) => x,
+};
+
+const result: string = mapper.map<string>('value');
+
+void mapper;
+void result;
+`,
+        'utf-8'
+      );
+      await writeFile(
+        join(compileDir, 'tsconfig.json'),
+        JSON.stringify(
+          {
+            compilerOptions: {
+              target: 'ES2022',
+              module: 'NodeNext',
+              moduleResolution: 'NodeNext',
+              strict: true,
+              noEmit: true,
+              skipLibCheck: false,
+            },
+            include: [
+              './consumer.ts',
+              '../generated/protocol_module.generated.ts',
+              '../generated/protocol_module.generated.d.ts',
+            ],
+          },
+          null,
+          2
+        ),
+        'utf-8'
+      );
+
+      const tscPath = join(process.cwd(), 'node_modules', 'typescript', 'lib', 'tsc.js');
+      const compile = await processUtils.exec(process.execPath, [
+        tscPath,
+        '-p',
+        join(compileDir, 'tsconfig.json'),
+        '--pretty',
+        'false',
+      ]);
+      expect(compile.code, compile.stdout || compile.stderr).toBe(0);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
