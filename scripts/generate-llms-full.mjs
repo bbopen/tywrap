@@ -75,6 +75,13 @@ async function main() {
     '',
   ].join('\n');
 
+  // Derive the canonical site base from the shared VitePress config
+  const configText = await readFile('docs/.vitepress/config.ts', 'utf8');
+  const baseMatch = configText.match(/base:\s*['"]([^'"]+)['"]/);
+  const basePath = baseMatch ? baseMatch[1] : '/';
+  const siteHost = 'https://bbopen.github.io';
+  const canonicalBase = new URL(basePath, siteHost).href;
+
   const sections = [];
   for (const file of orderedDocs) {
     let text = await readFile(file, 'utf8');
@@ -82,14 +89,15 @@ async function main() {
     // Resolve relative links based on the file's directory path
     const dirMatch = file.match(/^docs\/(.*\/)/);
     const dirPath = dirMatch ? dirMatch[1] : '';
-    const baseUrl = `https://bbopen.github.io/tywrap/${dirPath}`;
+    const baseUrl = new URL(dirPath, canonicalBase).href;
 
     text = text.replace(/\]\(([^)]+)\)/g, (match, href) => {
       if (/^(https?:|mailto:|#)/.test(href)) {
         return match;
       }
       if (href.startsWith('/')) {
-        return `](https://bbopen.github.io/tywrap${href})`;
+        // Root-relative links resolve against the canonical base (removing the leading slash)
+        return `](${new URL(href.slice(1), canonicalBase).href})`;
       }
       try {
         const url = new URL(href, baseUrl);

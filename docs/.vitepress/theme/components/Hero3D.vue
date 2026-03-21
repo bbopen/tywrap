@@ -21,7 +21,7 @@ function getBase(): string {
 }
 
 const copied = ref(false)
-let copyTimeout: number
+let copyTimeout: number | null = null
 
 async function copyPrompt() {
   try {
@@ -32,9 +32,10 @@ async function copyPrompt() {
     await navigator.clipboard.writeText(text)
     
     copied.value = true
-    if (copyTimeout) clearTimeout(copyTimeout)
+    if (copyTimeout !== null) window.clearTimeout(copyTimeout)
     copyTimeout = window.setTimeout(() => {
       copied.value = false
+      copyTimeout = null
     }, 2500)
   } catch (err) {
     console.error('Failed to copy prompt: ', err)
@@ -83,6 +84,10 @@ function onResize() {
 }
 
 onBeforeUnmount(() => {
+  if (copyTimeout !== null) {
+    window.clearTimeout(copyTimeout)
+    copyTimeout = null
+  }
   if (scrollRafId !== null) {
     window.cancelAnimationFrame(scrollRafId)
     scrollRafId = null
