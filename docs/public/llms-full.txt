@@ -7,19 +7,6 @@
 ---
 layout: home
 
-features:
-  - icon: 🔒
-    title: Full Type Safety
-    details: TypeScript definitions generated directly from Python source analysis via AST — no manual type writing.
-  - icon: 🌐
-    title: Multi-Runtime
-    details: One API across Node.js, Bun, Deno (subprocess), and browsers (Pyodide WebAssembly).
-  - icon: ⚡
-    title: Rich Data Types
-    details: First-class support for numpy, pandas, scipy, torch, and sklearn with Apache Arrow binary transport.
-  - icon: 🛠
-    title: Zero-Config CLI
-    details: Run `npx tywrap generate` and get production-ready TypeScript wrappers with a single command.
 ---
 
 ## Quick Start
@@ -1054,9 +1041,9 @@ Do you need subprocess-based Python execution?
 
 | Bridge | Export | Guide |
 |--------|--------|-------|
-| `NodeBridge` | `tywrap/node` | [Node.js](./node) · [Bun](./bun) · [Deno](./deno) |
-| `PyodideBridge` | `tywrap/pyodide` | [Browser](./browser) |
-| `HttpBridge` | `tywrap/http` | [HTTP](./http) |
+| `NodeBridge` | `tywrap/node` | [Node.js](https://bbopen.github.io/tywrap/guide/runtimes/node) · [Bun](https://bbopen.github.io/tywrap/guide/runtimes/bun) · [Deno](https://bbopen.github.io/tywrap/guide/runtimes/deno) |
+| `PyodideBridge` | `tywrap/pyodide` | [Browser](https://bbopen.github.io/tywrap/guide/runtimes/browser) |
+| `HttpBridge` | `tywrap/http` | [HTTP](https://bbopen.github.io/tywrap/guide/runtimes/http) |
 
 ---
 
@@ -1732,7 +1719,7 @@ setRuntimeBridge(new NodeBridge({
 
 ## Configuration Options
 
-`NodeBridge` accepts the same options under Bun as under Node.js. See the [Node.js guide](./node) for the full option reference.
+`NodeBridge` accepts the same options under Bun as under Node.js. See the [Node.js guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for the full option reference.
 
 Key options:
 
@@ -1790,7 +1777,7 @@ The same `TYWRAP_*` env vars work under Bun. See the [environment variables refe
 
 **Subprocess times out** — Increase `timeoutMs`. Verify `pip install tywrap-ir` ran in the correct environment.
 
-See the [Node.js troubleshooting guide](./node) for additional patterns — all apply equally to Bun.
+See the [Node.js troubleshooting guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for additional patterns — all apply equally to Bun.
 
 ---
 
@@ -1852,7 +1839,7 @@ deno check src/index.ts
 
 ## Configuration Options
 
-See the [Node.js guide](./node) for the full `NodeBridgeOptions` reference — all options work identically in Deno.
+See the [Node.js guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for the full `NodeBridgeOptions` reference — all options work identically in Deno.
 
 ## When to Use Each Bridge in Deno
 
@@ -1872,7 +1859,7 @@ The same `TYWRAP_*` env vars work under Deno. See the [environment variables ref
 
 **`NotSupported: Subprocess access is not allowed`** — You are running in Deno Deploy. Switch to [`PyodideBridge`](https://bbopen.github.io/tywrap/guide/runtimes/browser) or [`HttpBridge`](https://bbopen.github.io/tywrap/guide/runtimes/http).
 
-See the [Node.js troubleshooting guide](./node) for additional patterns.
+See the [Node.js troubleshooting guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for additional patterns.
 
 ---
 

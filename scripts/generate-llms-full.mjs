@@ -78,7 +78,27 @@ async function main() {
   const sections = [];
   for (const file of orderedDocs) {
     let text = await readFile(file, 'utf8');
-    text = text.replaceAll('](/', '](https://bbopen.github.io/tywrap/');
+    
+    // Resolve relative links based on the file's directory path
+    const dirMatch = file.match(/^docs\/(.*\/)/);
+    const dirPath = dirMatch ? dirMatch[1] : '';
+    const baseUrl = `https://bbopen.github.io/tywrap/${dirPath}`;
+
+    text = text.replace(/\]\(([^)]+)\)/g, (match, href) => {
+      if (/^(https?:|mailto:|#)/.test(href)) {
+        return match;
+      }
+      if (href.startsWith('/')) {
+        return `](https://bbopen.github.io/tywrap${href})`;
+      }
+      try {
+        const url = new URL(href, baseUrl);
+        return `](${url.href})`;
+      } catch (e) {
+        return match;
+      }
+    });
+
     sections.push(`<!-- Source: ${file} -->\n${text.trimEnd()}\n`);
   }
 

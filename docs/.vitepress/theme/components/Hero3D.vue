@@ -7,6 +7,7 @@ const { site } = useData()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let threeScene: ThreeSceneReturn | null = null
 let scrollTicking = false
+let scrollRafId: number | null = null
 
 const features = [
   { icon: '🔒', title: 'Full Type Safety', details: 'TypeScript definitions generated directly from Python source analysis via AST — no manual type writing.' },
