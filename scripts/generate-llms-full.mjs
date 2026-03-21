@@ -77,7 +77,8 @@ async function main() {
 
   const sections = [];
   for (const file of orderedDocs) {
-    const text = await readFile(file, 'utf8');
+    let text = await readFile(file, 'utf8');
+    text = text.replaceAll('](/', '](https://bbopen.github.io/tywrap/');
     sections.push(`<!-- Source: ${file} -->\n${text.trimEnd()}\n`);
   }
 
