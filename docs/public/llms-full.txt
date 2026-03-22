@@ -7,19 +7,6 @@
 ---
 layout: home
 
-features:
-  - icon: 🔒
-    title: Full Type Safety
-    details: TypeScript definitions generated directly from Python source analysis via AST — no manual type writing.
-  - icon: 🌐
-    title: Multi-Runtime
-    details: One API across Node.js, Bun, Deno (subprocess), and browsers (Pyodide WebAssembly).
-  - icon: ⚡
-    title: Rich Data Types
-    details: First-class support for numpy, pandas, scipy, torch, and sklearn with Apache Arrow binary transport.
-  - icon: 🛠
-    title: Zero-Config CLI
-    details: Run `npx tywrap generate` and get production-ready TypeScript wrappers with a single command.
 ---
 
 ## Quick Start
@@ -413,14 +400,14 @@ const [sinValue, cosValue, tanValue] = await Promise.all([
 
 ## Next Steps
 
-- [Configuration Guide](/guide/configuration) - Complete configuration reference
-- [Runtime Guides](/guide/runtimes/node) - Platform-specific setup
-- [Examples](/examples/) - Usage patterns and examples
-- [Troubleshooting](/troubleshooting/) - Common issues and solutions
+- [Configuration Guide](https://bbopen.github.io/tywrap/guide/configuration) - Complete configuration reference
+- [Runtime Guides](https://bbopen.github.io/tywrap/guide/runtimes/node) - Platform-specific setup
+- [Examples](https://bbopen.github.io/tywrap/examples/) - Usage patterns and examples
+- [Troubleshooting](https://bbopen.github.io/tywrap/troubleshooting/) - Common issues and solutions
 
 ## Support
 
-- [Troubleshooting Guide](/troubleshooting/)
+- [Troubleshooting Guide](https://bbopen.github.io/tywrap/troubleshooting/)
 - [GitHub Issues](https://github.com/bbopen/tywrap/issues)
 - [GitHub Discussions](https://github.com/bbopen/tywrap/discussions)
 
@@ -790,7 +777,7 @@ export default defineConfig({
 });
 ```
 
-See [Environment Variables](/reference/env-vars) for the full implemented list.
+See [Environment Variables](https://bbopen.github.io/tywrap/reference/env-vars) for the full implemented list.
 
 ## Advanced Configuration Patterns
 
@@ -1001,13 +988,13 @@ python3 -c "import your_module; print(your_module.__file__)"
 }
 ```
 
-For more troubleshooting, see [Troubleshooting Guide](/troubleshooting/).
+For more troubleshooting, see [Troubleshooting Guide](https://bbopen.github.io/tywrap/troubleshooting/).
 
 ## Next Steps
 
-- [Runtime Guides](/guide/runtimes/node) - Platform-specific configuration
-- [Examples](/examples/) - Configuration examples
-- [API Reference](/reference/api/) - Complete API documentation
+- [Runtime Guides](https://bbopen.github.io/tywrap/guide/runtimes/node) - Platform-specific configuration
+- [Examples](https://bbopen.github.io/tywrap/examples/) - Configuration examples
+- [API Reference](https://bbopen.github.io/tywrap/reference/api/) - Complete API documentation
 
 ---
 
@@ -1054,9 +1041,9 @@ Do you need subprocess-based Python execution?
 
 | Bridge | Export | Guide |
 |--------|--------|-------|
-| `NodeBridge` | `tywrap/node` | [Node.js](./node) · [Bun](./bun) · [Deno](./deno) |
-| `PyodideBridge` | `tywrap/pyodide` | [Browser](./browser) |
-| `HttpBridge` | `tywrap/http` | [HTTP](./http) |
+| `NodeBridge` | `tywrap/node` | [Node.js](https://bbopen.github.io/tywrap/guide/runtimes/node) · [Bun](https://bbopen.github.io/tywrap/guide/runtimes/bun) · [Deno](https://bbopen.github.io/tywrap/guide/runtimes/deno) |
+| `PyodideBridge` | `tywrap/pyodide` | [Browser](https://bbopen.github.io/tywrap/guide/runtimes/browser) |
+| `HttpBridge` | `tywrap/http` | [HTTP](https://bbopen.github.io/tywrap/guide/runtimes/http) |
 
 ---
 
@@ -1696,10 +1683,10 @@ function getNextBridge() {
 
 ## Next Steps
 
-- [Configuration Guide](/guide/configuration) - Complete configuration reference
-- [Examples](/examples/) - Usage examples and patterns
-- [Troubleshooting](/troubleshooting/) - Common issues and solutions
-- [API Reference](/reference/api/) - Complete API documentation
+- [Configuration Guide](https://bbopen.github.io/tywrap/guide/configuration) - Complete configuration reference
+- [Examples](https://bbopen.github.io/tywrap/examples/) - Usage examples and patterns
+- [Troubleshooting](https://bbopen.github.io/tywrap/troubleshooting/) - Common issues and solutions
+- [API Reference](https://bbopen.github.io/tywrap/reference/api/) - Complete API documentation
 
 ---
 
@@ -1732,7 +1719,7 @@ setRuntimeBridge(new NodeBridge({
 
 ## Configuration Options
 
-`NodeBridge` accepts the same options under Bun as under Node.js. See the [Node.js guide](./node) for the full option reference.
+`NodeBridge` accepts the same options under Bun as under Node.js. See the [Node.js guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for the full option reference.
 
 Key options:
 
@@ -1782,7 +1769,7 @@ setRuntimeBridge(new NodeBridge({
 
 ## Environment Variables
 
-The same `TYWRAP_*` env vars work under Bun. See the [environment variables reference](/reference/env-vars).
+The same `TYWRAP_*` env vars work under Bun. See the [environment variables reference](https://bbopen.github.io/tywrap/reference/env-vars).
 
 ## Troubleshooting
 
@@ -1790,7 +1777,7 @@ The same `TYWRAP_*` env vars work under Bun. See the [environment variables refe
 
 **Subprocess times out** — Increase `timeoutMs`. Verify `pip install tywrap-ir` ran in the correct environment.
 
-See the [Node.js troubleshooting guide](./node) for additional patterns — all apply equally to Bun.
+See the [Node.js troubleshooting guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for additional patterns — all apply equally to Bun.
 
 ---
 
@@ -1804,8 +1791,8 @@ tywrap works with [Deno](https://deno.land/) 1.46+ using the same `NodeBridge` a
 **Deno Deploy does NOT support subprocess execution.** Because `NodeBridge` spawns a Python subprocess, it cannot run in Deno Deploy.
 
 **Alternatives for Deno Deploy:**
-- Use [`PyodideBridge`](/guide/runtimes/browser) — runs Python in-browser via WebAssembly (no subprocess)
-- Use [`HttpBridge`](/guide/runtimes/http) — connects to a remote Python server over HTTP
+- Use [`PyodideBridge`](https://bbopen.github.io/tywrap/guide/runtimes/browser) — runs Python in-browser via WebAssembly (no subprocess)
+- Use [`HttpBridge`](https://bbopen.github.io/tywrap/guide/runtimes/http) — connects to a remote Python server over HTTP
 
 ## Installation
 
@@ -1852,7 +1839,7 @@ deno check src/index.ts
 
 ## Configuration Options
 
-See the [Node.js guide](./node) for the full `NodeBridgeOptions` reference — all options work identically in Deno.
+See the [Node.js guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for the full `NodeBridgeOptions` reference — all options work identically in Deno.
 
 ## When to Use Each Bridge in Deno
 
@@ -1864,15 +1851,15 @@ See the [Node.js guide](./node) for the full `NodeBridgeOptions` reference — a
 
 ## Environment Variables
 
-The same `TYWRAP_*` env vars work under Deno. See the [environment variables reference](/reference/env-vars).
+The same `TYWRAP_*` env vars work under Deno. See the [environment variables reference](https://bbopen.github.io/tywrap/reference/env-vars).
 
 ## Troubleshooting
 
 **`PermissionDenied: Requires run access to "python3"`** — Add `--allow-run=python3` to your `deno run` command.
 
-**`NotSupported: Subprocess access is not allowed`** — You are running in Deno Deploy. Switch to [`PyodideBridge`](/guide/runtimes/browser) or [`HttpBridge`](/guide/runtimes/http).
+**`NotSupported: Subprocess access is not allowed`** — You are running in Deno Deploy. Switch to [`PyodideBridge`](https://bbopen.github.io/tywrap/guide/runtimes/browser) or [`HttpBridge`](https://bbopen.github.io/tywrap/guide/runtimes/http).
 
-See the [Node.js troubleshooting guide](./node) for additional patterns.
+See the [Node.js troubleshooting guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for additional patterns.
 
 ---
 
@@ -2002,7 +1989,7 @@ setRuntimeBridge(new HttpBridge({
 
 `HttpBridge` expects a server that accepts POST requests with JSON/Arrow payloads. You must implement or deploy a compatible server endpoint. The protocol is stateless — each call is an independent POST request.
 
-> **Note:** A built-in server command is not yet available. See the [API reference](/reference/api/) for the expected request/response format.
+> **Note:** A built-in server command is not yet available. See the [API reference](https://bbopen.github.io/tywrap/reference/api/) for the expected request/response format.
 
 ## Apache Arrow
 
@@ -2022,7 +2009,7 @@ registerArrowDecoder(bytes => tableFromIPC(bytes));
 | `TYWRAP_CODEC_FALLBACK=json` | Disable Arrow, use JSON only |
 | `TYWRAP_CODEC_MAX_BYTES` | Cap max response size |
 
-See the [environment variables reference](/reference/env-vars).
+See the [environment variables reference](https://bbopen.github.io/tywrap/reference/env-vars).
 
 ## Security
 
@@ -2161,7 +2148,7 @@ export default defineConfig({
 });
 ```
 
-See the [Configuration guide](/guide/configuration) for the full config surface.
+See the [Configuration guide](https://bbopen.github.io/tywrap/guide/configuration) for the full config surface.
 
 ---
 
@@ -2770,12 +2757,12 @@ await counter.disposeHandle();
 
 ## More Docs
 
-- [Getting started](/guide/getting-started)
-- [Configuration](/guide/configuration)
-- [Node runtime](/guide/runtimes/node)
-- [Browser runtime](/guide/runtimes/browser)
-- [Troubleshooting](/troubleshooting/)
-- [Type mapping](/reference/type-mapping)
+- [Getting started](https://bbopen.github.io/tywrap/guide/getting-started)
+- [Configuration](https://bbopen.github.io/tywrap/guide/configuration)
+- [Node runtime](https://bbopen.github.io/tywrap/guide/runtimes/node)
+- [Browser runtime](https://bbopen.github.io/tywrap/guide/runtimes/browser)
+- [Troubleshooting](https://bbopen.github.io/tywrap/troubleshooting/)
+- [Type mapping](https://bbopen.github.io/tywrap/reference/type-mapping)
 
 ---
 
@@ -3429,6 +3416,6 @@ npx tsc --noEmit --traceResolution
 ```
 
 This troubleshooting guide covers the most common issues. For runtime-specific detail, see:
-- [Node.js Runtime](/guide/runtimes/node)
-- [Browser Runtime (Pyodide)](/guide/runtimes/browser)
+- [Node.js Runtime](https://bbopen.github.io/tywrap/guide/runtimes/node)
+- [Browser Runtime (Pyodide)](https://bbopen.github.io/tywrap/guide/runtimes/browser)
 - [Build Tool Issues](#build-tool-issues)
