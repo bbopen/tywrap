@@ -1,19 +1,6 @@
 ---
 layout: home
 
-features:
-  - icon: 🔒
-    title: Full Type Safety
-    details: TypeScript definitions generated directly from Python source analysis via AST — no manual type writing.
-  - icon: 🌐
-    title: Multi-Runtime
-    details: One API across Node.js, Bun, Deno (subprocess), and browsers (Pyodide WebAssembly).
-  - icon: ⚡
-    title: Rich Data Types
-    details: First-class support for numpy, pandas, scipy, torch, and sklearn with Apache Arrow binary transport.
-  - icon: 🛠
-    title: Zero-Config CLI
-    details: Run `npx tywrap generate` and get production-ready TypeScript wrappers with a single command.
 ---
 
 ## Quick Start
