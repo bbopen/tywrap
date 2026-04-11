@@ -1278,7 +1278,6 @@ def get_bad():
       },
       testTimeout
     );
-
   });
 
   describe('Performance Characteristics', () => {

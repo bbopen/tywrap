@@ -7,10 +7,13 @@ layout: home
 
 ```bash
 npm install tywrap
-pip install tywrap-ir
+pip install tywrap-ir  # Python component for code generation
 npx tywrap init
 npx tywrap generate
 ```
+
+`tywrap` and `tywrap-ir` are versioned independently. Install the latest
+published release of each package unless you need to pin them explicitly.
 
 ```typescript
 import { NodeBridge } from 'tywrap/node';

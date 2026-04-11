@@ -54,6 +54,11 @@ await generate({
 `runOptions.check` switches generation into compare-only mode, the same behavior
 used by `tywrap generate --check`.
 
+When `output.declaration` is enabled, `generate()` writes matching
+`.generated.d.ts` files from the same generic-aware pass as the runtime wrapper
+code. Simple `TypeVar` and callable `ParamSpec` declarations are preserved when
+tywrap can represent them safely.
+
 ### `tywrap(options?)`
 
 Creates the lower-level mapper and generator objects for advanced use.

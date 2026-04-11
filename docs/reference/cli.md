@@ -68,7 +68,7 @@ npx tywrap generate --modules math,statistics --runtime node
 | `--python`                            | Python executable path override                                     |
 | `--output-dir`                        | Override `output.dir`                                               |
 | `--format esm\|cjs\|both`             | Override `output.format`                                            |
-| `--declaration`                       | Override `output.declaration`                                       |
+| `--declaration`                       | Override `output.declaration` and emit matching `.d.ts` files       |
 | `--source-map`                        | Override `output.sourceMap`                                         |
 | `--cache`, `--no-cache`               | Enable or disable on-disk IR caching                                |
 | `--debug`                             | Enable debug logging                                                |
