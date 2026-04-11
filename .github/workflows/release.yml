@@ -10,10 +10,54 @@ permissions:
   pull-requests: write
 
 jobs:
-  release-please:
+  detect_release_state:
     runs-on: ubuntu-latest
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
+      package_version: ${{ steps.detect.outputs.package_version }}
+      tag_name: ${{ steps.detect.outputs.tag_name }}
+      tag_exists: ${{ steps.detect.outputs.tag_exists }}
+      changelog_has_version: ${{ steps.detect.outputs.changelog_has_version }}
+      publish_from_main: ${{ steps.detect.outputs.publish_from_main }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG_NAME="v${VERSION}"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            TAG_EXISTS=true
+          else
+            TAG_EXISTS=false
+          fi
+
+          if grep -F -q "## [${VERSION}]" CHANGELOG.md; then
+            CHANGELOG_HAS_VERSION=true
+          else
+            CHANGELOG_HAS_VERSION=false
+          fi
+
+          if [[ "${TAG_EXISTS}" == "false" && "${CHANGELOG_HAS_VERSION}" == "true" ]]; then
+            PUBLISH_FROM_MAIN=true
+          else
+            PUBLISH_FROM_MAIN=false
+          fi
+
+          echo "package_version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=${TAG_EXISTS}" >> "$GITHUB_OUTPUT"
+          echo "changelog_has_version=${CHANGELOG_HAS_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "publish_from_main=${PUBLISH_FROM_MAIN}" >> "$GITHUB_OUTPUT"
+
+  release_please:
+    needs: detect_release_state
+    if: ${{ needs.detect_release_state.outputs.publish_from_main != 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created || 'false' }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v4
@@ -22,9 +66,84 @@ jobs:
           release-type: node
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  publish-npm:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created }}
+  publish_existing_main_release:
+    needs: detect_release_state
+    if: ${{ needs.detect_release_state.outputs.publish_from_main == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_ready: ${{ steps.publish.outputs.release_ready }}
+      tag_name: ${{ steps.publish.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract release notes from changelog
+        env:
+          VERSION: ${{ needs.detect_release_state.outputs.package_version }}
+        run: |
+          awk -v version="$VERSION" '
+            index($0, "## [" version "]") == 1 {capture=1}
+            capture && /^## \[/ && index($0, "## [" version "]") != 1 {exit}
+            capture {print}
+          ' CHANGELOG.md > release-notes.md
+
+          if [[ ! -s release-notes.md ]]; then
+            echo "Failed to extract release notes for ${VERSION} from CHANGELOG.md" >&2
+            exit 1
+          fi
+
+      - name: Create tag and GitHub release for current main version
+        id: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.detect_release_state.outputs.tag_name }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Tag ${TAG_NAME} already exists on origin"
+          else
+            git tag "${TAG_NAME}" "${TARGET_SHA}"
+            git push origin "refs/tags/${TAG_NAME}"
+          fi
+
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            echo "GitHub release ${TAG_NAME} already exists"
+          else
+            gh release create "${TAG_NAME}" \
+              --target "${TARGET_SHA}" \
+              --title "${TAG_NAME}" \
+              --notes-file release-notes.md
+          fi
+
+          echo "release_ready=true" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+
+  select_release:
+    needs: [release_please, publish_existing_main_release]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.select.outputs.should_publish }}
+      tag_name: ${{ steps.select.outputs.tag_name }}
+    steps:
+      - id: select
+        run: |
+          if [[ "${{ needs.release_please.outputs.release_created }}" == "true" ]]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${{ needs.release_please.outputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ needs.publish_existing_main_release.outputs.release_ready }}" == "true" ]]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${{ needs.publish_existing_main_release.outputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish_npm:
+    needs: select_release
+    if: ${{ needs.select_release.outputs.should_publish == 'true' }}
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -33,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.select_release.outputs.tag_name }}
 
       - uses: actions/setup-node@v6
         with:
@@ -41,26 +160,45 @@ jobs:
           cache: npm
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Skip if version is already published
+        id: npm_registry
+        env:
+          TAG_NAME: ${{ needs.select_release.outputs.tag_name }}
+        run: |
+          VERSION="${TAG_NAME#v}"
+
+          if npm view "tywrap@${VERSION}" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v6
+        if: ${{ steps.npm_registry.outputs.already_published != 'true' }}
         with:
           python-version: '3.11'
 
-      - run: npm ci --prefer-offline --no-audit
+      - if: ${{ steps.npm_registry.outputs.already_published != 'true' }}
+        run: npm ci --prefer-offline --no-audit
 
       - name: Install Python dependencies
+        if: ${{ steps.npm_registry.outputs.already_published != 'true' }}
         run: |
           cd tywrap_ir
           pip install -e .
 
-      - run: npm run build
+      - if: ${{ steps.npm_registry.outputs.already_published != 'true' }}
+        run: npm run build
 
       - name: Run tests
+        if: ${{ steps.npm_registry.outputs.already_published != 'true' }}
         run: npm test
         env:
           NODE_OPTIONS: --expose-gc
           TYWRAP_PERF_BUDGETS: '1'
 
       - name: Publish to npm
+        if: ${{ steps.npm_registry.outputs.already_published != 'true' }}
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
