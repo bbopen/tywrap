@@ -19,6 +19,8 @@ TypeScript wrapper for Python libraries with full type safety.
 
 - **Full Type Safety** - TypeScript definitions generated from Python source
   analysis
+- **Generic-Aware Declarations** - Preserves simple `TypeVar` and callable
+  `ParamSpec` generics in generated `.ts` and `.d.ts` output
 - **Multi-Runtime** - Node.js (subprocess) and browsers (Pyodide)
 - **Rich Data Types** - numpy, pandas, scipy, torch, sklearn, and stdlib types
 - **Efficient Serialization** - Apache Arrow binary format with JSON fallback
