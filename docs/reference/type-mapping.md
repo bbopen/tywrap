@@ -54,18 +54,18 @@ This page describes the TypeScript shapes tywrap generates and returns today.
 
 ### Special Names
 
-| Python                    | TypeScript         |
-| ------------------------- | ------------------ |
-| `Any`                     | `unknown`          |
-| `Never`, `NoReturn`       | `never`            |
-| `LiteralString`, `AnyStr` | `string`           |
-| `object`                  | `object`           |
-| `Awaitable`               | `Promise<unknown>` |
-| `Coroutine`               | `Promise<unknown>` |
-| `TypeVar('T')`            | `unknown`          |
-| `ParamSpec('P')`          | `unknown`          |
-| `TypeVarTuple('Ts')`      | `unknown`          |
-| `Unpack[Ts]`              | `unknown`          |
+| Python                    | TypeScript         | Notes |
+| ------------------------- | ------------------ | ----- |
+| `Any`                     | `unknown`          |       |
+| `Never`, `NoReturn`       | `never`            |       |
+| `LiteralString`, `AnyStr` | `string`           |       |
+| `object`                  | `object`           |       |
+| `Awaitable`               | `Promise<unknown>` |       |
+| `Coroutine`               | `Promise<unknown>` |       |
+| `TypeVar('T')`            | `T`                | Preserved for simple unconstrained/invariant declarations; otherwise falls back to `unknown` |
+| `ParamSpec('P')`          | `P extends unknown[]` | Preserved for callable parameter packs when tywrap can emit a matching generic declaration |
+| `TypeVarTuple('Ts')`      | `unknown`          | Variadic generic parameters still fall back conservatively |
+| `Unpack[Ts]`              | `unknown`          | Variadic tuple unpacking still falls back conservatively |
 
 ## Preset Mappings
 
@@ -143,16 +143,51 @@ interface SklearnEstimator {
 ## Limits and Fallbacks
 
 - tywrap does not preserve Python numeric distinctions beyond `number`.
+- tywrap preserves simple unconstrained `TypeVar`s, generic classes, generic
+  type aliases, and callable `ParamSpec` packs in generated `.ts` and `.d.ts`
+  output when they can be rendered safely.
 - Complex user-defined generics that are not explicitly normalized stay as
   custom TypeScript names.
-- Python typing placeholders such as `TypeVar`, `ParamSpec`, `TypeVarTuple`,
-  and `Unpack` are lowered to `unknown`-based shapes because generated wrappers
-  do not currently emit matching TypeScript generic parameters.
+- Bound, constrained, or variant `TypeVar`s, plus variadic generics such as
+  `TypeVarTuple` and `Unpack`, still lower conservatively to `unknown`-based
+  shapes.
+- `P.args` and `P.kwargs` lower conservatively in runtime wrapper signatures as
+  `unknown[]` and `Record<string, unknown>`.
 - `Annotated[...]` metadata is not reflected in the generated type.
 - Runtime serialization can still shape values more narrowly than the static
   annotation alone. `torch.Tensor` and `sklearn` values are examples of this.
 
-## Example
+## Generic Example
+
+```python
+from typing import Callable, Generic, TypeVar
+try:
+    from typing import ParamSpec
+except ImportError:
+    from typing_extensions import ParamSpec
+
+T = TypeVar("T")
+P = ParamSpec("P")
+
+Pair = tuple[T, T]
+Transform = Callable[P, T]
+
+class Container(Generic[T]):
+    def get(self) -> T:
+        ...
+```
+
+Generates TypeScript shaped like:
+
+```ts
+export type Pair<T> = [T, T];
+export type Transform<P extends unknown[], T> = (...args: P) => T;
+export class Container<T> {
+  get(): Promise<T>;
+}
+```
+
+## Basic Example
 
 ```python
 from typing import Literal, Optional, Sequence

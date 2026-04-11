@@ -167,7 +167,7 @@ decorator helpers: `dataclass`, `property`, `staticmethod`, `classmethod`,
 | ---------------- | -------------------------- | --------------- | --------------------------------- |
 | `dir`            | `string`                   | `'./generated'` | Output directory                  |
 | `format`         | `'esm' \| 'cjs' \| 'both'` | `'esm'`         | Module format                     |
-| `declaration`    | `boolean`                  | `false`         | Generate .d.ts files              |
+| `declaration`    | `boolean`                  | `false`         | Generate matching `.d.ts` files, including preserved simple generics when representable |
 | `sourceMap`      | `boolean`                  | `false`         | Generate source maps              |
 | `annotatedJSDoc` | `boolean`                  | `false`         | Include type annotations in JSDoc |
 
