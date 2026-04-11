@@ -5,6 +5,7 @@
 
 ### Features
 
+* safe TypeScript generic emission ([#210](https://github.com/bbopen/tywrap/issues/210)) ([c977786](https://github.com/bbopen/tywrap/commit/c977786b48ae9f8d4043569fe7ade105313a23f1))
 * **docs:** add 3D hero visual — cinematic particle network ([#212](https://github.com/bbopen/tywrap/issues/212)) ([5740a4e](https://github.com/bbopen/tywrap/commit/5740a4e28d7703709461d741c79f75806ccc9f61))
 * **docs:** redesign hero with llm copy block and extracted features ([#213](https://github.com/bbopen/tywrap/issues/213)) ([7875db3](https://github.com/bbopen/tywrap/commit/7875db30bd97d4ea481fd4a0bba5ecc368e0ebf8))
 * **runtime:** add getBridgeInfo() meta call ([#188](https://github.com/bbopen/tywrap/issues/188)) ([bd16412](https://github.com/bbopen/tywrap/commit/bd16412de59d1499c769b574a3fa39a009ed1fab))
