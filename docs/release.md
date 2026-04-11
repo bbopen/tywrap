@@ -23,7 +23,10 @@
 5. For the normal `release-please` path, keep the repository Actions setting
    `Allow GitHub Actions to create and approve pull requests` enabled.
 
-6. If GitHub Actions release automation is unavailable, use the manual fallback:
+6. To publish an existing release tag without opening a new release PR, run the
+   `Release Please` workflow manually with `publish_tag=vX.Y.Z`.
+
+7. If GitHub Actions release automation is unavailable, use the manual fallback:
    ```sh
    node scripts/release.mjs <version> --commit --tag
    git push && git push --tags

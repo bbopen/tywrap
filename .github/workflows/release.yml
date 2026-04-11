@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: Existing release tag to publish to npm (for example v0.3.0)
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -18,15 +23,33 @@ jobs:
       tag_exists: ${{ steps.detect.outputs.tag_exists }}
       changelog_has_version: ${{ steps.detect.outputs.changelog_has_version }}
       publish_from_main: ${{ steps.detect.outputs.publish_from_main }}
+      publish_existing_tag: ${{ steps.detect.outputs.publish_existing_tag }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - id: detect
+        env:
+          DISPATCH_TAG: ${{ github.event.inputs.publish_tag || '' }}
         run: |
-          VERSION="$(node -p "require('./package.json').version")"
-          TAG_NAME="v${VERSION}"
+          if [[ -n "${DISPATCH_TAG}" ]]; then
+            VERSION="${DISPATCH_TAG#v}"
+            TAG_NAME="${DISPATCH_TAG}"
+            CHANGELOG_HAS_VERSION=false
+            PUBLISH_FROM_MAIN=false
+            PUBLISH_EXISTING_TAG=true
+          else
+            VERSION="$(node -p "require('./package.json').version")"
+            TAG_NAME="v${VERSION}"
+            PUBLISH_EXISTING_TAG=false
+
+            if grep -F -q "## [${VERSION}]" CHANGELOG.md; then
+              CHANGELOG_HAS_VERSION=true
+            else
+              CHANGELOG_HAS_VERSION=false
+            fi
+          fi
 
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
             TAG_EXISTS=true
@@ -34,16 +57,13 @@ jobs:
             TAG_EXISTS=false
           fi
 
-          if grep -F -q "## [${VERSION}]" CHANGELOG.md; then
-            CHANGELOG_HAS_VERSION=true
-          else
-            CHANGELOG_HAS_VERSION=false
+          if [[ "${PUBLISH_EXISTING_TAG}" == "true" && "${TAG_EXISTS}" == "false" ]]; then
+            echo "Requested publish_tag ${TAG_NAME} does not exist on origin" >&2
+            exit 1
           fi
 
-          if [[ "${TAG_EXISTS}" == "false" && "${CHANGELOG_HAS_VERSION}" == "true" ]]; then
+          if [[ "${PUBLISH_EXISTING_TAG}" == "false" && "${TAG_EXISTS}" == "false" && "${CHANGELOG_HAS_VERSION}" == "true" ]]; then
             PUBLISH_FROM_MAIN=true
-          else
-            PUBLISH_FROM_MAIN=false
           fi
 
           echo "package_version=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -51,10 +71,11 @@ jobs:
           echo "tag_exists=${TAG_EXISTS}" >> "$GITHUB_OUTPUT"
           echo "changelog_has_version=${CHANGELOG_HAS_VERSION}" >> "$GITHUB_OUTPUT"
           echo "publish_from_main=${PUBLISH_FROM_MAIN}" >> "$GITHUB_OUTPUT"
+          echo "publish_existing_tag=${PUBLISH_EXISTING_TAG}" >> "$GITHUB_OUTPUT"
 
   release_please:
     needs: detect_release_state
-    if: ${{ needs.detect_release_state.outputs.publish_from_main != 'true' }}
+    if: ${{ needs.detect_release_state.outputs.publish_from_main != 'true' && needs.detect_release_state.outputs.publish_existing_tag != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created || 'false' }}
@@ -121,29 +142,17 @@ jobs:
           echo "release_ready=true" >> "$GITHUB_OUTPUT"
           echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
 
-  select_release:
-    needs: [release_please, publish_existing_main_release]
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    outputs:
-      should_publish: ${{ steps.select.outputs.should_publish }}
-      tag_name: ${{ steps.select.outputs.tag_name }}
-    steps:
-      - id: select
-        run: |
-          if [[ "${{ needs.release_please.outputs.release_created }}" == "true" ]]; then
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-            echo "tag_name=${{ needs.release_please.outputs.tag_name }}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ needs.publish_existing_main_release.outputs.release_ready }}" == "true" ]]; then
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-            echo "tag_name=${{ needs.publish_existing_main_release.outputs.tag_name }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-          fi
-
   publish_npm:
-    needs: select_release
-    if: ${{ needs.select_release.outputs.should_publish == 'true' }}
+    needs: [detect_release_state, release_please, publish_existing_main_release]
+    if: >-
+      ${{
+        always() &&
+        (
+          needs.release_please.outputs.release_created == 'true' ||
+          needs.publish_existing_main_release.outputs.release_ready == 'true' ||
+          needs.detect_release_state.outputs.publish_existing_tag == 'true'
+        )
+      }}
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -152,7 +161,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.select_release.outputs.tag_name }}
+          ref: >-
+            ${{
+              needs.release_please.outputs.release_created == 'true' &&
+              needs.release_please.outputs.tag_name ||
+              needs.publish_existing_main_release.outputs.release_ready == 'true' &&
+              needs.publish_existing_main_release.outputs.tag_name ||
+              needs.detect_release_state.outputs.tag_name
+            }}
 
       - uses: actions/setup-node@v6
         with:
@@ -163,7 +179,7 @@ jobs:
       - name: Skip if version is already published
         id: npm_registry
         env:
-          TAG_NAME: ${{ needs.select_release.outputs.tag_name }}
+          TAG_NAME: ${{ needs.detect_release_state.outputs.tag_name }}
         run: |
           VERSION="${TAG_NAME#v}"
 
