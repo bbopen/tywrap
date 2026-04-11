@@ -12,6 +12,10 @@ Python IR extractor for [tywrap](https://github.com/bbopen/tywrap). Emits versio
 pip install tywrap-ir
 ```
 
+`tywrap-ir` is versioned independently from the `tywrap` npm package. Install
+the latest published release of each package unless you need to pin them
+explicitly.
+
 ## Usage
 
 ```bash

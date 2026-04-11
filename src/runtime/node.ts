@@ -349,10 +349,7 @@ export class NodeBridge extends BridgeProtocol {
       resolvedOptions.warmupCommands.length > 0
         ? createWarmupCallback(resolvedOptions.warmupCommands, resolvedOptions.timeoutMs)
         : undefined;
-    const replacementWorkerReady = createWorkerReadyCallback(
-      resolvedOptions.timeoutMs,
-      userWarmup
-    );
+    const replacementWorkerReady = createWorkerReadyCallback(resolvedOptions.timeoutMs, userWarmup);
 
     // Create pooled transport with ProcessIO workers
     const transport = new PooledTransport({

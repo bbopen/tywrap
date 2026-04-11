@@ -147,7 +147,7 @@ export {
 } from './utils/codec.js';
 
 // Version info
-export const VERSION = '0.2.1';
+export const VERSION = '0.3.0';
 
 /**
  * Quick setup function for getting started

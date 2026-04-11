@@ -106,7 +106,10 @@ interface QueuedWaiter {
  * ```
  */
 export class WorkerPool extends BoundedContext {
-  private readonly options: Omit<Required<WorkerPoolOptions>, 'onWorkerReady' | 'onReplacementWorkerReady'> & {
+  private readonly options: Omit<
+    Required<WorkerPoolOptions>,
+    'onWorkerReady' | 'onReplacementWorkerReady'
+  > & {
     onWorkerReady?: (worker: PooledWorker) => Promise<void>;
     onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
   };
@@ -435,9 +438,7 @@ export class WorkerPool extends BoundedContext {
    * If onWorkerReady is configured, calls it after the transport is initialized.
    * This is useful for per-worker warmup (importing modules, running setup).
    */
-  private async createWorker(
-    onWorkerReady = this.options.onWorkerReady
-  ): Promise<PooledWorker> {
+  private async createWorker(onWorkerReady = this.options.onWorkerReady): Promise<PooledWorker> {
     const transport = this.options.createTransport();
 
     // Initialize the transport
