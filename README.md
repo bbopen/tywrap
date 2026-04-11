@@ -51,6 +51,9 @@ npx tywrap init        # Create config (and package.json scripts if present)
 npx tywrap generate    # Generate wrappers
 ```
 
+`tywrap` and `tywrap-ir` are versioned independently. Install the latest
+published release of each package unless you need to pin them explicitly.
+
 For CI (or to verify a dependency upgrade didn’t change the generated surface):
 
 ```bash
