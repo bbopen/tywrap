@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1](https://github.com/bbopen/tywrap/compare/v0.3.0...v0.3.1) (2026-04-11)
+
+
+### Bug Fixes
+
+* **ci:** allow publishing an existing release tag ([c657889](https://github.com/bbopen/tywrap/commit/c657889e32d8a12d9151c00f88461121af839845))
+* **ci:** publish npm with node 24 trusted publishing ([0662f22](https://github.com/bbopen/tywrap/commit/0662f22692ccd91379a0db739b789c56174280e2))
+* **ci:** use trusted publishing for npm release ([f30e947](https://github.com/bbopen/tywrap/commit/f30e947e911b310fb79de08e9b2566e87cbb6f96))
+
 ## [0.3.0](https://github.com/bbopen/tywrap/compare/v0.2.1...v0.3.0) (2026-03-22)
 
 
