@@ -15,10 +15,15 @@
    CI=1 npm run check:all
    ```
 
-4. Merge the release-please branch or PR to `main`. The [`release.yml`](../.github/workflows/release.yml)
-   workflow creates the npm tag and publishes the package.
+4. Merge the reviewed release branch or PR to `main`. The [`release.yml`](../.github/workflows/release.yml)
+   workflow has two paths:
+   - normal path: `release-please` opens or updates the release PR, then creates the npm tag and release after that PR is merged
+   - fallback path: if `main` already contains an unreleased `package.json` version with a matching `CHANGELOG.md` section, the workflow tags and publishes that version directly from `main`
 
-5. If release-please is unavailable, use the manual fallback:
+5. For the normal `release-please` path, keep the repository Actions setting
+   `Allow GitHub Actions to create and approve pull requests` enabled.
+
+6. If GitHub Actions release automation is unavailable, use the manual fallback:
    ```sh
    node scripts/release.mjs <version> --commit --tag
    git push && git push --tags
