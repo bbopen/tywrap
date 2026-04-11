@@ -20,13 +20,17 @@
    - normal path: `release-please` opens or updates the release PR, then creates the npm tag and release after that PR is merged
    - fallback path: if `main` already contains an unreleased `package.json` version with a matching `CHANGELOG.md` section, the workflow tags and publishes that version directly from `main`
 
-5. For the normal `release-please` path, keep the repository Actions setting
+5. npm publishing uses npm trusted publishing from GitHub Actions. Keep the npm
+   package connected to this repository as a trusted publisher, and do not add a
+   publish token to the workflow for the normal release path.
+
+6. For the normal `release-please` path, keep the repository Actions setting
    `Allow GitHub Actions to create and approve pull requests` enabled.
 
-6. To publish an existing release tag without opening a new release PR, run the
+7. To publish an existing release tag without opening a new release PR, run the
    `Release Please` workflow manually with `publish_tag=vX.Y.Z`.
 
-7. If GitHub Actions release automation is unavailable, use the manual fallback:
+8. If GitHub Actions release automation is unavailable, use the manual fallback:
    ```sh
    node scripts/release.mjs <version> --commit --tag
    git push && git push --tags
