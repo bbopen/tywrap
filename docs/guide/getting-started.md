@@ -30,6 +30,16 @@ bun add tywrap
 deno add npm:tywrap
 ```
 
+Install the Python IR extractor in the environment that will run code
+generation:
+
+```bash
+pip install tywrap-ir
+```
+
+`tywrap` and `tywrap-ir` are versioned independently. Install the latest
+published release of each package unless you need to pin them explicitly.
+
 ## Configuration
 
 Create a `tywrap.config.ts` in your project root (or run `npx tywrap init`):
