@@ -377,9 +377,7 @@ describe('CLI', () => {
       }
     });
 
-    it(
-      'accepts --format flag with valid values',
-      () => {
+    it('accepts --format flag with valid values', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
         for (const format of ['esm', 'cjs', 'both']) {
@@ -398,9 +396,7 @@ describe('CLI', () => {
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
-      },
-      15000
-    );
+    }, 15000);
 
     it('rejects --format flag with invalid value', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
@@ -523,9 +519,7 @@ describe('CLI', () => {
       }
     });
 
-    it(
-      'supports --check without writing files',
-      () => {
+    it('supports --check without writing files', () => {
       const repoRoot = join(__dirname, '..');
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       const outputDir = join(tempDir, 'generated');
@@ -581,9 +575,7 @@ describe('CLI', () => {
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
-      },
-      15000
-    );
+    }, 15000);
 
     it('fails with actionable errors when a module cannot be imported', () => {
       const repoRoot = join(__dirname, '..');

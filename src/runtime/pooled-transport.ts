@@ -83,7 +83,10 @@ export interface PooledTransportOptions {
  * ```
  */
 export class PooledTransport extends BoundedContext implements Transport {
-  private readonly poolOptions: Omit<Required<PooledTransportOptions>, 'onWorkerReady' | 'onReplacementWorkerReady'> & {
+  private readonly poolOptions: Omit<
+    Required<PooledTransportOptions>,
+    'onWorkerReady' | 'onReplacementWorkerReady'
+  > & {
     onWorkerReady?: (worker: PooledWorker) => Promise<void>;
     onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
   };
