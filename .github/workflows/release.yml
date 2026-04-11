@@ -174,10 +174,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Upgrade npm for trusted publishing
-        run: npm install --global npm@^11.5.1
 
       - name: Skip if version is already published
         id: npm_registry
@@ -216,6 +212,16 @@ jobs:
           NODE_OPTIONS: --expose-gc
           TYWRAP_PERF_BUDGETS: '1'
 
+      - name: Switch to Node 24 for npm trusted publishing
+        if: ${{ steps.npm_registry.outputs.already_published != 'true' }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - name: Publish to npm
         if: ${{ steps.npm_registry.outputs.already_published != 'true' }}
-        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ''
+        run: |
+          npm --version
+          npm publish --provenance --access public
