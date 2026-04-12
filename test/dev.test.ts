@@ -154,6 +154,33 @@ async function writeNestedWatchPackage(
   await writeFile(join(packageDir, '__init__.py'), `from .nested.value import answer\n`, 'utf-8');
 }
 
+async function writeNamespacePackageRoot(
+  rootDir: string,
+  packageName: string,
+  options: { answer?: number; pluginValue?: string } = {}
+): Promise<string> {
+  const packageDir = join(rootDir, packageName);
+  await mkdir(packageDir, { recursive: true });
+  await writeFile(
+    join(packageDir, '__init__.py'),
+    [
+      'from pkgutil import extend_path',
+      '__path__ = extend_path(__path__, __name__)',
+      ...(options.answer === undefined
+        ? []
+        : [`def answer() -> int:`, `    return ${options.answer}`]),
+      '',
+    ].join('\n'),
+    'utf-8'
+  );
+
+  if (options.pluginValue !== undefined) {
+    await writeFile(join(packageDir, 'plugin.py'), `VALUE = ${JSON.stringify(options.pluginValue)}\n`);
+  }
+
+  return packageDir;
+}
+
 afterEach(() => {
   clearRuntimeBridge();
 });
@@ -529,6 +556,166 @@ describeNodeOnly('startNodeWatchSession', () => {
       );
       expect(await generatedModule.answer()).toBe(3);
     } finally {
+      await session?.close();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('watches every discovered package root for namespace-style packages', async () => {
+    const tempDir = await mkdtemp(join(process.cwd(), '.tmp-tywrap-dev-namespace-watch-'));
+    const rootA = join(tempDir, 'root-a');
+    const rootB = join(tempDir, 'root-b');
+    const packageName = 'namespacepkg';
+    const outputDir = join(tempDir, 'generated');
+    const configPath = join(tempDir, 'tywrap.config.json');
+    const events: NodeWatchEvent[] = [];
+
+    const packageDirA = await writeNamespacePackageRoot(rootA, packageName, { answer: 1 });
+    const packageDirB = await writeNamespacePackageRoot(rootB, packageName, {
+      pluginValue: 'initial',
+    });
+
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          pythonModules: {
+            [packageName]: { runtime: 'node', typeHints: 'strict' },
+          },
+          pythonImportPath: [rootA, rootB],
+          output: { dir: outputDir, format: 'esm', declaration: false, sourceMap: false },
+          runtime: { node: { pythonPath: getDefaultPythonPath() } },
+          performance: { caching: false, batching: false, compression: 'none' },
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    let session: NodeWatchSession | undefined;
+    try {
+      session = await startNodeWatchSession({
+        configFile: configPath,
+        debounceMs: 75,
+        onEvent: event => {
+          events.push(event);
+        },
+        createBridge: async _config => new FakeBridge('namespace'),
+      });
+
+      const watchPathsEvent = await waitFor(
+        () =>
+          events.find(
+            (event): event is Extract<NodeWatchEvent, { type: 'watchPaths' }> =>
+              event.type === 'watchPaths'
+          ),
+        5000
+      );
+
+      expect(watchPathsEvent.paths).toEqual([configPath, packageDirA, packageDirB].sort());
+
+      const reloadSuccessesBeforeUpdate = events.filter(
+        (event): event is Extract<NodeWatchEvent, { type: 'reload-success' }> =>
+          event.type === 'reload-success'
+      ).length;
+      await writeFile(join(packageDirB, 'plugin.py'), `VALUE = "updated"\n`, 'utf-8');
+      await waitFor(
+        () =>
+          events.filter(
+            (event): event is Extract<NodeWatchEvent, { type: 'reload-success' }> =>
+              event.type === 'reload-success'
+          ).length > reloadSuccessesBeforeUpdate
+            ? true
+            : undefined,
+        10000
+      );
+    } finally {
+      await session?.close();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('does not reinstall watchers or a bridge after close wins a reload race', async () => {
+    const tempDir = await mkdtemp(join(process.cwd(), '.tmp-tywrap-dev-close-race-'));
+    const packageDir = join(tempDir, 'racepkg');
+    const outputDir = join(tempDir, 'generated');
+    const configPath = join(tempDir, 'tywrap.config.json');
+    const events: NodeWatchEvent[] = [];
+    let bridgeCreates = 0;
+    let releaseReloadBridge: (() => void) | null = null;
+    let signalReloadBridgeStarted!: () => void;
+    const reloadBridgeStarted = new Promise<void>(resolve => {
+      signalReloadBridgeStarted = resolve;
+    });
+
+    await mkdir(packageDir, { recursive: true });
+    await writePythonModule(packageDir, ['def answer() -> int:', '    return 1', ''].join('\n'));
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          pythonModules: {
+            racepkg: { runtime: 'node', typeHints: 'strict' },
+          },
+          pythonImportPath: [tempDir],
+          output: { dir: outputDir, format: 'esm', declaration: false, sourceMap: false },
+          runtime: { node: { pythonPath: getDefaultPythonPath(), timeout: 30000 } },
+          performance: { caching: false, batching: false, compression: 'none' },
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    let session: NodeWatchSession | undefined;
+    try {
+      session = await startNodeWatchSession({
+        configFile: configPath,
+        debounceMs: 75,
+        onEvent: event => {
+          events.push(event);
+        },
+        createBridge: async _config => {
+          bridgeCreates += 1;
+          if (bridgeCreates === 1) {
+            return new FakeBridge('initial');
+          }
+
+          signalReloadBridgeStarted();
+          await new Promise<void>(resolve => {
+            releaseReloadBridge = resolve;
+          });
+          return new FakeBridge('reloaded');
+        },
+      });
+
+      await waitFor(
+        () =>
+          events.find(
+            (event): event is Extract<NodeWatchEvent, { type: 'watchPaths' }> =>
+              event.type === 'watchPaths'
+          ),
+        5000
+      );
+      const watchPathEventsBeforeReload = events.filter(event => event.type === 'watchPaths').length;
+
+      const reloadPromise = session.reloadNow();
+      await reloadBridgeStarted;
+      const closePromise = session.close();
+      releaseReloadBridge?.();
+
+      await expect(reloadPromise).resolves.toBe(false);
+      await closePromise;
+      await delay(100);
+
+      expect(events.filter(event => event.type === 'watchPaths').length).toBe(
+        watchPathEventsBeforeReload
+      );
+      expect(() => getRuntimeBridge()).toThrow('No runtime bridge configured');
+    } finally {
+      releaseReloadBridge?.();
       await session?.close();
       await rm(tempDir, { recursive: true, force: true });
     }

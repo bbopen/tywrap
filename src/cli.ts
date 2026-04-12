@@ -331,7 +331,7 @@ async function main(): Promise<void> {
                 process.stderr.write(`- ${file}\n`);
               }
               process.stderr.write('\nRun `tywrap generate` to update.\n');
-              if (!(argv.failOnWarn && res.warnings.length > 0)) {
+              if (!(argv.failOnWarn && warnings.length > 0)) {
                 process.exit(3);
               }
             }

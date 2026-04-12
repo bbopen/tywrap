@@ -621,12 +621,10 @@ function createWarmupCallback(
   timeoutMs: number
 ): (worker: PooledWorker) => Promise<void> {
   return async (worker: PooledWorker) => {
-    if (warmupCommands.length === 0) {
-      await sendWarmupRequest(worker, timeoutMs, generateWarmupId(), 'Worker warmup check', {
-        method: 'meta',
-        params: {},
-      });
-    }
+    await sendWarmupRequest(worker, timeoutMs, generateWarmupId(), 'Worker warmup check', {
+      method: 'meta',
+      params: {},
+    });
 
     for (const [index, cmd] of warmupCommands.entries()) {
       const commandLabel = `${cmd.module}.${cmd.functionName}`;

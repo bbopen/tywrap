@@ -717,6 +717,39 @@ describe('WorkerPool', () => {
       expect(reusedWorker.transport).toBe(transports[0]);
       pool.release(reusedWorker);
     });
+
+    it('disposes replacement workers that finish after the pool has been disposed', async () => {
+      const transports: MockTransport[] = [];
+      let createCount = 0;
+      pool = new WorkerPool({
+        createTransport: () => {
+          createCount += 1;
+          const transport = new MockTransport();
+          if (createCount === 2) {
+            transport.initDelay = 50;
+          }
+          transports.push(transport);
+          return transport;
+        },
+        maxWorkers: 1,
+        minWorkers: 1,
+      });
+
+      await pool.init();
+      const worker = await pool.acquire();
+
+      (
+        pool as unknown as {
+          removeWorker(worker: PooledWorker): void;
+        }
+      ).removeWorker(worker);
+      await pool.dispose();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      expect(pool.workerCount).toBe(0);
+      expect(transports).toHaveLength(2);
+      expect(transports[1]?.disposeCalled).toBe(true);
+    });
   });
 
   // ===========================================================================

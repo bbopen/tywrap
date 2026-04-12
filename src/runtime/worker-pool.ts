@@ -409,9 +409,19 @@ export class WorkerPool extends BoundedContext {
   }
 
   private async spawnReplacementWorker(): Promise<void> {
+    const initialState = this.state;
+    if (initialState === 'disposed' || initialState === 'disposing') {
+      return;
+    }
+
     this.pendingCreations++;
     try {
       const worker = await this.createWorker();
+      const currentState = this.state;
+      if (currentState === 'disposed' || currentState === 'disposing') {
+        this.removeWorker(worker);
+        return;
+      }
       this.release(worker);
     } finally {
       this.pendingCreations--;

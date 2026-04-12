@@ -450,6 +450,7 @@ async function resolveWatchTargets(config: TywrapOptions): Promise<WatchTarget[]
 
   for (const moduleName of Object.keys(config.pythonModules ?? {})) {
     const resolutionScript = [
+      'import importlib',
       'import importlib.util',
       'import json',
       'import sys',
@@ -460,10 +461,20 @@ async function resolveWatchTargets(config: TywrapOptions): Promise<WatchTarget[]
       "    print(json.dumps({'missing': True}))",
       '    raise SystemExit(0)',
       '',
+      'module_path = None',
+      'module_origin = spec.origin',
+      'if spec.submodule_search_locations:',
+      '    try:',
+      '        module = importlib.import_module(module_name)',
+      '    except Exception:',
+      '        module = None',
+      '    if module is not None:',
+      '        module_path = getattr(module, "__path__", None)',
+      '        module_origin = getattr(module, "__file__", None) or spec.origin',
       'payload = {',
       "    'missing': False,",
-      "    'origin': spec.origin,",
-      "    'locations': list(spec.submodule_search_locations or []),",
+      "    'origin': module_origin,",
+      "    'locations': list(module_path) if module_path is not None else list(spec.submodule_search_locations or []),",
       "    'has_location': bool(spec.has_location),",
       '}',
       'print(json.dumps(payload))',
@@ -505,14 +516,16 @@ async function resolveWatchTargets(config: TywrapOptions): Promise<WatchTarget[]
 
     const packageLocations = Array.isArray(payload.locations) ? payload.locations : [];
     if (packageLocations.length > 0) {
-      const packageDir = resolve(packageLocations[0]!);
-      const stats = await stat(packageDir);
-      if (!stats.isDirectory()) {
-        throw new Error(
-          `Module "${moduleName}" resolved to "${packageDir}", but it is not a package directory`
-        );
+      for (const location of packageLocations) {
+        const packageDir = resolve(location);
+        const stats = await stat(packageDir);
+        if (!stats.isDirectory()) {
+          throw new Error(
+            `Module "${moduleName}" resolved to "${packageDir}", but it is not a package directory`
+          );
+        }
+        watchTargets.push({ moduleName, path: packageDir, kind: 'directory' });
       }
-      watchTargets.push({ moduleName, path: packageDir, kind: 'directory' });
       continue;
     }
 
@@ -769,8 +782,28 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
     let nextBridge: T | null = null;
     let preparedWatchers: PreparedWatchers | null = null;
 
+    const abortReload = async (
+      managerToDispose: ManagedBridgeReloader<T> | null = null
+    ): Promise<boolean> => {
+      if (preparedWatchers) {
+        closePreparedWatchers(preparedWatchers);
+        preparedWatchers = null;
+      }
+      if (nextBridge) {
+        await nextBridge.dispose().catch(() => {});
+        nextBridge = null;
+      }
+      if (managerToDispose) {
+        await managerToDispose.dispose().catch(() => {});
+      }
+      return false;
+    };
+
     try {
       stage = await generateToStage(configFile);
+      if (closed) {
+        return abortReload();
+      }
       currentBridgeConfig = stage.config;
       const nextIgnoredPaths = buildIgnoredPaths(stage.outputDir);
       const extraWatchSources = await resolveExtraWatchSources(extraWatchPaths);
@@ -781,9 +814,15 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
       ]);
       const watchPaths = normalizePaths(watchSources.map(source => source.path));
       preparedWatchers = await prepareWatchers(watchSources, nextIgnoredPaths);
+      if (closed) {
+        return abortReload();
+      }
 
       if (bridgeManager) {
         nextBridge = await bridgeManager.prepareNextBridge();
+        if (closed) {
+          return abortReload();
+        }
       }
 
       const previousManagedFiles =
@@ -795,11 +834,22 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
         stage.files,
         previousManagedFiles
       );
+      if (closed) {
+        return abortReload();
+      }
 
       if (bridgeManager && nextBridge) {
         await bridgeManager.activatePreparedBridge(nextBridge);
+        nextBridge = null;
+        if (closed) {
+          return abortReload();
+        }
       } else if (!bridgeManager) {
-        bridgeManager = await ManagedBridgeReloader.create(createBridgeForSession);
+        const createdBridgeManager = await ManagedBridgeReloader.create(createBridgeForSession);
+        if (closed) {
+          return abortReload(createdBridgeManager);
+        }
+        bridgeManager = createdBridgeManager;
       }
 
       managedFiles = promotedManagedFiles;

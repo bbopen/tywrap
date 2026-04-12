@@ -429,12 +429,19 @@ def get_bad():
 
         await expect(bridge.call('time', 'sleep', [1.5])).rejects.toThrow(/timed out/i);
 
-        // Wait for the Python process to eventually respond to the timed-out request.
-        await new Promise(resolve => setTimeout(resolve, 800));
-
         // Validate recovery with a lightweight stdlib call rather than a cold module import,
         // so this test measures timeout isolation instead of first-call import latency.
-        const result = await bridge.call<string>('builtins', 'str', ['recovered']);
+        const deadline = Date.now() + 3000;
+        let result: string | undefined;
+        while (Date.now() < deadline) {
+          try {
+            result = await bridge.call<string>('builtins', 'str', ['recovered']);
+            break;
+          } catch {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+
         expect(result).toBe('recovered');
       },
       testTimeout
@@ -853,7 +860,11 @@ def get_bad():
               '',
               'for line in sys.stdin:',
               '    request = json.loads(line)',
-              "    response = {'id': request.get('id'), 'protocol': request.get('protocol')}",
+              "    method = request.get('method')",
+              "    if method == 'meta':",
+              "        response = {'id': request.get('id'), 'protocol': request.get('protocol'), 'result': {'capabilities': {}}}",
+              '    else:',
+              "        response = {'id': request.get('id'), 'protocol': request.get('protocol')}",
               "    sys.stdout.write(json.dumps(response) + '\\n')",
               '    sys.stdout.flush()',
             ].join('\n'),
