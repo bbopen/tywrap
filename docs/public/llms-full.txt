@@ -1080,11 +1080,12 @@ The Node.js runtime:
 
 ## Bridge Selection
 
-- **NodeBridge (default)**: correctness-first, simplest lifecycle, recommended
-  for most users.
-- **OptimizedNodeBridge (experimental)**: process pooling + optional caching for
-  throughput; not a drop-in replacement yet and not part of the public API
-  exports. See `ROADMAP.md` for the unification plan and parity goals.
+- **NodeBridge (default)**: the public Node bridge. It supports both
+  single-process execution and pooled execution through its constructor
+  options.
+- **OptimizedNodeBridge**: deprecated compatibility alias for older deep
+  imports. It is not part of the package exports and should not be used in new
+  code.
 
 Both bridges share the same JSONL core for protocol validation, timeouts, and
 stderr buffering.
