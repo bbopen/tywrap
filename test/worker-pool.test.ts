@@ -750,6 +750,30 @@ describe('WorkerPool', () => {
       expect(transports).toHaveLength(2);
       expect(transports[1]?.disposeCalled).toBe(true);
     });
+
+    it('rejects acquire when dispose wins after worker creation starts', async () => {
+      const transports: MockTransport[] = [];
+      pool = new WorkerPool({
+        createTransport: () => {
+          const transport = new MockTransport();
+          transport.initDelay = 50;
+          transports.push(transport);
+          return transport;
+        },
+        maxWorkers: 1,
+      });
+
+      await pool.init();
+
+      const acquirePromise = pool.acquire();
+      await new Promise(resolve => setTimeout(resolve, 10));
+      await pool.dispose();
+
+      await expect(acquirePromise).rejects.toThrow(BridgeExecutionError);
+      expect(pool.workerCount).toBe(0);
+      expect(transports).toHaveLength(1);
+      expect(transports[0]?.disposeCalled).toBe(true);
+    });
   });
 
   // ===========================================================================

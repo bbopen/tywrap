@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -279,6 +279,8 @@ describeNodeOnly('startNodeWatchSession', () => {
 
     await mkdir(packageDir, { recursive: true });
     await writePythonModule(packageDir, ['def answer() -> int:', '    return 1', ''].join('\n'));
+    await mkdir(join(outputDir, 'nested'), { recursive: true });
+    await writeFile(join(outputDir, 'nested', 'stale.generated.ts'), '// stale output\n', 'utf-8');
     await writeFile(
       configPath,
       JSON.stringify(
@@ -325,6 +327,7 @@ describeNodeOnly('startNodeWatchSession', () => {
         answer: () => Promise<number>;
       };
 
+      expect(existsSync(join(outputDir, 'nested', 'stale.generated.ts'))).toBe(false);
       expect(await generatedModule.answer()).toBe(1);
 
       const reloadStartsBeforeIgnoredWrite = events.filter(

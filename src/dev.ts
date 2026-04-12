@@ -307,18 +307,32 @@ async function listExistingManagedFiles(outputDir: string): Promise<Set<string>>
     return new Set();
   }
 
-  const entries = await readdir(outputDir, { withFileTypes: true });
-  return new Set(
-    entries
-      .filter(entry => entry.isFile())
-      .map(entry => entry.name)
-      .filter(
-        name =>
-          name.endsWith('.generated.ts') ||
-          name.endsWith('.generated.d.ts') ||
-          name.endsWith('.generated.ts.map')
-      )
-  );
+  const managedFiles = new Set<string>();
+  const queue = [resolve(outputDir)];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const entries = await readdir(current, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = join(current, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(fullPath);
+        continue;
+      }
+
+      if (
+        entry.isFile() &&
+        (entry.name.endsWith('.generated.ts') ||
+          entry.name.endsWith('.generated.d.ts') ||
+          entry.name.endsWith('.generated.ts.map'))
+      ) {
+        managedFiles.add(relative(outputDir, fullPath));
+      }
+    }
+  }
+
+  return managedFiles;
 }
 
 async function collectWatchDirectories(root: string, ignoredPaths: string[]): Promise<string[]> {

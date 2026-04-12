@@ -206,7 +206,7 @@ export class WorkerPool extends BoundedContext {
    */
   async acquire(): Promise<PooledWorker> {
     // Check for disposed state
-    if (this.isDisposed) {
+    if (this.isDisposed || this.state === 'disposing') {
       throw new BridgeExecutionError('Pool has been disposed');
     }
 
@@ -225,6 +225,10 @@ export class WorkerPool extends BoundedContext {
       this.pendingCreations++;
       try {
         const newWorker = await this.createWorker();
+        if (this.state !== 'ready') {
+          this.removeWorker(newWorker);
+          throw new BridgeExecutionError('Pool has been disposed');
+        }
         newWorker.inFlightCount++;
         return newWorker;
       } finally {
