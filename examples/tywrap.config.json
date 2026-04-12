@@ -9,6 +9,5 @@
     "sourceMap": false
   },
   "runtime": {},
-  "performance": { "caching": false, "batching": false, "compression": "none" },
-  "development": { "hotReload": false, "sourceMap": false, "validation": "none" }
+  "performance": { "caching": false, "batching": false, "compression": "none" }
 }

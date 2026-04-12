@@ -605,8 +605,45 @@ describe('CLI', () => {
           timeout: 30000,
         });
 
-        expect(res.status).not.toBe(0);
-        expect(res.stderr.toLowerCase()).toContain('failed to import');
+        expect(res.status).toBe(1);
+        expect(res.stderr).toContain('Failures (count 1):');
+        expect(res.stderr).toContain('No IR produced for module');
+        expect(res.stderr).toContain(moduleName);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('fails in --check mode when generation has structured failures', () => {
+      const repoRoot = join(__dirname, '..');
+      const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
+      try {
+        const pythonPath = join(repoRoot, 'tywrap_ir');
+        const env = {
+          ...process.env,
+          PYTHONPATH: process.env.PYTHONPATH
+            ? `${pythonPath}${delimiter}${process.env.PYTHONPATH}`
+            : pythonPath,
+        };
+
+        const moduleName = 'this_module_definitely_does_not_exist_67890';
+        const config = {
+          pythonModules: { [moduleName]: { runtime: 'node', typeHints: 'strict' } },
+          output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false },
+          runtime: { node: { pythonPath: 'python3' } },
+          types: { presets: ['stdlib'] },
+        };
+        writeFileSync(join(tempDir, 'tywrap.config.json'), JSON.stringify(config, null, 2));
+
+        const res = spawnSync('node', [CLI_PATH, 'generate', '--check'], {
+          encoding: 'utf-8',
+          cwd: tempDir,
+          env,
+          timeout: 30000,
+        });
+
+        expect(res.status).toBe(1);
+        expect(res.stderr).toContain('Failures (count 1):');
         expect(res.stderr).toContain(moduleName);
       } finally {
         rmSync(tempDir, { recursive: true, force: true });

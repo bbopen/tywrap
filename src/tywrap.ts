@@ -86,9 +86,16 @@ export interface GenerateRunOptions {
   check?: boolean;
 }
 
+export interface GenerateFailure {
+  module: string;
+  code: 'ir-unavailable';
+  message: string;
+}
+
 export interface GenerateResult {
   written: string[];
   warnings: string[];
+  failures: GenerateFailure[];
   /**
    * Only set when `GenerateRunOptions.check === true`.
    * Lists files that are missing or differ from what would be generated.
@@ -123,6 +130,7 @@ export async function generate(
   const written: string[] = [];
   const outOfDate: string[] = [];
   const warnings: string[] = [];
+  const failures: GenerateFailure[] = [];
   const outputDir = resolvedOptions.output.dir;
   const caching = resolvedOptions.performance.caching;
   const cacheDir = '.tywrap/cache';
@@ -173,7 +181,13 @@ export async function generate(
       }
     }
     if (!ir) {
-      warnings.push(`No IR produced for module ${moduleKey}${irError ? `: ${irError}` : ''}`);
+      const message = `No IR produced for module ${moduleKey}${irError ? `: ${irError}` : ''}`;
+      warnings.push(message);
+      failures.push({
+        module: moduleKey,
+        code: 'ir-unavailable',
+        message,
+      });
       continue;
     }
 
@@ -324,10 +338,10 @@ export async function generate(
   }
 
   if (checkMode) {
-    return { written: [], warnings, outOfDate };
+    return { written: [], warnings, failures, outOfDate };
   }
 
-  return { written, warnings };
+  return { written, warnings, failures };
 }
 
 /**

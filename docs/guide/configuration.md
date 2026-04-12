@@ -12,7 +12,6 @@ advanced optimization.
 | `output`           | Output directory, module format and artifact options                                                                     |
 | `runtime`          | Settings for Node, Pyodide or HTTP runtimes                                                                              |
 | `performance`      | Caching and optimization controls                                                                                        |
-| `development`      | Development-time features like hot reloading                                                                             |
 | `types`            | Type mapping presets and customization                                                                                   |
 
 ## Configuration File Formats
@@ -36,8 +35,7 @@ When `--config` is omitted, the CLI searches for `tywrap.config.ts`, `.mts`,
   },
   "output": { "dir": "./generated", "format": "esm" },
   "runtime": {},
-  "performance": { "caching": true },
-  "development": { "hotReload": false }
+  "performance": { "caching": true }
 }
 ```
 
@@ -114,13 +112,11 @@ Notes:
       "functions": ["array", "zeros", "ones", "eye"],
       "classes": ["ndarray", "matrix"],
       "alias": "np",
-      "typeHints": "strict",
-      "watch": true
+      "typeHints": "strict"
     },
     "./custom_module.py": {
       "runtime": "node",
-      "typeHints": "loose",
-      "watch": true
+      "typeHints": "loose"
     }
   }
 }
@@ -138,7 +134,6 @@ Notes:
 | `excludePatterns` | `string[]`                                | `[]`        | Exclude exports by regex pattern       |
 | `alias`           | `string`                                  | Module name | Import alias in generated code         |
 | `typeHints`       | `'strict' \| 'loose' \| 'ignore'`         | `'strict'`  | Type hint processing                   |
-| `watch`           | `boolean`                                 | `false`     | Enable file watching in development    |
 
 When `functions`/`classes` are not explicitly configured for a module, tywrap
 applies a small default exclude list to avoid generating wrappers for common
@@ -294,25 +289,35 @@ sparse matrix classes (csr/csc/coo) to structured sparse objects.
 | `batching`    | `boolean`                                | `false`  | Batch multiple operations |
 | `compression` | `'auto' \| 'gzip' \| 'brotli' \| 'none'` | `'none'` | Output compression        |
 
-## Development Configuration
+## Development Reload Helpers
 
-### Development Options
+Development reload is no longer configured inside `tywrap.config.*`.
 
-```json
-{
-  "development": {
-    "hotReload": true,
-    "sourceMap": true,
-    "validation": "runtime"
-  }
-}
+Use `tywrap/dev` instead:
+
+```typescript
+import { createBridgeReloader, startNodeWatchSession } from 'tywrap/dev';
 ```
 
-| Option       | Type                                         | Default  | Description          |
-| ------------ | -------------------------------------------- | -------- | -------------------- |
-| `hotReload`  | `boolean`                                    | `false`  | Enable hot reloading |
-| `sourceMap`  | `boolean`                                    | `false`  | Generate source maps |
-| `validation` | `'runtime' \| 'compile' \| 'both' \| 'none'` | `'none'` | Validation level     |
+Support matrix:
+
+- **Node**: `startNodeWatchSession(...)` watches local modules, regenerates
+  wrappers, and swaps the active bridge.
+- **Node bridge config**: `createBridge(config)` receives the fully resolved
+  config for that reload cycle, so runtime setting changes can flow into the
+  next bridge instance.
+- **Node watch trees**: directory-valued package roots and `extraWatchPaths`
+  are watched as directory trees, with `__pycache__`, `.pytest_cache`,
+  `.mypy_cache`, and `.ruff_cache` ignored.
+- **Strict reloads**: if regeneration returns structured failures, tywrap keeps
+  the last known good generated output and bridge in place.
+- **Pyodide**: `createBridgeReloader(...)` provides manual bridge replacement
+  only.
+- **HTTP**: reload is external to tywrap because tywrap does not own the remote
+  server lifecycle.
+
+If an older config still contains `development` or `pythonModules[*].watch`,
+tywrap now throws a migration error that points to `tywrap/dev`.
 
 ## Extension Hooks
 
@@ -384,10 +389,6 @@ export default defineConfig({
     dir: isDev ? './dev-generated' : './dist/generated',
     sourceMap: isDev,
   },
-  development: {
-    hotReload: isDev,
-    validation: isDev ? 'runtime' : 'none',
-  },
 });
 ```
 
@@ -438,9 +439,9 @@ export default defineConfig({
       torch: { runtime: 'node', classes: ['Tensor'] },
     }),
 
-    // Development-only modules
+    // Local-only modules
     ...(process.env.NODE_ENV === 'development' && {
-      debug_utils: { runtime: 'node', watch: true },
+      debug_utils: { runtime: 'node' },
     }),
   },
 });
@@ -471,9 +472,7 @@ Configurations are merged in this order:
 
 1. Default values
 2. Configuration file
-3. Environment variables
-4. CLI flags
-5. Programmatic overrides
+3. CLI flags or programmatic overrides
 
 ```bash
 # CLI overrides take highest precedence
@@ -487,7 +486,7 @@ tywrap generate --output-dir ./custom --format cjs
 ```typescript
 // Use different configs per environment
 const config = {
-  development: './tywrap.dev.config.ts',
+  local: './tywrap.dev.config.ts',
   production: './tywrap.prod.config.ts',
   test: './tywrap.test.config.ts',
 };

@@ -4,7 +4,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createBridgeReloader } from '../src/dev.js';
 import { PyodideBridge, type PyodideBridgeOptions } from '../src/runtime/pyodide.js';
+import { clearRuntimeBridge, getRuntimeBridge } from '../src/runtime/index.js';
 import { isBrowser } from '../src/utils/runtime.js';
 
 // Mock Pyodide for testing
@@ -147,6 +149,7 @@ describe('Pyodide Runtime Bridge', () => {
   afterEach(async () => {
     await bridge?.dispose();
     mockDispatchHandler = null;
+    clearRuntimeBridge();
 
     // Cleanup global mock
     delete (globalThis as any).loadPyodide;
@@ -212,6 +215,28 @@ describe('Pyodide Runtime Bridge', () => {
       await bridge.call('math', 'sqrt', [16]);
 
       expect(loadPackageSpy).toHaveBeenCalledWith(packages);
+    });
+  });
+
+  describe('Bridge Reloader', () => {
+    it('reloads PyodideBridge instances without changing generated-wrapper-style calls', async () => {
+      let nextResult = 4;
+      const reloader = await createBridgeReloader(async () => {
+        const resultValue = nextResult++;
+        setMockDispatchHandler((msg: string) => {
+          const parsed = JSON.parse(msg);
+          return JSON.stringify({ id: parsed.id, result: resultValue });
+        });
+        return new PyodideBridge();
+      });
+
+      const invokeThroughRegistry = async (): Promise<number> =>
+        getRuntimeBridge().call<number>('math', 'sqrt', [16]);
+
+      expect(await invokeThroughRegistry()).toBe(4);
+      await reloader.reload();
+      expect(await invokeThroughRegistry()).toBe(5);
+      await reloader.dispose();
     });
   });
 

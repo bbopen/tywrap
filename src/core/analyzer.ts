@@ -26,8 +26,7 @@ import { getComponentLogger } from '../utils/logger.js';
 const log = getComponentLogger('Analyzer');
 
 const UNKNOWN_TYPE: PythonType = { kind: 'custom', name: 'Any', module: 'typing' };
-// tree-sitter-python >=0.25 updates its typings, but Parser#setLanguage still expects the package export at runtime.
-const PYTHON_LANGUAGE = Python as unknown as Parser.Language;
+const PYTHON_LANGUAGE = Python as unknown as Parameters<Parser['setLanguage']>[0];
 
 export class PyAnalyzer {
   private parser: Parser;

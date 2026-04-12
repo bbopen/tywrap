@@ -162,8 +162,7 @@ Update your `tywrap.config.ts`:
   "pythonModules": {
     "my_utils": {
       "runtime": "node",
-      "typeHints": "strict",
-      "watch": true
+      "typeHints": "strict"
     }
   },
   "output": {
@@ -171,10 +170,6 @@ Update your `tywrap.config.ts`:
     "format": "esm",
     "declaration": true,
     "sourceMap": true
-  },
-  "development": {
-    "hotReload": true,
-    "validation": "runtime"
   }
 }
 ```
@@ -284,23 +279,36 @@ async function demo() {
 
 ## Development Workflow
 
-### With Hot Reload
+Use `tywrap/dev` for wrapper regeneration plus bridge replacement:
 
-```json
-{
-  "development": {
-    "hotReload": true,
-    "sourceMap": true,
-    "validation": "runtime"
-  }
-}
+```typescript
+import { startNodeWatchSession } from 'tywrap/dev';
+import { NodeBridge } from 'tywrap/node';
+
+const session = await startNodeWatchSession({
+  configFile: './tywrap.config.ts',
+  createBridge: async config =>
+    new NodeBridge({
+      pythonPath: config.runtime.node?.pythonPath ?? 'python3',
+      timeoutMs: config.runtime.node?.timeout ?? 30000,
+    }),
+});
 ```
+
+For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual bridge
+replacement. For HTTP, restart or redeploy the remote server outside tywrap.
+
+`startNodeWatchSession(...)` watches local package directories as directory
+trees, refreshes those trees when nested directories change, and keeps the last
+known good wrappers and bridge live if a reload produces structured generation
+failures.
 
 ### Build Integration
 
 Run `tywrap generate --check` in CI to ensure generated wrappers are committed
-and up to date. After upgrading Python dependencies, run `tywrap generate` to
-refresh the generated surface.
+and up to date. Structured generation failures exit with code `1`; out-of-date
+generated files exit with code `3`. After upgrading Python dependencies, run
+`tywrap generate` to refresh the generated surface.
 
 If you ran `tywrap init` in a Node project, it will also add `tywrap:generate`
 and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).

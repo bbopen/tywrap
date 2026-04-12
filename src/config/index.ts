@@ -17,7 +17,6 @@ import type {
   OutputConfig,
   RuntimeConfig,
   PerformanceConfig,
-  DevelopmentConfig,
 } from '../types/index.js';
 import { getDefaultPythonPath } from '../utils/python.js';
 
@@ -48,10 +47,15 @@ const DEFAULT_CONFIG: ResolvedTywrapConfig = {
   output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false },
   runtime: { node: { pythonPath: getDefaultPythonPath(), timeout: 30000 } },
   performance: { caching: false, batching: false, compression: 'none' },
-  development: { hotReload: false, sourceMap: false, validation: 'none' },
   types: { presets: [] },
   debug: false,
 };
+
+const LEGACY_DEVELOPMENT_MESSAGE =
+  'Legacy config field "development" is no longer supported. Use createBridgeReloader() or startNodeWatchSession() from "tywrap/dev" instead.';
+
+const LEGACY_MODULE_WATCH_MESSAGE =
+  'Legacy config field "pythonModules.<module>.watch" is no longer supported. Use startNodeWatchSession() from "tywrap/dev" instead.';
 
 /**
  * Recursively merge two configuration objects. Arrays are overwritten by
@@ -89,17 +93,38 @@ function safeExists(path: string): boolean {
   return existsSync(path);
 }
 
+function detectLegacyFields(config: TywrapConfig): void {
+  const rawConfig = config as unknown as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(rawConfig, 'development')) {
+    throw new Error(LEGACY_DEVELOPMENT_MESSAGE);
+  }
+
+  const pythonModules = rawConfig.pythonModules;
+  if (!isPlainObject(pythonModules)) {
+    return;
+  }
+
+  for (const moduleConfig of Object.values(pythonModules)) {
+    if (
+      isPlainObject(moduleConfig) &&
+      Object.prototype.hasOwnProperty.call(moduleConfig, 'watch')
+    ) {
+      throw new Error(LEGACY_MODULE_WATCH_MESSAGE);
+    }
+  }
+}
+
 /**
  * Validate configuration values and throw user-friendly errors when invalid.
  */
 function validateConfig(config: ResolvedTywrapConfig): void {
+  detectLegacyFields(config);
   const allowedTopLevel = new Set([
     'pythonModules',
     'pythonImportPath',
     'output',
     'runtime',
     'performance',
-    'development',
     'types',
     'debug',
   ]);
@@ -151,18 +176,6 @@ function validateConfig(config: ResolvedTywrapConfig): void {
   const validCompression = ['auto', 'gzip', 'brotli', 'none'];
   if (!validCompression.includes(perf.compression)) {
     throw new Error(`performance.compression must be one of ${validCompression.join(', ')}`);
-  }
-
-  const dev: DevelopmentConfig = config.development;
-  if (typeof dev.hotReload !== 'boolean') {
-    throw new Error('development.hotReload must be a boolean');
-  }
-  if (typeof dev.sourceMap !== 'boolean') {
-    throw new Error('development.sourceMap must be a boolean');
-  }
-  const validValidation = ['runtime', 'compile', 'both', 'none'];
-  if (!validValidation.includes(dev.validation)) {
-    throw new Error(`development.validation must be one of ${validValidation.join(', ')}`);
   }
 
   if (config.types) {

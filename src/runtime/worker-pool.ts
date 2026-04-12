@@ -162,13 +162,7 @@ export class WorkerPool extends BoundedContext {
    */
   protected async doInit(): Promise<void> {
     // Pre-spawn minimum workers if configured
-    if (this.options.minWorkers > 0) {
-      const spawns: Promise<PooledWorker>[] = [];
-      for (let i = 0; i < this.options.minWorkers; i++) {
-        spawns.push(this.createWorker());
-      }
-      await Promise.all(spawns);
-    }
+    await this.fillToMinimumWorkers();
   }
 
   /**
@@ -224,7 +218,7 @@ export class WorkerPool extends BoundedContext {
    */
   async acquire(): Promise<PooledWorker> {
     // Check for disposed state
-    if (this.isDisposed) {
+    if (this.isDisposed || this.state === 'disposing') {
       throw new BridgeExecutionError('Pool has been disposed');
     }
 
@@ -243,7 +237,12 @@ export class WorkerPool extends BoundedContext {
       this.pendingCreations++;
       try {
         const newWorker = await this.createWorker();
+        if (this.isShuttingDown()) {
+          this.removeWorker(newWorker);
+          throw new BridgeExecutionError('Pool has been disposed');
+        }
         newWorker.inFlightCount++;
+        this.publishAvailableWorker(newWorker);
         return newWorker;
       } finally {
         this.pendingCreations--;
@@ -270,16 +269,7 @@ export class WorkerPool extends BoundedContext {
 
     // Decrement in-flight count (minimum 0)
     worker.inFlightCount = Math.max(0, worker.inFlightCount - 1);
-
-    // If there are waiters and this worker has capacity, fulfill the first waiter
-    if (this.waitQueue.length > 0 && worker.inFlightCount < this.options.maxConcurrentPerWorker) {
-      const waiter = this.waitQueue.shift();
-      if (waiter) {
-        clearTimeout(waiter.timer);
-        worker.inFlightCount++;
-        waiter.resolve(worker);
-      }
-    }
+    this.publishAvailableWorker(worker);
   }
 
   /**
@@ -331,14 +321,8 @@ export class WorkerPool extends BoundedContext {
    * - Process exited unexpectedly
    * - Pipe errors (EPIPE)
    * - Connection reset errors (ECONNRESET)
-   * - Request timeouts (the worker may still be busy with an uncancellable request)
    */
   private isFatalWorkerError(error: unknown): boolean {
-    // If a request times out, the underlying transport may still be executing it.
-    // Quarantine this worker so subsequent requests don't get stuck behind it.
-    if (error instanceof BridgeTimeoutError) {
-      return true;
-    }
     if (error instanceof BridgeProtocolError) {
       const msg = error.message.toLowerCase();
       return (
@@ -365,7 +349,9 @@ export class WorkerPool extends BoundedContext {
       worker.transport.dispose().catch(() => {
         // Ignore disposal errors for dead workers
       });
-      this.scheduleReplacementWorker();
+      if (this.state === 'ready') {
+        this.scheduleReplacementWorker();
+      }
     }
   }
 
@@ -405,6 +391,30 @@ export class WorkerPool extends BoundedContext {
     return this.workers.find(w => w.inFlightCount < this.options.maxConcurrentPerWorker);
   }
 
+  private getMinimumWorkerDeficit(): number {
+    return Math.max(0, this.options.minWorkers - (this.workers.length + this.pendingCreations));
+  }
+
+  private isShuttingDown(): boolean {
+    return this.isDisposed || this.state === 'disposing';
+  }
+
+  private async fillToMinimumWorkers(): Promise<void> {
+    await this.spawnWorkers(this.getMinimumWorkerDeficit());
+  }
+
+  private async spawnWorkers(count: number): Promise<void> {
+    if (count === 0) {
+      return;
+    }
+    this.pendingCreations += count;
+    try {
+      await Promise.all(Array.from({ length: count }, () => this.spawnWorkerToPool()));
+    } finally {
+      this.pendingCreations = Math.max(0, this.pendingCreations - count);
+    }
+  }
+
   /**
    * Replace a removed worker in the background so the next caller does not pay
    * the full worker cold-start penalty after a timeout or crash.
@@ -419,17 +429,44 @@ export class WorkerPool extends BoundedContext {
 
     this.pendingCreations++;
     const replacementReady = this.options.onReplacementWorkerReady ?? this.options.onWorkerReady;
-    this.createWorker(replacementReady)
-      .then(worker => {
-        // Reuse release() to wake queued callers if one is waiting.
-        this.release(worker);
-      })
+    this.spawnWorkerToPool(replacementReady)
       .catch(() => {
         // Ignore background replacement failures. A later acquire() can retry.
       })
       .finally(() => {
         this.pendingCreations = Math.max(0, this.pendingCreations - 1);
       });
+  }
+
+  private async spawnWorkerToPool(
+    onWorkerReady = this.options.onWorkerReady
+  ): Promise<void> {
+    if (this.isShuttingDown()) {
+      return;
+    }
+
+    const worker = await this.createWorker(onWorkerReady);
+    if (this.isShuttingDown()) {
+      this.removeWorker(worker);
+      return;
+    }
+
+    this.publishAvailableWorker(worker);
+  }
+
+  private publishAvailableWorker(worker: PooledWorker): void {
+    while (
+      this.waitQueue.length > 0 &&
+      worker.inFlightCount < this.options.maxConcurrentPerWorker
+    ) {
+      const waiter = this.waitQueue.shift();
+      if (!waiter) {
+        return;
+      }
+      clearTimeout(waiter.timer);
+      worker.inFlightCount++;
+      waiter.resolve(worker);
+    }
   }
 
   /**

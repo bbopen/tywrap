@@ -59,6 +59,27 @@ When `output.declaration` is enabled, `generate()` writes matching
 code. Simple `TypeVar` and callable `ParamSpec` declarations are preserved when
 tywrap can represent them safely.
 
+`generate()` returns:
+
+```ts
+interface GenerateFailure {
+  module: string;
+  code: 'ir-unavailable';
+  message: string;
+}
+
+interface GenerateResult {
+  written: string[];
+  warnings: string[];
+  failures: GenerateFailure[];
+  outOfDate?: string[];
+}
+```
+
+`failures` is the structured fatal-generation channel. Compatibility warnings
+may still be present in `warnings`, but callers should use `failures` to detect
+modules that could not produce IR.
+
 ### `tywrap(options?)`
 
 Creates the lower-level mapper and generator objects for advanced use.
@@ -249,6 +270,25 @@ import {
 } from 'tywrap';
 ```
 
+## Dev Helpers
+
+```ts
+import { createBridgeReloader, startNodeWatchSession } from 'tywrap/dev';
+```
+
+- `startNodeWatchSession(...)` is the Node-only helper for wrapper regeneration
+  plus bridge swap.
+- `startNodeWatchSession(...)` passes the resolved config for that reload cycle
+  into `createBridge(config)`.
+- `startNodeWatchSession(...)` watches local package trees by attaching one
+  watcher per discovered directory, then refreshing that tree when directories
+  are added, removed, or renamed.
+- `startNodeWatchSession(...)` keeps the last known good generated output and
+  bridge live if a reload hits structured generation failures.
+- `createBridgeReloader(...)` is the manual reload primitive for cases like
+  Pyodide.
+- HTTP server reload remains external to tywrap.
+
 ## Key Types
 
 ```ts
@@ -258,7 +298,6 @@ interface TywrapOptions {
   output: OutputConfig;
   runtime: RuntimeConfig;
   performance: PerformanceConfig;
-  development: DevelopmentConfig;
   types?: TypeMappingConfig;
   debug?: boolean;
 }

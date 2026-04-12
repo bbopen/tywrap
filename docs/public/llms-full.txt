@@ -201,8 +201,7 @@ Update your `tywrap.config.ts`:
   "pythonModules": {
     "my_utils": {
       "runtime": "node",
-      "typeHints": "strict",
-      "watch": true
+      "typeHints": "strict"
     }
   },
   "output": {
@@ -210,10 +209,6 @@ Update your `tywrap.config.ts`:
     "format": "esm",
     "declaration": true,
     "sourceMap": true
-  },
-  "development": {
-    "hotReload": true,
-    "validation": "runtime"
   }
 }
 ```
@@ -323,23 +318,36 @@ async function demo() {
 
 ## Development Workflow
 
-### With Hot Reload
+Use `tywrap/dev` for wrapper regeneration plus bridge replacement:
 
-```json
-{
-  "development": {
-    "hotReload": true,
-    "sourceMap": true,
-    "validation": "runtime"
-  }
-}
+```typescript
+import { startNodeWatchSession } from 'tywrap/dev';
+import { NodeBridge } from 'tywrap/node';
+
+const session = await startNodeWatchSession({
+  configFile: './tywrap.config.ts',
+  createBridge: async config =>
+    new NodeBridge({
+      pythonPath: config.runtime.node?.pythonPath ?? 'python3',
+      timeoutMs: config.runtime.node?.timeout ?? 30000,
+    }),
+});
 ```
+
+For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual bridge
+replacement. For HTTP, restart or redeploy the remote server outside tywrap.
+
+`startNodeWatchSession(...)` watches local package directories as directory
+trees, refreshes those trees when nested directories change, and keeps the last
+known good wrappers and bridge live if a reload produces structured generation
+failures.
 
 ### Build Integration
 
 Run `tywrap generate --check` in CI to ensure generated wrappers are committed
-and up to date. After upgrading Python dependencies, run `tywrap generate` to
-refresh the generated surface.
+and up to date. Structured generation failures exit with code `1`; out-of-date
+generated files exit with code `3`. After upgrading Python dependencies, run
+`tywrap generate` to refresh the generated surface.
 
 If you ran `tywrap init` in a Node project, it will also add `tywrap:generate`
 and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).
@@ -441,7 +449,6 @@ advanced optimization.
 | `output`           | Output directory, module format and artifact options                                                                     |
 | `runtime`          | Settings for Node, Pyodide or HTTP runtimes                                                                              |
 | `performance`      | Caching and optimization controls                                                                                        |
-| `development`      | Development-time features like hot reloading                                                                             |
 | `types`            | Type mapping presets and customization                                                                                   |
 
 ## Configuration File Formats
@@ -465,8 +472,7 @@ When `--config` is omitted, the CLI searches for `tywrap.config.ts`, `.mts`,
   },
   "output": { "dir": "./generated", "format": "esm" },
   "runtime": {},
-  "performance": { "caching": true },
-  "development": { "hotReload": false }
+  "performance": { "caching": true }
 }
 ```
 
@@ -543,13 +549,11 @@ Notes:
       "functions": ["array", "zeros", "ones", "eye"],
       "classes": ["ndarray", "matrix"],
       "alias": "np",
-      "typeHints": "strict",
-      "watch": true
+      "typeHints": "strict"
     },
     "./custom_module.py": {
       "runtime": "node",
-      "typeHints": "loose",
-      "watch": true
+      "typeHints": "loose"
     }
   }
 }
@@ -567,7 +571,6 @@ Notes:
 | `excludePatterns` | `string[]`                                | `[]`        | Exclude exports by regex pattern       |
 | `alias`           | `string`                                  | Module name | Import alias in generated code         |
 | `typeHints`       | `'strict' \| 'loose' \| 'ignore'`         | `'strict'`  | Type hint processing                   |
-| `watch`           | `boolean`                                 | `false`     | Enable file watching in development    |
 
 When `functions`/`classes` are not explicitly configured for a module, tywrap
 applies a small default exclude list to avoid generating wrappers for common
@@ -723,25 +726,35 @@ sparse matrix classes (csr/csc/coo) to structured sparse objects.
 | `batching`    | `boolean`                                | `false`  | Batch multiple operations |
 | `compression` | `'auto' \| 'gzip' \| 'brotli' \| 'none'` | `'none'` | Output compression        |
 
-## Development Configuration
+## Development Reload Helpers
 
-### Development Options
+Development reload is no longer configured inside `tywrap.config.*`.
 
-```json
-{
-  "development": {
-    "hotReload": true,
-    "sourceMap": true,
-    "validation": "runtime"
-  }
-}
+Use `tywrap/dev` instead:
+
+```typescript
+import { createBridgeReloader, startNodeWatchSession } from 'tywrap/dev';
 ```
 
-| Option       | Type                                         | Default  | Description          |
-| ------------ | -------------------------------------------- | -------- | -------------------- |
-| `hotReload`  | `boolean`                                    | `false`  | Enable hot reloading |
-| `sourceMap`  | `boolean`                                    | `false`  | Generate source maps |
-| `validation` | `'runtime' \| 'compile' \| 'both' \| 'none'` | `'none'` | Validation level     |
+Support matrix:
+
+- **Node**: `startNodeWatchSession(...)` watches local modules, regenerates
+  wrappers, and swaps the active bridge.
+- **Node bridge config**: `createBridge(config)` receives the fully resolved
+  config for that reload cycle, so runtime setting changes can flow into the
+  next bridge instance.
+- **Node watch trees**: directory-valued package roots and `extraWatchPaths`
+  are watched as directory trees, with `__pycache__`, `.pytest_cache`,
+  `.mypy_cache`, and `.ruff_cache` ignored.
+- **Strict reloads**: if regeneration returns structured failures, tywrap keeps
+  the last known good generated output and bridge in place.
+- **Pyodide**: `createBridgeReloader(...)` provides manual bridge replacement
+  only.
+- **HTTP**: reload is external to tywrap because tywrap does not own the remote
+  server lifecycle.
+
+If an older config still contains `development` or `pythonModules[*].watch`,
+tywrap now throws a migration error that points to `tywrap/dev`.
 
 ## Extension Hooks
 
@@ -813,10 +826,6 @@ export default defineConfig({
     dir: isDev ? './dev-generated' : './dist/generated',
     sourceMap: isDev,
   },
-  development: {
-    hotReload: isDev,
-    validation: isDev ? 'runtime' : 'none',
-  },
 });
 ```
 
@@ -867,9 +876,9 @@ export default defineConfig({
       torch: { runtime: 'node', classes: ['Tensor'] },
     }),
 
-    // Development-only modules
+    // Local-only modules
     ...(process.env.NODE_ENV === 'development' && {
-      debug_utils: { runtime: 'node', watch: true },
+      debug_utils: { runtime: 'node' },
     }),
   },
 });
@@ -900,9 +909,7 @@ Configurations are merged in this order:
 
 1. Default values
 2. Configuration file
-3. Environment variables
-4. CLI flags
-5. Programmatic overrides
+3. CLI flags or programmatic overrides
 
 ```bash
 # CLI overrides take highest precedence
@@ -916,7 +923,7 @@ tywrap generate --output-dir ./custom --format cjs
 ```typescript
 // Use different configs per environment
 const config = {
-  development: './tywrap.dev.config.ts',
+  local: './tywrap.dev.config.ts',
   production: './tywrap.prod.config.ts',
   test: './tywrap.test.config.ts',
 };
@@ -1090,6 +1097,33 @@ The Node.js runtime:
 Both bridges share the same JSONL core for protocol validation, timeouts, and
 stderr buffering.
 
+## Development Reload
+
+Node wrapper regeneration plus bridge replacement lives in `tywrap/dev`, not in
+`tywrap.config.*`.
+
+```typescript
+import { startNodeWatchSession } from 'tywrap/dev';
+import { NodeBridge } from 'tywrap/node';
+
+const session = await startNodeWatchSession({
+  configFile: './tywrap.config.ts',
+  createBridge: async config =>
+    new NodeBridge({
+      pythonPath: config.runtime.node?.pythonPath ?? 'python3',
+      timeoutMs: config.runtime.node?.timeout ?? 30000,
+    }),
+});
+```
+
+Use `reloadNow()` for an explicit rebuild or `close()` to stop watching and
+dispose the active bridge.
+
+The watch session manages directory trees internally for local package roots and
+directory-valued `extraWatchPaths`, ignores Python cache directories, and keeps
+the last known good wrappers plus bridge live if a reload returns structured
+generation failures.
+
 ## Basic Setup
 
 ### Installation
@@ -1201,7 +1235,6 @@ const bridge = new NodeBridge({
 Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
 `maxRequestsPerProcess`, `enableJsonFallback`, and `maxLineLength`. Avoid them
 in new code.
-
 By default, the subprocess environment is minimal (PATH/PYTHON*/TYWRAP\_* only).
 Set `inheritProcessEnv: true` to pass through the full environment when needed.
 
@@ -2528,6 +2561,27 @@ When `output.declaration` is enabled, `generate()` writes matching
 code. Simple `TypeVar` and callable `ParamSpec` declarations are preserved when
 tywrap can represent them safely.
 
+`generate()` returns:
+
+```ts
+interface GenerateFailure {
+  module: string;
+  code: 'ir-unavailable';
+  message: string;
+}
+
+interface GenerateResult {
+  written: string[];
+  warnings: string[];
+  failures: GenerateFailure[];
+  outOfDate?: string[];
+}
+```
+
+`failures` is the structured fatal-generation channel. Compatibility warnings
+may still be present in `warnings`, but callers should use `failures` to detect
+modules that could not produce IR.
+
 ### `tywrap(options?)`
 
 Creates the lower-level mapper and generator objects for advanced use.
@@ -2718,6 +2772,25 @@ import {
 } from 'tywrap';
 ```
 
+## Dev Helpers
+
+```ts
+import { createBridgeReloader, startNodeWatchSession } from 'tywrap/dev';
+```
+
+- `startNodeWatchSession(...)` is the Node-only helper for wrapper regeneration
+  plus bridge swap.
+- `startNodeWatchSession(...)` passes the resolved config for that reload cycle
+  into `createBridge(config)`.
+- `startNodeWatchSession(...)` watches local package trees by attaching one
+  watcher per discovered directory, then refreshing that tree when directories
+  are added, removed, or renamed.
+- `startNodeWatchSession(...)` keeps the last known good generated output and
+  bridge live if a reload hits structured generation failures.
+- `createBridgeReloader(...)` is the manual reload primitive for cases like
+  Pyodide.
+- HTTP server reload remains external to tywrap.
+
 ## Key Types
 
 ```ts
@@ -2727,7 +2800,6 @@ interface TywrapOptions {
   output: OutputConfig;
   runtime: RuntimeConfig;
   performance: PerformanceConfig;
-  development: DevelopmentConfig;
   types?: TypeMappingConfig;
   debug?: boolean;
 }

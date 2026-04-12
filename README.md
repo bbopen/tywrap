@@ -97,11 +97,10 @@ default and also supports pooled execution through `minProcesses`,
 deep imports. It is not part of the package exports and should not be used in
 new code.
 
-Both bridges share a common JSONL core for protocol validation and timeouts.
-
 By default, NodeBridge inherits only PATH/PYTHON*/TYWRAP\_* from `process.env`
 to keep the subprocess environment minimal. Set `inheritProcessEnv: true` if you
-need the full environment.
+need the full environment. Large JSONL responses are capped by `maxLineLength`
+(defaults to `TYWRAP_CODEC_MAX_BYTES` when set, otherwise 1MB).
 
 You can cap payload sizes with `TYWRAP_CODEC_MAX_BYTES` (responses) and
 `TYWRAP_REQUEST_MAX_BYTES` (requests) to keep JSONL traffic bounded.
