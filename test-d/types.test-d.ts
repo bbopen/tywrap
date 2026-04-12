@@ -346,11 +346,6 @@ const fullConfig: TywrapOptions = {
     caching: true,
     batching: true,
     compression: 'auto'
-  },
-  development: {
-    hotReload: true,
-    sourceMap: true,
-    validation: 'both'
   }
 };
 expectType<TywrapOptions>(fullConfig);
