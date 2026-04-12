@@ -30,6 +30,16 @@ bun add tywrap
 deno add npm:tywrap
 ```
 
+Install the Python IR extractor in the environment that will run code
+generation:
+
+```bash
+pip install tywrap-ir
+```
+
+`tywrap` and `tywrap-ir` are versioned independently. Install the latest
+published release of each package unless you need to pin them explicitly.
+
 ## Configuration
 
 Create a `tywrap.config.ts` in your project root (or run `npx tywrap init`):
@@ -77,6 +87,9 @@ Run `tywrap generate --help` to see all available options and defaults.
 
 The CLI searches for `tywrap.config.ts`, `.mts`, `.js`, `.mjs`, `.cjs`, and
 `.json` when `--config` is not provided.
+
+The config file drives code generation. Your application still creates a runtime
+bridge with `NodeBridge`, `PyodideBridge`, or `HttpBridge`.
 
 ## Usage
 
@@ -359,23 +372,23 @@ const results = await Promise.all([
   math.tan(Math.PI / 4),
 ]);
 
-// Better: Batch related calls
-const batch = await mathBatch([
-  { function: 'sin', args: [Math.PI / 2] },
-  { function: 'cos', args: [0] },
-  { function: 'tan', args: [Math.PI / 4] },
+// Group independent calls with Promise.all
+const [sinValue, cosValue, tanValue] = await Promise.all([
+  math.sin(Math.PI / 2),
+  math.cos(0),
+  math.tan(Math.PI / 4),
 ]);
 ```
 
 ## Next Steps
 
-- [Configuration Guide](./configuration.md) - Complete configuration reference
-- [Runtime Guides](./runtimes/nodejs.md) - Platform-specific setup
-- [Examples](./examples/README.md) - Usage patterns and examples
-- [Troubleshooting](./troubleshooting/README.md) - Common issues and solutions
+- [Configuration Guide](/guide/configuration) - Complete configuration reference
+- [Runtime Guides](/guide/runtimes/node) - Platform-specific setup
+- [Examples](/examples/) - Usage patterns and examples
+- [Troubleshooting](/troubleshooting/) - Common issues and solutions
 
 ## Support
 
-- [Troubleshooting Guide](./troubleshooting/README.md)
+- [Troubleshooting Guide](/troubleshooting/)
 - [GitHub Issues](https://github.com/bbopen/tywrap/issues)
 - [GitHub Discussions](https://github.com/bbopen/tywrap/discussions)

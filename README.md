@@ -3,20 +3,37 @@
 [![npm version](https://img.shields.io/npm/v/tywrap.svg)](https://www.npmjs.com/package/tywrap)
 [![PyPI version](https://img.shields.io/pypi/v/tywrap-ir.svg)](https://pypi.org/project/tywrap-ir/)
 [![CI](https://github.com/bbopen/tywrap/actions/workflows/ci.yml/badge.svg)](https://github.com/bbopen/tywrap/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/bbopen/tywrap/branch/main/graph/badge.svg)](https://codecov.io/gh/bbopen/tywrap)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![npm downloads](https://img.shields.io/npm/dm/tywrap.svg)](https://www.npmjs.com/package/tywrap)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Docs](https://img.shields.io/badge/docs-bbopen.github.io%2Ftywrap-blue)](https://bbopen.github.io/tywrap)
 
 TypeScript wrapper for Python libraries with full type safety.
 
-> **⚠️ Experimental Software (v0.2.1)** - APIs may change between versions. Not
-> recommended for production use until v1.0.0.
+> **⚠️ Experimental** — APIs may change before v1.0.0. See the
+> [releases page](https://github.com/bbopen/tywrap/releases) for breaking
+> changes.
 
 ## Features
 
 - **Full Type Safety** - TypeScript definitions generated from Python source
   analysis
+- **Generic-Aware Declarations** - Preserves simple `TypeVar` and callable
+  `ParamSpec` generics in generated `.ts` and `.d.ts` output
 - **Multi-Runtime** - Node.js (subprocess) and browsers (Pyodide)
 - **Rich Data Types** - numpy, pandas, scipy, torch, sklearn, and stdlib types
 - **Efficient Serialization** - Apache Arrow binary format with JSON fallback
+
+## Why tywrap?
+
+| Feature                         | tywrap    | pythonia  | node-calls-python | pymport   |
+| ------------------------------- | --------- | --------- | ----------------- | --------- |
+| Auto-generated TypeScript types | ✅        | ❌        | ❌                | ❌        |
+| Browser / WASM (Pyodide)        | ✅        | ❌        | ❌                | ❌        |
+| numpy / pandas type mappings    | ✅        | ❌        | ❌                | ❌        |
+| Node.js + Bun + Deno            | All three | Node only | Node only         | Node only |
+| Apache Arrow binary transport   | ✅        | ❌        | ❌                | ❌        |
 
 ## Requirements
 
@@ -36,6 +53,9 @@ npx tywrap init        # Create config (and package.json scripts if present)
 npx tywrap generate    # Generate wrappers
 ```
 
+`tywrap` and `tywrap-ir` are versioned independently. Install the latest
+published release of each package unless you need to pin them explicitly.
+
 For CI (or to verify a dependency upgrade didn’t change the generated surface):
 
 ```bash
@@ -53,6 +73,9 @@ setRuntimeBridge(bridge);
 const result = await math.sqrt(16); // 4
 ```
 
+> If tywrap saves you time, a ⭐ on [GitHub](https://github.com/bbopen/tywrap)
+> helps others find it.
+
 ## Runtime Bridges
 
 ### Node.js
@@ -66,8 +89,13 @@ const bridge = new NodeBridge({
 });
 ```
 
-NodeBridge is the public Node.js bridge. Process pooling and related throughput
-tuning live on `NodeBridge` options directly.
+NodeBridge is the public Node runtime bridge. It runs in single-process mode by
+default and also supports pooled execution through `minProcesses`,
+`maxProcesses`, and `maxConcurrentPerProcess`.
+
+`OptimizedNodeBridge` is now only a deprecated compatibility alias for older
+deep imports. It is not part of the package exports and should not be used in
+new code.
 
 By default, NodeBridge inherits only PATH/PYTHON*/TYWRAP\_* from `process.env`
 to keep the subprocess environment minimal. Set `inheritProcessEnv: true` if you
@@ -102,14 +130,24 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    pandas: { classes: ['DataFrame'], functions: ['read_csv'] },
-    numpy: { alias: 'np' },
+    pandas: {
+      runtime: 'node',
+      typeHints: 'strict',
+      classes: ['DataFrame'],
+      functions: ['read_csv'],
+    },
+    numpy: {
+      runtime: 'node',
+      typeHints: 'strict',
+      alias: 'np',
+    },
   },
   output: { dir: './src/generated' },
 });
 ```
 
-See [Configuration Guide](./docs/configuration.md) for all options.
+See [Configuration Guide](https://bbopen.github.io/tywrap/guide/configuration)
+for all options.
 
 ## Supported Data Types
 
@@ -132,10 +170,10 @@ registerArrowDecoder(bytes => tableFromIPC(bytes));
 
 ## Documentation
 
-- [Getting Started](./docs/getting-started.md)
-- [Configuration](./docs/configuration.md)
-- [API Reference](./docs/api/README.md)
-- [Troubleshooting](./docs/troubleshooting/README.md)
+- [Getting Started](https://bbopen.github.io/tywrap/guide/getting-started)
+- [Configuration](https://bbopen.github.io/tywrap/guide/configuration)
+- [API Reference](https://bbopen.github.io/tywrap/reference/api/)
+- [Troubleshooting](https://bbopen.github.io/tywrap/troubleshooting/)
 
 ## Contributing
 

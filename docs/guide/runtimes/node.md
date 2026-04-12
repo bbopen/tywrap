@@ -17,12 +17,15 @@ The Node.js runtime:
 
 ## Bridge Selection
 
-- **NodeBridge**: the public Node.js bridge.
-- **Pooling and throughput tuning**: configured directly on `NodeBridge`
+- **NodeBridge (default)**: the public Node bridge. It supports both
+  single-process execution and pooled execution through its constructor
   options.
+- **OptimizedNodeBridge**: deprecated compatibility alias for older deep
+  imports. It is not part of the package exports and should not be used in new
+  code.
 
-NodeBridge uses the JSONL protocol core for validation, timeouts, and stderr
-buffering.
+Both bridges share the same JSONL core for protocol validation, timeouts, and
+stderr buffering.
 
 ## Development Reload
 
@@ -102,58 +105,66 @@ console.log(info.protocol, info.pythonVersion, info.instances);
 
 ## Configuration Options
 
-### Basic Options
+`tywrap.config.*` and `NodeBridge` do different jobs:
+
+- `tywrap.config.*` controls wrapper generation.
+- `new NodeBridge(...)` controls the live subprocess bridge in your app.
+
+### `tywrap.config.*` fields
 
 ```json
 {
   "runtime": {
     "node": {
       "pythonPath": "/usr/local/bin/python3",
-      "scriptPath": "./runtime/python_bridge.py",
-      "cwd": "./",
-      "timeoutMs": 30000
-    }
-  }
-}
-```
-
-### Advanced Options
-
-```json
-{
-  "runtime": {
-    "node": {
-      "pythonPath": "/usr/local/bin/python3.11",
       "virtualEnv": "./venv",
-      "scriptPath": "./custom_bridge.py",
-      "cwd": "./python_src",
-      "timeoutMs": 60000,
-      "maxLineLength": 10485760,
-      "inheritProcessEnv": true,
-      "enableJsonFallback": true,
-      "env": {
-        "PYTHONPATH": "./additional_modules",
-        "OMP_NUM_THREADS": "4"
-      }
+      "timeout": 30000
     }
   }
 }
 ```
 
-### Configuration Reference
+### `NodeBridge` constructor options
 
-| Option               | Type                     | Default                               | Description                                           |
-| -------------------- | ------------------------ | ------------------------------------- | ----------------------------------------------------- |
-| `pythonPath`         | `string`                 | `'python3'`                           | Path to Python executable                             |
-| `virtualEnv`         | `string`                 | -                                     | Virtual environment directory                         |
-| `scriptPath`         | `string`                 | Built-in bridge                       | Custom Python bridge script                           |
-| `cwd`                | `string`                 | `process.cwd()`                       | Working directory for Python                          |
-| `timeoutMs`          | `number`                 | `30000`                               | Subprocess timeout in milliseconds                    |
-| `maxLineLength`      | `number`                 | `TYWRAP_CODEC_MAX_BYTES` or `1048576` | Max JSONL response line length                        |
-| `inheritProcessEnv`  | `boolean`                | `false`                               | Inherit full `process.env` into the Python subprocess |
-| `enableJsonFallback` | `boolean`                | `false`                               | Use JSON for data transport fallback                  |
-| `env`                | `Record<string, string>` | `{}`                                  | Additional environment variables                      |
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: '/usr/local/bin/python3.11',
+  virtualEnv: './venv',
+  scriptPath: './custom_bridge.py',
+  cwd: './python_src',
+  timeoutMs: 60000,
+  queueTimeoutMs: 60000,
+  inheritProcessEnv: true,
+  env: {
+    PYTHONPATH: './additional_modules',
+    OMP_NUM_THREADS: '4',
+  },
+  codec: {
+    bytesHandling: 'base64',
+  },
+});
+```
 
+| Option                    | Type                                     | Default         | Description                              |
+| ------------------------- | ---------------------------------------- | --------------- | ---------------------------------------- |
+| `pythonPath`              | `string`                                 | auto-detect     | Path to the Python executable            |
+| `scriptPath`              | `string`                                 | built-in bridge | Custom `python_bridge.py` path           |
+| `virtualEnv`              | `string`                                 | —               | Virtual environment root                 |
+| `cwd`                     | `string`                                 | `process.cwd()` | Working directory for the subprocess     |
+| `timeoutMs`               | `number`                                 | `30000`         | Per-call timeout                         |
+| `queueTimeoutMs`          | `number`                                 | `30000`         | Queue timeout when the pool is saturated |
+| `minProcesses`            | `number`                                 | `1`             | Minimum worker count                     |
+| `maxProcesses`            | `number`                                 | `1`             | Maximum worker count                     |
+| `maxConcurrentPerProcess` | `number`                                 | `10`            | Concurrent requests per worker           |
+| `inheritProcessEnv`       | `boolean`                                | `false`         | Pass the full parent environment through |
+| `enableCache`             | `boolean`                                | `false`         | Cache pure function results              |
+| `env`                     | `Record<string, string \| undefined>`    | `{}`            | Extra subprocess env vars                |
+| `codec`                   | `CodecOptions`                           | —               | Codec validation and byte handling       |
+| `warmupCommands`          | `Array<{ module, functionName, args? }>` | `[]`            | Commands to run when each worker starts  |
+
+Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
+`maxRequestsPerProcess`, `enableJsonFallback`, and `maxLineLength`. Avoid them
+in new code.
 By default, the subprocess environment is minimal (PATH/PYTHON*/TYWRAP\_* only).
 Set `inheritProcessEnv: true` to pass through the full environment when needed.
 
@@ -253,19 +264,7 @@ registerArrowDecoder(bytes => tableFromIPC(bytes));
 
 ### JSON Fallback
 
-For environments without Arrow support:
-
-```json
-{
-  "runtime": {
-    "node": {
-      "enableJsonFallback": true
-    }
-  }
-}
-```
-
-Or set environment variable:
+For environments without Arrow support, set the environment variable:
 
 ```bash
 export TYWRAP_CODEC_FALLBACK=json
@@ -281,8 +280,7 @@ export TYWRAP_CODEC_MAX_BYTES=10485760  # 10 MB cap
 ```
 
 If a response exceeds `TYWRAP_CODEC_MAX_BYTES`, the call fails with an explicit
-error. `maxLineLength` defaults to the same value when set (otherwise 1MB) so
-the Node side and Python side stay aligned.
+error. Use this instead of older line-length knobs.
 
 ### Request Size Limit
 
@@ -319,19 +317,30 @@ try {
 
 ### Debugging Configuration
 
-```json
-{
-  "runtime": {
-    "node": {
-      "timeoutMs": 0, // Disable timeout for debugging
-      "env": {
-        "PYTHONUNBUFFERED": "1", // Immediate stdout/stderr
-        "TYWRAP_DEBUG": "1" // Enable debug logging
-      }
-    }
+Use the CLI's debug flag when you are troubleshooting wrapper generation:
+
+```bash
+npx tywrap generate --debug
+```
+
+Use runtime log env vars for subprocess diagnostics:
+
+```bash
+export TYWRAP_LOG_LEVEL=DEBUG
+export TYWRAP_LOG_JSON=1
+```
+
+If you need to disable timeouts or pass extra Python env vars while debugging,
+do it on the bridge instance:
+
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  timeoutMs: 0,
+  env: {
+    PYTHONUNBUFFERED: '1',
   },
-  "debug": true
-}
+});
 ```
 
 ### Common Error Scenarios
@@ -388,17 +397,16 @@ const [sin1, sin2, sin3] = await Promise.all([
 
 ### Memory Management
 
-```json
-{
-  "runtime": {
-    "node": {
-      "env": {
-        "PYTHONMALLOC": "malloc", // Use system malloc
-        "OMP_NUM_THREADS": "4" // Limit OpenMP threads
-      }
-    }
-  }
-}
+Pass Python-specific tuning through `env` on the bridge:
+
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  env: {
+    PYTHONMALLOC: 'malloc',
+    OMP_NUM_THREADS: '4',
+  },
+});
 ```
 
 ## Production Deployment
@@ -466,8 +474,8 @@ services:
   app:
     build: .
     environment:
-      - TYWRAP_PYTHON_PATH=/usr/bin/python3
       - TYWRAP_CODEC_FALLBACK=json # For smaller containers
+      - TYWRAP_LOG_LEVEL=INFO
     ports:
       - '3000:3000'
 ```
@@ -477,32 +485,36 @@ services:
 ```bash
 # Production environment
 export NODE_ENV=production
-export TYWRAP_PYTHON_PATH="/usr/local/bin/python3"
-export TYWRAP_CACHE_DIR="/tmp/tywrap-cache"
-export TYWRAP_MEMORY_LIMIT="2048"
+export TYWRAP_CODEC_MAX_BYTES=10485760
+export TYWRAP_REQUEST_MAX_BYTES=1048576
+export TYWRAP_LOG_LEVEL=INFO
 
 # Security
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONUNBUFFERED=1
 ```
 
+Set the Python executable in config or when you construct the bridge:
+
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: '/usr/local/bin/python3',
+});
+```
+
 ## Security Considerations
 
 ### Subprocess Security
 
-```json
-{
-  "runtime": {
-    "node": {
-      "cwd": "/safe/directory", // Restrict working directory
-      "env": {
-        "PATH": "/usr/bin:/bin", // Limit PATH
-        "PYTHONPATH": "/safe/python/libs"
-      },
-      "timeoutMs": 10000 // Prevent hanging processes
-    }
-  }
-}
+```typescript
+const bridge = new NodeBridge({
+  cwd: '/safe/directory',
+  timeoutMs: 10000,
+  env: {
+    PATH: '/usr/bin:/bin',
+    PYTHONPATH: '/safe/python/libs',
+  },
+});
 ```
 
 ### Input Validation
@@ -565,25 +577,25 @@ chmod +x /usr/local/bin/python3
 
 **"Process timeout"**:
 
-```json
-{
-  "runtime": {
-    "node": {
-      "timeoutMs": 60000, // Increase timeout
-      "env": {
-        "OMP_NUM_THREADS": "1" // Reduce parallelism
-      }
-    }
-  }
-}
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  timeoutMs: 60000,
+  env: {
+    OMP_NUM_THREADS: '1',
+  },
+});
 ```
 
 ### Debug Mode
 
 ```bash
-# Enable debug logging
-export TYWRAP_DEBUG=1
-export TYWRAP_VERBOSE=1
+# Wrapper-generation diagnostics
+npx tywrap generate --debug
+
+# Runtime bridge diagnostics
+export TYWRAP_LOG_LEVEL=DEBUG
+export TYWRAP_LOG_JSON=1
 
 # Run with debug output
 node --trace-warnings your-app.js
@@ -620,14 +632,11 @@ if __name__ == '__main__':
     pass
 ```
 
-```json
-{
-  "runtime": {
-    "node": {
-      "scriptPath": "./custom_bridge.py"
-    }
-  }
-}
+```typescript
+const bridge = new NodeBridge({
+  pythonPath: 'python3',
+  scriptPath: './custom_bridge.py',
+});
 ```
 
 ### Process Pooling
@@ -651,7 +660,7 @@ function getNextBridge() {
 
 ## Next Steps
 
-- [Configuration Guide](../configuration.md) - Complete configuration reference
-- [Examples](../examples/README.md) - Usage examples and patterns
-- [Troubleshooting](../troubleshooting/README.md) - Common issues and solutions
-- [API Reference](../api/README.md) - Complete API documentation
+- [Configuration Guide](/guide/configuration) - Complete configuration reference
+- [Examples](/examples/) - Usage examples and patterns
+- [Troubleshooting](/troubleshooting/) - Common issues and solutions
+- [API Reference](/reference/api/) - Complete API documentation

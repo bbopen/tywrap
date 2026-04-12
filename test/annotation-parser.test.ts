@@ -47,4 +47,24 @@ describe('annotation parser', () => {
     expect((t as any).parameters[0].kind).toBe('custom');
     expect((t as any).parameters[0].name).toBe('...');
   });
+
+  it('parses known ParamSpec argument packs', () => {
+    const t = parseAnnotationToPythonType('P.args', {
+      typeParameters: [{ name: 'P', kind: 'paramspec' }],
+    });
+    expect(t.kind).toBe('paramspec_args');
+    expect((t as any).name).toBe('P');
+  });
+
+  it('parses explicit ParamSpec argument packs without declared type parameters', () => {
+    const t = parseAnnotationToPythonType('~P.args');
+    expect(t.kind).toBe('paramspec_args');
+    expect((t as any).name).toBe('P');
+  });
+
+  it('does not treat arbitrary dotted names as ParamSpec packs', () => {
+    const t = parseAnnotationToPythonType('Request.args');
+    expect(t.kind).toBe('custom');
+    expect((t as any).name).toBe('Request.args');
+  });
 });

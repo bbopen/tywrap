@@ -39,6 +39,13 @@ export interface WorkerPoolOptions {
    * Use this for per-worker warmup (e.g., importing modules, running setup).
    */
   onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+
+  /**
+   * Optional callback used only for background replacement workers after a
+   * fatal timeout/crash. This lets callers publish a replacement only after it
+   * is proven ready, without charging hidden work to normal request startup.
+   */
+  onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
 }
 
 /**
@@ -99,8 +106,12 @@ interface QueuedWaiter {
  * ```
  */
 export class WorkerPool extends BoundedContext {
-  private readonly options: Omit<Required<WorkerPoolOptions>, 'onWorkerReady'> & {
+  private readonly options: Omit<
+    Required<WorkerPoolOptions>,
+    'onWorkerReady' | 'onReplacementWorkerReady'
+  > & {
     onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+    onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
   };
   private readonly workers: PooledWorker[] = [];
   private readonly waitQueue: QueuedWaiter[] = [];
@@ -135,6 +146,7 @@ export class WorkerPool extends BoundedContext {
       queueTimeoutMs: options.queueTimeoutMs ?? 30000,
       maxConcurrentPerWorker: options.maxConcurrentPerWorker ?? 1,
       onWorkerReady: options.onWorkerReady,
+      onReplacementWorkerReady: options.onReplacementWorkerReady,
     };
   }
 
@@ -225,7 +237,7 @@ export class WorkerPool extends BoundedContext {
       this.pendingCreations++;
       try {
         const newWorker = await this.createWorker();
-        if (this.state !== 'ready') {
+        if (this.isShuttingDown()) {
           this.removeWorker(newWorker);
           throw new BridgeExecutionError('Pool has been disposed');
         }
@@ -345,7 +357,9 @@ export class WorkerPool extends BoundedContext {
       worker.transport.dispose().catch(() => {
         // Ignore disposal errors for dead workers
       });
-      this.replenishMinimumWorkersInBackground();
+      if (this.state === 'ready') {
+        this.scheduleReplacementWorker();
+      }
     }
   }
 
@@ -389,47 +403,63 @@ export class WorkerPool extends BoundedContext {
     return Math.max(0, this.options.minWorkers - (this.workers.length + this.pendingCreations));
   }
 
-  private async fillToMinimumWorkers(): Promise<void> {
-    await this.spawnWorkers(this.getMinimumWorkerDeficit());
+  private isShuttingDown(): boolean {
+    return this.isDisposed || this.state === 'disposing';
   }
 
-  private replenishMinimumWorkersInBackground(): void {
-    if (this.isDisposed || this.state === 'disposing') {
-      return;
-    }
-
-    for (let i = 0; i < this.getMinimumWorkerDeficit(); i++) {
-      void this.spawnReplacementWorker().catch(() => {
-        // A later acquire() can retry worker creation if background refill fails.
-      });
-    }
+  private async fillToMinimumWorkers(): Promise<void> {
+    await this.spawnWorkers(this.getMinimumWorkerDeficit());
   }
 
   private async spawnWorkers(count: number): Promise<void> {
     if (count === 0) {
       return;
     }
-    await Promise.all(Array.from({ length: count }, () => this.spawnReplacementWorker()));
+    this.pendingCreations += count;
+    try {
+      await Promise.all(Array.from({ length: count }, () => this.spawnWorkerToPool()));
+    } finally {
+      this.pendingCreations = Math.max(0, this.pendingCreations - count);
+    }
   }
 
-  private async spawnReplacementWorker(): Promise<void> {
-    const initialState = this.state;
-    if (initialState === 'disposed' || initialState === 'disposing') {
+  /**
+   * Replace a removed worker in the background so the next caller does not pay
+   * the full worker cold-start penalty after a timeout or crash.
+   */
+  private scheduleReplacementWorker(): void {
+    if (this.state !== 'ready') {
+      return;
+    }
+    if (this.workers.length + this.pendingCreations >= this.options.maxWorkers) {
       return;
     }
 
     this.pendingCreations++;
-    try {
-      const worker = await this.createWorker();
-      const currentState = this.state;
-      if (currentState === 'disposed' || currentState === 'disposing') {
-        this.removeWorker(worker);
-        return;
-      }
-      this.release(worker);
-    } finally {
-      this.pendingCreations--;
+    const replacementReady = this.options.onReplacementWorkerReady ?? this.options.onWorkerReady;
+    this.spawnWorkerToPool(replacementReady)
+      .catch(() => {
+        // Ignore background replacement failures. A later acquire() can retry.
+      })
+      .finally(() => {
+        this.pendingCreations = Math.max(0, this.pendingCreations - 1);
+      });
+  }
+
+  private async spawnWorkerToPool(
+    onWorkerReady = this.options.onWorkerReady
+  ): Promise<void> {
+    if (this.isShuttingDown()) {
+      return;
     }
+
+    const worker = await this.createWorker(onWorkerReady);
+    if (this.isShuttingDown()) {
+      this.removeWorker(worker);
+      return;
+    }
+
+    this.release(worker);
   }
 
   /**
@@ -438,7 +468,7 @@ export class WorkerPool extends BoundedContext {
    * If onWorkerReady is configured, calls it after the transport is initialized.
    * This is useful for per-worker warmup (importing modules, running setup).
    */
-  private async createWorker(): Promise<PooledWorker> {
+  private async createWorker(onWorkerReady = this.options.onWorkerReady): Promise<PooledWorker> {
     const transport = this.options.createTransport();
 
     // Initialize the transport
@@ -451,8 +481,8 @@ export class WorkerPool extends BoundedContext {
 
     try {
       // Call onWorkerReady callback if provided
-      if (this.options.onWorkerReady) {
-        await this.options.onWorkerReady(worker);
+      if (onWorkerReady) {
+        await onWorkerReady(worker);
       }
     } catch (error) {
       // Ensure partially initialized workers do not leak when warmup fails.
@@ -460,6 +490,13 @@ export class WorkerPool extends BoundedContext {
         // Ignore disposal failures during warmup failure handling.
       });
       throw error;
+    }
+
+    if (this.state === 'disposing' || this.state === 'disposed') {
+      await transport.dispose().catch(() => {
+        // Ignore disposal failures if the pool was torn down mid-creation.
+      });
+      throw new BridgeExecutionError('Pool disposed during worker creation');
     }
 
     this.workers.push(worker);

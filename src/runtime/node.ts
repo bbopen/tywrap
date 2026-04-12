@@ -74,8 +74,7 @@ export interface NodeBridgeOptions {
 
   /** Commands to run on each process at startup for warming up. */
   warmupCommands?: Array<
-    | { module: string; functionName: string; args?: unknown[] }
-    | { method: string; params: unknown } // Legacy shape preserved so runtime can surface a migration error
+    { module: string; functionName: string; args?: unknown[] } | { method: string; params: unknown } // Legacy shape preserved so runtime can surface a migration error
   >;
 
   // ===========================================================================
@@ -130,6 +129,8 @@ interface WarmupCommand {
   args?: unknown[];
 }
 
+const WORKER_READY_TIMEOUT_MS = 5000;
+
 // =============================================================================
 // UTILITIES
 // =============================================================================
@@ -162,12 +163,30 @@ function resolveVirtualEnv(
  * Get the environment variable key for PATH (case-insensitive on Windows).
  */
 function getPathKey(env: Record<string, string | undefined>): string {
+  if (Object.prototype.hasOwnProperty.call(env, 'PATH')) {
+    return 'PATH';
+  }
+
   for (const key of Object.keys(env)) {
     if (key.toLowerCase() === 'path') {
       return key;
     }
   }
   return 'PATH';
+}
+
+function setPathValue(env: Record<string, string>, value: string): void {
+  setEnvValue(env, 'PATH', value);
+
+  if (process.platform !== 'win32') {
+    return;
+  }
+
+  for (const key of Object.keys(env)) {
+    if (key !== 'PATH' && key.toLowerCase() === 'path') {
+      setEnvValue(env, key, value);
+    }
+  }
 }
 
 const DANGEROUS_ENV_OVERRIDE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
@@ -324,12 +343,11 @@ export class NodeBridge extends BridgeProtocol {
     // Build environment for ProcessIO
     const processEnv = buildProcessEnv(resolvedOptions);
 
-    // Warm each worker with a cheap protocol round-trip before handing it out,
-    // then run any user-specified warmup commands on top.
-    const onWorkerReady = createWarmupCallback(
-      resolvedOptions.warmupCommands,
-      resolvedOptions.timeoutMs
-    );
+    const userWarmup =
+      resolvedOptions.warmupCommands.length > 0
+        ? createWarmupCallback(resolvedOptions.warmupCommands, resolvedOptions.timeoutMs)
+        : undefined;
+    const onWorkerReady = createWorkerReadyCallback(resolvedOptions.timeoutMs, userWarmup);
 
     // Create pooled transport with ProcessIO workers
     const transport = new PooledTransport({
@@ -345,6 +363,7 @@ export class NodeBridge extends BridgeProtocol {
       queueTimeoutMs: resolvedOptions.queueTimeoutMs,
       maxConcurrentPerWorker: resolvedOptions.maxConcurrentPerProcess,
       onWorkerReady,
+      onReplacementWorkerReady: onWorkerReady,
     });
 
     // Initialize BridgeProtocol with pooled transport
@@ -621,31 +640,137 @@ function createWarmupCallback(
   timeoutMs: number
 ): (worker: PooledWorker) => Promise<void> {
   return async (worker: PooledWorker) => {
-    await sendWarmupRequest(worker, timeoutMs, generateWarmupId(), 'Worker warmup check', {
-      method: 'meta',
-      params: {},
-    });
-
     for (const [index, cmd] of warmupCommands.entries()) {
       const commandLabel = `${cmd.module}.${cmd.functionName}`;
-      const requestId = generateWarmupId();
-      await sendWarmupRequest(
+      await executeWorkerCall(
         worker,
-        timeoutMs,
-        requestId,
-        `Warmup command #${index + 1} (${commandLabel})`,
         {
-          method: 'call',
-          params: {
-            module: cmd.module,
-            functionName: cmd.functionName,
-            args: cmd.args ?? [],
-            kwargs: {},
-          },
+          module: cmd.module,
+          functionName: cmd.functionName,
+          args: cmd.args ?? [],
+        },
+        timeoutMs,
+        {
+          label: `Warmup command #${index + 1} (${commandLabel})`,
+          invalidJsonMessage: 'returned invalid JSON response',
+          malformedEnvelopeMessage: requestId =>
+            `returned malformed response envelope for request ${requestId}`,
+          pythonErrorMessage: (errorType, errorMessage) => `failed: ${errorType}: ${errorMessage}`,
+          malformedErrorPayloadMessage: 'failed with malformed error payload',
         }
       );
     }
   };
+}
+
+function createWorkerReadyCallback(
+  timeoutMs: number,
+  extraWarmup?: (worker: PooledWorker) => Promise<void>
+): (worker: PooledWorker) => Promise<void> {
+  return async (worker: PooledWorker) => {
+    await sendWarmupRequest(
+      worker,
+      Math.max(timeoutMs, WORKER_READY_TIMEOUT_MS),
+      generateWarmupId(),
+      'Worker warmup check',
+      {
+        method: 'meta',
+        params: {},
+      }
+    );
+
+    await extraWarmup?.(worker);
+  };
+}
+
+interface WorkerCallSpec {
+  module: string;
+  functionName: string;
+  args: unknown[];
+}
+
+interface WorkerCallErrorMessages {
+  label: string;
+  invalidJsonMessage: string;
+  malformedEnvelopeMessage: (requestId: number) => string;
+  pythonErrorMessage: (errorType: string, errorMessage: string) => string;
+  malformedErrorPayloadMessage: string;
+}
+
+async function executeWorkerCall(
+  worker: PooledWorker,
+  request: WorkerCallSpec,
+  timeoutMs: number,
+  messages: WorkerCallErrorMessages
+): Promise<unknown> {
+  const requestId = generateWarmupId();
+  let message: string;
+  try {
+    message = JSON.stringify({
+      id: requestId,
+      protocol: PROTOCOL_ID,
+      method: 'call',
+      params: {
+        module: request.module,
+        functionName: request.functionName,
+        args: request.args,
+        kwargs: {},
+      },
+    });
+  } catch (error) {
+    throw new BridgeExecutionError(
+      `${messages.label} failed to encode request: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error instanceof Error ? error : undefined }
+    );
+  }
+
+  let response: string;
+  try {
+    response = await worker.transport.send(message, timeoutMs);
+  } catch (error) {
+    throw new BridgeExecutionError(
+      `${messages.label} failed to send: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error instanceof Error ? error : undefined }
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(response);
+  } catch (error) {
+    throw new BridgeExecutionError(`${messages.label} ${messages.invalidJsonMessage}`, {
+      cause: error instanceof Error ? error : undefined,
+    });
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new BridgeExecutionError(
+      `${messages.label} ${messages.malformedEnvelopeMessage(requestId)}`
+    );
+  }
+
+  const envelope = parsed as { result?: unknown; error?: unknown };
+  if ('error' in envelope && envelope.error !== undefined && envelope.error !== null) {
+    const errorPayload = envelope.error;
+    if (errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)) {
+      const err = errorPayload as { type?: unknown; message?: unknown };
+      const errType = typeof err.type === 'string' ? err.type : 'Error';
+      const errMessage = typeof err.message === 'string' ? err.message : 'Unknown error';
+      throw new BridgeExecutionError(
+        `${messages.label} ${messages.pythonErrorMessage(errType, errMessage)}`
+      );
+    }
+
+    throw new BridgeExecutionError(`${messages.label} ${messages.malformedErrorPayloadMessage}`);
+  }
+
+  if (!('result' in envelope)) {
+    throw new BridgeExecutionError(
+      `${messages.label} ${messages.malformedEnvelopeMessage(requestId)}`
+    );
+  }
+
+  return envelope.result;
 }
 
 // =============================================================================
@@ -691,8 +816,8 @@ function buildProcessEnv(options: ResolvedOptions): Record<string, string> {
     const venv = resolveVirtualEnv(options.virtualEnv, options.cwd);
     env.VIRTUAL_ENV = venv.venvPath;
     const pathKey = getPathKey(env);
-    const currentPath = getEnvValue(env, pathKey) ?? '';
-    setEnvValue(env, pathKey, `${venv.binDir}${delimiter}${currentPath}`);
+    const currentPath = getEnvValue(env, pathKey);
+    setPathValue(env, currentPath ? `${venv.binDir}${delimiter}${currentPath}` : venv.binDir);
   }
 
   // Add cwd to PYTHONPATH so Python can find modules in the working directory

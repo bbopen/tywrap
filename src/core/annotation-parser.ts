@@ -1,7 +1,9 @@
-import type { PythonType } from '../types/index.js';
+import type { PythonGenericParameter, PythonType } from '../types/index.js';
 
 export interface AnnotationParserOptions {
   onUnknownTypeName?: (name: string) => void;
+  knownTypeVarNames?: Iterable<string>;
+  typeParameters?: readonly PythonGenericParameter[];
 }
 
 export function parseAnnotationToPythonType(
@@ -9,6 +11,11 @@ export function parseAnnotationToPythonType(
   options: AnnotationParserOptions = {}
 ): PythonType {
   const onUnknownTypeName = options.onUnknownTypeName;
+  const knownTypeVarNames = new Set(options.knownTypeVarNames ?? []);
+  const knownTypeParameters = new Map(
+    (options.typeParameters ?? []).map(param => [param.name, param] as const)
+  );
+  const modulePrefixes = ['', 'typing.', 'typing_extensions.', 'collections.abc.'] as const;
 
   const unknownType = (): PythonType => ({ kind: 'custom', name: 'Any', module: 'typing' });
 
@@ -32,20 +39,48 @@ export function parseAnnotationToPythonType(
       return { kind: 'literal', value: null } as PythonType;
     }
     const num = Number(t);
-    // Number('') is 0, so ensure we don't treat empty literals as numeric.
     if (t !== '' && !Number.isNaN(num)) {
       return { kind: 'literal', value: num } as PythonType;
     }
     return { kind: 'custom', name: t } as PythonType;
   };
 
+  const mapKnownTypeParameter = (name: string): PythonType | null => {
+    const normalized = name.replace(/^~/, '').trim();
+    const param = knownTypeParameters.get(normalized);
+    if (!param) {
+      return null;
+    }
+    switch (param.kind) {
+      case 'typevar':
+        return {
+          kind: 'typevar',
+          name: param.name,
+          bound: param.bound,
+          constraints: param.constraints,
+          variance: param.variance,
+        } satisfies PythonType;
+      case 'paramspec':
+        return { kind: 'paramspec', name: param.name } satisfies PythonType;
+      case 'typevartuple':
+        return { kind: 'typevartuple', name: param.name } satisfies PythonType;
+    }
+  };
+
   const mapSimpleName = (name: string): PythonType => {
-    const n = name.replace(/^typing\./, '').trim();
+    const n = name.replace(/^(typing\.|typing_extensions\.|collections\.abc\.)/, '').trim();
+    const known = mapKnownTypeParameter(n);
+    if (known) {
+      return known;
+    }
+    if (knownTypeVarNames.has(n)) {
+      return { kind: 'typevar', name: n };
+    }
+
     if (n === 'int' || n === 'float' || n === 'str' || n === 'bool' || n === 'bytes') {
       return { kind: 'primitive', name: n };
     }
 
-    // Track unknown typing-ish names for diagnostics
     if (
       n === 'Any' ||
       n === 'Never' ||
@@ -77,14 +112,56 @@ export function parseAnnotationToPythonType(
     if (n === 'frozenset' || n === 'FrozenSet') {
       return { kind: 'collection', name: 'frozenset', itemTypes: [] };
     }
+    if (n.startsWith('~')) {
+      return { kind: 'typevar', name: n.slice(1) };
+    }
     return { kind: 'custom', name: n };
+  };
+
+  const parseTypingFactoryName = (text: string, name: string): string | null => {
+    for (const prefix of modulePrefixes) {
+      const start = `${prefix}${name}(`;
+      if (!text.startsWith(start) || !text.endsWith(')')) {
+        continue;
+      }
+
+      const inner = text.slice(start.length, -1).trim();
+      if (inner.length < 2) {
+        return null;
+      }
+
+      const quote = inner[0];
+      if ((quote !== "'" && quote !== '"') || inner[inner.length - 1] !== quote) {
+        return null;
+      }
+
+      const commaIndex = inner.indexOf(',');
+      const quoted = commaIndex === -1 ? inner : inner.slice(0, commaIndex).trimEnd();
+      if (quoted.length < 2 || quoted[quoted.length - 1] !== quote) {
+        return null;
+      }
+
+      return quoted.slice(1, -1);
+    }
+
+    return null;
+  };
+
+  const splitQualifiedName = (raw: string): { name: string; module?: string } => {
+    const trimmed = raw.trim();
+    const parts = trimmed.split('.').filter(Boolean);
+    if (parts.length <= 1) {
+      return { name: trimmed };
+    }
+    const name = parts[parts.length - 1] ?? trimmed;
+    return { name, module: parts.slice(0, -1).join('.') || undefined };
   };
 
   const normalizeCollectionName = (
     raw: string
   ): { name: 'list' | 'dict' | 'tuple' | 'set' | 'frozenset'; inner?: string } | null => {
     const m = raw.match(
-      /^(typing\.)?(List|Dict|Tuple|Set|FrozenSet|list|dict|tuple|set|frozenset)\[(.*)\]$/
+      /^(typing\.|typing_extensions\.)?(List|Dict|Tuple|Set|FrozenSet|list|dict|tuple|set|frozenset)\[(.*)\]$/
     );
     if (!m) {
       return null;
@@ -168,6 +245,38 @@ export function parseAnnotationToPythonType(
     return results;
   };
 
+  const splitGenericInvocation = (raw: string): { name: string; inner: string } | null => {
+    if (!raw.endsWith(']')) {
+      return null;
+    }
+    const bracketStart = raw.indexOf('[');
+    if (bracketStart <= 0) {
+      return null;
+    }
+
+    let depth = 0;
+    for (let i = bracketStart; i < raw.length; i++) {
+      const ch = raw.charAt(i);
+      if (ch === '[') {
+        depth++;
+      } else if (ch === ']') {
+        depth--;
+        if (depth === 0 && i !== raw.length - 1) {
+          return null;
+        }
+      }
+    }
+
+    if (depth !== 0) {
+      return null;
+    }
+
+    return {
+      name: raw.slice(0, bracketStart).trim(),
+      inner: raw.slice(bracketStart + 1, -1),
+    };
+  };
+
   const parse = (ann: unknown, depth = 0): PythonType => {
     if (ann === null || ann === undefined) {
       return unknownType();
@@ -175,18 +284,34 @@ export function parseAnnotationToPythonType(
     if (depth > 100) {
       return unknownType();
     }
-    const raw = String(ann).trim();
+    const rawText = String(ann).trim();
+    const raw = rawText.startsWith('~') ? rawText.slice(1).trim() : rawText;
+    if (raw === '') {
+      return unknownType();
+    }
 
-    // Handle built-in class repr: <class 'int'>
-    const classMatch = raw.match(/^<class ['"][^'"]+['"]>$/);
-    if (classMatch) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) && rawText.startsWith('~')) {
+      return mapKnownTypeParameter(raw) ?? { kind: 'typevar', name: raw };
+    }
+
+    const paramspecArgsMatch = rawText.match(/^~?([A-Za-z_][A-Za-z0-9_]*)\.(args|kwargs)$/);
+    if (paramspecArgsMatch?.[1] && paramspecArgsMatch[2]) {
+      const baseName = paramspecArgsMatch[1];
+      const known = mapKnownTypeParameter(baseName);
+      if (known?.kind === 'paramspec' || rawText.startsWith('~')) {
+        return paramspecArgsMatch[2] === 'args'
+          ? ({ kind: 'paramspec_args', name: baseName } satisfies PythonType)
+          : ({ kind: 'paramspec_kwargs', name: baseName } satisfies PythonType);
+      }
+    }
+
+    const builtInClassMatch = raw.match(/^<class ['"][^'"]+['"]>$/);
+    if (builtInClassMatch) {
       const inner = (raw.match(/^<class ['"]([^'"]+)['"]>$/) ?? [])[1] ?? '';
       const name = (inner.split('.').pop() ?? '').toString();
       return mapSimpleName(name);
     }
 
-    // PEP 604 unions: int | str | None
-    // Note: split at top-level only (avoid recursing forever on pipes inside quoted Literals).
     if (raw.includes('|')) {
       const parts = splitTopLevel(raw, '|');
       if (parts.length > 1) {
@@ -195,99 +320,179 @@ export function parseAnnotationToPythonType(
       }
     }
 
-    // typing.Union[...]
-    if (raw.startsWith('typing.Union[') || raw.startsWith('Union[')) {
+    if (
+      raw.startsWith('typing.Union[') ||
+      raw.startsWith('typing_extensions.Union[') ||
+      raw.startsWith('Union[')
+    ) {
       const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
       const parts = splitTopLevel(inner, ',');
       const types = parts.map(p => parse(p.trim(), depth + 1));
       return { kind: 'union', types };
     }
 
-    // Optional[T]
-    if (raw.startsWith('typing.Optional[') || raw.startsWith('Optional[')) {
+    if (
+      raw.startsWith('typing.Optional[') ||
+      raw.startsWith('typing_extensions.Optional[') ||
+      raw.startsWith('Optional[')
+    ) {
       const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const base = parse(inner, depth + 1);
-      return { kind: 'optional', type: base };
+      return { kind: 'optional', type: parse(inner, depth + 1) };
     }
 
-    // Literal[...] -> literal values union
-    if (raw.startsWith('typing.Literal[') || raw.startsWith('Literal[')) {
+    if (
+      raw.startsWith('typing.Literal[') ||
+      raw.startsWith('typing_extensions.Literal[') ||
+      raw.startsWith('Literal[')
+    ) {
       const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
       const parts = splitTopLevel(inner, ',');
       if (parts.length === 1) {
         return mapLiteral(String(parts[0] ?? '').trim());
       }
-      return { kind: 'union', types: parts.map(p => mapLiteral(String(p).trim())) } as PythonType;
+      return { kind: 'union', types: parts.map(p => mapLiteral(String(p).trim())) };
     }
 
-    // typing_extensions wrappers: ClassVar[T], Final[T], Required[T], NotRequired[T]
     const extMatch = raw.match(
       /^(typing\.|typing_extensions\.)?(ClassVar|Final|Required|NotRequired)\[(.*)\]$/
     );
     if (extMatch) {
-      const inner = extMatch[3] ?? '';
-      return parse(inner, depth + 1);
+      return parse(extMatch[3] ?? '', depth + 1);
     }
 
-    // LiteralString
-    if (raw === 'typing.LiteralString' || raw === 'LiteralString') {
-      return { kind: 'primitive', name: 'str' } as PythonType;
+    const typeVarName = parseTypingFactoryName(rawText, 'TypeVar');
+    if (typeVarName) {
+      return mapKnownTypeParameter(typeVarName) ?? { kind: 'typevar', name: typeVarName };
     }
 
-    // Callable[[...], R]
-	    if (raw.startsWith('typing.Callable[') || raw.startsWith('Callable[')) {
-	      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-	      const parts = splitTopLevel(inner, ',');
-	      if (parts.length >= 2) {
-	        const paramsPart = (parts[0] ?? '').trim();
-	        const returnPart = parts.slice(1).join(',').trim();
-	        const paramInner =
-	          paramsPart.startsWith('[') && paramsPart.endsWith(']') ? paramsPart.slice(1, -1) : '';
-	        const paramTypes = ((): PythonType[] => {
-	          // Callable[..., R] uses a top-level Ellipsis.
-	          if (paramsPart === '...' || paramsPart === 'Ellipsis') {
-	            return [{ kind: 'custom', name: '...' } as PythonType];
-	          }
-	          const trimmed = paramInner.trim();
-	          if (trimmed === '...' || trimmed === 'Ellipsis') {
-	            return [{ kind: 'custom', name: '...' } as PythonType];
-	          }
-	          return trimmed ? splitTopLevel(trimmed, ',').map(p => parse(p.trim(), depth + 1)) : [];
-	        })();
-	        const returnType = parse(returnPart, depth + 1);
-	        return { kind: 'callable', parameters: paramTypes, returnType } as PythonType;
-	      }
-	    }
+    const paramSpecName = parseTypingFactoryName(rawText, 'ParamSpec');
+    if (paramSpecName) {
+      return mapKnownTypeParameter(paramSpecName) ?? { kind: 'paramspec', name: paramSpecName };
+    }
 
-    // Mapping[K, V] / Dict[K, V] normalization
-    if (raw.startsWith('typing.Mapping[') || raw.startsWith('Mapping[')) {
+    const typeVarTupleName = parseTypingFactoryName(rawText, 'TypeVarTuple');
+    if (typeVarTupleName) {
+      return (
+        mapKnownTypeParameter(typeVarTupleName) ?? {
+          kind: 'typevartuple',
+          name: typeVarTupleName,
+        }
+      );
+    }
+    if (
+      raw === 'typing.LiteralString' ||
+      raw === 'typing_extensions.LiteralString' ||
+      raw === 'LiteralString'
+    ) {
+      return { kind: 'primitive', name: 'str' };
+    }
+
+    if (
+      raw.startsWith('typing.Callable[') ||
+      raw.startsWith('typing_extensions.Callable[') ||
+      raw.startsWith('Callable[')
+    ) {
       const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
       const parts = splitTopLevel(inner, ',');
-      const itemTypes = parts.map(p => parse(p.trim(), depth + 1));
-      return { kind: 'collection', name: 'dict', itemTypes } as PythonType;
-    }
+      if (parts.length >= 2) {
+        const paramsPart = (parts[0] ?? '').trim();
+        const returnPart = parts.slice(1).join(',').trim();
+        const returnType = parse(returnPart, depth + 1);
 
-    // Annotated[T, ...] -> annotated node with base and metadata
-    if (raw.startsWith('typing.Annotated[') || raw.startsWith('Annotated[')) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const parts = splitTopLevel(inner, ',');
-      if (parts.length > 0) {
-        const base = parse((parts[0] ?? '').trim(), depth + 1);
-        const metaParts = parts.slice(1).map(p => String(p).trim());
-        return { kind: 'annotated', base, metadata: metaParts } as PythonType;
+        if (paramsPart === '...' || paramsPart === 'Ellipsis') {
+          return {
+            kind: 'callable',
+            parameters: [{ kind: 'custom', name: '...' }],
+            returnType,
+          };
+        }
+
+        const directParamSpec = parse(paramsPart, depth + 1);
+        if (directParamSpec.kind === 'paramspec') {
+          return {
+            kind: 'callable',
+            parameters: [],
+            parameterSpec: directParamSpec,
+            returnType,
+          };
+        }
+
+        const paramInner =
+          paramsPart.startsWith('[') && paramsPart.endsWith(']') ? paramsPart.slice(1, -1) : '';
+        const trimmed = paramInner.trim();
+        if (trimmed === '...' || trimmed === 'Ellipsis') {
+          return {
+            kind: 'callable',
+            parameters: [{ kind: 'custom', name: '...' }],
+            returnType,
+          };
+        }
+
+        const parameters = trimmed
+          ? splitTopLevel(trimmed, ',').map(p => parse(p.trim(), depth + 1))
+          : [];
+        return { kind: 'callable', parameters, returnType };
       }
     }
 
-    // Collections: list[T], dict[K,V], tuple[...], set[T], frozenset[T]
-    const coll = normalizeCollectionName(raw);
-    if (coll) {
-      const { name, inner } = coll;
-      const itemParts = splitTopLevel(inner ?? '', ',');
-      const itemTypes = (inner ? itemParts : []).map(p => parse(p.trim(), depth + 1));
-      return { kind: 'collection', name, itemTypes };
+    if (
+      raw.startsWith('typing.Mapping[') ||
+      raw.startsWith('typing_extensions.Mapping[') ||
+      raw.startsWith('Mapping[')
+    ) {
+      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
+      const parts = splitTopLevel(inner, ',');
+      return {
+        kind: 'collection',
+        name: 'dict',
+        itemTypes: parts.map(p => parse(p.trim(), depth + 1)),
+      };
     }
 
-    // Bare names like int, str, float, bool, bytes, None
+    if (
+      raw.startsWith('typing.Annotated[') ||
+      raw.startsWith('typing_extensions.Annotated[') ||
+      raw.startsWith('Annotated[')
+    ) {
+      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
+      const parts = splitTopLevel(inner, ',');
+      if (parts.length > 0) {
+        return {
+          kind: 'annotated',
+          base: parse(parts[0] ?? '', depth + 1),
+          metadata: parts.slice(1).map(p => String(p).trim()),
+        };
+      }
+    }
+
+    if (
+      raw.startsWith('typing.Unpack[') ||
+      raw.startsWith('typing_extensions.Unpack[') ||
+      raw.startsWith('Unpack[')
+    ) {
+      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
+      return { kind: 'unpack', type: parse(inner, depth + 1) };
+    }
+
+    const coll = normalizeCollectionName(raw);
+    if (coll) {
+      const itemParts = splitTopLevel(coll.inner ?? '', ',');
+      const itemTypes = (coll.inner ? itemParts : []).map(p => parse(p.trim(), depth + 1));
+      return { kind: 'collection', name: coll.name, itemTypes };
+    }
+
+    const generic = splitGenericInvocation(raw);
+    if (generic) {
+      const typeArgs = splitTopLevel(generic.inner, ',').map(part => parse(part.trim(), depth + 1));
+      const qualified = splitQualifiedName(generic.name);
+      return {
+        kind: 'generic',
+        name: qualified.name,
+        module: qualified.module,
+        typeArgs,
+      };
+    }
+
     return mapSimpleName(raw);
   };
 

@@ -1,7 +1,7 @@
 {
   "name": "tywrap",
-  "version": "0.2.1",
-  "description": "TypeScript wrapper for Python libraries with full type safety (EXPERIMENTAL - v0.2.1)",
+  "version": "0.3.1",
+  "description": "Generate type-safe TypeScript wrappers for any Python library — Node.js, Deno, Bun, and browsers via Pyodide.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -75,7 +75,11 @@
     "act": "node scripts/act.mjs",
     "act:clean": "node scripts/act.mjs --clean",
     "act:serial": "node scripts/act-matrix.mjs",
-    "docker:npm": "node scripts/node-docker.mjs npm"
+    "docker:npm": "node scripts/node-docker.mjs npm",
+    "docs:sync-llms": "node scripts/generate-llms-full.mjs",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "npm run docs:sync-llms && vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "keywords": [
     "typescript",
@@ -88,7 +92,17 @@
     "code-generation",
     "node",
     "deno",
-    "bun"
+    "bun",
+    "codegen",
+    "ffi",
+    "bindings",
+    "wrapper",
+    "numpy",
+    "pandas",
+    "scipy",
+    "python-wrapper",
+    "rpc",
+    "subprocess"
   ],
   "author": "tywrap contributors",
   "license": "MIT",
@@ -99,7 +113,7 @@
   "bugs": {
     "url": "https://github.com/bbopen/tywrap/issues"
   },
-  "homepage": "https://github.com/bbopen/tywrap#readme",
+  "homepage": "https://bbopen.github.io/tywrap",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
@@ -107,30 +121,34 @@
   "dependencies": {
     "@babel/parser": "^7.25.6",
     "@babel/types": "^7.25.6",
-    "tree-sitter": "^0.21.0",
-    "tree-sitter-python": "^0.21.0",
+    "tree-sitter": "^0.25.0",
+    "tree-sitter-python": "^0.25.0",
     "typescript": "^5.6.2",
     "web-tree-sitter": "^0.21.0",
-    "yargs": "^17.7.2"
+    "yargs": "^18.0.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.19",
-    "@types/node": "^22.5.4",
-    "@types/yargs": "^17.0.33",
-    "@typescript-eslint/eslint-plugin": "^8.5.0",
+    "@types/bun": "^1.3.11",
+    "@types/node": "^25.5.2",
+    "@types/three": "^0.183.1",
+    "@types/yargs": "^17.0.35",
+    "@typescript-eslint/eslint-plugin": "^8.58.0",
     "@typescript-eslint/parser": "^8.5.0",
-    "@vitest/coverage-v8": "^4.0.16",
-    "@vitest/eslint-plugin": "^1.6.4",
+    "@vitest/coverage-v8": "^4.1.2",
+    "@vitest/eslint-plugin": "^1.6.14",
     "apache-arrow": "^21.1.0",
     "eslint": "^9.10.0",
-    "eslint-import-resolver-typescript": "^3.6.1",
+    "eslint-import-resolver-typescript": "^4.4.4",
     "eslint-plugin-import": "^2.29.1",
     "eslint-plugin-security": "^3.0.1",
-    "fast-check": "^4.3.0",
-    "prettier": "^3.3.3",
+    "fast-check": "^4.6.0",
+    "prettier": "^3.8.1",
     "tsd": "^0.33.0",
     "vite": "^7.3.0",
-    "vitest": "^4.0.16"
+    "vitepress": "^1.6.4",
+    "vitest": "^4.0.16",
+    "three": "^0.183.2",
+    "postprocessing": "^6.39.0"
   },
   "peerDependencies": {
     "pyodide": ">=0.28.0"
@@ -143,6 +161,10 @@
   "trustedDependencies": [
     "pyodide"
   ],
+  "overrides": {
+    "@types/react": "^18.3.0",
+    "@types/prop-types": "^15.7.0"
+  },
   "bin": {
     "tywrap": "dist/cli.js"
   }

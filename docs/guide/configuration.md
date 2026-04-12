@@ -162,11 +162,16 @@ decorator helpers: `dataclass`, `property`, `staticmethod`, `classmethod`,
 | ---------------- | -------------------------- | --------------- | --------------------------------- |
 | `dir`            | `string`                   | `'./generated'` | Output directory                  |
 | `format`         | `'esm' \| 'cjs' \| 'both'` | `'esm'`         | Module format                     |
-| `declaration`    | `boolean`                  | `false`         | Generate .d.ts files              |
+| `declaration`    | `boolean`                  | `false`         | Generate matching `.d.ts` files, including preserved simple generics when representable |
 | `sourceMap`      | `boolean`                  | `false`         | Generate source maps              |
 | `annotatedJSDoc` | `boolean`                  | `false`         | Include type annotations in JSDoc |
 
 ## Runtime Configuration
+
+These fields are part of the typed config surface. Today the CLI uses
+`runtime.node.pythonPath`, `runtime.node.virtualEnv`, and `runtime.node.timeout`
+during IR extraction. Your application still creates `NodeBridge`,
+`PyodideBridge`, or `HttpBridge` itself at runtime.
 
 ### Node.js Runtime
 
@@ -270,9 +275,10 @@ Use presets to opt into richer mappings for common ecosystems.
 | `presets` | `('numpy' \| 'pandas' \| 'pydantic' \| 'stdlib' \| 'scipy' \| 'torch' \| 'sklearn')[]` | `[]`    | Enable opt-in mappings for specific libraries |
 
 `stdlib` maps common Python stdlib types (datetime, UUID, Decimal, Path) to
-JSON-friendly primitives. `pandas` maps `DataFrame` and `Series` to
-record-shaped unions. `scipy` maps sparse matrix classes (csr/csc/coo) to
-structured sparse objects. `torch` maps `Tensor` to a structured tensor object.
+JSON-friendly primitives.  
+`pandas` maps `DataFrame` and `Series` to record-shaped unions. `scipy` maps
+sparse matrix classes (csr/csc/coo) to structured sparse objects.  
+`torch` maps `Tensor` to a structured tensor object.  
 `sklearn` maps `BaseEstimator` to estimator metadata objects.
 
 ### Performance Options
@@ -327,32 +333,40 @@ Hooks are optional; implement only what your plugin needs.
 
 ## Environment Variables
 
-Override configuration with environment variables:
+Most tywrap behavior is configured in `tywrap.config.*` or when you construct a
+runtime bridge in application code. The supported `TYWRAP_*` environment
+variables are mostly codec guardrails, logging, and repo test knobs:
 
 ```bash
-# Runtime configuration
-export TYWRAP_PYTHON_PATH="/usr/local/bin/python3.11"
-export TYWRAP_VIRTUAL_ENV="./venv"
 export TYWRAP_CODEC_FALLBACK="json"
-export TYWRAP_CODEC_MAX_BYTES="10485760"  # Max response payload size (bytes)
+export TYWRAP_CODEC_MAX_BYTES="10485760"   # Max response payload size (bytes)
 export TYWRAP_REQUEST_MAX_BYTES="1048576"  # Max request payload size (bytes)
 export TYWRAP_TORCH_ALLOW_COPY="1"
-
-# Note: NodeBridge uses TYWRAP_CODEC_MAX_BYTES as the default maxLineLength when set.
-
-# Performance tuning
-export TYWRAP_CACHE_DIR="./.tywrap/cache"
-export TYWRAP_MEMORY_LIMIT="1024"
-export TYWRAP_PERF_BUDGETS="1"
-export TYWRAP_PERF_TIME_BUDGET_MS="2000"
-export TYWRAP_PERF_MEMORY_BUDGET_MB="64"
-export TYWRAP_CODEC_PERF_ITERATIONS="200"
-export TYWRAP_CODEC_PERF_TIME_BUDGET_MS="500"
-export TYWRAP_CODEC_PERF_MEMORY_BUDGET_MB="32"
-
-# Development
-export TYWRAP_VERBOSE="true"
+export TYWRAP_LOG_LEVEL="INFO"
+export TYWRAP_LOG_JSON="1"
 ```
+
+Repo tests and benchmarks also use additional `TYWRAP_*` variables such as
+`TYWRAP_PERF_BUDGETS`.
+
+Python executable and virtual environment selection are not configured through
+environment variables today. Set them in `tywrap.config.*` or on the bridge:
+
+```ts
+import { defineConfig } from 'tywrap';
+
+export default defineConfig({
+  runtime: {
+    node: {
+      pythonPath: '/usr/local/bin/python3',
+      virtualEnv: './venv',
+      timeout: 30000,
+    },
+  },
+});
+```
+
+See [Environment Variables](/reference/env-vars) for the full implemented list.
 
 ## Advanced Configuration Patterns
 
@@ -425,9 +439,9 @@ export default defineConfig({
       torch: { runtime: 'node', classes: ['Tensor'] },
     }),
 
-    // Development-only modules
+    // Local-only modules
     ...(process.env.NODE_ENV === 'development' && {
-      debug_utils: { runtime: 'node', typeHints: 'loose' },
+      debug_utils: { runtime: 'node' },
     }),
   },
 });
@@ -458,9 +472,7 @@ Configurations are merged in this order:
 
 1. Default values
 2. Configuration file
-3. Environment variables
-4. CLI flags
-5. Programmatic overrides
+3. CLI flags or programmatic overrides
 
 ```bash
 # CLI overrides take highest precedence
@@ -472,8 +484,12 @@ tywrap generate --output-dir ./custom --format cjs
 ### 1. Environment-Specific Configs
 
 ```typescript
-// Select the config file in your package.json scripts or CI commands
-// instead of nesting environment names inside the tywrap config object.
+// Use different configs per environment
+const config = {
+  local: './tywrap.dev.config.ts',
+  production: './tywrap.prod.config.ts',
+  test: './tywrap.test.config.ts',
+};
 ```
 
 ### 2. Module Organization
@@ -555,11 +571,10 @@ python3 -c "import your_module; print(your_module.__file__)"
 }
 ```
 
-For more troubleshooting, see
-[Troubleshooting Guide](./troubleshooting/README.md).
+For more troubleshooting, see [Troubleshooting Guide](/troubleshooting/).
 
 ## Next Steps
 
-- [Runtime Guides](./runtimes/nodejs.md) - Platform-specific configuration
-- [Examples](./examples/README.md) - Configuration examples
-- [API Reference](./api/README.md) - Complete API documentation
+- [Runtime Guides](/guide/runtimes/node) - Platform-specific configuration
+- [Examples](/examples/) - Configuration examples
+- [API Reference](/reference/api/) - Complete API documentation

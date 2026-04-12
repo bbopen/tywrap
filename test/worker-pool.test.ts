@@ -12,7 +12,11 @@ import {
   type PooledWorker,
 } from '../src/runtime/worker-pool.js';
 import type { Transport } from '../src/runtime/transport.js';
-import { BridgeTimeoutError, BridgeExecutionError } from '../src/runtime/errors.js';
+import {
+  BridgeTimeoutError,
+  BridgeExecutionError,
+  BridgeProtocolError,
+} from '../src/runtime/errors.js';
 
 // =============================================================================
 // TEST FIXTURES
@@ -1019,6 +1023,34 @@ describe('WorkerPool', () => {
         expect(worker.transport).toBe(transports[0]);
         expect(worker.transport.isReady).toBe(true);
       });
+    });
+
+    it('replaces crashed workers in the background', async () => {
+      const { factory, transports } = createMockTransportFactory();
+      pool = new WorkerPool({
+        createTransport: factory,
+        maxWorkers: 1,
+        minWorkers: 1,
+      });
+
+      await pool.init();
+      expect(transports).toHaveLength(1);
+
+      await expect(
+        pool.withWorker(async () => {
+          throw new BridgeProtocolError('process exited unexpectedly');
+        })
+      ).rejects.toThrow(BridgeProtocolError);
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(transports).toHaveLength(2);
+      expect(transports[0]?.disposeCalled).toBe(true);
+      expect(pool.workerCount).toBe(1);
+
+      const worker = await pool.acquire();
+      expect(worker.transport).toBe(transports[1]);
+      pool.release(worker);
     });
   });
 

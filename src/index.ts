@@ -7,7 +7,7 @@
 
 import { tywrap } from './tywrap.js';
 
-export type { TywrapConfig } from './config/index.js';
+export type { TywrapConfig, ResolvedTywrapConfig } from './config/index.js';
 export { defineConfig, resolveConfig } from './config/index.js';
 // BoundedContext - unified abstraction for cross-boundary concerns
 export {
@@ -87,13 +87,27 @@ export type {
   PythonModule,
   PythonFunction,
   PythonClass,
+  PythonTypeAlias,
   PythonType,
+  PythonGenericParameter,
+  PythonGenericParameterKind,
   PrimitiveType,
   CollectionType,
   UnionType,
   OptionalType,
   CustomType,
   GenericType,
+  CallableType,
+  LiteralType,
+  AnnotatedType,
+  TypeVarType,
+  ParamSpecType,
+  ParamSpecArgsType,
+  ParamSpecKwargsType,
+  TypeVarTupleType,
+  UnpackType,
+  FinalType,
+  ClassVarType,
   Parameter,
   Property,
   PythonImport,
@@ -133,7 +147,7 @@ export {
 } from './utils/codec.js';
 
 // Version info
-export const VERSION = '0.2.1';
+export const VERSION = '0.3.0';
 
 /**
  * Quick setup function for getting started

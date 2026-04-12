@@ -631,9 +631,26 @@ parentPort.on('message', (message) => {
       loadBalancing: 'round-robin',
     });
 
+    await processor.init();
+
+    const processorInternals = processor as unknown as {
+      workers: Map<string, unknown>;
+      selectOptimalWorker: () => { workerId: string; worker: unknown } | null;
+    };
+    const workerSelections = Array.from(processorInternals.workers.entries()).map(
+      ([workerId, worker]) => ({ workerId, worker })
+    );
+    expect(workerSelections).toHaveLength(2);
+
+    const fallbackSelection = processorInternals.selectOptimalWorker.bind(processor);
+    vi.spyOn(processorInternals, 'selectOptimalWorker')
+      .mockImplementationOnce(() => workerSelections[0] ?? null)
+      .mockImplementationOnce(() => workerSelections[1] ?? null)
+      .mockImplementation(fallbackSelection);
+
     const results = await processor.executeTasks([
-      { id: 'crash', type: 'custom', data: { action: 'crash' } },
-      { id: 'ok', type: 'custom', data: { action: 'ok' } },
+      { id: 'crash', type: 'custom', data: { action: 'crash' }, priority: 2 },
+      { id: 'ok', type: 'custom', data: { action: 'ok' }, priority: 1 },
     ]);
 
     const byId = Object.fromEntries(results.map(r => [r.taskId, r]));

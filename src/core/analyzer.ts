@@ -26,6 +26,7 @@ import { getComponentLogger } from '../utils/logger.js';
 const log = getComponentLogger('Analyzer');
 
 const UNKNOWN_TYPE: PythonType = { kind: 'custom', name: 'Any', module: 'typing' };
+const PYTHON_LANGUAGE = Python;
 
 export class PyAnalyzer {
   private parser: Parser;
@@ -44,7 +45,7 @@ export class PyAnalyzer {
     }
 
     try {
-      await this.parser.setLanguage(Python);
+      await this.parser.setLanguage(PYTHON_LANGUAGE);
       this.initialized = true;
     } catch (error) {
       throw new Error(`Failed to initialize Python parser: ${error}`);

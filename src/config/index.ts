@@ -20,11 +20,6 @@ import type {
 } from '../types/index.js';
 import { getDefaultPythonPath } from '../utils/python.js';
 
-/**
- * Public configuration type. Currently identical to {@link TywrapOptions}.
- */
-export type TywrapConfig = TywrapOptions;
-
 type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends Array<infer U>
     ? Array<U>
@@ -34,9 +29,19 @@ type DeepPartial<T> = {
 };
 
 /**
+ * User-authored configuration shape accepted by defineConfig() and config files.
+ */
+export type TywrapConfig = DeepPartial<TywrapOptions>;
+
+/**
+ * Fully resolved configuration shape returned by createConfig() and resolveConfig().
+ */
+export type ResolvedTywrapConfig = TywrapOptions;
+
+/**
  * Default configuration values used when options are not supplied.
  */
-const DEFAULT_CONFIG: TywrapConfig = {
+const DEFAULT_CONFIG: ResolvedTywrapConfig = {
   pythonModules: {},
   pythonImportPath: [],
   output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false },
@@ -112,9 +117,8 @@ function detectLegacyFields(config: TywrapConfig): void {
 /**
  * Validate configuration values and throw user-friendly errors when invalid.
  */
-function validateConfig(config: TywrapConfig): void {
+function validateConfig(config: ResolvedTywrapConfig): void {
   detectLegacyFields(config);
-
   const allowedTopLevel = new Set([
     'pythonModules',
     'pythonImportPath',
@@ -209,7 +213,7 @@ function validateConfig(config: TywrapConfig): void {
  *
  * @param overrides CLI or programmatic overrides
  */
-export function createConfig(overrides: DeepPartial<TywrapOptions> = {}): TywrapConfig {
+export function createConfig(overrides: DeepPartial<TywrapOptions> = {}): ResolvedTywrapConfig {
   const merged = merge(DEFAULT_CONFIG, overrides);
   validateConfig(merged);
   return merged;
@@ -226,7 +230,9 @@ export interface ResolveConfigOptions {
  * Resolve configuration by loading a config file (JSON/JS/TS) and merging
  * defaults with any overrides.
  */
-export async function resolveConfig(options: ResolveConfigOptions = {}): Promise<TywrapConfig> {
+export async function resolveConfig(
+  options: ResolveConfigOptions = {}
+): Promise<ResolvedTywrapConfig> {
   const cwd = options.cwd ?? process.cwd();
   const overrides = options.overrides ?? {};
   const configFile = options.configFile ? resolve(cwd, options.configFile) : undefined;
@@ -388,6 +394,6 @@ async function safeReadFileAsync(path: string): Promise<string> {
 /**
  * Type helper for authoring tywrap configs with full type inference.
  */
-export function defineConfig(config: TywrapConfig): TywrapConfig {
+export function defineConfig<T extends TywrapConfig>(config: T): T {
   return config;
 }
