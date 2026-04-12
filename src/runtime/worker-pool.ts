@@ -242,6 +242,7 @@ export class WorkerPool extends BoundedContext {
           throw new BridgeExecutionError('Pool has been disposed');
         }
         newWorker.inFlightCount++;
+        this.publishAvailableWorker(newWorker);
         return newWorker;
       } finally {
         this.pendingCreations--;
@@ -268,16 +269,7 @@ export class WorkerPool extends BoundedContext {
 
     // Decrement in-flight count (minimum 0)
     worker.inFlightCount = Math.max(0, worker.inFlightCount - 1);
-
-    // If there are waiters and this worker has capacity, fulfill the first waiter
-    if (this.waitQueue.length > 0 && worker.inFlightCount < this.options.maxConcurrentPerWorker) {
-      const waiter = this.waitQueue.shift();
-      if (waiter) {
-        clearTimeout(waiter.timer);
-        worker.inFlightCount++;
-        waiter.resolve(worker);
-      }
-    }
+    this.publishAvailableWorker(worker);
   }
 
   /**
@@ -459,7 +451,22 @@ export class WorkerPool extends BoundedContext {
       return;
     }
 
-    this.release(worker);
+    this.publishAvailableWorker(worker);
+  }
+
+  private publishAvailableWorker(worker: PooledWorker): void {
+    while (
+      this.waitQueue.length > 0 &&
+      worker.inFlightCount < this.options.maxConcurrentPerWorker
+    ) {
+      const waiter = this.waitQueue.shift();
+      if (!waiter) {
+        return;
+      }
+      clearTimeout(waiter.timer);
+      worker.inFlightCount++;
+      waiter.resolve(worker);
+    }
   }
 
   /**

@@ -345,6 +345,43 @@ describe('WorkerPool', () => {
       expect(worker1).not.toBe(worker2);
     });
 
+    it('publishes a newly created worker to queued acquires up to its concurrency limit', async () => {
+      const slowFactory = () => {
+        const transport = new MockTransport();
+        transport.initDelay = 25;
+        return transport;
+      };
+
+      pool = new WorkerPool({
+        createTransport: slowFactory,
+        maxWorkers: 1,
+        maxConcurrentPerWorker: 3,
+        queueTimeoutMs: 1000,
+      });
+
+      await pool.init();
+
+      const worker1Promise = pool.acquire();
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const worker2Promise = pool.acquire();
+      const worker3Promise = pool.acquire();
+
+      const [worker1, worker2, worker3] = await Promise.all([
+        worker1Promise,
+        worker2Promise,
+        worker3Promise,
+      ]);
+
+      expect(worker1).toBe(worker2);
+      expect(worker2).toBe(worker3);
+      expect(pool.workerCount).toBe(1);
+      expect(pool.totalInFlight).toBe(3);
+
+      pool.release(worker1);
+      pool.release(worker2);
+      pool.release(worker3);
+    });
+
     it('respects maxWorkers limit', async () => {
       const { factory, transports } = createMockTransportFactory();
       pool = new WorkerPool({

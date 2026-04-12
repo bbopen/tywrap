@@ -769,6 +769,57 @@ def get_bad():
     );
 
     it(
+      'should allow timeoutMs 0 to disable the worker readiness timeout',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable) return;
+
+        let tempDir: string | undefined;
+        let warmupBridge: NodeBridge | undefined;
+        try {
+          tempDir = await mkdtemp(join(tmpdir(), 'tywrap-warmup-timeout0-'));
+          const slowBridgePath = join(tempDir, 'slow_meta_bridge.py');
+
+          await writeFile(
+            slowBridgePath,
+            [
+              'import json',
+              'import sys',
+              'import time',
+              '',
+              'for line in sys.stdin:',
+              '    request = json.loads(line)',
+              "    if request.get('method') == 'meta':",
+              '        time.sleep(5.2)',
+              "        response = {'id': request.get('id'), 'protocol': request.get('protocol'), 'result': {'capabilities': {}}}",
+              '    else:',
+              "        response = {'id': request.get('id'), 'protocol': request.get('protocol'), 'result': 'ok'}",
+              "    sys.stdout.write(json.dumps(response) + '\\n')",
+              '    sys.stdout.flush()',
+            ].join('\n'),
+            'utf-8'
+          );
+
+          warmupBridge = new NodeBridge({
+            scriptPath: slowBridgePath,
+            timeoutMs: 0,
+          });
+
+          await expect(warmupBridge.init()).resolves.toBeUndefined();
+          expect(warmupBridge.isReady).toBe(true);
+        } finally {
+          if (warmupBridge) {
+            await warmupBridge.dispose();
+          }
+          if (tempDir) {
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          }
+        }
+      },
+      testTimeout
+    );
+
+    it(
       'should surface warmup failures and keep bridge not ready',
       async () => {
         const pythonAvailable = await isPythonAvailable();

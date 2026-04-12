@@ -668,9 +668,10 @@ function createWorkerReadyCallback(
   extraWarmup?: (worker: PooledWorker) => Promise<void>
 ): (worker: PooledWorker) => Promise<void> {
   return async (worker: PooledWorker) => {
+    const readyTimeoutMs = timeoutMs > 0 ? Math.max(timeoutMs, WORKER_READY_TIMEOUT_MS) : 0;
     await sendWarmupRequest(
       worker,
-      Math.max(timeoutMs, WORKER_READY_TIMEOUT_MS),
+      readyTimeoutMs,
       generateWarmupId(),
       'Worker warmup check',
       {
