@@ -30,6 +30,10 @@ describeNodeOnly('Package distribution', () => {
     expect(exportsMap).toHaveProperty('./pyodide');
     expect(exportsMap).toHaveProperty('./http');
     expect(exportsMap).toHaveProperty('./runtime');
+    expect(exportsMap['./dev']).toEqual({
+      import: './dist/dev.js',
+      types: './dist/dev.d.ts',
+    });
   });
 
   it('includes Python bridge in npm pack output', async () => {

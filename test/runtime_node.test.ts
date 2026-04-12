@@ -424,21 +424,25 @@ def get_bad():
         const pythonAvailable = await isPythonAvailable();
         if (!pythonAvailable || !isBridgeScriptAvailable()) return;
 
-        // Give the bridge enough time to recover (worker quarantine/replacement) after a timeout.
-        const timeoutMs = 3000;
-        const lateResponseWaitMs = 1500;
-        const sleepSeconds = (timeoutMs + lateResponseWaitMs) / 1000;
-        bridge = new NodeBridge({ scriptPath, timeoutMs });
+        bridge = new NodeBridge({ scriptPath, timeoutMs: 1000 });
+        const sleepSeconds = 1.5;
 
         await expect(bridge.call('time', 'sleep', [sleepSeconds])).rejects.toThrow(/timed out/i);
 
-        // Wait for the timed-out worker to emit its stale response before verifying recovery.
-        await new Promise(resolve => setTimeout(resolve, lateResponseWaitMs + 250));
+        // Validate recovery with a lightweight stdlib call rather than a cold module import,
+        // so this test measures timeout isolation instead of first-call import latency.
+        const deadline = Date.now() + 3000;
+        let result: string | undefined;
+        while (Date.now() < deadline) {
+          try {
+            result = await bridge.call<string>('builtins', 'str', ['recovered']);
+            break;
+          } catch {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
 
-        // Note: With the unified bridge, timed-out workers are quarantined and replaced
-        // per ADR-0001 (#101). The important thing is that the bridge recovers and works.
-        const result = await bridge.call<number>('math', 'sqrt', [16]);
-        expect(result).toBe(4);
+        expect(result).toBe('recovered');
       },
       testTimeout
     );
@@ -765,6 +769,57 @@ def get_bad():
     );
 
     it(
+      'should allow timeoutMs 0 to disable the worker readiness timeout',
+      async () => {
+        const pythonAvailable = await isPythonAvailable();
+        if (!pythonAvailable) return;
+
+        let tempDir: string | undefined;
+        let warmupBridge: NodeBridge | undefined;
+        try {
+          tempDir = await mkdtemp(join(tmpdir(), 'tywrap-warmup-timeout0-'));
+          const slowBridgePath = join(tempDir, 'slow_meta_bridge.py');
+
+          await writeFile(
+            slowBridgePath,
+            [
+              'import json',
+              'import sys',
+              'import time',
+              '',
+              'for line in sys.stdin:',
+              '    request = json.loads(line)',
+              "    if request.get('method') == 'meta':",
+              '        time.sleep(5.2)',
+              "        response = {'id': request.get('id'), 'protocol': request.get('protocol'), 'result': {'capabilities': {}}}",
+              '    else:',
+              "        response = {'id': request.get('id'), 'protocol': request.get('protocol'), 'result': 'ok'}",
+              "    sys.stdout.write(json.dumps(response) + '\\n')",
+              '    sys.stdout.flush()',
+            ].join('\n'),
+            'utf-8'
+          );
+
+          warmupBridge = new NodeBridge({
+            scriptPath: slowBridgePath,
+            timeoutMs: 0,
+          });
+
+          await expect(warmupBridge.init()).resolves.toBeUndefined();
+          expect(warmupBridge.isReady).toBe(true);
+        } finally {
+          if (warmupBridge) {
+            await warmupBridge.dispose();
+          }
+          if (tempDir) {
+            await rm(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          }
+        }
+      },
+      testTimeout
+    );
+
+    it(
       'should surface warmup failures and keep bridge not ready',
       async () => {
         const pythonAvailable = await isPythonAvailable();
@@ -856,7 +911,11 @@ def get_bad():
               '',
               'for line in sys.stdin:',
               '    request = json.loads(line)',
-              "    response = {'id': request.get('id'), 'protocol': request.get('protocol')}",
+              "    method = request.get('method')",
+              "    if method == 'meta':",
+              "        response = {'id': request.get('id'), 'protocol': request.get('protocol'), 'result': {'capabilities': {}}}",
+              '    else:',
+              "        response = {'id': request.get('id'), 'protocol': request.get('protocol')}",
               "    sys.stdout.write(json.dumps(response) + '\\n')",
               '    sys.stdout.flush()',
             ].join('\n'),

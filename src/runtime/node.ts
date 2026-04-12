@@ -340,16 +340,14 @@ export class NodeBridge extends BridgeProtocol {
       codec: options.codec,
       warmupCommands,
     };
-
     // Build environment for ProcessIO
     const processEnv = buildProcessEnv(resolvedOptions);
 
-    // Create warmup callback for per-worker initialization
     const userWarmup =
       resolvedOptions.warmupCommands.length > 0
         ? createWarmupCallback(resolvedOptions.warmupCommands, resolvedOptions.timeoutMs)
         : undefined;
-    const replacementWorkerReady = createWorkerReadyCallback(resolvedOptions.timeoutMs, userWarmup);
+    const onWorkerReady = createWorkerReadyCallback(resolvedOptions.timeoutMs, userWarmup);
 
     // Create pooled transport with ProcessIO workers
     const transport = new PooledTransport({
@@ -364,8 +362,8 @@ export class NodeBridge extends BridgeProtocol {
       minWorkers: resolvedOptions.minProcesses,
       queueTimeoutMs: resolvedOptions.queueTimeoutMs,
       maxConcurrentPerWorker: resolvedOptions.maxConcurrentPerProcess,
-      onWorkerReady: userWarmup,
-      onReplacementWorkerReady: replacementWorkerReady,
+      onWorkerReady,
+      onReplacementWorkerReady: onWorkerReady,
     });
 
     // Initialize BridgeProtocol with pooled transport
@@ -565,6 +563,72 @@ function generateWarmupId(): number {
   return ++warmupRequestId;
 }
 
+async function sendWarmupRequest(
+  worker: PooledWorker,
+  timeoutMs: number,
+  requestId: number,
+  label: string,
+  messagePayload: Record<string, unknown>
+): Promise<void> {
+  let message: string;
+  try {
+    message = JSON.stringify({
+      id: requestId,
+      protocol: PROTOCOL_ID,
+      ...messagePayload,
+    });
+  } catch (error) {
+    throw new BridgeExecutionError(
+      `${label} failed to encode request: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error instanceof Error ? error : undefined }
+    );
+  }
+
+  let response: string;
+  try {
+    response = await worker.transport.send(message, timeoutMs);
+  } catch (error) {
+    throw new BridgeExecutionError(
+      `${label} failed to send: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error instanceof Error ? error : undefined }
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(response);
+  } catch (error) {
+    throw new BridgeExecutionError(`${label} returned invalid JSON response`, {
+      cause: error instanceof Error ? error : undefined,
+    });
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new BridgeExecutionError(
+      `${label} returned malformed response envelope for request ${requestId}`
+    );
+  }
+
+  const envelope = parsed as { result?: unknown; error?: unknown };
+  if ('error' in envelope && envelope.error !== undefined && envelope.error !== null) {
+    const errorPayload = envelope.error;
+    if (errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)) {
+      const err = errorPayload as { type?: unknown; message?: unknown };
+      const errType = typeof err.type === 'string' ? err.type : 'Error';
+      const errMessage = typeof err.message === 'string' ? err.message : 'Unknown warmup error';
+      throw new BridgeExecutionError(`${label} failed: ${errType}: ${errMessage}`);
+    }
+
+    throw new BridgeExecutionError(`${label} failed with malformed error payload`);
+  }
+
+  if (!('result' in envelope)) {
+    throw new BridgeExecutionError(
+      `${label} returned malformed response envelope for request ${requestId}`
+    );
+  }
+}
+
 /**
  * Create a callback that runs warmup commands on each worker.
  *
@@ -604,29 +668,17 @@ function createWorkerReadyCallback(
   extraWarmup?: (worker: PooledWorker) => Promise<void>
 ): (worker: PooledWorker) => Promise<void> {
   return async (worker: PooledWorker) => {
-    const result = await executeWorkerCall(
+    const readyTimeoutMs = timeoutMs > 0 ? Math.max(timeoutMs, WORKER_READY_TIMEOUT_MS) : 0;
+    await sendWarmupRequest(
       worker,
+      readyTimeoutMs,
+      generateWarmupId(),
+      'Worker warmup check',
       {
-        module: 'builtins',
-        functionName: 'len',
-        args: [[]],
-      },
-      Math.max(timeoutMs, WORKER_READY_TIMEOUT_MS),
-      {
-        label: 'Worker readiness probe (builtins.len)',
-        invalidJsonMessage: 'returned invalid JSON response',
-        malformedEnvelopeMessage: requestId =>
-          `returned malformed response envelope for request ${requestId}`,
-        pythonErrorMessage: (errorType, errorMessage) => `failed: ${errorType}: ${errorMessage}`,
-        malformedErrorPayloadMessage: 'failed with malformed error payload',
+        method: 'meta',
+        params: {},
       }
     );
-
-    if (result !== 0) {
-      throw new BridgeExecutionError(
-        `Worker readiness probe (builtins.len) returned unexpected result: ${JSON.stringify(result)}`
-      );
-    }
 
     await extraWarmup?.(worker);
   };

@@ -287,7 +287,9 @@ async function main(): Promise<void> {
           }
 
           const res = await generate(options, { check: argv.check });
+          const failures = res.failures ?? [];
           const warnings = res.warnings ?? [];
+          const hasFailures = failures.length > 0;
           const moduleCount = Object.keys(options.pythonModules ?? {}).length;
 
           const emitWarnings = (): void => {
@@ -301,24 +303,43 @@ async function main(): Promise<void> {
             process.stderr.write('\n');
           };
 
+          const emitFailures = (): void => {
+            if (failures.length === 0) {
+              return;
+            }
+            process.stderr.write(`Failures (count ${failures.length}):\n`);
+            for (const failure of failures) {
+              process.stderr.write(`- ${failure.message}\n`);
+            }
+            process.stderr.write('\n');
+          };
+
+          emitWarnings();
+
           if (argv.check) {
+            if (hasFailures) {
+              emitFailures();
+              process.exit(1);
+            }
+
             const outOfDate = res.outOfDate ?? [];
             if (outOfDate.length === 0) {
-              emitWarnings();
               process.stdout.write('Generated wrappers are up to date.\n');
             } else {
-              emitWarnings();
               process.stderr.write('Generated wrappers are out of date:\n');
               for (const file of outOfDate) {
                 process.stderr.write(`- ${file}\n`);
               }
               process.stderr.write('\nRun `tywrap generate` to update.\n');
-              if (!(argv.failOnWarn && res.warnings.length > 0)) {
+              if (!(argv.failOnWarn && warnings.length > 0)) {
                 process.exit(3);
               }
             }
           } else {
-            emitWarnings();
+            if (hasFailures) {
+              emitFailures();
+              process.exit(1);
+            }
 
             const written = res.written ?? [];
             if (written.length === 0) {
@@ -355,9 +376,9 @@ async function main(): Promise<void> {
               process.stdout.write(`- ${file}\n`);
             }
           }
-          if (argv.failOnWarn && res.warnings.length > 0) {
+          if (argv.failOnWarn && warnings.length > 0) {
             log.error(
-              `Warnings encountered (count ${res.warnings.length}). Failing due to --fail-on-warn.`
+              `Warnings encountered (count ${warnings.length}). Failing due to --fail-on-warn.`
             );
             process.exit(2);
           }

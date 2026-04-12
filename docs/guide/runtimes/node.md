@@ -27,6 +27,33 @@ The Node.js runtime:
 Both bridges share the same JSONL core for protocol validation, timeouts, and
 stderr buffering.
 
+## Development Reload
+
+Node wrapper regeneration plus bridge replacement lives in `tywrap/dev`, not in
+`tywrap.config.*`.
+
+```typescript
+import { startNodeWatchSession } from 'tywrap/dev';
+import { NodeBridge } from 'tywrap/node';
+
+const session = await startNodeWatchSession({
+  configFile: './tywrap.config.ts',
+  createBridge: async config =>
+    new NodeBridge({
+      pythonPath: config.runtime.node?.pythonPath ?? 'python3',
+      timeoutMs: config.runtime.node?.timeout ?? 30000,
+    }),
+});
+```
+
+Use `reloadNow()` for an explicit rebuild or `close()` to stop watching and
+dispose the active bridge.
+
+The watch session manages directory trees internally for local package roots and
+directory-valued `extraWatchPaths`, ignores Python cache directories, and keeps
+the last known good wrappers plus bridge live if a reload returns structured
+generation failures.
+
 ## Basic Setup
 
 ### Installation
@@ -138,7 +165,6 @@ const bridge = new NodeBridge({
 Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
 `maxRequestsPerProcess`, `enableJsonFallback`, and `maxLineLength`. Avoid them
 in new code.
-
 By default, the subprocess environment is minimal (PATH/PYTHON*/TYWRAP\_* only).
 Set `inheritProcessEnv: true` to pass through the full environment when needed.
 

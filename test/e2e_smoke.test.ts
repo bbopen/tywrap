@@ -97,7 +97,6 @@ describeNodeOnly('E2E Smoke - CLI generate + runtime bridge', () => {
         output: { dir: outputDir, format: 'esm', declaration: false, sourceMap: false },
         runtime: { node: { pythonPath } },
         performance: { caching: false, batching: false, compression: 'none' },
-        development: { hotReload: false, sourceMap: false, validation: 'none' },
       };
       writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 

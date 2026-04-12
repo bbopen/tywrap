@@ -12,7 +12,11 @@ import {
   type PooledWorker,
 } from '../src/runtime/worker-pool.js';
 import type { Transport } from '../src/runtime/transport.js';
-import { BridgeTimeoutError, BridgeExecutionError } from '../src/runtime/errors.js';
+import {
+  BridgeTimeoutError,
+  BridgeExecutionError,
+  BridgeProtocolError,
+} from '../src/runtime/errors.js';
 
 // =============================================================================
 // TEST FIXTURES
@@ -339,6 +343,43 @@ describe('WorkerPool', () => {
       // Should create a second worker since maxConcurrentPerWorker is 1
       expect(transports.length).toBe(2);
       expect(worker1).not.toBe(worker2);
+    });
+
+    it('publishes a newly created worker to queued acquires up to its concurrency limit', async () => {
+      const slowFactory = () => {
+        const transport = new MockTransport();
+        transport.initDelay = 25;
+        return transport;
+      };
+
+      pool = new WorkerPool({
+        createTransport: slowFactory,
+        maxWorkers: 1,
+        maxConcurrentPerWorker: 3,
+        queueTimeoutMs: 1000,
+      });
+
+      await pool.init();
+
+      const worker1Promise = pool.acquire();
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const worker2Promise = pool.acquire();
+      const worker3Promise = pool.acquire();
+
+      const [worker1, worker2, worker3] = await Promise.all([
+        worker1Promise,
+        worker2Promise,
+        worker3Promise,
+      ]);
+
+      expect(worker1).toBe(worker2);
+      expect(worker2).toBe(worker3);
+      expect(pool.workerCount).toBe(1);
+      expect(pool.totalInFlight).toBe(3);
+
+      pool.release(worker1);
+      pool.release(worker2);
+      pool.release(worker3);
     });
 
     it('respects maxWorkers limit', async () => {
@@ -683,6 +724,99 @@ describe('WorkerPool', () => {
     });
   });
 
+  describe('timeout recovery', () => {
+    let pool: WorkerPool;
+
+    afterEach(async () => {
+      if (pool && !pool.isDisposed) {
+        await pool.dispose();
+      }
+    });
+
+    it('keeps a timed-out worker in the pool for later reuse', async () => {
+      const { factory, transports } = createMockTransportFactory();
+      pool = new WorkerPool({
+        createTransport: factory,
+        maxWorkers: 1,
+        minWorkers: 1,
+      });
+
+      await pool.init();
+      expect(pool.workerCount).toBe(1);
+      expect(transports.length).toBe(1);
+
+      await expect(
+        pool.withWorker(async () => {
+          throw new BridgeTimeoutError('simulated timeout');
+        })
+      ).rejects.toThrow('simulated timeout');
+
+      expect(pool.workerCount).toBe(1);
+      expect(transports.length).toBe(1);
+
+      const reusedWorker = await pool.acquire();
+      expect(reusedWorker.transport).toBe(transports[0]);
+      pool.release(reusedWorker);
+    });
+
+    it('disposes replacement workers that finish after the pool has been disposed', async () => {
+      const transports: MockTransport[] = [];
+      let createCount = 0;
+      pool = new WorkerPool({
+        createTransport: () => {
+          createCount += 1;
+          const transport = new MockTransport();
+          if (createCount === 2) {
+            transport.initDelay = 50;
+          }
+          transports.push(transport);
+          return transport;
+        },
+        maxWorkers: 1,
+        minWorkers: 1,
+      });
+
+      await pool.init();
+      const worker = await pool.acquire();
+
+      (
+        pool as unknown as {
+          removeWorker(worker: PooledWorker): void;
+        }
+      ).removeWorker(worker);
+      await pool.dispose();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      expect(pool.workerCount).toBe(0);
+      expect(transports).toHaveLength(2);
+      expect(transports[1]?.disposeCalled).toBe(true);
+    });
+
+    it('rejects acquire when dispose wins after worker creation starts', async () => {
+      const transports: MockTransport[] = [];
+      pool = new WorkerPool({
+        createTransport: () => {
+          const transport = new MockTransport();
+          transport.initDelay = 50;
+          transports.push(transport);
+          return transport;
+        },
+        maxWorkers: 1,
+      });
+
+      await pool.init();
+
+      const acquirePromise = pool.acquire();
+      await new Promise(resolve => setTimeout(resolve, 10));
+      await pool.dispose();
+
+      await expect(acquirePromise).rejects.toThrow(BridgeExecutionError);
+      expect(pool.workerCount).toBe(0);
+      expect(transports).toHaveLength(1);
+      expect(transports[0]?.disposeCalled).toBe(true);
+    });
+  });
+
   // ===========================================================================
   // TIMEOUT TESTS
   // ===========================================================================
@@ -928,7 +1062,7 @@ describe('WorkerPool', () => {
       });
     });
 
-    it('replaces timed-out workers in the background', async () => {
+    it('replaces crashed workers in the background', async () => {
       const { factory, transports } = createMockTransportFactory();
       pool = new WorkerPool({
         createTransport: factory,
@@ -941,9 +1075,9 @@ describe('WorkerPool', () => {
 
       await expect(
         pool.withWorker(async () => {
-          throw new BridgeTimeoutError('timed out');
+          throw new BridgeProtocolError('process exited unexpectedly');
         })
-      ).rejects.toThrow(BridgeTimeoutError);
+      ).rejects.toThrow(BridgeProtocolError);
 
       await new Promise(resolve => setTimeout(resolve, 0));
 
