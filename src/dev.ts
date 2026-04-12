@@ -186,7 +186,7 @@ class ManagedBridgeReloader<T extends RuntimeExecution & Disposable> implements 
     }
 
     if (previousBridge && previousBridge !== nextBridge) {
-      void previousBridge.dispose().catch(() => {
+      previousBridge.dispose().catch(() => {
         // Keep the new bridge active even if old cleanup fails.
       });
     }
@@ -653,11 +653,9 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
   let lastReloadError: Error | null = null;
   let closed = false;
 
-  const emit = (event: NodeWatchEvent) =>
-    safeEmit(
-      options.onEvent as StartNodeWatchSessionOptions<RuntimeExecution & Disposable>['onEvent'],
-      event
-    );
+  const emit = (event: NodeWatchEvent): void => {
+    safeEmit(options.onEvent, event);
+  };
 
   const shouldIgnorePath = (path: string): boolean => shouldIgnoreWatchPath(path, ignoredPaths);
 
@@ -710,7 +708,9 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
                   return;
                 }
                 if (eventType === 'rename' || fileName.length === 0) {
-                  void queueWatcherRefresh();
+                  queueWatcherRefresh().catch(() => {
+                    // Surface the next reload error rather than crashing the session.
+                  });
                 }
                 emit({ type: 'change', path: changedPath, manual: false });
                 scheduleReload({ path: changedPath, manual: false });
@@ -935,7 +935,9 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
     }
     debounceTimer = setTimeout(() => {
       debounceTimer = undefined;
-      void enqueueReload(trigger);
+      enqueueReload(trigger).catch(() => {
+        // Reload errors are emitted via the session event hook.
+      });
     }, debounceMs);
   };
 
