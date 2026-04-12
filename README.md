@@ -89,9 +89,13 @@ const bridge = new NodeBridge({
 });
 ```
 
-NodeBridge is the default, correctness-first bridge. OptimizedNodeBridge is a
-performance-focused prototype (process pooling + optional caching) and is not a
-drop-in replacement yet. See `ROADMAP.md` for the unification plan.
+NodeBridge is the public Node runtime bridge. It runs in single-process mode by
+default and also supports pooled execution through `minProcesses`,
+`maxProcesses`, and `maxConcurrentPerProcess`.
+
+`OptimizedNodeBridge` is now only a deprecated compatibility alias for older
+deep imports. It is not part of the package exports and should not be used in
+new code.
 
 Both bridges share a common JSONL core for protocol validation and timeouts.
 
