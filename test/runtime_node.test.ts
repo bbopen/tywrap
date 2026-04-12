@@ -424,7 +424,7 @@ def get_bad():
         const pythonAvailable = await isPythonAvailable();
         if (!pythonAvailable || !isBridgeScriptAvailable()) return;
 
-        // Give the bridge enough time to recover (worker quarantine/replacement) after a timeout.
+        // Give the bridge enough time to drain the timed-out request before reusing the worker.
         bridge = new NodeBridge({ scriptPath, timeoutMs: 1000 });
 
         await expect(bridge.call('time', 'sleep', [1.5])).rejects.toThrow(/timed out/i);
@@ -432,10 +432,10 @@ def get_bad():
         // Wait for the Python process to eventually respond to the timed-out request.
         await new Promise(resolve => setTimeout(resolve, 800));
 
-        // Note: With the unified bridge, timed-out workers are quarantined and replaced
-        // per ADR-0001 (#101). The important thing is that the bridge recovers and works.
-        const result = await bridge.call<number>('math', 'sqrt', [16]);
-        expect(result).toBe(4);
+        // Validate recovery with a lightweight stdlib call rather than a cold module import,
+        // so this test measures timeout isolation instead of first-call import latency.
+        const result = await bridge.call<string>('builtins', 'str', ['recovered']);
+        expect(result).toBe('recovered');
       },
       testTimeout
     );

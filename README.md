@@ -7,11 +7,13 @@
 
 TypeScript wrapper for Python libraries with full type safety.
 
-> **⚠️ Experimental Software (v0.2.1)** - APIs may change between versions. Not recommended for production use until v1.0.0.
+> **⚠️ Experimental Software (v0.2.1)** - APIs may change between versions. Not
+> recommended for production use until v1.0.0.
 
 ## Features
 
-- **Full Type Safety** - TypeScript definitions generated from Python source analysis
+- **Full Type Safety** - TypeScript definitions generated from Python source
+  analysis
 - **Multi-Runtime** - Node.js (subprocess) and browsers (Pyodide)
 - **Rich Data Types** - numpy, pandas, scipy, torch, sklearn, and stdlib types
 - **Efficient Serialization** - Apache Arrow binary format with JSON fallback
@@ -60,30 +62,27 @@ import { NodeBridge } from 'tywrap/node';
 const bridge = new NodeBridge({
   pythonPath: 'python3',
   virtualEnv: './venv',
-  timeoutMs: 30000
+  timeoutMs: 30000,
 });
 ```
 
-NodeBridge is the default, correctness-first bridge. OptimizedNodeBridge is a performance-focused
-prototype (process pooling + optional caching) and is not a drop-in replacement yet. See
-`ROADMAP.md` for the unification plan.
+NodeBridge is the public Node.js bridge. Process pooling and related throughput
+tuning live on `NodeBridge` options directly.
 
-Both bridges share a common JSONL core for protocol validation and timeouts.
+By default, NodeBridge inherits only PATH/PYTHON*/TYWRAP\_* from `process.env`
+to keep the subprocess environment minimal. Set `inheritProcessEnv: true` if you
+need the full environment. Large JSONL responses are capped by `maxLineLength`
+(defaults to `TYWRAP_CODEC_MAX_BYTES` when set, otherwise 1MB).
 
-By default, NodeBridge inherits only PATH/PYTHON*/TYWRAP_* from `process.env` to keep
-the subprocess environment minimal. Set `inheritProcessEnv: true` if you need the
-full environment. Large JSONL responses are capped by `maxLineLength` (defaults to
-`TYWRAP_CODEC_MAX_BYTES` when set, otherwise 1MB).
-
-You can cap payload sizes with `TYWRAP_CODEC_MAX_BYTES` (responses) and `TYWRAP_REQUEST_MAX_BYTES`
-(requests) to keep JSONL traffic bounded.
+You can cap payload sizes with `TYWRAP_CODEC_MAX_BYTES` (responses) and
+`TYWRAP_REQUEST_MAX_BYTES` (requests) to keep JSONL traffic bounded.
 
 ### Browser (Pyodide)
 
 ```typescript
 import { PyodideBridge } from 'tywrap/pyodide';
 const bridge = new PyodideBridge({
-  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/'
+  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
 });
 await bridge.init();
 ```
@@ -91,8 +90,8 @@ await bridge.init();
 ### Deno / Bun
 
 ```typescript
-import { NodeBridge } from 'npm:tywrap';  // Deno
-import { NodeBridge } from 'tywrap';       // Bun
+import { NodeBridge } from 'npm:tywrap'; // Deno
+import { NodeBridge } from 'tywrap'; // Bun
 ```
 
 ## Configuration
@@ -103,10 +102,10 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    'pandas': { classes: ['DataFrame'], functions: ['read_csv'] },
-    'numpy': { alias: 'np' }
+    pandas: { classes: ['DataFrame'], functions: ['read_csv'] },
+    numpy: { alias: 'np' },
   },
-  output: { dir: './src/generated' }
+  output: { dir: './src/generated' },
 });
 ```
 
@@ -114,14 +113,14 @@ See [Configuration Guide](./docs/configuration.md) for all options.
 
 ## Supported Data Types
 
-| Python | TypeScript | Notes |
-|--------|-----------|-------|
-| `numpy.ndarray` | `Uint8Array` / `array` | Arrow or JSON |
-| `pandas.DataFrame` | Arrow Table / `object[]` | Arrow or JSON |
-| `scipy.sparse.*` | `SparseMatrix` | CSR, CSC, COO |
-| `torch.Tensor` | `TorchTensor` | CPU only |
-| `sklearn estimator` | `SklearnEstimator` | Params only |
-| `datetime`, `Decimal`, `UUID`, `Path` | `string` | Standard formats |
+| Python                                | TypeScript               | Notes            |
+| ------------------------------------- | ------------------------ | ---------------- |
+| `numpy.ndarray`                       | `Uint8Array` / `array`   | Arrow or JSON    |
+| `pandas.DataFrame`                    | Arrow Table / `object[]` | Arrow or JSON    |
+| `scipy.sparse.*`                      | `SparseMatrix`           | CSR, CSC, COO    |
+| `torch.Tensor`                        | `TorchTensor`            | CPU only         |
+| `sklearn estimator`                   | `SklearnEstimator`       | Params only      |
+| `datetime`, `Decimal`, `UUID`, `Path` | `string`                 | Standard formats |
 
 For Arrow encoding with numpy/pandas:
 

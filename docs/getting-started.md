@@ -1,6 +1,7 @@
 # Getting Started with tywrap
 
-This guide covers installation, basic configuration, and creating your first TypeScript wrapper for a Python library.
+This guide covers installation, basic configuration, and creating your first
+TypeScript wrapper for a Python library.
 
 ## Prerequisites
 
@@ -74,11 +75,13 @@ node -e "import('tywrap').then(async tw => { const cfg = await tw.resolveConfig(
 
 Run `tywrap generate --help` to see all available options and defaults.
 
-The CLI searches for `tywrap.config.ts`, `.mts`, `.js`, `.mjs`, `.cjs`, and `.json` when `--config` is not provided.
+The CLI searches for `tywrap.config.ts`, `.mts`, `.js`, `.mjs`, `.cjs`, and
+`.json` when `--config` is not provided.
 
 ## Usage
 
-After generation, import and use your Python library with full TypeScript support:
+After generation, import and use your Python library with full TypeScript
+support:
 
 ```typescript
 // Import the generated wrapper
@@ -92,10 +95,10 @@ setRuntimeBridge(bridge);
 // Use with full type safety
 async function example() {
   const result = await math.sqrt(16); // TypeScript knows this returns Promise<number>
-  const power = await math.pow(2, 3);  // Full autocompletion and type checking
-  
+  const power = await math.pow(2, 3); // Full autocompletion and type checking
+
   console.log(`√16 = ${result}`); // 4
-  console.log(`2³ = ${power}`);   // 8
+  console.log(`2³ = ${power}`); // 8
 }
 
 example().catch(console.error);
@@ -123,14 +126,14 @@ def calculate_area(width: float, height: float) -> float:
 
 class Calculator:
     """Simple calculator class."""
-    
+
     def __init__(self, precision: int = 2):
         self.precision = precision
-    
+
     def add(self, a: float, b: float) -> float:
         """Add two numbers."""
         return round(a + b, self.precision)
-    
+
     def multiply(self, a: float, b: float) -> float:
         """Multiply two numbers."""
         return round(a * b, self.precision)
@@ -144,27 +147,22 @@ Update your `tywrap.config.ts`:
 {
   "pythonImportPath": [],
   "pythonModules": {
-    "my_utils": { 
-      "runtime": "node", 
-      "typeHints": "strict",
-      "watch": true
+    "my_utils": {
+      "runtime": "node",
+      "typeHints": "strict"
     }
   },
   "output": {
     "dir": "./generated",
-    "format": "esm", 
+    "format": "esm",
     "declaration": true,
     "sourceMap": true
-  },
-  "development": {
-    "hotReload": true,
-    "validation": "runtime"
   }
 }
 ```
 
-If `my_utils` is not importable from your current working directory or your Python environment,
-add the directory that contains it to `pythonImportPath`:
+If `my_utils` is not importable from your current working directory or your
+Python environment, add the directory that contains it to `pythonImportPath`:
 
 ```json
 {
@@ -184,26 +182,30 @@ npx tywrap generate
 ```typescript
 import { NodeBridge } from 'tywrap/node';
 import { setRuntimeBridge } from 'tywrap/runtime';
-import { greet, calculate_area, Calculator } from './generated/my_utils.generated.js';
+import {
+  greet,
+  calculate_area,
+  Calculator,
+} from './generated/my_utils.generated.js';
 
 const bridge = new NodeBridge({ pythonPath: 'python3' });
 setRuntimeBridge(bridge);
 
 async function demo() {
   // Function calls with type safety
-  const greeting = await greet("World", true);
+  const greeting = await greet('World', true);
   console.log(greeting); // "Hello, World! 🎉"
-  
+
   const area = await calculate_area(10.5, 8.2);
   console.log(`Area: ${area}`); // Area: 86.1
-  
+
   // Class instantiation and methods
   const calc = await Calculator.create(3);
   const sum = await calc.add(3.14159, 2.71828);
   const product = await calc.multiply(sum, 2);
   await calc.disposeHandle();
-  
-  console.log(`Sum: ${sum}`);     // Sum: 5.860
+
+  console.log(`Sum: ${sum}`); // Sum: 5.860
   console.log(`Product: ${product}`); // Product: 11.720
 }
 ```
@@ -211,6 +213,7 @@ async function demo() {
 ## Runtime Options
 
 ### Node.js (Default)
+
 ```json
 {
   "pythonModules": {
@@ -227,6 +230,7 @@ async function demo() {
 ```
 
 ### Browser (Pyodide)
+
 ```json
 {
   "pythonModules": {
@@ -242,6 +246,7 @@ async function demo() {
 ```
 
 ### HTTP API
+
 ```json
 {
   "pythonModules": {
@@ -261,26 +266,44 @@ async function demo() {
 
 ## Development Workflow
 
-### With Hot Reload
-```json
-{
-  "development": {
-    "hotReload": true,
-    "sourceMap": true,
-    "validation": "runtime"
-  }
-}
+Use `tywrap/dev` for wrapper regeneration plus bridge replacement:
+
+```typescript
+import { startNodeWatchSession } from 'tywrap/dev';
+import { NodeBridge } from 'tywrap/node';
+
+const session = await startNodeWatchSession({
+  configFile: './tywrap.config.ts',
+  createBridge: async config =>
+    new NodeBridge({
+      pythonPath: config.runtime.node?.pythonPath ?? 'python3',
+      timeoutMs: config.runtime.node?.timeout ?? 30000,
+    }),
+});
 ```
 
-### Build Integration
-Run `tywrap generate --check` in CI to ensure generated wrappers are committed and up to date. After upgrading Python dependencies, run `tywrap generate` to refresh the generated surface.
+For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual bridge
+replacement. For HTTP, restart or redeploy the remote server outside tywrap.
 
-If you ran `tywrap init` in a Node project, it will also add `tywrap:generate` and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).
+`startNodeWatchSession(...)` watches local package directories as directory
+trees, refreshes those trees when nested directories change, and keeps the last
+known good wrappers and bridge live if a reload produces structured generation
+failures.
+
+### Build Integration
+
+Run `tywrap generate --check` in CI to ensure generated wrappers are committed
+and up to date. Structured generation failures exit with code `1`; out-of-date
+generated files exit with code `3`. After upgrading Python dependencies, run
+`tywrap generate` to refresh the generated surface.
+
+If you ran `tywrap init` in a Node project, it will also add `tywrap:generate`
+and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).
 
 ## Performance Tips
 
 1. **Enable Caching**: Set `"caching": true` for faster rebuilds
-2. **Use Batching**: Set `"batching": true` for multiple modules  
+2. **Use Batching**: Set `"batching": true` for multiple modules
 3. **Smart Compression**: Use `"compression": "auto"` for optimal size
 4. **Selective Imports**: Specify only needed functions/classes
 
@@ -304,6 +327,7 @@ If you ran `tywrap init` in a Node project, it will also add `tywrap:generate` a
 ## Common Patterns
 
 ### Error Handling
+
 ```typescript
 try {
   const result = await math.sqrt(-1);
@@ -315,6 +339,7 @@ try {
 ```
 
 ### Working with Arrays
+
 ```typescript
 import { array, zeros } from './generated/numpy.generated.js';
 
@@ -325,19 +350,20 @@ const empty = await zeros([3, 3]);
 ```
 
 ### Async/Await Best Practices
+
 ```typescript
 // Good: Handle promises properly
 const results = await Promise.all([
   math.sin(Math.PI / 2),
   math.cos(0),
-  math.tan(Math.PI / 4)
+  math.tan(Math.PI / 4),
 ]);
 
 // Better: Batch related calls
 const batch = await mathBatch([
   { function: 'sin', args: [Math.PI / 2] },
   { function: 'cos', args: [0] },
-  { function: 'tan', args: [Math.PI / 4] }
+  { function: 'tan', args: [Math.PI / 4] },
 ]);
 ```
 

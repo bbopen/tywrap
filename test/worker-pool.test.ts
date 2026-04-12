@@ -683,6 +683,42 @@ describe('WorkerPool', () => {
     });
   });
 
+  describe('timeout recovery', () => {
+    let pool: WorkerPool;
+
+    afterEach(async () => {
+      if (pool && !pool.isDisposed) {
+        await pool.dispose();
+      }
+    });
+
+    it('keeps a timed-out worker in the pool for later reuse', async () => {
+      const { factory, transports } = createMockTransportFactory();
+      pool = new WorkerPool({
+        createTransport: factory,
+        maxWorkers: 1,
+        minWorkers: 1,
+      });
+
+      await pool.init();
+      expect(pool.workerCount).toBe(1);
+      expect(transports.length).toBe(1);
+
+      await expect(
+        pool.withWorker(async () => {
+          throw new BridgeTimeoutError('simulated timeout');
+        })
+      ).rejects.toThrow('simulated timeout');
+
+      expect(pool.workerCount).toBe(1);
+      expect(transports.length).toBe(1);
+
+      const reusedWorker = await pool.acquire();
+      expect(reusedWorker.transport).toBe(transports[0]);
+      pool.release(reusedWorker);
+    });
+  });
+
   // ===========================================================================
   // TIMEOUT TESTS
   // ===========================================================================

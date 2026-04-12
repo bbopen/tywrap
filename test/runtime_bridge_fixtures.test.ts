@@ -194,7 +194,7 @@ describeNodeOnly('Bridge behavior parity', () => {
       if (!pythonPath) return;
 
       const nodeBridge = new NodeBridge({ scriptPath: defaultScriptPath, pythonPath });
-      await nodeBridge.call('math', 'sqrt', [4]);
+      await nodeBridge.init();
       await nodeBridge.dispose();
       await expect(nodeBridge.dispose()).resolves.toBeUndefined();
 
@@ -204,7 +204,7 @@ describeNodeOnly('Bridge behavior parity', () => {
         maxProcesses: 1,
         pythonPath,
       });
-      await optimizedBridge.call('math', 'sqrt', [4]);
+      await optimizedBridge.init();
       await optimizedBridge.dispose();
       await expect(optimizedBridge.dispose()).resolves.toBeUndefined();
     });

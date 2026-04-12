@@ -107,7 +107,6 @@ export type {
   NodeConfig,
   HttpConfig,
   PerformanceConfig,
-  DevelopmentConfig,
   TypeMappingConfig,
   TypePreset,
   BridgeInfo,
@@ -121,6 +120,7 @@ export type {
 // Main API
 export { tywrap } from './tywrap.js';
 export { generate } from './tywrap.js';
+export type { GenerateFailure, GenerateResult, GenerateRunOptions } from './tywrap.js';
 
 // Runtime detection utilities
 export { detectRuntime, isNodejs, isDeno, isBun, isBrowser } from './utils/runtime.js';

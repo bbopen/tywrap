@@ -252,7 +252,6 @@ export interface TywrapOptions {
   output: OutputConfig;
   runtime: RuntimeConfig;
   performance: PerformanceConfig;
-  development: DevelopmentConfig;
   types?: TypeMappingConfig;
   debug?: boolean;
 }
@@ -268,7 +267,6 @@ export interface PythonModuleConfig {
   excludePatterns?: string[];
   alias?: string;
   typeHints: 'strict' | 'loose' | 'ignore';
-  watch?: boolean;
 }
 
 export interface OutputConfig {
@@ -306,12 +304,6 @@ export interface PerformanceConfig {
   caching: boolean;
   batching: boolean;
   compression: 'auto' | 'gzip' | 'brotli' | 'none';
-}
-
-export interface DevelopmentConfig {
-  hotReload: boolean;
-  sourceMap: boolean;
-  validation: 'runtime' | 'compile' | 'both' | 'none';
 }
 
 export type TypePreset = 'numpy' | 'pandas' | 'pydantic' | 'stdlib' | 'scipy' | 'torch' | 'sklearn';

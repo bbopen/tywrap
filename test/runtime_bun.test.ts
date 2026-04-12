@@ -248,15 +248,15 @@ describeBunOnly('Bun Runtime Support', () => {
       expect(tsConfig.compilerOptions.moduleResolution).toBe('bundler');
     });
 
-    it('should support hot reloading in development', () => {
-      const devConfig = {
-        watch: true,
+    it('should support Bun dev server configuration objects', () => {
+      const devServerConfig = {
         hot: true,
         port: 3000,
+        target: 'bun',
       };
 
-      expect(devConfig.watch).toBe(true);
-      expect(devConfig.hot).toBe(true);
+      expect(devServerConfig.hot).toBe(true);
+      expect(devServerConfig.port).toBe(3000);
     });
 
     it('should handle module resolution', () => {

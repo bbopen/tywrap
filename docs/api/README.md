@@ -5,6 +5,7 @@ Public API for tywrap’s programmatic interface and CLI.
 ## Core API
 
 ### `tywrap(options?: Partial<TywrapOptions>): Promise<TywrapInstance>`
+
 Creates a tywrap instance (advanced use).
 
 ```ts
@@ -16,6 +17,7 @@ const instance = await tywrap({
 ```
 
 ### `generate(options: Partial<TywrapOptions>)`
+
 Generates wrappers from configuration.
 
 ```ts
@@ -23,11 +25,38 @@ import { generate } from 'tywrap';
 
 await generate({
   pythonModules: { math: { runtime: 'node', typeHints: 'strict' } },
-  output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false },
+  output: {
+    dir: './generated',
+    format: 'esm',
+    declaration: false,
+    sourceMap: false,
+  },
 });
 ```
 
+Returns:
+
+```ts
+interface GenerateFailure {
+  module: string;
+  code: 'ir-unavailable';
+  message: string;
+}
+
+interface GenerateResult {
+  written: string[];
+  warnings: string[];
+  failures: GenerateFailure[];
+  outOfDate?: string[];
+}
+```
+
+`failures` is the structured fatal-generation channel. A result may still carry
+human-readable warning strings for compatibility, but callers should use
+`failures` to detect modules that could not produce IR.
+
 ### `defineConfig(config: TywrapConfig)`
+
 Type-safe helper for config files.
 
 ```ts
@@ -39,6 +68,7 @@ export default defineConfig({
 ```
 
 ### `resolveConfig({ configFile, overrides, requireConfig })`
+
 Loads a config file (JSON/JS/TS) and merges defaults with overrides.
 
 ```ts
@@ -65,10 +95,11 @@ setRuntimeBridge(bridge);
 ## Runtime Bridges
 
 ### `NodeBridge`
+
 Python subprocess bridge for Node.js.
 
-Note: OptimizedNodeBridge is an experimental, performance-focused bridge and is not part of the
-public API exports yet. NodeBridge remains the default.
+NodeBridge is the public Node.js bridge. Process pooling and related throughput
+controls are configured on `NodeBridge` directly.
 
 ```ts
 import { NodeBridge } from 'tywrap/node';
@@ -83,6 +114,7 @@ const info = await bridge.getBridgeInfo({ refresh: true });
 ```
 
 **Options**:
+
 ```ts
 interface NodeBridgeOptions {
   pythonPath?: string;
@@ -98,6 +130,7 @@ interface NodeBridgeOptions {
 ```
 
 ### `PyodideBridge`
+
 Browser WebAssembly runtime bridge.
 
 ```ts
@@ -110,6 +143,7 @@ const bridge = new PyodideBridge({
 ```
 
 **Options**:
+
 ```ts
 interface PyodideBridgeOptions {
   indexURL?: string;
@@ -118,6 +152,7 @@ interface PyodideBridgeOptions {
 ```
 
 ### `HttpBridge`
+
 HTTP runtime bridge (expects compatible server endpoints).
 
 ```ts
@@ -131,6 +166,7 @@ const bridge = new HttpBridge({
 ```
 
 **Options**:
+
 ```ts
 interface HttpBridgeOptions {
   baseURL: string;
@@ -159,7 +195,8 @@ const arrowReady = await autoRegisterArrowDecoder();
 const value = await decodeValueAsync(pythonValue);
 ```
 
-Arrow-encoded payloads throw unless a decoder is registered or JSON fallback is enabled on the Python bridge.
+Arrow-encoded payloads throw unless a decoder is registered or JSON fallback is
+enabled on the Python bridge.
 
 ## Error Types
 
@@ -183,12 +220,30 @@ interface TywrapOptions {
   output: OutputConfig;
   runtime: RuntimeConfig;
   performance: PerformanceConfig;
-  development: DevelopmentConfig;
   debug?: boolean;
 }
 ```
 
 For the full type surface, refer to `src/types/index.ts`.
+
+## Dev Helpers
+
+```ts
+import { createBridgeReloader, startNodeWatchSession } from 'tywrap/dev';
+```
+
+- `startNodeWatchSession(...)` is the Node-only helper for wrapper regeneration
+  plus bridge swap.
+- `startNodeWatchSession(...)` passes the resolved config for that reload cycle
+  into `createBridge(config)`.
+- `startNodeWatchSession(...)` watches local package trees by attaching one
+  watcher per discovered directory, then refreshing that tree when directories
+  are added, removed, or renamed.
+- `startNodeWatchSession(...)` keeps the last known good generated output and
+  bridge live if a reload hits structured generation failures.
+- `createBridgeReloader(...)` is the manual reload primitive for cases like
+  Pyodide.
+- HTTP server reload remains external to tywrap.
 
 ## CLI API
 
@@ -199,6 +254,7 @@ tywrap --version
 ```
 
 ### `tywrap init`
+
 - `--format ts|json`
 - `--modules "math,numpy"`
 - `--runtime node|pyodide|http|auto`
@@ -206,6 +262,7 @@ tywrap --version
 - `--force`
 
 ### `tywrap generate`
+
 - `--config ./tywrap.config.ts`
 - `--modules "math,numpy"`
 - `--runtime node|pyodide|http|auto`
