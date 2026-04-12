@@ -26,7 +26,7 @@ import { getComponentLogger } from '../utils/logger.js';
 const log = getComponentLogger('Analyzer');
 
 const UNKNOWN_TYPE: PythonType = { kind: 'custom', name: 'Any', module: 'typing' };
-const PYTHON_LANGUAGE = Python;
+const PYTHON_LANGUAGE = Python as unknown as Parameters<Parser['setLanguage']>[0];
 
 export class PyAnalyzer {
   private parser: Parser;
