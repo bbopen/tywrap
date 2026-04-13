@@ -205,6 +205,7 @@ registerArrowDecoder(bytes => tableFromIPC(bytes));
 - [Configuration](https://bbopen.github.io/tywrap/guide/configuration)
 - [API Reference](https://bbopen.github.io/tywrap/reference/api/)
 - [Troubleshooting](https://bbopen.github.io/tywrap/troubleshooting/)
+- [Roadmap](./ROADMAP.md)
 
 ## Contributing
 
