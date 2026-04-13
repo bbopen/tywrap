@@ -124,7 +124,7 @@
     "tree-sitter": "^0.25.0",
     "tree-sitter-python": "^0.25.0",
     "typescript": "^5.9.3",
-    "web-tree-sitter": "^0.21.0",
+    "web-tree-sitter": "^0.26.8",
     "yargs": "^18.0.0"
   },
   "devDependencies": {
