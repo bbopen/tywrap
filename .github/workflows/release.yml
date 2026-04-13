@@ -172,7 +172,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Skip if version is already published
@@ -211,6 +211,12 @@ jobs:
         env:
           NODE_OPTIONS: --expose-gc
           TYWRAP_PERF_BUDGETS: '1'
+
+      - name: Switch to Node 24 for npm trusted publishing
+        if: ${{ steps.npm_registry.outputs.already_published != 'true' }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
       - name: Publish to npm
         if: ${{ steps.npm_registry.outputs.already_published != 'true' }}
