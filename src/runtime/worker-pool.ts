@@ -438,9 +438,7 @@ export class WorkerPool extends BoundedContext {
       });
   }
 
-  private async spawnWorkerToPool(
-    onWorkerReady = this.options.onWorkerReady
-  ): Promise<void> {
+  private async spawnWorkerToPool(onWorkerReady = this.options.onWorkerReady): Promise<void> {
     if (this.isShuttingDown()) {
       return;
     }

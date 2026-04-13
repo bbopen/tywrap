@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/bbopen/tywrap/compare/v0.3.1...v0.4.0) (2026-04-12)
+
+### Features
+
+* add development hot reload helpers through `tywrap/dev`
+* add Node watch sessions that regenerate wrappers and swap the active bridge
+* pass the resolved config into bridge recreation during reloads
+
+### Bug Fixes
+
+* add structured generation failures and CLI handling for fatal vs stale output states
+* harden Node worker warmup, worker-pool publishing, and timeout recovery behavior
+* reject legacy config-based reload fields and point users to the new dev helpers
+* update docs to describe the real hot reload support matrix across Node, Pyodide, and HTTP
+
 ## [0.3.1](https://github.com/bbopen/tywrap/compare/v0.3.0...v0.3.1) (2026-04-11)
 
 

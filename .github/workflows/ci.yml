@@ -18,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22]
+        node-version: [20, 24]
         python-version: ['3.10', '3.11', '3.12']
     steps:
       - uses: actions/checkout@v6
@@ -68,11 +68,11 @@ jobs:
         env:
           NODE_OPTIONS: --expose-gc
           TYWRAP_PERF_BUDGETS: '1'
-        run: ${{ (matrix.node-version == 22 && matrix.python-version == '3.11') && 'npm run test:coverage' || 'npm test' }}
+        run: ${{ (matrix.node-version == 24 && matrix.python-version == '3.11') && 'npm run test:coverage' || 'npm test' }}
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6
-        if: matrix.node-version == 22 && matrix.python-version == '3.11'
+        if: matrix.node-version == 24 && matrix.python-version == '3.11'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
@@ -124,7 +124,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -179,7 +179,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -209,7 +209,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -239,7 +239,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Setup Python
         uses: actions/setup-python@v6
