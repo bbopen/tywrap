@@ -27,10 +27,10 @@ The Node.js runtime:
 Both bridges share the same JSONL core for protocol validation, timeouts, and
 stderr buffering.
 
-## Development Reload
+## Development Hot Reload
 
-Node wrapper regeneration plus bridge replacement lives in `tywrap/dev`, not in
-`tywrap.config.*`.
+Node hot reload in tywrap means wrapper regeneration plus bridge replacement.
+It lives in `tywrap/dev`, not in `tywrap.config.*`.
 
 ```typescript
 import { startNodeWatchSession } from 'tywrap/dev';

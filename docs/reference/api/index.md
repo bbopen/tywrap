@@ -276,8 +276,8 @@ import {
 import { createBridgeReloader, startNodeWatchSession } from 'tywrap/dev';
 ```
 
-- `startNodeWatchSession(...)` is the Node-only helper for wrapper regeneration
-  plus bridge swap.
+- `startNodeWatchSession(...)` is the Node-only development hot reload helper
+  for wrapper regeneration plus bridge swap.
 - `startNodeWatchSession(...)` passes the resolved config for that reload cycle
   into `createBridge(config)`.
 - `startNodeWatchSession(...)` watches local package trees by attaching one

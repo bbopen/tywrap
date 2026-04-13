@@ -277,9 +277,10 @@ async function demo() {
 }
 ```
 
-## Development Workflow
+## Development Workflow (Hot Reload)
 
-Use `tywrap/dev` for wrapper regeneration plus bridge replacement:
+Use `tywrap/dev` for development hot reload: wrapper regeneration plus bridge
+replacement.
 
 ```typescript
 import { startNodeWatchSession } from 'tywrap/dev';
@@ -295,8 +296,9 @@ const session = await startNodeWatchSession({
 });
 ```
 
-For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual bridge
-replacement. For HTTP, restart or redeploy the remote server outside tywrap.
+For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual
+bridge replacement. For HTTP, restart or redeploy the remote server outside
+tywrap.
 
 `startNodeWatchSession(...)` watches local package directories as directory
 trees, refreshes those trees when nested directories change, and keeps the last

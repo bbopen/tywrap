@@ -175,7 +175,10 @@ async function writeNamespacePackageRoot(
   );
 
   if (options.pluginValue !== undefined) {
-    await writeFile(join(packageDir, 'plugin.py'), `VALUE = ${JSON.stringify(options.pluginValue)}\n`);
+    await writeFile(
+      join(packageDir, 'plugin.py'),
+      `VALUE = ${JSON.stringify(options.pluginValue)}\n`
+    );
   }
 
   return packageDir;
@@ -702,7 +705,9 @@ describeNodeOnly('startNodeWatchSession', () => {
           ),
         5000
       );
-      const watchPathEventsBeforeReload = events.filter(event => event.type === 'watchPaths').length;
+      const watchPathEventsBeforeReload = events.filter(
+        event => event.type === 'watchPaths'
+      ).length;
 
       const reloadPromise = session.reloadNow();
       await reloadBridgeStarted;

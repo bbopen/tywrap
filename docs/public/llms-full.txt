@@ -30,6 +30,26 @@ setRuntimeBridge(new NodeBridge({ pythonPath: 'python3' }));
 const result = await math.sqrt(16); // 4 — fully typed
 ```
 
+## Development Hot Reload
+
+```typescript
+import { startNodeWatchSession } from 'tywrap/dev';
+import { NodeBridge } from 'tywrap/node';
+
+const session = await startNodeWatchSession({
+  configFile: './tywrap.config.ts',
+  createBridge: async config =>
+    new NodeBridge({
+      pythonPath: config.runtime.node?.pythonPath ?? 'python3',
+      timeoutMs: config.runtime.node?.timeout ?? 30000,
+    }),
+});
+```
+
+Use `reloadNow()` for an explicit rebuild or `close()` to stop watching. Node
+gets full hot reload, Pyodide gets manual bridge replacement through
+`createBridgeReloader(...)`, and HTTP reload remains external to tywrap.
+
 > ⚠️ **Experimental** — APIs may change before v1.0.0. See [Releases](https://github.com/bbopen/tywrap/releases) for breaking changes.
 
 > If tywrap saves you time, a ⭐ on [GitHub](https://github.com/bbopen/tywrap) helps others find it.
@@ -316,9 +336,10 @@ async function demo() {
 }
 ```
 
-## Development Workflow
+## Development Workflow (Hot Reload)
 
-Use `tywrap/dev` for wrapper regeneration plus bridge replacement:
+Use `tywrap/dev` for development hot reload: wrapper regeneration plus bridge
+replacement.
 
 ```typescript
 import { startNodeWatchSession } from 'tywrap/dev';
@@ -334,8 +355,9 @@ const session = await startNodeWatchSession({
 });
 ```
 
-For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual bridge
-replacement. For HTTP, restart or redeploy the remote server outside tywrap.
+For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual
+bridge replacement. For HTTP, restart or redeploy the remote server outside
+tywrap.
 
 `startNodeWatchSession(...)` watches local package directories as directory
 trees, refreshes those trees when nested directories change, and keeps the last
@@ -726,9 +748,9 @@ sparse matrix classes (csr/csc/coo) to structured sparse objects.
 | `batching`    | `boolean`                                | `false`  | Batch multiple operations |
 | `compression` | `'auto' \| 'gzip' \| 'brotli' \| 'none'` | `'none'` | Output compression        |
 
-## Development Reload Helpers
+## Development Hot Reload Helpers
 
-Development reload is no longer configured inside `tywrap.config.*`.
+Development hot reload is no longer configured inside `tywrap.config.*`.
 
 Use `tywrap/dev` instead:
 
@@ -1032,6 +1054,7 @@ tywrap supports five runtime configurations. Choose based on your environment.
 | Apache Arrow transport | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Virtual environment support | ✅ | ✅ | ✅ | ❌ | Server-side |
 | Process pooling (experimental) | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Development hot reload | ✅ | ❌ | ❌ | Manual bridge reload | External |
 | Tested in CI | ✅ | ✅ | Mocked | ✅ | ✅ |
 
 ## Import Paths
@@ -1097,10 +1120,10 @@ The Node.js runtime:
 Both bridges share the same JSONL core for protocol validation, timeouts, and
 stderr buffering.
 
-## Development Reload
+## Development Hot Reload
 
-Node wrapper regeneration plus bridge replacement lives in `tywrap/dev`, not in
-`tywrap.config.*`.
+Node hot reload in tywrap means wrapper regeneration plus bridge replacement.
+It lives in `tywrap/dev`, not in `tywrap.config.*`.
 
 ```typescript
 import { startNodeWatchSession } from 'tywrap/dev';
@@ -2778,8 +2801,8 @@ import {
 import { createBridgeReloader, startNodeWatchSession } from 'tywrap/dev';
 ```
 
-- `startNodeWatchSession(...)` is the Node-only helper for wrapper regeneration
-  plus bridge swap.
+- `startNodeWatchSession(...)` is the Node-only development hot reload helper
+  for wrapper regeneration plus bridge swap.
 - `startNodeWatchSession(...)` passes the resolved config for that reload cycle
   into `createBridge(config)`.
 - `startNodeWatchSession(...)` watches local package trees by attaching one
