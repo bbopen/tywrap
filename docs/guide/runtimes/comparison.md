@@ -11,6 +11,7 @@ tywrap supports five runtime configurations. Choose based on your environment.
 | Apache Arrow transport | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Virtual environment support | ✅ | ✅ | ✅ | ❌ | Server-side |
 | Process pooling (experimental) | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Development hot reload | ✅ | ❌ | ❌ | Manual bridge reload | External |
 | Tested in CI | ✅ | ✅ | Mocked | ✅ | ✅ |
 
 ## Import Paths

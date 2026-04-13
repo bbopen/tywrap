@@ -289,9 +289,9 @@ sparse matrix classes (csr/csc/coo) to structured sparse objects.
 | `batching`    | `boolean`                                | `false`  | Batch multiple operations |
 | `compression` | `'auto' \| 'gzip' \| 'brotli' \| 'none'` | `'none'` | Output compression        |
 
-## Development Reload Helpers
+## Development Hot Reload Helpers
 
-Development reload is no longer configured inside `tywrap.config.*`.
+Development hot reload is no longer configured inside `tywrap.config.*`.
 
 Use `tywrap/dev` instead:
 

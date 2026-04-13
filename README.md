@@ -19,6 +19,8 @@ TypeScript wrapper for Python libraries with full type safety.
 
 - **Full Type Safety** - TypeScript definitions generated from Python source
   analysis
+- **Development Hot Reload** - Real Node watch sessions regenerate wrappers and
+  swap the active bridge without re-importing generated modules
 - **Generic-Aware Declarations** - Preserves simple `TypeVar` and callable
   `ParamSpec` generics in generated `.ts` and `.d.ts` output
 - **Multi-Runtime** - Node.js (subprocess) and browsers (Pyodide)
@@ -62,6 +64,10 @@ For CI (or to verify a dependency upgrade didn’t change the generated surface)
 npx tywrap generate --check
 ```
 
+For local Node development, `tywrap/dev` gives you real hot reload: watch local
+Python package trees, regenerate wrappers, and swap the active bridge while
+keeping the last known good state if regeneration fails.
+
 ```typescript
 import { NodeBridge } from 'tywrap/node';
 import { setRuntimeBridge } from 'tywrap/runtime';
@@ -104,6 +110,31 @@ need the full environment. Large JSONL responses are capped by `maxLineLength`
 
 You can cap payload sizes with `TYWRAP_CODEC_MAX_BYTES` (responses) and
 `TYWRAP_REQUEST_MAX_BYTES` (requests) to keep JSONL traffic bounded.
+
+## Development Hot Reload
+
+```typescript
+import { startNodeWatchSession } from 'tywrap/dev';
+import { NodeBridge } from 'tywrap/node';
+
+const session = await startNodeWatchSession({
+  configFile: './tywrap.config.ts',
+  createBridge: async config =>
+    new NodeBridge({
+      pythonPath: config.runtime.node?.pythonPath ?? 'python3',
+      timeoutMs: config.runtime.node?.timeout ?? 30000,
+    }),
+});
+```
+
+- **Node**: full watch + wrapper regeneration + bridge swap
+- **Pyodide**: use `createBridgeReloader(...)` from `tywrap/dev` for manual
+  bridge replacement
+- **HTTP**: restart or redeploy the remote server outside tywrap
+
+The Node watch session manages local package trees, refreshes nested directory
+watchers when package layouts change, and keeps the last known good generated
+output and bridge active if regeneration returns structured failures.
 
 ### Browser (Pyodide)
 

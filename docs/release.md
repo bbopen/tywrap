@@ -23,8 +23,8 @@
 5. npm publishing uses npm trusted publishing from GitHub Actions. Keep the npm
    package connected to this repository as a trusted publisher, and do not add a
    publish token to the workflow for the normal release path. The release job
-   validates the tagged package on Node 22, then switches to Node 24 for the
-   final `npm publish --provenance` step so npm uses an OIDC-capable CLI.
+   validates the tagged package on Node 24 and publishes with
+   `npm publish --provenance` from that same runtime.
 
 6. For the normal `release-please` path, keep the repository Actions setting
    `Allow GitHub Actions to create and approve pull requests` enabled.

@@ -703,7 +703,8 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
                     : filename instanceof Buffer
                       ? filename.toString()
                       : '';
-                const changedPath = fileName.length > 0 ? resolve(directoryPath, fileName) : directoryPath;
+                const changedPath =
+                  fileName.length > 0 ? resolve(directoryPath, fileName) : directoryPath;
                 if (shouldIgnorePath(changedPath)) {
                   return;
                 }
