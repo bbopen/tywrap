@@ -24,17 +24,24 @@ It exists to keep the release and CI baseline stable after the `v0.4.0` cut.
 
 ## Now (0.4.x)
 
-### Stabilize the new dev contract
+### Node 25 support, analyzer removal, and dev-contract stabilization
 
 The `0.4.x` line is for tightening what `v0.4.0` introduced before the next
 minor release expands scope again.
 
+- remove the TypeScript-side analyzer and the required `tree-sitter` install
+  path so `npm install tywrap` no longer depends on a native parser build for
+  the supported Node story, including Node 25
 - stabilize `tywrap/dev` examples and hot-reload coverage, especially around
   failure and recovery behavior
 - define and document the `tywrap` to `tywrap-ir` compatibility contract so
   users get explicit expectations and explicit mismatch behavior
 - clean up deprecated runtime surface in docs and examples so new usage follows
   the shipped public API rather than compatibility shims
+
+This release line should treat `tywrap_ir` as the single supported analysis
+path. The TypeScript analyzer is legacy internal code and should be fully
+removed rather than carried forward as a parallel implementation.
 
 ## Next (0.5.0)
 
