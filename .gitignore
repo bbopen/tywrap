@@ -9,8 +9,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Plans (local only)
+# Plans / internal review artifacts (local only — never commit to the public repo)
 docs/plans/
+reports/
 
 # Build outputs
 /dist/
