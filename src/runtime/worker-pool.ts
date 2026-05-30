@@ -7,7 +7,7 @@
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import { BoundedContext } from './bounded-context.js';
+import { DisposableBase } from './bounded-context.js';
 import { BridgeTimeoutError, BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import type { Transport } from './transport.js';
 
@@ -105,7 +105,7 @@ interface QueuedWaiter {
  * await pool.dispose();
  * ```
  */
-export class WorkerPool extends BoundedContext {
+export class WorkerPool extends DisposableBase {
   private readonly options: Omit<
     Required<WorkerPoolOptions>,
     'onWorkerReady' | 'onReplacementWorkerReady'
@@ -534,61 +534,5 @@ export class WorkerPool extends BoundedContext {
 
       this.waitQueue.push({ resolve, reject, timer });
     });
-  }
-
-  // ===========================================================================
-  // RUNTIME EXECUTION (Not implemented - WorkerPool is just for worker management)
-  // ===========================================================================
-
-  /**
-   * Not implemented - WorkerPool does not execute Python calls directly.
-   * Use the BridgeProtocol layer with a pooled worker's transport.
-   */
-  async call<T = unknown>(
-    _module: string,
-    _functionName: string,
-    _args: unknown[],
-    _kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    throw new BridgeExecutionError(
-      'WorkerPool does not implement call() - use withWorker() to get a transport'
-    );
-  }
-
-  /**
-   * Not implemented - WorkerPool does not execute Python calls directly.
-   */
-  async instantiate<T = unknown>(
-    _module: string,
-    _className: string,
-    _args: unknown[],
-    _kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    throw new BridgeExecutionError(
-      'WorkerPool does not implement instantiate() - use withWorker() to get a transport'
-    );
-  }
-
-  /**
-   * Not implemented - WorkerPool does not execute Python calls directly.
-   */
-  async callMethod<T = unknown>(
-    _handle: string,
-    _methodName: string,
-    _args: unknown[],
-    _kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    throw new BridgeExecutionError(
-      'WorkerPool does not implement callMethod() - use withWorker() to get a transport'
-    );
-  }
-
-  /**
-   * Not implemented - WorkerPool does not execute Python calls directly.
-   */
-  async disposeInstance(_handle: string): Promise<void> {
-    throw new BridgeExecutionError(
-      'WorkerPool does not implement disposeInstance() - use withWorker() to get a transport'
-    );
   }
 }

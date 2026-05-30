@@ -364,12 +364,16 @@ export interface TypeMappingConfig {
   presets?: TypePreset[];
 }
 
+/** Known bridge backends. Each speaks the identical "tywrap/1" protocol. */
+export type BridgeBackend = 'python-subprocess' | 'pyodide' | 'http';
+
 export interface BridgeInfo {
   protocol: string;
   protocolVersion: number;
-  bridge: 'python-subprocess';
+  bridge: BridgeBackend;
   pythonVersion: string;
-  pid: number;
+  /** OS process id for subprocess backends; null for in-WASM (Pyodide). */
+  pid: number | null;
   codecFallback: 'json' | 'none';
   arrowAvailable: boolean;
   scipyAvailable: boolean;
@@ -424,8 +428,14 @@ export interface GenerationMetadata {
   optimizations: string[];
 }
 
-// Runtime bridge interface
-export interface RuntimeExecution {
+// PythonRuntime — the four cross-boundary RPC methods generated wrappers call.
+// This is the contract that, after the composition rework, is implemented ONLY
+// by the bridge facades (NodeBridge/HttpBridge/PyodideBridge); the facades
+// satisfy it by delegating to an owned RpcClient. It deliberately carries NO
+// lifecycle method — dispose() is a separate lifecycle concern (see Disposable
+// in runtime/disposable.ts), so transports and the lifecycle base class
+// (DisposableBase) never have to stub these methods.
+export interface PythonRuntime {
   call<T = unknown>(
     module: string,
     functionName: string,
@@ -448,7 +458,13 @@ export interface RuntimeExecution {
   ): Promise<T>;
 
   disposeInstance(handle: string): Promise<void>;
+}
 
+// Runtime bridge interface — the four RPC methods plus lifecycle dispose().
+// Kept as PythonRuntime + dispose() so getRuntimeBridge() and every existing
+// `RuntimeExecution` reference (registry, dev.ts) compile with zero churn. The
+// RuntimeExecution -> PythonRuntime symbol rename is deferred to the T9 pass.
+export interface RuntimeExecution extends PythonRuntime {
   dispose(): Promise<void>;
 }
 

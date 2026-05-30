@@ -14,8 +14,9 @@
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import { BoundedContext } from './bounded-context.js';
-import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
+import { DisposableBase } from './bounded-context.js';
+import { BridgeProtocolError } from './errors.js';
+import { PYODIDE_BRIDGE_CORE_SOURCE } from './pyodide-bootstrap-core.generated.js';
 import {
   PROTOCOL_ID,
   type Transport,
@@ -65,125 +66,100 @@ const DEFAULT_INDEX_URL = 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/';
 /**
  * Bootstrap Python code that sets up the dispatch function.
  *
- * This code is injected into Pyodide during initialization and provides
- * a single entry point for all protocol messages. The dispatch function
- * parses JSON messages, routes to appropriate handlers, and returns
- * JSON responses.
+ * This is injected into Pyodide once at init. It does two things:
+ *
+ *  1. Loads the SHARED bridge core (the exact same code runtime/python_bridge.py
+ *     imports) by exec'ing the build-time-embedded source into a fresh module and
+ *     registering it in sys.modules as 'tywrap_bridge_core'. Pyodide has no
+ *     filesystem to import from, so the source is shipped as a string constant
+ *     (PYODIDE_BRIDGE_CORE_SOURCE) kept in sync with the .py by a drift-guard test.
+ *
+ *  2. Defines the single dispatch entry point __tywrap_dispatch(message_json) the
+ *     JS transport calls. It routes through core.dispatch_request and encodes the
+ *     response through core.encode_value, mirroring the reference server's error
+ *     ladder so the on-the-wire envelopes are byte-identical.
+ *
+ * CONTRACT (Pyodide side): markers are forced to JSON (force_json_markers=True)
+ * because pyarrow is not available in WASM, NaN/Infinity are rejected
+ * (allow_nan=False), the bridge identifies itself as 'pyodide' with pid=None, and
+ * arrowAvailable is reported False. These choices match the JS-side decoder and
+ * the relaxed BridgeInfo validator (bridge in {python-subprocess, pyodide, http},
+ * pid number|null).
+ *
+ * The PYODIDE_CORE_MODULE_NAME must match the import name used inside the core
+ * module's own docstring/contract and the conformance harness.
  */
-const BOOTSTRAP_PYTHON = `
-import json
-import importlib
+const PYODIDE_CORE_MODULE_NAME = 'tywrap_bridge_core';
+
+// Exported so the cross-backend conformance suite can run the EXACT bootstrap
+// source (this string, with the generated core constant inlined and the real
+// __tywrap_dispatch error ladder) under CPython — proving the glue, not just the
+// shared core module. It is not part of the public package surface.
+export const BOOTSTRAP_PYTHON = `
+import sys as __tywrap_sys
+import json as __tywrap_json
+import types as __tywrap_types
+
+# Load the shared bridge core from the embedded source into a real module so the
+# Pyodide server runs the IDENTICAL protocol/serialization code as the reference
+# subprocess server. Registering in sys.modules lets the core's own internal
+# 'import sys' (used lazily in dispatch_request for meta) resolve normally.
+__tywrap_core_source = ${JSON.stringify(PYODIDE_BRIDGE_CORE_SOURCE)}
+__tywrap_core = __tywrap_types.ModuleType(${JSON.stringify(PYODIDE_CORE_MODULE_NAME)})
+__tywrap_sys.modules[${JSON.stringify(PYODIDE_CORE_MODULE_NAME)}] = __tywrap_core
+exec(compile(__tywrap_core_source, '<tywrap_bridge_core>', 'exec'), __tywrap_core.__dict__)
 
 __tywrap_instances = {}
-__tywrap_protocol = 'tywrap/1'
+__tywrap_protocol = __tywrap_core.PROTOCOL
 
-def __tywrap_require_str(params, key):
-    value = params.get(key)
-    if not isinstance(value, str) or not value:
-        raise ValueError(f'Missing {key}')
-    return value
-
-def __tywrap_coerce_list(value, key):
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise ValueError(f'Invalid {key}')
-    return value
-
-def __tywrap_coerce_dict(value, key):
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ValueError(f'Invalid {key}')
-    return value
 
 def __tywrap_dispatch(message_json):
     """
-    Dispatch a protocol message and return a JSON response.
+    Dispatch a protocol message and return a JSON response string.
 
-    Args:
-        message_json: JSON-encoded ProtocolMessage string
-
-    Returns:
-        JSON-encoded ProtocolResponse string
+    Mirrors runtime/python_bridge.py main()'s error ladder: ProtocolError ->
+    error envelope WITHOUT traceback; any other handler error -> error envelope
+    WITH traceback. The final encode goes through core.encode_value(allow_nan=False)
+    so NaN/Infinity is rejected with the same wording the subprocess server uses.
     """
-    msg = None
-    msg_id = -1
+    core = __tywrap_core
+    mid = None
     try:
-        msg = json.loads(message_json)
-        if not isinstance(msg, dict):
-            raise ValueError('Invalid request payload')
-
-        msg_id = msg.get('id')
-        if not isinstance(msg_id, int):
-            raise ValueError(f'Invalid request id: {msg_id}')
-
-        protocol = msg.get('protocol')
-        if protocol != __tywrap_protocol:
-            raise ValueError(f'Invalid protocol: {protocol}')
-
-        method = msg.get('method')
-        if not isinstance(method, str):
-            raise ValueError('Missing method')
-
-        params = __tywrap_coerce_dict(msg.get('params'), 'params')
-
-        if method == 'call':
-            module_name = __tywrap_require_str(params, 'module')
-            function_name = __tywrap_require_str(params, 'functionName')
-            args = __tywrap_coerce_list(params.get('args'), 'args')
-            kwargs = __tywrap_coerce_dict(params.get('kwargs'), 'kwargs')
-            mod = importlib.import_module(module_name)
-            fn = getattr(mod, function_name)
-            result = fn(*args, **kwargs)
-
-        elif method == 'instantiate':
-            module_name = __tywrap_require_str(params, 'module')
-            class_name = __tywrap_require_str(params, 'className')
-            args = __tywrap_coerce_list(params.get('args'), 'args')
-            kwargs = __tywrap_coerce_dict(params.get('kwargs'), 'kwargs')
-            mod = importlib.import_module(module_name)
-            cls = getattr(mod, class_name)
-            obj = cls(*args, **kwargs)
-            handle = str(id(obj))
-            __tywrap_instances[handle] = obj
-            result = handle
-
-        elif method == 'call_method':
-            handle = __tywrap_require_str(params, 'handle')
-            method_name = __tywrap_require_str(params, 'methodName')
-            args = __tywrap_coerce_list(params.get('args'), 'args')
-            kwargs = __tywrap_coerce_dict(params.get('kwargs'), 'kwargs')
-            if handle not in __tywrap_instances:
-                raise ValueError(f'Unknown instance handle: {handle}')
-            obj = __tywrap_instances[handle]
-            bound_method = getattr(obj, method_name)
-            result = bound_method(*args, **kwargs)
-
-        elif method == 'dispose_instance':
-            handle = __tywrap_require_str(params, 'handle')
-            result = __tywrap_instances.pop(handle, None) is not None
-
-        else:
-            raise ValueError(f'Unknown method: {method}')
-
-        return json.dumps({
-            'id': msg_id,
-            'protocol': __tywrap_protocol,
-            'result': result
-        })
-
+        msg = __tywrap_json.loads(message_json)
+        if isinstance(msg, dict) and isinstance(msg.get('id'), int):
+            mid = msg.get('id')
+        try:
+            out = core.dispatch_request(
+                msg,
+                __tywrap_instances,
+                bridge='pyodide',
+                pid=None,
+                force_json_markers=True,
+                allow_nan=False,
+                arrow_available_override=False,
+            )
+        except core.ProtocolError as e:
+            out = core.build_error_payload(mid, e, include_traceback=False)
+        except Exception as e:
+            out = core.build_error_payload(mid, e, include_traceback=True)
     except Exception as e:
-        import traceback
-        return json.dumps({
-            'id': msg_id,
-            'protocol': __tywrap_protocol,
-            'error': {
-                'type': type(e).__name__,
-                'message': str(e),
-                'traceback': traceback.format_exc()
-            }
-        })
+        # Malformed JSON / unexpected pre-dispatch failure: well-formed error,
+        # no traceback (matches the reference's outer handler).
+        out = core.build_error_payload(mid, e, include_traceback=False)
+
+    try:
+        return core.encode_value(out, allow_nan=False)
+    except core.CodecError as e:
+        # The subprocess server's encode_response() converts CodecError -> ValueError
+        # so the NaN/Infinity rejection surfaces with type 'ValueError'. Match that
+        # so the error envelope is byte-identical across backends.
+        err_out = core.build_error_payload(mid, ValueError(str(e)), include_traceback=False)
+        return __tywrap_json.dumps(err_out)
+    except Exception as e:
+        # Any other encoding failure: well-formed error envelope, no traceback,
+        # exactly as the subprocess server's fallback does.
+        err_out = core.build_error_payload(mid, e, include_traceback=False)
+        return __tywrap_json.dumps(err_out)
 `;
 
 // =============================================================================
@@ -193,8 +169,10 @@ def __tywrap_dispatch(message_json):
 /**
  * Transport implementation for in-memory Pyodide communication.
  *
- * This transport extends BoundedContext for lifecycle management and
- * implements the Transport interface for message-based communication.
+ * This transport extends DisposableBase for lifecycle management and
+ * implements the Transport interface for message-based communication. It is a
+ * pure transport: it moves bytes via send() and carries no RPC methods (those
+ * live on PythonRuntime, implemented by PyodideBridge through an RpcClient).
  *
  * @example
  * ```typescript
@@ -214,10 +192,9 @@ def __tywrap_dispatch(message_json):
  * await transport.dispose();
  * ```
  */
-export class PyodideIO extends BoundedContext implements Transport {
+export class PyodideIO extends DisposableBase implements Transport {
   private readonly indexURL: string;
   private readonly packages: readonly string[];
-  private requestId = 0;
   private py?: PyodideInstance;
 
   /**
@@ -232,7 +209,7 @@ export class PyodideIO extends BoundedContext implements Transport {
   }
 
   // ===========================================================================
-  // LIFECYCLE (BoundedContext implementation)
+  // LIFECYCLE
   // ===========================================================================
 
   /**
@@ -365,110 +342,6 @@ export class PyodideIO extends BoundedContext implements Transport {
   }
 
   // ===========================================================================
-  // RUNTIME EXECUTION (BoundedContext abstract methods)
-  // ===========================================================================
-
-  /**
-   * Call a Python function.
-   *
-   * Convenience method that constructs a 'call' message and sends it.
-   */
-  async call<T = unknown>(
-    module: string,
-    functionName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    const message: ProtocolMessage = {
-      id: this.generateId(),
-      protocol: PROTOCOL_ID,
-      method: 'call',
-      params: {
-        module,
-        functionName,
-        args: args ?? [],
-        kwargs,
-      },
-    };
-
-    const responseJson = await this.send(JSON.stringify(message), 30000);
-    return this.parseResponse<T>(responseJson);
-  }
-
-  /**
-   * Instantiate a Python class.
-   *
-   * Convenience method that constructs an 'instantiate' message and sends it.
-   */
-  async instantiate<T = unknown>(
-    module: string,
-    className: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    const message: ProtocolMessage = {
-      id: this.generateId(),
-      protocol: PROTOCOL_ID,
-      method: 'instantiate',
-      params: {
-        module,
-        className,
-        args: args ?? [],
-        kwargs,
-      },
-    };
-
-    const responseJson = await this.send(JSON.stringify(message), 30000);
-    return this.parseResponse<T>(responseJson);
-  }
-
-  /**
-   * Call a method on a Python instance.
-   *
-   * Convenience method that constructs a 'call_method' message and sends it.
-   */
-  async callMethod<T = unknown>(
-    handle: string,
-    methodName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    const message: ProtocolMessage = {
-      id: this.generateId(),
-      protocol: PROTOCOL_ID,
-      method: 'call_method',
-      params: {
-        handle,
-        methodName,
-        args: args ?? [],
-        kwargs,
-      },
-    };
-
-    const responseJson = await this.send(JSON.stringify(message), 30000);
-    return this.parseResponse<T>(responseJson);
-  }
-
-  /**
-   * Dispose a Python instance.
-   *
-   * Convenience method that constructs a 'dispose_instance' message and sends it.
-   */
-  async disposeInstance(handle: string): Promise<void> {
-    const message: ProtocolMessage = {
-      id: this.generateId(),
-      protocol: PROTOCOL_ID,
-      method: 'dispose_instance',
-      params: {
-        handle,
-      },
-    };
-
-    const responseJson = await this.send(JSON.stringify(message), 30000);
-    this.parseResponse<void>(responseJson);
-  }
-
-  // ===========================================================================
   // PRIVATE HELPERS
   // ===========================================================================
 
@@ -507,30 +380,6 @@ export class PyodideIO extends BoundedContext implements Transport {
       return;
     }
     await this.py.runPythonAsync(BOOTSTRAP_PYTHON);
-  }
-
-  /**
-   * Parse a JSON response and extract the result or throw an error.
-   */
-  private parseResponse<T>(responseJson: string): T {
-    const response = JSON.parse(responseJson) as ProtocolResponse;
-
-    if (response.error) {
-      const err = new BridgeExecutionError(`${response.error.type}: ${response.error.message}`, {
-        code: response.error.type,
-      });
-      err.traceback = response.error.traceback;
-      throw err;
-    }
-
-    return response.result as T;
-  }
-
-  /**
-   * Generate a unique message ID.
-   */
-  private generateId(): number {
-    return ++this.requestId;
   }
 
   /**

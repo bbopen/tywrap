@@ -1,24 +1,26 @@
 /**
- * BridgeProtocol - Unified abstraction for JS<->Python communication.
+ * RpcClient - the single correlated-RPC client for JS<->Python communication.
  *
- * Combines BoundedContext + SafeCodec + Transport into a single base class
- * that handles all cross-boundary concerns:
- * - Lifecycle management (init/dispose state machine)
- * - Request/response encoding with validation
- * - Transport-agnostic message passing
- * - Bounded execution (timeout, retry, abort)
+ * It HOLDS a Transport and a codec (SafeCodec) and is, in turn, HELD by the
+ * bridge facades (NodeBridge/HttpBridge/PyodideBridge) via composition — it is
+ * NOT a base class bridges extend. It owns the one place where the wire frame
+ * is built and correlated: id generation, {id, protocol} stamping, codec
+ * encode/decode, and transport.send. It composes DisposableBase to obtain its
+ * lifecycle (init/dispose) and bounded execution (timeout/retry/abort), but it
+ * carries no PythonRuntime contract obligation — the facade implements
+ * PythonRuntime and delegates the four RPC methods to this client.
  *
- * Subclasses (NodeBridge, HttpBridge, PyodideBridge) only need to:
- * 1. Create their transport in their constructor
- * 2. Pass it to super() via BridgeProtocolOptions
- * 3. Optionally override doInit() and doDispose() for additional setup/teardown
+ * Why composition (not inheritance): inheritance previously forced the RPC
+ * contract onto a lifecycle base, leaking throwing RPC stubs into transports.
+ * Holding one RpcClient keeps exactly one encode/decode/correlation site and
+ * lets transports stay pure byte-movers.
  *
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
 import type { BridgeInfo } from '../types/index.js';
 
-import { BoundedContext, type ExecuteOptions } from './bounded-context.js';
+import { DisposableBase, type ExecuteOptions } from './bounded-context.js';
 import { BridgeProtocolError } from './errors.js';
 import { SafeCodec, type CodecOptions } from './safe-codec.js';
 import { TYWRAP_PROTOCOL_VERSION } from './protocol.js';
@@ -37,9 +39,9 @@ export interface GetBridgeInfoOptions {
 }
 
 /**
- * Configuration options for BridgeProtocol.
+ * Configuration options for RpcClient.
  */
-export interface BridgeProtocolOptions {
+export interface RpcClientOptions {
   /** The transport to use for communication */
   transport: Transport;
 
@@ -174,43 +176,37 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
 }
 
 // =============================================================================
-// BRIDGE PROTOCOL BASE CLASS
+// RPC CLIENT
 // =============================================================================
 
 /**
- * BridgeProtocol combines BoundedContext + SafeCodec + Transport
- * into a unified abstraction for all JS<->Python communication.
- *
- * This class provides:
- * - Automatic transport lifecycle management
- * - Request encoding with guardrails (special float rejection, key validation)
- * - Response decoding with Arrow support
- * - Full RuntimeExecution interface implementation
- *
- * Subclasses should:
- * 1. Create their transport in their constructor
- * 2. Pass it to super() via BridgeProtocolOptions
- * 3. Optionally override doInit() and doDispose() for additional setup/teardown
+ * RpcClient holds a SafeCodec + Transport and composes DisposableBase for
+ * lifecycle/bounded-execution. It is the one correlated-RPC client; bridge
+ * facades HOLD an instance and delegate their PythonRuntime methods to it.
  *
  * @example
  * ```typescript
- * class NodeBridge extends BridgeProtocol {
+ * class NodeBridge extends DisposableBase implements PythonRuntime {
+ *   private readonly rpc: RpcClient;
  *   constructor(options: NodeBridgeOptions) {
+ *     super();
  *     const transport = new ProcessIO(options);
- *     super({ transport, defaultTimeoutMs: options.timeout });
+ *     this.rpc = new RpcClient({ transport, defaultTimeoutMs: options.timeout });
+ *     this.trackResource(this.rpc);
  *   }
+ *   // call/instantiate/callMethod/disposeInstance delegate to this.rpc.*
  * }
  * ```
  */
-export class BridgeProtocol extends BoundedContext {
+export class RpcClient extends DisposableBase {
   /** Codec instance for validation and serialization */
-  protected readonly codec: SafeCodec;
+  readonly codec: SafeCodec;
 
   /** Transport instance for message passing */
-  protected readonly transport: Transport;
+  readonly transport: Transport;
 
   /** Default timeout for operations in milliseconds */
-  protected readonly defaultTimeoutMs: number;
+  readonly defaultTimeoutMs: number;
 
   /** Counter for generating unique request IDs */
   private requestId = 0;
@@ -219,11 +215,11 @@ export class BridgeProtocol extends BoundedContext {
   private bridgeInfoCache?: BridgeInfo;
 
   /**
-   * Create a new BridgeProtocol instance.
+   * Create a new RpcClient instance.
    *
    * @param options - Configuration options including transport and codec settings
    */
-  constructor(options: BridgeProtocolOptions) {
+  constructor(options: RpcClientOptions) {
     super();
     this.codec = new SafeCodec(options.codec);
     this.transport = options.transport;
@@ -238,26 +234,22 @@ export class BridgeProtocol extends BoundedContext {
   // ===========================================================================
 
   /**
-   * Initialize the protocol.
-   *
-   * Initializes the underlying transport. Subclasses can override this
-   * to add additional initialization logic, but must call super.doInit().
+   * Initialize the client by initializing the underlying transport.
+   * Driven by the holding facade's lifecycle (facade.init() -> rpc.init()).
    */
   protected async doInit(): Promise<void> {
     await this.transport.init();
   }
 
   /**
-   * Dispose the protocol.
+   * Dispose the client.
    *
-   * The transport is tracked as a resource and will be disposed automatically
-   * by BoundedContext. Subclasses can override this to add additional cleanup,
-   * but should not need to dispose the transport manually.
+   * The transport is tracked as a resource and is disposed automatically by
+   * DisposableBase. Here we only clear the cached bridge info.
    */
   protected async doDispose(): Promise<void> {
     this.bridgeInfoCache = undefined;
-    // Transport is tracked and will be disposed by BoundedContext
-    // Subclasses can override to add additional cleanup
+    // Transport is tracked and will be disposed by DisposableBase.
   }
 
   // ===========================================================================
@@ -281,7 +273,7 @@ export class BridgeProtocol extends BoundedContext {
    * @throws BridgeExecutionError if Python returns an error
    * @throws BridgeTimeoutError if the operation times out
    */
-  protected async sendMessage<T>(
+  async sendMessage<T>(
     message: Omit<ProtocolMessage, 'id' | 'protocol'>,
     options?: ExecuteOptions<T>
   ): Promise<T> {
@@ -321,7 +313,7 @@ export class BridgeProtocol extends BoundedContext {
    * @throws BridgeExecutionError if Python returns an error
    * @throws BridgeTimeoutError if the operation times out
    */
-  protected async sendMessageAsync<T>(
+  async sendMessageAsync<T>(
     message: Omit<ProtocolMessage, 'id' | 'protocol'>,
     options?: ExecuteOptions<T>
   ): Promise<T> {
@@ -348,6 +340,41 @@ export class BridgeProtocol extends BoundedContext {
   }
 
   /**
+   * Send a message over an EXPLICIT transport (not this.transport) with the
+   * same id-generation + codec encode/decode as the normal send path, but
+   * WITHOUT this.execute() and WITHOUT auto-init.
+   *
+   * This is the warmup path: NodeBridge runs warmup commands inside
+   * transport.init() (worker spawn -> onWorkerReady), which happens DURING
+   * rpc.init(). Routing those through this.execute() would auto-init this same
+   * client and re-await the in-flight init() that is itself waiting on warmup,
+   * deadlocking. So sendOn deliberately skips lifecycle: it only unifies the
+   * id counter + codec, never the state machine.
+   *
+   * @param transport - The specific worker transport to send on
+   * @param message - The protocol message (without id/protocol; stamped here)
+   * @param opts - Optional timeout / abort signal
+   */
+  async sendOn<T>(
+    transport: Transport,
+    message: Omit<ProtocolMessage, 'id' | 'protocol'>,
+    opts?: { timeoutMs?: number; signal?: AbortSignal }
+  ): Promise<T> {
+    const fullMessage: ProtocolMessage = {
+      ...message,
+      id: this.generateId(),
+      protocol: PROTOCOL_ID,
+    };
+    const encoded = this.codec.encodeRequest(fullMessage);
+    const responseStr = await transport.send(
+      encoded,
+      opts?.timeoutMs ?? this.defaultTimeoutMs,
+      opts?.signal
+    );
+    return this.codec.decodeResponseAsync<T>(responseStr);
+  }
+
+  /**
    * Generate a unique request ID.
    *
    * Returns a monotonically increasing integer that ensures uniqueness
@@ -358,7 +385,7 @@ export class BridgeProtocol extends BoundedContext {
   }
 
   // ===========================================================================
-  // RUNTIME EXECUTION INTERFACE
+  // RPC METHODS (delegated to by the facade's PythonRuntime implementation)
   // ===========================================================================
 
   /**
