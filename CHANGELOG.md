@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/bbopen/tywrap/compare/v0.4.0...v0.5.0) (2026-05-30)
+
+
+### Bug Fixes
+
+* also match json's canonical 'out of range float' phrase in both tywrap_bridge_core.encode_value and safe_codec.SafeCodec, so the rejection message is stable on all supported Python versions. NaN was always rejected; only the message wording differed. Regenerated the embedded pyodide bootstrap constant. ([57450a4](https://github.com/bbopen/tywrap/commit/57450a497d3f7aa2dba2aefaf64d9d344290ec26))
+* **ci:** restore node 22 validation baseline ([#226](https://github.com/bbopen/tywrap/issues/226)) ([037c20c](https://github.com/bbopen/tywrap/commit/037c20c2f66b0b6bfe218b4e3ae02a8859199115))
+* **codec:** stabilize NaN/Infinity rejection message across Python versions ([57450a4](https://github.com/bbopen/tywrap/commit/57450a497d3f7aa2dba2aefaf64d9d344290ec26))
+
+
+### Miscellaneous Chores
+
+* release 0.5.0 ([82d4030](https://github.com/bbopen/tywrap/commit/82d403073efe9145c2af13bb2adbfbf6136ff6f1))
+
 ## [0.4.0](https://github.com/bbopen/tywrap/compare/v0.3.1...v0.4.0) (2026-04-12)
 
 ### Features
