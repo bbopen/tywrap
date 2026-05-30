@@ -1,8 +1,9 @@
 /**
- * Node.js runtime bridge for BridgeProtocol.
+ * Node.js runtime bridge.
  *
- * NodeBridge extends BridgeProtocol and uses ProcessIO transports with
- * optional pooling for concurrent Python execution.
+ * NodeBridge is a thin facade: it extends DisposableBase (lifecycle/resources)
+ * and implements PythonRuntime by HOLDING an RpcClient. It uses ProcessIO
+ * transports with optional pooling for concurrent Python execution.
  *
  * @see https://github.com/bbopen/tywrap/issues/149
  */
@@ -12,17 +13,18 @@ import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
+import type { PythonRuntime, BridgeInfo } from '../types/index.js';
 import { autoRegisterArrowDecoder } from '../utils/codec.js';
 import { getDefaultPythonPath } from '../utils/python.js';
 import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 import { globalCache } from '../utils/cache.js';
 
-import { BridgeProtocol, type BridgeProtocolOptions } from './bridge-protocol.js';
-import { BridgeExecutionError, BridgeProtocolError } from './errors.js';
+import { DisposableBase } from './bounded-context.js';
+import { RpcClient, type GetBridgeInfoOptions } from './rpc-client.js';
+import { BridgeCodecError, BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import { ProcessIO } from './process-io.js';
 import { PooledTransport } from './pooled-transport.js';
 import type { CodecOptions } from './safe-codec.js';
-import { PROTOCOL_ID } from './transport.js';
 import type { PooledWorker } from './worker-pool.js';
 
 // =============================================================================
@@ -303,9 +305,10 @@ function normalizeWarmupCommands(commands: NodeBridgeOptions['warmupCommands']):
  * await pooledBridge.init();
  * ```
  */
-export class NodeBridge extends BridgeProtocol {
+export class NodeBridge extends DisposableBase implements PythonRuntime {
   private readonly resolvedOptions: ResolvedOptions;
   private readonly pooledTransport: PooledTransport;
+  private readonly rpc: RpcClient;
 
   /**
    * Create a new NodeBridge instance.
@@ -343,11 +346,19 @@ export class NodeBridge extends BridgeProtocol {
     // Build environment for ProcessIO
     const processEnv = buildProcessEnv(resolvedOptions);
 
-    const userWarmup =
-      resolvedOptions.warmupCommands.length > 0
-        ? createWarmupCallback(resolvedOptions.warmupCommands, resolvedOptions.timeoutMs)
-        : undefined;
-    const onWorkerReady = createWorkerReadyCallback(resolvedOptions.timeoutMs, userWarmup);
+    // Why a late-bound holder: PooledTransport copies onWorkerReady eagerly at
+    // construction (before super()), but the callback needs the RpcClient, and
+    // a derived constructor cannot touch `this` before super(). So the closure
+    // captures a mutable holder whose .rpc is assigned right after super(). The
+    // closure body only runs at worker-spawn time during init(), by which point
+    // rpc is set. Warmup goes through rpc.sendOn (NOT rpc.execute): it runs
+    // inside transport.init() during rpc.init(), so it must not auto-init.
+    const rpcHolder: { rpc?: RpcClient } = {};
+    const onWorkerReady = createWorkerReadyCallback(
+      rpcHolder,
+      resolvedOptions.warmupCommands,
+      resolvedOptions.timeoutMs
+    );
 
     // Create pooled transport with ProcessIO workers
     const transport = new PooledTransport({
@@ -366,17 +377,21 @@ export class NodeBridge extends BridgeProtocol {
       onReplacementWorkerReady: onWorkerReady,
     });
 
-    // Initialize BridgeProtocol with pooled transport
-    const protocolOptions: BridgeProtocolOptions = {
-      transport,
-      codec: resolvedOptions.codec,
-      defaultTimeoutMs: resolvedOptions.timeoutMs,
-    };
-
-    super(protocolOptions);
+    super();
 
     this.resolvedOptions = resolvedOptions;
     this.pooledTransport = transport;
+    this.rpc = new RpcClient({
+      transport,
+      codec: resolvedOptions.codec,
+      defaultTimeoutMs: resolvedOptions.timeoutMs,
+    });
+    // Track the RpcClient (which itself tracks the transport): one disposal
+    // chain facade -> rpc -> transport, and rpc.doDispose clears its info cache.
+    this.trackResource(this.rpc);
+
+    // Publish the rpc into the holder so the warmup closure can reach it.
+    rpcHolder.rpc = this.rpc;
   }
 
   // ===========================================================================
@@ -387,9 +402,10 @@ export class NodeBridge extends BridgeProtocol {
    * Initialize the bridge.
    *
    * Validates the bridge script exists, registers Arrow decoder,
-   * and initializes the transport pool (which runs warmup commands per-worker).
+   * and initializes the held RpcClient (which initializes the transport pool,
+   * running warmup commands per-worker).
    */
-  protected override async doInit(): Promise<void> {
+  protected async doInit(): Promise<void> {
     // Validate script exists
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- script path is user-configured
     if (!existsSync(this.resolvedOptions.scriptPath)) {
@@ -404,18 +420,29 @@ export class NodeBridge extends BridgeProtocol {
       loader: () => require('apache-arrow'),
     });
 
-    // Initialize parent (which initializes transport and runs warmup per-worker)
-    await super.doInit();
+    // Initialize the RpcClient (which initializes transport and runs warmup).
+    await this.rpc.init();
+  }
+
+  /**
+   * No facade-specific teardown: the RpcClient (and through it the transport
+   * pool) is tracked as a resource and disposed automatically by DisposableBase.
+   */
+  protected async doDispose(): Promise<void> {
+    // Intentionally empty; tracked resources handle disposal.
   }
 
   // ===========================================================================
-  // CACHING OVERRIDE
+  // RPC METHODS (delegate to the held RpcClient)
   // ===========================================================================
 
   /**
-   * Override call() to add optional caching.
+   * Call a Python function, with optional result caching.
+   *
+   * Cache lookup stays FIRST so cache hits return without forcing init,
+   * preserving the pre-composition behavior.
    */
-  override async call<T = unknown>(
+  async call<T = unknown>(
     module: string,
     functionName: string,
     args: unknown[],
@@ -433,7 +460,8 @@ export class NodeBridge extends BridgeProtocol {
 
       // Execute and cache if pure function
       const startTime = performance.now();
-      const result = await super.call<T>(module, functionName, args, kwargs);
+      await this.ensureReady();
+      const result = await this.rpc.call<T>(module, functionName, args, kwargs);
       const duration = performance.now() - startTime;
 
       if (cacheKey && this.isPureFunctionCandidate(functionName, args)) {
@@ -447,7 +475,52 @@ export class NodeBridge extends BridgeProtocol {
     }
 
     // No caching - direct call
-    return super.call<T>(module, functionName, args, kwargs);
+    await this.ensureReady();
+    return this.rpc.call<T>(module, functionName, args, kwargs);
+  }
+
+  async instantiate<T = unknown>(
+    module: string,
+    className: string,
+    args: unknown[],
+    kwargs?: Record<string, unknown>
+  ): Promise<T> {
+    await this.ensureReady();
+    return this.rpc.instantiate<T>(module, className, args, kwargs);
+  }
+
+  async callMethod<T = unknown>(
+    handle: string,
+    methodName: string,
+    args: unknown[],
+    kwargs?: Record<string, unknown>
+  ): Promise<T> {
+    await this.ensureReady();
+    return this.rpc.callMethod<T>(handle, methodName, args, kwargs);
+  }
+
+  async disposeInstance(handle: string): Promise<void> {
+    await this.ensureReady();
+    return this.rpc.disposeInstance(handle);
+  }
+
+  /**
+   * Fetch bridge diagnostics and feature availability.
+   */
+  async getBridgeInfo(options?: GetBridgeInfoOptions): Promise<BridgeInfo> {
+    await this.ensureReady();
+    return this.rpc.getBridgeInfo(options);
+  }
+
+  /**
+   * Ensure the facade is initialized before delegating an RPC. Replicates the
+   * auto-init that BoundedContext.execute() gave for free, so the facade's
+   * own doInit pre-work (script check, Arrow decoder) runs before any RPC.
+   */
+  private async ensureReady(): Promise<void> {
+    if (!this.isReady) {
+      await this.init();
+    }
   }
 
   // ===========================================================================
@@ -556,216 +629,91 @@ export class NodeBridge extends BridgeProtocol {
 // =============================================================================
 
 /**
- * Simple request ID generator for warmup commands.
+ * Wrap an error from rpc.sendOn() with the warmup command's context label,
+ * preserving the exact phrasing the warmup tests assert on. The single
+ * RpcClient codec+id-counter is reused (via sendOn); only this label wrapping
+ * is bespoke, and only because warmup surfaces command-specific diagnostics.
+ *
+ * Maps codec/protocol error shapes to the historical messages:
+ * - encode failure (BridgeCodecError, e.g. BigInt) -> "failed to encode request"
+ * - missing result/error envelope (BridgeProtocolError) -> "malformed response envelope"
+ * - Python error (BridgeExecutionError "Type: message") -> "failed: Type: message"
+ * - anything else (transport/send) -> "failed to send"
  */
-let warmupRequestId = 0;
-function generateWarmupId(): number {
-  return ++warmupRequestId;
-}
+function wrapWarmupError(label: string, error: unknown): BridgeExecutionError {
+  const cause = error instanceof Error ? error : undefined;
+  const message = error instanceof Error ? error.message : String(error);
 
-async function sendWarmupRequest(
-  worker: PooledWorker,
-  timeoutMs: number,
-  requestId: number,
-  label: string,
-  messagePayload: Record<string, unknown>
-): Promise<void> {
-  let message: string;
-  try {
-    message = JSON.stringify({
-      id: requestId,
-      protocol: PROTOCOL_ID,
-      ...messagePayload,
-    });
-  } catch (error) {
-    throw new BridgeExecutionError(
-      `${label} failed to encode request: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error instanceof Error ? error : undefined }
-    );
+  if (error instanceof BridgeCodecError && error.codecPhase === 'encode') {
+    return new BridgeExecutionError(`${label} failed to encode request: ${message}`, { cause });
   }
-
-  let response: string;
-  try {
-    response = await worker.transport.send(message, timeoutMs);
-  } catch (error) {
-    throw new BridgeExecutionError(
-      `${label} failed to send: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error instanceof Error ? error : undefined }
-    );
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(response);
-  } catch (error) {
-    throw new BridgeExecutionError(`${label} returned invalid JSON response`, {
-      cause: error instanceof Error ? error : undefined,
-    });
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new BridgeExecutionError(
-      `${label} returned malformed response envelope for request ${requestId}`
-    );
-  }
-
-  const envelope = parsed as { result?: unknown; error?: unknown };
-  if ('error' in envelope && envelope.error !== undefined && envelope.error !== null) {
-    const errorPayload = envelope.error;
-    if (errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)) {
-      const err = errorPayload as { type?: unknown; message?: unknown };
-      const errType = typeof err.type === 'string' ? err.type : 'Error';
-      const errMessage = typeof err.message === 'string' ? err.message : 'Unknown warmup error';
-      throw new BridgeExecutionError(`${label} failed: ${errType}: ${errMessage}`);
+  if (error instanceof BridgeProtocolError) {
+    // The codec rejects an envelope that has neither "result" nor "error".
+    // Distinguish that specific malformed-envelope case from transport-level
+    // protocol errors (e.g. garbled stdout), whose original message must be
+    // preserved so callers still see the underlying "Protocol error" text.
+    if (/missing "result" or "error"/.test(message)) {
+      return new BridgeExecutionError(`${label} returned malformed response envelope`, { cause });
     }
-
-    throw new BridgeExecutionError(`${label} failed with malformed error payload`);
+    return new BridgeExecutionError(`${label} failed to send: ${message}`, { cause });
   }
-
-  if (!('result' in envelope)) {
-    throw new BridgeExecutionError(
-      `${label} returned malformed response envelope for request ${requestId}`
-    );
+  if (error instanceof BridgeExecutionError) {
+    // Python-side error already formatted as "Type: message" by the codec.
+    return new BridgeExecutionError(`${label} failed: ${message}`, { cause });
   }
+  return new BridgeExecutionError(`${label} failed to send: ${message}`, { cause });
 }
 
 /**
- * Create a callback that runs warmup commands on each worker.
+ * Build the per-worker onWorkerReady callback. It runs at worker-spawn time
+ * during init(); by then rpcHolder.rpc is set (assigned right after super()).
  *
- * The callback sends warmup commands directly to the worker's transport,
- * bypassing the pool to ensure each worker gets warmed up individually.
+ * The callback first does a readiness `meta` probe, then runs each warmup
+ * command. Both go through rpc.sendOn (raw encode/send/decode, NO auto-init)
+ * so they cannot re-await the in-flight rpc.init().
  */
-function createWarmupCallback(
+function createWorkerReadyCallback(
+  rpcHolder: { rpc?: RpcClient },
   warmupCommands: WarmupCommand[],
   timeoutMs: number
 ): (worker: PooledWorker) => Promise<void> {
   return async (worker: PooledWorker) => {
-    for (const [index, cmd] of warmupCommands.entries()) {
-      const commandLabel = `${cmd.module}.${cmd.functionName}`;
-      await executeWorkerCall(
-        worker,
-        {
-          module: cmd.module,
-          functionName: cmd.functionName,
-          args: cmd.args ?? [],
-        },
-        timeoutMs,
-        {
-          label: `Warmup command #${index + 1} (${commandLabel})`,
-          invalidJsonMessage: 'returned invalid JSON response',
-          malformedEnvelopeMessage: requestId =>
-            `returned malformed response envelope for request ${requestId}`,
-          pythonErrorMessage: (errorType, errorMessage) => `failed: ${errorType}: ${errorMessage}`,
-          malformedErrorPayloadMessage: 'failed with malformed error payload',
-        }
-      );
+    const rpc = rpcHolder.rpc;
+    if (!rpc) {
+      throw new BridgeExecutionError('Worker warmup attempted before RpcClient was wired');
     }
-  };
-}
 
-function createWorkerReadyCallback(
-  timeoutMs: number,
-  extraWarmup?: (worker: PooledWorker) => Promise<void>
-): (worker: PooledWorker) => Promise<void> {
-  return async (worker: PooledWorker) => {
     const readyTimeoutMs = timeoutMs > 0 ? Math.max(timeoutMs, WORKER_READY_TIMEOUT_MS) : 0;
-    await sendWarmupRequest(worker, readyTimeoutMs, generateWarmupId(), 'Worker warmup check', {
-      method: 'meta',
-      params: {},
-    });
 
-    await extraWarmup?.(worker);
-  };
-}
-
-interface WorkerCallSpec {
-  module: string;
-  functionName: string;
-  args: unknown[];
-}
-
-interface WorkerCallErrorMessages {
-  label: string;
-  invalidJsonMessage: string;
-  malformedEnvelopeMessage: (requestId: number) => string;
-  pythonErrorMessage: (errorType: string, errorMessage: string) => string;
-  malformedErrorPayloadMessage: string;
-}
-
-async function executeWorkerCall(
-  worker: PooledWorker,
-  request: WorkerCallSpec,
-  timeoutMs: number,
-  messages: WorkerCallErrorMessages
-): Promise<unknown> {
-  const requestId = generateWarmupId();
-  let message: string;
-  try {
-    message = JSON.stringify({
-      id: requestId,
-      protocol: PROTOCOL_ID,
-      method: 'call',
-      params: {
-        module: request.module,
-        functionName: request.functionName,
-        args: request.args,
-        kwargs: {},
-      },
-    });
-  } catch (error) {
-    throw new BridgeExecutionError(
-      `${messages.label} failed to encode request: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error instanceof Error ? error : undefined }
-    );
-  }
-
-  let response: string;
-  try {
-    response = await worker.transport.send(message, timeoutMs);
-  } catch (error) {
-    throw new BridgeExecutionError(
-      `${messages.label} failed to send: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error instanceof Error ? error : undefined }
-    );
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(response);
-  } catch (error) {
-    throw new BridgeExecutionError(`${messages.label} ${messages.invalidJsonMessage}`, {
-      cause: error instanceof Error ? error : undefined,
-    });
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new BridgeExecutionError(
-      `${messages.label} ${messages.malformedEnvelopeMessage(requestId)}`
-    );
-  }
-
-  const envelope = parsed as { result?: unknown; error?: unknown };
-  if ('error' in envelope && envelope.error !== undefined && envelope.error !== null) {
-    const errorPayload = envelope.error;
-    if (errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)) {
-      const err = errorPayload as { type?: unknown; message?: unknown };
-      const errType = typeof err.type === 'string' ? err.type : 'Error';
-      const errMessage = typeof err.message === 'string' ? err.message : 'Unknown error';
-      throw new BridgeExecutionError(
-        `${messages.label} ${messages.pythonErrorMessage(errType, errMessage)}`
-      );
+    // Readiness probe (mirrors getBridgeInfo's meta request, per-worker).
+    try {
+      await rpc.sendOn(worker.transport, { method: 'meta', params: {} }, { timeoutMs: readyTimeoutMs });
+    } catch (error) {
+      throw wrapWarmupError('Worker warmup check', error);
     }
 
-    throw new BridgeExecutionError(`${messages.label} ${messages.malformedErrorPayloadMessage}`);
-  }
-
-  if (!('result' in envelope)) {
-    throw new BridgeExecutionError(
-      `${messages.label} ${messages.malformedEnvelopeMessage(requestId)}`
-    );
-  }
-
-  return envelope.result;
+    // User-provided warmup commands.
+    for (const [index, cmd] of warmupCommands.entries()) {
+      const label = `Warmup command #${index + 1} (${cmd.module}.${cmd.functionName})`;
+      try {
+        await rpc.sendOn(
+          worker.transport,
+          {
+            method: 'call',
+            params: {
+              module: cmd.module,
+              functionName: cmd.functionName,
+              args: cmd.args ?? [],
+              kwargs: {},
+            },
+          },
+          { timeoutMs }
+        );
+      } catch (error) {
+        throw wrapWarmupError(label, error);
+      }
+    }
+  };
 }
 
 // =============================================================================

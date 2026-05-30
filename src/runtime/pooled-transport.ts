@@ -8,7 +8,7 @@
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import { BoundedContext } from './bounded-context.js';
+import { DisposableBase } from './bounded-context.js';
 import { BridgeDisposedError, BridgeExecutionError } from './errors.js';
 import type { Transport } from './transport.js';
 import { WorkerPool, type PooledWorker } from './worker-pool.js';
@@ -82,7 +82,7 @@ export interface PooledTransportOptions {
  * await transport.dispose();
  * ```
  */
-export class PooledTransport extends BoundedContext implements Transport {
+export class PooledTransport extends DisposableBase implements Transport {
   private readonly poolOptions: Omit<
     Required<PooledTransportOptions>,
     'onWorkerReady' | 'onReplacementWorkerReady'
@@ -204,60 +204,5 @@ export class PooledTransport extends BoundedContext implements Transport {
    */
   get totalInFlight(): number {
     return this.pool?.totalInFlight ?? 0;
-  }
-
-  // ===========================================================================
-  // RUNTIME EXECUTION (Not implemented - PooledTransport is just a transport)
-  // ===========================================================================
-
-  /**
-   * Not implemented - PooledTransport is a transport, use BridgeProtocol.
-   */
-  async call<T = unknown>(
-    _module: string,
-    _functionName: string,
-    _args: unknown[],
-    _kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    throw new BridgeExecutionError(
-      'PooledTransport is a transport, use BridgeProtocol for operations'
-    );
-  }
-
-  /**
-   * Not implemented - PooledTransport is a transport, use BridgeProtocol.
-   */
-  async instantiate<T = unknown>(
-    _module: string,
-    _className: string,
-    _args: unknown[],
-    _kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    throw new BridgeExecutionError(
-      'PooledTransport is a transport, use BridgeProtocol for operations'
-    );
-  }
-
-  /**
-   * Not implemented - PooledTransport is a transport, use BridgeProtocol.
-   */
-  async callMethod<T = unknown>(
-    _handle: string,
-    _methodName: string,
-    _args: unknown[],
-    _kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    throw new BridgeExecutionError(
-      'PooledTransport is a transport, use BridgeProtocol for operations'
-    );
-  }
-
-  /**
-   * Not implemented - PooledTransport is a transport, use BridgeProtocol.
-   */
-  async disposeInstance(_handle: string): Promise<void> {
-    throw new BridgeExecutionError(
-      'PooledTransport is a transport, use BridgeProtocol for operations'
-    );
   }
 }
