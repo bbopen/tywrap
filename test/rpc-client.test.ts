@@ -1,7 +1,7 @@
 /**
- * BridgeProtocol Integration Test Suite
+ * RpcClient Integration Test Suite
  *
- * Comprehensive tests for the BridgeProtocol orchestration layer that integrates:
+ * Comprehensive tests for the RpcClient correlated-RPC client that integrates:
  * - SafeCodec (encoding/decoding with validation)
  * - Transport (message sending/receiving)
  * - WorkerPool (concurrent transport management)
@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { BridgeProtocol, type BridgeProtocolOptions } from '../src/runtime/bridge-protocol.js';
+import { RpcClient, type RpcClientOptions } from '../src/runtime/rpc-client.js';
 import { SafeCodec, type CodecOptions } from '../src/runtime/safe-codec.js';
 import {
   type Transport,
@@ -138,11 +138,12 @@ class MockTransport implements Transport {
 // =============================================================================
 
 /**
- * Concrete implementation of BridgeProtocol for testing.
- * Exposes protected methods and allows inspection of internal state.
+ * Test wrapper around RpcClient. RpcClient is the standalone (held, not
+ * extended) client now; this thin subclass just exposes a sendMessage helper
+ * and accessors for the public transport/codec for inspection.
  */
-class TestBridgeProtocol extends BridgeProtocol {
-  constructor(options: BridgeProtocolOptions) {
+class TestBridgeProtocol extends RpcClient {
+  constructor(options: RpcClientOptions) {
     super(options);
   }
 
@@ -181,7 +182,7 @@ describe('BridgeProtocol', () => {
       const transport = new MockTransport();
       const protocol = new TestBridgeProtocol({ transport });
 
-      expect(protocol).toBeInstanceOf(BridgeProtocol);
+      expect(protocol).toBeInstanceOf(RpcClient);
       expect(protocol.getTransport()).toBe(transport);
     });
 
@@ -235,7 +236,7 @@ describe('BridgeProtocol', () => {
         defaultTimeoutMs: 10000,
       });
 
-      expect(protocol).toBeInstanceOf(BridgeProtocol);
+      expect(protocol).toBeInstanceOf(RpcClient);
     });
   });
 

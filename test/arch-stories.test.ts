@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { BoundedContext, type ContextState } from '../src/runtime/bounded-context.js';
+import { DisposableBase, type ContextState } from '../src/runtime/bounded-context.js';
 import {
   BridgeDisposedError,
   BridgeError,
@@ -41,7 +41,7 @@ import { HttpBridge } from '../src/runtime/http.js';
 // TEST FIXTURES
 // ═══════════════════════════════════════════════════════════════════════════
 
-class TestBridge extends BoundedContext {
+class TestBridge extends DisposableBase {
   public initCalls = 0;
   public disposeCalls = 0;
   public shouldFailInit = false;
@@ -73,18 +73,6 @@ class TestBridge extends BoundedContext {
   public testValidateNumeric(value: unknown, name: string): number {
     return this.validateNumeric(value, name);
   }
-
-  // RuntimeExecution stubs
-  async call<T>(): Promise<T> {
-    return {} as T;
-  }
-  async instantiate<T>(): Promise<T> {
-    return {} as T;
-  }
-  async callMethod<T>(): Promise<T> {
-    return {} as T;
-  }
-  async disposeInstance(): Promise<void> {}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -449,26 +437,26 @@ describe('Issue #143: Standardized error classification', () => {
 // ALL BRIDGES EXTEND BOUNDED CONTEXT
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('All bridges extend BoundedContext', () => {
-  it('NodeBridge extends BoundedContext', () => {
+describe('All bridges extend DisposableBase', () => {
+  it('NodeBridge extends DisposableBase', () => {
     const bridge = new NodeBridge();
-    expect(bridge).toBeInstanceOf(BoundedContext);
+    expect(bridge).toBeInstanceOf(DisposableBase);
     expect(typeof bridge.init).toBe('function');
     expect(typeof bridge.dispose).toBe('function');
     expect(bridge.state).toBe('idle');
   });
 
-  it('PyodideBridge extends BoundedContext', () => {
+  it('PyodideBridge extends DisposableBase', () => {
     const bridge = new PyodideBridge();
-    expect(bridge).toBeInstanceOf(BoundedContext);
+    expect(bridge).toBeInstanceOf(DisposableBase);
     expect(typeof bridge.init).toBe('function');
     expect(typeof bridge.dispose).toBe('function');
     expect(bridge.state).toBe('idle');
   });
 
-  it('HttpBridge extends BoundedContext', () => {
+  it('HttpBridge extends DisposableBase', () => {
     const bridge = new HttpBridge({ baseURL: 'http://localhost:8000' });
-    expect(bridge).toBeInstanceOf(BoundedContext);
+    expect(bridge).toBeInstanceOf(DisposableBase);
     expect(typeof bridge.init).toBe('function');
     expect(typeof bridge.dispose).toBe('function');
     expect(bridge.state).toBe('idle');

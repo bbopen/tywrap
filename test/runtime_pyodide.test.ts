@@ -467,7 +467,7 @@ describe('Pyodide Runtime Bridge', () => {
       bridge = new PyodideBridge();
 
       await expect(
-        (bridge as any).transport.send(
+        (bridge as any).rpc.transport.send(
           JSON.stringify({
             id: 1,
             protocol: PROTOCOL_ID,

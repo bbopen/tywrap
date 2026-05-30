@@ -1,19 +1,20 @@
 /**
- * BoundedContext - Unified abstraction for cross-boundary concerns.
+ * DisposableBase - Lifecycle-and-resource base for cross-boundary components.
  *
- * This base class provides consistent handling of:
- * - Lifecycle management (init/dispose state machine)
- * - Validation helpers
- * - Error classification
- * - Bounded execution (timeout, retry)
- * - Resource ownership tracking
+ * Provides ONLY: init/dispose state machine, validation helpers, error
+ * classification, bounded execution (timeout/retry/abort), and resource
+ * ownership tracking. It carries ZERO RPC methods by design — the
+ * cross-boundary RPC contract (call/instantiate/callMethod/disposeInstance)
+ * is PythonRuntime, implemented only by the bridge facades, never by a base
+ * class or a transport. This separation is what keeps transports (ProcessIO,
+ * PooledTransport, WorkerPool, PyodideIO) and RpcClient from having to stub
+ * RPC methods they do not implement.
  *
- * All runtime bridges (NodeBridge, PyodideBridge, HttpBridge) extend this class.
+ * Reused by RpcClient and all transports.
  *
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import type { RuntimeExecution } from '../types/index.js';
 import {
   BridgeDisposedError,
   BridgeError,
@@ -36,7 +37,7 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Lifecycle states for a BoundedContext.
+ * Lifecycle states for a DisposableBase.
  *
  * State transitions:
  * - idle → initializing → ready (on successful init)
@@ -63,16 +64,15 @@ export interface ExecuteOptions<T = unknown> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BOUNDED CONTEXT BASE CLASS
+// DISPOSABLE BASE CLASS
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Abstract base class for runtime bridges with unified boundary management.
- *
- * Provides lifecycle management, validation, error classification,
- * bounded execution, and resource tracking.
+ * Abstract lifecycle/resource base. Provides lifecycle management, validation,
+ * error classification, bounded execution, and resource tracking — and nothing
+ * about RPC. See the file header for the DisposableBase vs PythonRuntime split.
  */
-export abstract class BoundedContext implements RuntimeExecution {
+export abstract class DisposableBase {
   // ═══════════════════════════════════════════════════════════════════════════
   // STATE
   // ═══════════════════════════════════════════════════════════════════════════
@@ -103,7 +103,7 @@ export abstract class BoundedContext implements RuntimeExecution {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // LIFECYCLE (addresses #142, #148)
+  // LIFECYCLE
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
@@ -566,43 +566,4 @@ export abstract class BoundedContext implements RuntimeExecution {
   protected get resourceCount(): number {
     return this._resources.size;
   }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // ABSTRACT METHODS (RuntimeExecution interface)
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  /**
-   * Call a Python function.
-   */
-  abstract call<T = unknown>(
-    module: string,
-    functionName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T>;
-
-  /**
-   * Instantiate a Python class.
-   */
-  abstract instantiate<T = unknown>(
-    module: string,
-    className: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T>;
-
-  /**
-   * Call a method on a Python instance.
-   */
-  abstract callMethod<T = unknown>(
-    handle: string,
-    methodName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T>;
-
-  /**
-   * Dispose a Python instance.
-   */
-  abstract disposeInstance(handle: string): Promise<void>;
 }

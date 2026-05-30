@@ -132,8 +132,8 @@ describe('Runtime Configuration', () => {
   describe('Pyodide Bridge Configuration', () => {
     it('should use default configuration', () => {
       const bridge = new PyodideBridge();
-      // In the new architecture, transport holds these properties
-      const transport = (bridge as any).transport;
+      // Composition: the facade holds an RpcClient which holds the transport.
+      const transport = (bridge as any).rpc.transport;
       const indexURL = (transport as any).indexURL;
       const packages = (transport as any).packages;
 
@@ -148,7 +148,7 @@ describe('Runtime Configuration', () => {
       };
 
       const bridge = new PyodideBridge(customOptions);
-      const transport = (bridge as any).transport;
+      const transport = (bridge as any).rpc.transport;
       const indexURL = (transport as any).indexURL;
       const packages = (transport as any).packages;
 
@@ -163,7 +163,7 @@ describe('Runtime Configuration', () => {
       };
 
       const bridge = new PyodideBridge(options);
-      const transport = (bridge as any).transport;
+      const transport = (bridge as any).rpc.transport;
       const packages = (transport as any).packages;
 
       expect(packages).toEqual([]);
@@ -175,7 +175,7 @@ describe('Runtime Configuration', () => {
       };
 
       const bridge = new PyodideBridge(options);
-      const transport = (bridge as any).transport;
+      const transport = (bridge as any).rpc.transport;
       const packages = (transport as any).packages;
 
       expect(packages).toEqual([]);
