@@ -203,6 +203,10 @@ describe('IR-only integration', () => {
         process.execPath,
         [
           tscPath,
+          // TS6 (TS5112) errors when files are passed on the CLI while an ambient
+          // tsconfig.json exists (cwd is the repo root). We intentionally compile a
+          // single file with explicit flags, so skip config discovery.
+          '--ignoreConfig',
           '--noEmit',
           '--pretty',
           'false',
@@ -378,8 +382,9 @@ void passthroughResult;
               moduleResolution: 'NodeNext',
               strict: true,
               noEmit: true,
+              // No baseUrl: it is deprecated in TS6 (TS5101). Relative path
+              // mappings resolve against the tsconfig location without it.
               skipLibCheck: false,
-              baseUrl: '.',
               paths: {
                 'tywrap/runtime': ['./runtime-stub'],
               },
