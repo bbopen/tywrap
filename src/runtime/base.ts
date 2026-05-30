@@ -1,24 +1,24 @@
 /**
  * Base runtime bridge
  *
- * @deprecated Use BoundedContext instead. RuntimeBridge will be removed in the next major version.
+ * @deprecated Use DisposableBase instead. RuntimeBridge will be removed in the next major version.
  */
 
-import { BoundedContext } from './bounded-context.js';
+import { DisposableBase } from './bounded-context.js';
 
 /**
- * @deprecated Use BoundedContext instead. RuntimeBridge will be removed in the next major version.
+ * @deprecated Use DisposableBase instead. RuntimeBridge will be removed in the next major version.
  *
- * All bridges now extend BoundedContext which provides:
+ * All bridges now build on DisposableBase which provides:
  * - Lifecycle management (init/dispose state machine)
  * - Validation helpers
  * - Error classification
  * - Bounded execution (timeout, retry)
  * - Resource ownership tracking
  *
- * @see BoundedContext
+ * @see DisposableBase
  */
-export abstract class RuntimeBridge extends BoundedContext {}
+export abstract class RuntimeBridge extends DisposableBase {}
 
-// Re-export BoundedContext for backwards compatibility
-export { BoundedContext };
+// Re-export DisposableBase for backwards compatibility
+export { DisposableBase };

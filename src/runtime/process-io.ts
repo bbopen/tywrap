@@ -14,13 +14,8 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
-import { BoundedContext } from './bounded-context.js';
-import {
-  BridgeDisposedError,
-  BridgeProtocolError,
-  BridgeTimeoutError,
-  BridgeExecutionError,
-} from './errors.js';
+import { DisposableBase } from './bounded-context.js';
+import { BridgeDisposedError, BridgeProtocolError, BridgeTimeoutError } from './errors.js';
 import { TimedOutRequestTracker } from './timed-out-request-tracker.js';
 import type { Transport } from './transport.js';
 
@@ -162,7 +157,7 @@ function extractMessageId(json: string): number | null {
  * await transport.dispose();
  * ```
  */
-export class ProcessIO extends BoundedContext implements Transport {
+export class ProcessIO extends DisposableBase implements Transport {
   // Configuration
   private readonly pythonPath: string;
   private readonly bridgeScript: string;
@@ -370,53 +365,6 @@ export class ProcessIO extends BoundedContext implements Transport {
     this.stderrBuffer = '';
     this.timedOutRequests.clear();
     this.requestCount = 0;
-  }
-
-  // ===========================================================================
-  // ABSTRACT METHOD STUBS (from BoundedContext)
-  // ===========================================================================
-
-  /**
-   * Not implemented - ProcessIO is a transport, not a full bridge.
-   */
-  call<T = unknown>(
-    _module: string,
-    _functionName: string,
-    _args: unknown[],
-    _kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    throw new BridgeExecutionError('ProcessIO is a transport, use BridgeProtocol for operations');
-  }
-
-  /**
-   * Not implemented - ProcessIO is a transport, not a full bridge.
-   */
-  instantiate<T = unknown>(
-    _module: string,
-    _className: string,
-    _args: unknown[],
-    _kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    throw new BridgeExecutionError('ProcessIO is a transport, use BridgeProtocol for operations');
-  }
-
-  /**
-   * Not implemented - ProcessIO is a transport, not a full bridge.
-   */
-  callMethod<T = unknown>(
-    _handle: string,
-    _methodName: string,
-    _args: unknown[],
-    _kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    throw new BridgeExecutionError('ProcessIO is a transport, use BridgeProtocol for operations');
-  }
-
-  /**
-   * Not implemented - ProcessIO is a transport, not a full bridge.
-   */
-  disposeInstance(_handle: string): Promise<void> {
-    throw new BridgeExecutionError('ProcessIO is a transport, use BridgeProtocol for operations');
   }
 
   // ===========================================================================

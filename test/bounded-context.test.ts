@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  BoundedContext,
+  DisposableBase,
   type ContextState,
   type ExecuteOptions,
 } from '../src/runtime/bounded-context.js';
@@ -25,9 +25,9 @@ import type { Disposable } from '../src/runtime/disposable.js';
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Concrete implementation of BoundedContext for testing.
+ * Concrete implementation of DisposableBase for testing.
  */
-class TestContext extends BoundedContext {
+class TestContext extends DisposableBase {
   public initCalls = 0;
   public disposeCalls = 0;
   public shouldFailInit = false;
@@ -87,21 +87,6 @@ class TestContext extends BoundedContext {
   public getResourceCount(): number {
     return this.resourceCount;
   }
-
-  // RuntimeExecution interface (not tested here, just stubs)
-  async call<T>(): Promise<T> {
-    return {} as T;
-  }
-
-  async instantiate<T>(): Promise<T> {
-    return {} as T;
-  }
-
-  async callMethod<T>(): Promise<T> {
-    return {} as T;
-  }
-
-  async disposeInstance(): Promise<void> {}
 }
 
 class MockResource implements Disposable {
