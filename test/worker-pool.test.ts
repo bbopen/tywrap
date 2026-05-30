@@ -1407,47 +1407,4 @@ describe('WorkerPool', () => {
     });
   });
 
-  // ===========================================================================
-  // RUNTIME EXECUTION (NOT IMPLEMENTED)
-  // ===========================================================================
-
-  describe('runtime execution methods', () => {
-    let pool: WorkerPool;
-
-    afterEach(async () => {
-      if (pool && !pool.isDisposed) {
-        await pool.dispose();
-      }
-    });
-
-    it('call() throws BridgeExecutionError', async () => {
-      pool = new WorkerPool(createTestOptions());
-      await pool.init();
-
-      await expect(pool.call('module', 'function', [])).rejects.toThrow(BridgeExecutionError);
-    });
-
-    it('instantiate() throws BridgeExecutionError', async () => {
-      pool = new WorkerPool(createTestOptions());
-      await pool.init();
-
-      await expect(pool.instantiate('module', 'ClassName', [])).rejects.toThrow(
-        BridgeExecutionError
-      );
-    });
-
-    it('callMethod() throws BridgeExecutionError', async () => {
-      pool = new WorkerPool(createTestOptions());
-      await pool.init();
-
-      await expect(pool.callMethod('handle', 'method', [])).rejects.toThrow(BridgeExecutionError);
-    });
-
-    it('disposeInstance() throws BridgeExecutionError', async () => {
-      pool = new WorkerPool(createTestOptions());
-      await pool.init();
-
-      await expect(pool.disposeInstance('handle')).rejects.toThrow(BridgeExecutionError);
-    });
-  });
 });

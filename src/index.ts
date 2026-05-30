@@ -9,14 +9,14 @@ import { tywrap } from './tywrap.js';
 
 export type { TywrapConfig, ResolvedTywrapConfig } from './config/index.js';
 export { defineConfig, resolveConfig } from './config/index.js';
-// BoundedContext - unified abstraction for cross-boundary concerns
+// DisposableBase - lifecycle/resource base for cross-boundary components
 export {
-  BoundedContext,
+  DisposableBase,
   type ContextState,
   type ExecuteOptions,
 } from './runtime/bounded-context.js';
-// BridgeProtocol - unified BoundedContext + SafeCodec + Transport
-export { BridgeProtocol, type BridgeProtocolOptions } from './runtime/bridge-protocol.js';
+// RpcClient - the single correlated-RPC client (codec + transport), held by bridges
+export { RpcClient, type RpcClientOptions } from './runtime/rpc-client.js';
 // SafeCodec - validation and serialization for JS<->Python boundary
 export { SafeCodec, type CodecOptions } from './runtime/safe-codec.js';
 // Transport - abstract I/O channel interface
@@ -63,7 +63,7 @@ export {
 } from './runtime/validators.js';
 
 /**
- * @deprecated Use BoundedContext instead. RuntimeBridge will be removed in the next major version.
+ * @deprecated Use DisposableBase instead. RuntimeBridge will be removed in the next major version.
  */
 export { RuntimeBridge } from './runtime/base.js';
 
@@ -77,7 +77,7 @@ export {
 } from './runtime/errors.js';
 export { getRuntimeBridge, setRuntimeBridge, clearRuntimeBridge } from './runtime/index.js';
 
-// Runtime-specific exports (Bridges using new BridgeProtocol architecture)
+// Runtime-specific exports (Bridge facades that HOLD an RpcClient)
 export { NodeBridge, type NodeBridgeOptions } from './runtime/node.js';
 export { PyodideBridge, type PyodideBridgeOptions } from './runtime/pyodide.js';
 export { HttpBridge, type HttpBridgeOptions } from './runtime/http.js';

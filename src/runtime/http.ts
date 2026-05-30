@@ -1,16 +1,20 @@
 /**
- * HTTP runtime bridge for BridgeProtocol.
+ * HTTP runtime bridge.
  *
- * HttpBridge extends BridgeProtocol and uses HttpIO transport for
- * stateless HTTP POST-based communication with a Python server.
+ * HttpBridge is a thin facade: it extends DisposableBase (lifecycle/resources)
+ * and implements PythonRuntime by HOLDING an RpcClient over an HttpIO transport
+ * for stateless HTTP POST-based communication with a Python server.
  *
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import { BridgeProtocol, type BridgeProtocolOptions } from './bridge-protocol.js';
+import type { PythonRuntime, BridgeInfo } from '../types/index.js';
+import { autoRegisterArrowDecoder } from '../utils/codec.js';
+
+import { DisposableBase } from './bounded-context.js';
+import { RpcClient, type GetBridgeInfoOptions } from './rpc-client.js';
 import { HttpIO } from './http-io.js';
 import type { CodecOptions } from './safe-codec.js';
-import { autoRegisterArrowDecoder } from '../utils/codec.js';
 
 // =============================================================================
 // OPTIONS
@@ -61,33 +65,101 @@ export interface HttpBridgeOptions {
  * await bridge.dispose();
  * ```
  */
-export class HttpBridge extends BridgeProtocol {
+export class HttpBridge extends DisposableBase implements PythonRuntime {
+  private readonly rpc: RpcClient;
+
   /**
    * Create a new HttpBridge instance.
    *
    * @param options - Configuration options for the bridge
    */
   constructor(options: HttpBridgeOptions) {
-    // Create HTTP transport
+    super();
+
     const transport = new HttpIO({
       baseURL: options.baseURL,
       headers: options.headers,
       defaultTimeoutMs: options.timeoutMs,
     });
 
-    // Initialize BridgeProtocol with transport and codec options
-    const protocolOptions: BridgeProtocolOptions = {
+    this.rpc = new RpcClient({
       transport,
       codec: options.codec,
       defaultTimeoutMs: options.timeoutMs,
-    };
-
-    super(protocolOptions);
+    });
+    // One disposal chain: facade -> rpc -> transport.
+    this.trackResource(this.rpc);
   }
+
+  // ===========================================================================
+  // LIFECYCLE
+  // ===========================================================================
 
   protected async doInit(): Promise<void> {
     // Best-effort: keep apache-arrow optional and avoid breaking non-Node runtimes.
     await autoRegisterArrowDecoder();
-    await super.doInit();
+    await this.rpc.init();
+  }
+
+  /**
+   * No facade-specific teardown: the RpcClient (and its transport) is tracked
+   * as a resource and disposed automatically by DisposableBase.
+   */
+  protected async doDispose(): Promise<void> {
+    // Intentionally empty; tracked resources handle disposal.
+  }
+
+  // ===========================================================================
+  // RPC METHODS (delegate to the held RpcClient)
+  // ===========================================================================
+
+  async call<T = unknown>(
+    module: string,
+    functionName: string,
+    args: unknown[],
+    kwargs?: Record<string, unknown>
+  ): Promise<T> {
+    await this.ensureReady();
+    return this.rpc.call<T>(module, functionName, args, kwargs);
+  }
+
+  async instantiate<T = unknown>(
+    module: string,
+    className: string,
+    args: unknown[],
+    kwargs?: Record<string, unknown>
+  ): Promise<T> {
+    await this.ensureReady();
+    return this.rpc.instantiate<T>(module, className, args, kwargs);
+  }
+
+  async callMethod<T = unknown>(
+    handle: string,
+    methodName: string,
+    args: unknown[],
+    kwargs?: Record<string, unknown>
+  ): Promise<T> {
+    await this.ensureReady();
+    return this.rpc.callMethod<T>(handle, methodName, args, kwargs);
+  }
+
+  async disposeInstance(handle: string): Promise<void> {
+    await this.ensureReady();
+    return this.rpc.disposeInstance(handle);
+  }
+
+  async getBridgeInfo(options?: GetBridgeInfoOptions): Promise<BridgeInfo> {
+    await this.ensureReady();
+    return this.rpc.getBridgeInfo(options);
+  }
+
+  /**
+   * Ensure the facade is initialized before delegating an RPC, replicating the
+   * auto-init that the bounded execute path provided pre-composition.
+   */
+  private async ensureReady(): Promise<void> {
+    if (!this.isReady) {
+      await this.init();
+    }
   }
 }

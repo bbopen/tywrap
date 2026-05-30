@@ -396,7 +396,14 @@ export function validateBridgeInfo(info: unknown): void {
   ) {
     throw new BridgeProtocolError('Invalid bridge info payload');
   }
-  if (candidate.bridge !== 'python-subprocess') {
+  // Why: accept any known backend identity (subprocess, Pyodide, HTTP) — all
+  // speak the same protocol — rather than hardcoding the subprocess identity.
+  const knownBridges: ReadonlyArray<BridgeInfo['bridge']> = [
+    'python-subprocess',
+    'pyodide',
+    'http',
+  ];
+  if (!knownBridges.includes(candidate.bridge)) {
     throw new BridgeProtocolError(`Unexpected bridge identifier: ${candidate.bridge}`);
   }
 }
