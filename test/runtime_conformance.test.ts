@@ -300,6 +300,11 @@ for __tywrap_line in __tywrap_driver_sys.stdin:
     __tywrap_driver_sys.stdout.flush()
 `;
 
+// The harness inlines the full ~31 KB bootstrap. Passing it via `python -c "..."`
+// overflows Windows' ~32 KB command-line limit (spawn ENAMETOOLONG), so it is
+// written to a file and executed as `python <file>` instead.
+const PYODIDE_HARNESS_PATH = resolve(RUNTIME_DIR, '_tywrap_conformance_harness.py');
+
 // ---------------------------------------------------------------------------
 // Backend construction
 // ---------------------------------------------------------------------------
@@ -326,12 +331,8 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     await httpBackend.start();
 
     if (CORE_OK) {
-      coreBackend = new JsonlProcessBackend(
-        'pyodide-core',
-        PYTHON,
-        ['-c', PYODIDE_CORE_HARNESS],
-        baseEnv
-      );
+      writeFileSync(PYODIDE_HARNESS_PATH, PYODIDE_CORE_HARNESS, 'utf-8');
+      coreBackend = new JsonlProcessBackend('pyodide-core', PYTHON, [PYODIDE_HARNESS_PATH], baseEnv);
     }
   });
 
@@ -342,6 +343,11 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     await coreBackend?.dispose();
     try {
       rmSync(PYDANTIC_FIXTURE_PATH, { force: true });
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(PYODIDE_HARNESS_PATH, { force: true });
     } catch {
       // ignore
     }
