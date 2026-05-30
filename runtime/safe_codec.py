@@ -148,9 +148,17 @@ class SafeCodec:
                 allow_nan=self.allow_nan,
             )
         except ValueError as exc:
-            # json.dumps raises ValueError for NaN/Infinity when allow_nan=False
+            # json.dumps raises ValueError for NaN/Infinity when allow_nan=False.
+            # The wording is Python-version dependent (3.12+ appends ": nan";
+            # 3.10/3.11 emit only "Out of range float values are not JSON
+            # compliant"), so match that canonical phrase too for a stable message.
             error_msg = str(exc).lower()
-            if 'nan' in error_msg or 'infinity' in error_msg or 'inf' in error_msg:
+            if (
+                'nan' in error_msg
+                or 'infinity' in error_msg
+                or 'inf' in error_msg
+                or 'out of range float' in error_msg
+            ):
                 raise CodecError(
                     'Cannot serialize NaN - NaN/Infinity not allowed in JSON'
                 ) from exc

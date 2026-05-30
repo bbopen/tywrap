@@ -673,7 +673,17 @@ def encode_value(value, *, allow_nan):
         return json.dumps(value, default=make_default_encoder(allow_nan=allow_nan), allow_nan=allow_nan)
     except ValueError as exc:
         error_msg = str(exc).lower()
-        if 'nan' in error_msg or 'infinity' in error_msg or 'inf' in error_msg:
+        # json.dumps(allow_nan=False) rejects NaN/Infinity with a ValueError whose
+        # wording is Python-version dependent: 3.12+ appends the offending value
+        # ("...not JSON compliant: nan"), but 3.10/3.11 emit only the canonical
+        # "Out of range float values are not JSON compliant". Match that phrase too
+        # so the typed error message is stable across versions.
+        if (
+            'nan' in error_msg
+            or 'infinity' in error_msg
+            or 'inf' in error_msg
+            or 'out of range float' in error_msg
+        ):
             raise CodecError('Cannot serialize NaN - NaN/Infinity not allowed in JSON') from exc
         raise CodecError(f'JSON encoding failed: {exc}') from exc
     except TypeError as exc:
