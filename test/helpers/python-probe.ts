@@ -19,7 +19,9 @@ import { spawnSync } from 'node:child_process';
  */
 export function resolvePythonForTests(): string | null {
   const explicit = process.env.TYWRAP_CODEC_PYTHON?.trim();
-  const candidates = explicit ? [explicit] : ['python3', 'python'];
+  // Include the Windows launcher (`py`) so interpreter discovery works there too;
+  // on non-Windows it simply fails the --version probe and is skipped.
+  const candidates = explicit ? [explicit] : ['python3', 'python', 'py'];
   for (const candidate of candidates) {
     const res = spawnSync(candidate, ['--version'], { encoding: 'utf-8' });
     if (res.status === 0) {

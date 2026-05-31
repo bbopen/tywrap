@@ -16,11 +16,15 @@ import type { Disposable } from './disposable.js';
 // PROTOCOL CONSTANTS
 // =============================================================================
 
-/** Protocol identifier for tywrap communication */
+/** Protocol identifier for tywrap communication. Single source of truth for the version. */
 export const PROTOCOL_ID = 'tywrap/1';
 
-/** Numeric protocol version negotiated with the Python bridge */
-export const TYWRAP_PROTOCOL_VERSION = 1;
+/**
+ * Numeric protocol version negotiated with the Python bridge. Derived from the
+ * trailing number of {@link PROTOCOL_ID} so the two cannot drift — bump
+ * PROTOCOL_ID alone and this follows.
+ */
+export const TYWRAP_PROTOCOL_VERSION = Number.parseInt(PROTOCOL_ID.split('/')[1] ?? '', 10);
 
 // =============================================================================
 // PROTOCOL TYPES

@@ -10,7 +10,7 @@
  * This runs as part of `npm run build` (before tsc) so a fresh checkout builds.
  * Regenerate with: node scripts/generate-version.mjs
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,8 +38,15 @@ const banner = `/**
 export const VERSION: string = ${literal};
 `;
 
-writeFileSync(outPath, banner, 'utf-8');
+// Skip the write when the content is unchanged so we don't churn the file's mtime
+// (which would invalidate incremental-build caches on every run).
+const existing = existsSync(outPath) ? readFileSync(outPath, 'utf-8') : null;
 // Write progress to stderr, not stdout: this script runs inside `npm run build`,
 // which runs as the npm `prepare` lifecycle during `npm pack --json`. Anything on
 // stdout would corrupt the JSON that tooling (and packaging.test.ts) parses.
-process.stderr.write(`Wrote ${outPath} (version ${version})\n`);
+if (existing === banner) {
+  process.stderr.write(`src/version.ts already current (version ${version})\n`);
+} else {
+  writeFileSync(outPath, banner, 'utf-8');
+  process.stderr.write(`Wrote ${outPath} (version ${version})\n`);
+}
