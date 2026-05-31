@@ -15,6 +15,7 @@ import type {
   PythonTypeAlias,
   Parameter,
   PythonType,
+  PythonModuleConfig,
 } from './types/index.js';
 import { fsUtils, pathUtils, processUtils, isWindows } from './utils/runtime.js';
 import { globalCache } from './utils/cache.js';
@@ -90,6 +91,195 @@ async function safeReadFile(path: string): Promise<string | null> {
   }
 }
 
+const CACHE_DIR = '.tywrap/cache';
+
+/**
+ * Resolve module IR via the Python extractor, consulting and (best-effort)
+ * populating the on-disk cache. Mirrors the original inline cache-then-fetch
+ * logic exactly: the cache is only read/written when caching is enabled, the
+ * filesystem is available, and we are not in check mode.
+ */
+async function fetchAndCacheIr(
+  moduleKey: string,
+  resolvedOptions: ReturnType<typeof createConfig>,
+  pythonPath: string,
+  cacheKey: string,
+  caching: boolean,
+  checkMode: boolean
+): Promise<{ ir: unknown | null; error?: string }> {
+  let ir: unknown | null = null;
+  let irError: string | undefined;
+  if (caching && fsUtils.isAvailable() && !checkMode) {
+    try {
+      const cached = await fsUtils.readFile(pathUtils.join(CACHE_DIR, cacheKey));
+      ir = JSON.parse(cached);
+    } catch {
+      ir = null;
+    }
+  }
+  if (!ir) {
+    const fetchResult = await fetchPythonIr(moduleKey, pythonPath, {
+      timeoutMs: resolvedOptions.runtime?.node?.timeout,
+      pythonImportPath: resolvedOptions.pythonImportPath,
+    });
+    ir = fetchResult.ir;
+    irError = fetchResult.error;
+    if (ir && caching && fsUtils.isAvailable() && !checkMode) {
+      try {
+        await fsUtils.writeFile(pathUtils.join(CACHE_DIR, cacheKey), JSON.stringify(ir));
+      } catch {}
+    }
+  }
+  return { ir, error: irError };
+}
+
+/**
+ * Apply module-level export filtering (functions/classes + excludes) in place.
+ * Pushes any filtering warnings onto the provided `warnings` array. Behavior is
+ * identical to the original inline block.
+ */
+function filterModuleExports(
+  moduleModel: TSPythonModule,
+  moduleConfig: PythonModuleConfig,
+  moduleKey: string,
+  warnings: string[]
+): void {
+  const builtInDefaultExcludes = new Set([
+    'dataclass',
+    'property',
+    'staticmethod',
+    'classmethod',
+    'abstractmethod',
+    'cached_property',
+  ]);
+
+  const excludeExact = new Set((moduleConfig.exclude ?? []).map(String));
+  const excludeRegexes: RegExp[] = [];
+  for (const pattern of moduleConfig.excludePatterns ?? []) {
+    try {
+      excludeRegexes.push(new RegExp(String(pattern)));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      warnings.push(
+        `Module ${moduleKey}: invalid excludePatterns regex "${String(pattern)}": ${message}`
+      );
+    }
+  }
+
+  const shouldExclude = (name: string, applyBuiltInDefaults: boolean): boolean => {
+    if (excludeExact.has(name)) {
+      return true;
+    }
+    if (excludeRegexes.some(r => r.test(name))) {
+      return true;
+    }
+    if (applyBuiltInDefaults && builtInDefaultExcludes.has(name)) {
+      return true;
+    }
+    return false;
+  };
+
+  if (Array.isArray(moduleConfig.functions)) {
+    const allow = new Set(moduleConfig.functions.map(String));
+    for (const requested of allow) {
+      if (!moduleModel.functions.some(f => f.name === requested)) {
+        warnings.push(`Module ${moduleKey}: configured function "${requested}" not found in IR`);
+      }
+    }
+    moduleModel.functions = moduleModel.functions.filter(
+      f => allow.has(f.name) && !shouldExclude(f.name, false)
+    );
+  } else {
+    moduleModel.functions = moduleModel.functions.filter(f => !shouldExclude(f.name, true));
+  }
+
+  if (Array.isArray(moduleConfig.classes)) {
+    const allow = new Set(moduleConfig.classes.map(String));
+    for (const requested of allow) {
+      if (!moduleModel.classes.some(c => c.name === requested)) {
+        warnings.push(`Module ${moduleKey}: configured class "${requested}" not found in IR`);
+      }
+    }
+    moduleModel.classes = moduleModel.classes.filter(
+      c => allow.has(c.name) && !shouldExclude(c.name, false)
+    );
+  } else {
+    moduleModel.classes = moduleModel.classes.filter(c => !shouldExclude(c.name, true));
+  }
+
+  moduleModel.typeAliases = (moduleModel.typeAliases ?? []).filter(
+    alias => !shouldExclude(alias.name, false)
+  );
+}
+
+/**
+ * Either compare the generated files against disk (check mode) or write them.
+ * Mutates `written`/`outOfDate` exactly as the original inline branches did.
+ */
+async function emitOrCompareFiles(
+  filesToEmit: Array<{ path: string; content: string }>,
+  checkMode: boolean,
+  written: string[],
+  outOfDate: string[]
+): Promise<void> {
+  if (checkMode) {
+    for (const file of filesToEmit) {
+      const existing = await safeReadFile(file.path);
+      if (existing === null) {
+        outOfDate.push(file.path);
+        continue;
+      }
+      if (normalizeForComparison(existing) !== normalizeForComparison(file.content)) {
+        outOfDate.push(file.path);
+      }
+    }
+  } else {
+    for (const file of filesToEmit) {
+      await fsUtils.writeFile(file.path, file.content);
+      written.push(file.path);
+    }
+  }
+}
+
+/**
+ * Emit the best-effort warning summary of unknown typing constructs collected
+ * for the current module, and (outside check mode) write the JSON report.
+ */
+async function reportUnknownTypes(
+  baseName: string,
+  unknownTypeNames: Map<string, number>,
+  checkMode: boolean,
+  warnings: string[]
+): Promise<void> {
+  if (unknownTypeNames.size === 0) {
+    return;
+  }
+  const entries = Array.from(unknownTypeNames.entries()).sort((a, b) => b[1] - a[1]);
+  const unkList = entries
+    .slice(0, 25)
+    .map(([n, c]) => `${n}:${c}`)
+    .join(', ');
+  warnings.push(
+    `Module ${baseName}: unknown typing constructs encountered: ${unkList}${entries.length > 25 ? '…' : ''}`
+  );
+  // Write JSON report
+  if (!checkMode) {
+    try {
+      const reportsDir = pathUtils.join('.tywrap', 'reports');
+      await fsUtils.writeFile(
+        pathUtils.join(reportsDir, `${baseName}.json`),
+        JSON.stringify({
+          module: baseName,
+          unknowns: Object.fromEntries(entries),
+          generatedAt: new Date().toISOString(),
+        })
+      );
+    } catch {
+      // ignore
+    }
+  }
+}
+
 /**
  * Generate TypeScript wrappers for configured Python modules.
  * Minimal MVP implementation: resolves module file, analyzes, generates TS, writes to output.dir
@@ -107,7 +297,6 @@ export async function generate(
   const failures: GenerateFailure[] = [];
   const outputDir = resolvedOptions.output.dir;
   const caching = resolvedOptions.performance.caching;
-  const cacheDir = '.tywrap/cache';
   const pythonPath = await resolvePythonExecutable({
     pythonPath: resolvedOptions.runtime?.node?.pythonPath,
     virtualEnv: resolvedOptions.runtime?.node?.virtualEnv,
@@ -131,29 +320,14 @@ export async function generate(
     unknownTypeNamesCollector = new Map();
     // Resolve module IR via the Python extractor (with optional cache)
     const cacheKey = await computeCacheKey(moduleKey, resolvedOptions);
-    let ir: unknown | null = null;
-    let irError: string | undefined;
-    if (caching && fsUtils.isAvailable() && !checkMode) {
-      try {
-        const cached = await fsUtils.readFile(pathUtils.join(cacheDir, cacheKey));
-        ir = JSON.parse(cached);
-      } catch {
-        ir = null;
-      }
-    }
-    if (!ir) {
-      const fetchResult = await fetchPythonIr(moduleKey, pythonPath, {
-        timeoutMs: resolvedOptions.runtime?.node?.timeout,
-        pythonImportPath: resolvedOptions.pythonImportPath,
-      });
-      ir = fetchResult.ir;
-      irError = fetchResult.error;
-      if (ir && caching && fsUtils.isAvailable() && !checkMode) {
-        try {
-          await fsUtils.writeFile(pathUtils.join(cacheDir, cacheKey), JSON.stringify(ir));
-        } catch {}
-      }
-    }
+    const { ir, error: irError } = await fetchAndCacheIr(
+      moduleKey,
+      resolvedOptions,
+      pythonPath,
+      cacheKey,
+      caching,
+      checkMode
+    );
     if (!ir) {
       const message = `No IR produced for module ${moduleKey}${irError ? `: ${irError}` : ''}`;
       warnings.push(message);
@@ -168,76 +342,7 @@ export async function generate(
     const moduleModel = transformIrToTsModel(ir);
 
     // Apply module-level export filtering (functions/classes + excludes).
-    {
-      const builtInDefaultExcludes = new Set([
-        'dataclass',
-        'property',
-        'staticmethod',
-        'classmethod',
-        'abstractmethod',
-        'cached_property',
-      ]);
-
-      const excludeExact = new Set((moduleConfig.exclude ?? []).map(String));
-      const excludeRegexes: RegExp[] = [];
-      for (const pattern of moduleConfig.excludePatterns ?? []) {
-        try {
-          excludeRegexes.push(new RegExp(String(pattern)));
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          warnings.push(
-            `Module ${moduleKey}: invalid excludePatterns regex "${String(pattern)}": ${message}`
-          );
-        }
-      }
-
-      const shouldExclude = (name: string, applyBuiltInDefaults: boolean): boolean => {
-        if (excludeExact.has(name)) {
-          return true;
-        }
-        if (excludeRegexes.some(r => r.test(name))) {
-          return true;
-        }
-        if (applyBuiltInDefaults && builtInDefaultExcludes.has(name)) {
-          return true;
-        }
-        return false;
-      };
-
-      if (Array.isArray(moduleConfig.functions)) {
-        const allow = new Set(moduleConfig.functions.map(String));
-        for (const requested of allow) {
-          if (!moduleModel.functions.some(f => f.name === requested)) {
-            warnings.push(
-              `Module ${moduleKey}: configured function "${requested}" not found in IR`
-            );
-          }
-        }
-        moduleModel.functions = moduleModel.functions.filter(
-          f => allow.has(f.name) && !shouldExclude(f.name, false)
-        );
-      } else {
-        moduleModel.functions = moduleModel.functions.filter(f => !shouldExclude(f.name, true));
-      }
-
-      if (Array.isArray(moduleConfig.classes)) {
-        const allow = new Set(moduleConfig.classes.map(String));
-        for (const requested of allow) {
-          if (!moduleModel.classes.some(c => c.name === requested)) {
-            warnings.push(`Module ${moduleKey}: configured class "${requested}" not found in IR`);
-          }
-        }
-        moduleModel.classes = moduleModel.classes.filter(
-          c => allow.has(c.name) && !shouldExclude(c.name, false)
-        );
-      } else {
-        moduleModel.classes = moduleModel.classes.filter(c => !shouldExclude(c.name, true));
-      }
-
-      moduleModel.typeAliases = (moduleModel.typeAliases ?? []).filter(
-        alias => !shouldExclude(alias.name, false)
-      );
-    }
+    filterModuleExports(moduleModel, moduleConfig, moduleKey, warnings);
 
     // Generate module code
     const annotatedJSDoc = Boolean(resolvedOptions.output?.annotatedJSDoc);
@@ -264,51 +369,10 @@ export async function generate(
       });
     }
 
-    if (checkMode) {
-      for (const file of filesToEmit) {
-        const existing = await safeReadFile(file.path);
-        if (existing === null) {
-          outOfDate.push(file.path);
-          continue;
-        }
-        if (normalizeForComparison(existing) !== normalizeForComparison(file.content)) {
-          outOfDate.push(file.path);
-        }
-      }
-    } else {
-      for (const file of filesToEmit) {
-        await fsUtils.writeFile(file.path, file.content);
-        written.push(file.path);
-      }
-    }
+    await emitOrCompareFiles(filesToEmit, checkMode, written, outOfDate);
 
     // Emit warning summary of unknown typing constructs (best-effort)
-    if (unknownTypeNamesCollector.size > 0) {
-      const entries = Array.from(unknownTypeNamesCollector.entries()).sort((a, b) => b[1] - a[1]);
-      const unkList = entries
-        .slice(0, 25)
-        .map(([n, c]) => `${n}:${c}`)
-        .join(', ');
-      warnings.push(
-        `Module ${baseName}: unknown typing constructs encountered: ${unkList}${entries.length > 25 ? '…' : ''}`
-      );
-      // Write JSON report
-      if (!checkMode) {
-        try {
-          const reportsDir = pathUtils.join('.tywrap', 'reports');
-          await fsUtils.writeFile(
-            pathUtils.join(reportsDir, `${baseName}.json`),
-            JSON.stringify({
-              module: baseName,
-              unknowns: Object.fromEntries(entries),
-              generatedAt: new Date().toISOString(),
-            })
-          );
-        } catch {
-          // ignore
-        }
-      }
-    }
+    await reportUnknownTypes(baseName, unknownTypeNamesCollector, checkMode, warnings);
   }
 
   if (checkMode) {
@@ -316,6 +380,40 @@ export async function generate(
   }
 
   return { written, warnings, failures };
+}
+
+/**
+ * Run the IR extractor (`python <command...>`) and parse its JSON stdout.
+ *
+ * Returns the exec result alongside a parsed-IR outcome. On a zero exit code the
+ * stdout is JSON-parsed; on parse failure the supplied `parseErrorLabel` is used
+ * to build the error message. The caller is responsible for handling non-zero
+ * exit codes (e.g. the module-missing fallback), so a non-zero exit yields
+ * `ir: null` with no `error` set here.
+ */
+async function execAndParseIr(
+  pythonPath: string,
+  command: string[],
+  execOptions: { timeoutMs?: number; env?: Record<string, string> },
+  parseErrorLabel: 'tywrap_ir output' | 'tywrap_ir fallback output'
+): Promise<{
+  result: { code: number; stdout: string; stderr: string };
+  ir: unknown | null;
+  error?: string;
+}> {
+  const result = await processUtils.exec(pythonPath, command, execOptions);
+  if (result.code !== 0) {
+    return { result, ir: null };
+  }
+  try {
+    return { result, ir: JSON.parse(result.stdout) };
+  } catch {
+    return {
+      result,
+      ir: null,
+      error: `Failed to parse ${parseErrorLabel}. stderr: ${result.stderr.trim() || 'empty'}`,
+    };
+  }
 }
 
 /**
@@ -339,24 +437,27 @@ async function fetchPythonIr(
     .filter(Boolean)
     .join(delimiter);
   const env = mergedPyPath ? { PYTHONPATH: mergedPyPath } : undefined;
+  const execOptions = { timeoutMs: options.timeoutMs, env };
   try {
-    const result = await processUtils.exec(
+    const primary = await execAndParseIr(
       pythonPath,
-      ['-m', 'tywrap_ir', '--module', moduleName, '--ir-version', TYWRAP_IR_VERSION, '--no-pretty'],
-      { timeoutMs: options.timeoutMs, env }
+      [
+        '-m',
+        'tywrap_ir',
+        '--module',
+        moduleName,
+        '--ir-version',
+        TYWRAP_IR_VERSION,
+        '--no-pretty',
+      ],
+      execOptions,
+      'tywrap_ir output'
     );
-    if (result.code === 0) {
-      try {
-        return { ir: JSON.parse(result.stdout) };
-      } catch {
-        return {
-          ir: null,
-          error: `Failed to parse tywrap_ir output. stderr: ${result.stderr.trim() || 'empty'}`,
-        };
-      }
+    if (primary.result.code === 0) {
+      return { ir: primary.ir, error: primary.error };
     }
 
-    const stderrText = result.stderr.trim();
+    const stderrText = primary.result.stderr.trim();
     const isTywrapIrMissing =
       stderrText.includes('No module named') && stderrText.includes('tywrap_ir');
     if (!isTywrapIrMissing) {
@@ -381,25 +482,19 @@ async function fetchPythonIr(
       };
     }
 
-    const fallback = await processUtils.exec(
+    const fallback = await execAndParseIr(
       pythonPath,
       [localMain, '--module', moduleName, '--ir-version', TYWRAP_IR_VERSION, '--no-pretty'],
-      { timeoutMs: options.timeoutMs, env }
+      execOptions,
+      'tywrap_ir fallback output'
     );
-    if (fallback.code !== 0) {
+    if (fallback.result.code !== 0) {
       return {
         ir: null,
-        error: `tywrap_ir failed. stderr: ${fallback.stderr.trim() || stderrText || 'empty'}`,
+        error: `tywrap_ir failed. stderr: ${fallback.result.stderr.trim() || stderrText || 'empty'}`,
       };
     }
-    try {
-      return { ir: JSON.parse(fallback.stdout) };
-    } catch {
-      return {
-        ir: null,
-        error: `Failed to parse tywrap_ir fallback output. stderr: ${fallback.stderr.trim() || 'empty'}`,
-      };
-    }
+    return { ir: fallback.ir, error: fallback.error };
   } catch (err) {
     return { ir: null, error: err instanceof Error ? err.message : String(err) };
   }
