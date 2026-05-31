@@ -149,73 +149,71 @@ export class ArtifactCache {
     hash.update(prefix);
     hash.update('\0');
 
-    // Add inputs
+    // Add inputs. Each input contributes a type tag, an optional payload, and a
+    // boundary separator so that "1" vs 1 and ["a","bc"] vs ["ab","c"] never collide.
     for (const input of inputs) {
-      // Why: disambiguate types so "1" and 1 don't collide, and keep input boundaries so
-      // ["a", "bc"] doesn't collide with ["ab", "c"].
-      if (input === undefined) {
-        hash.update('undef:');
-        hash.update('\0');
-        continue;
+      const { tag, payload } = ArtifactCache.encodeKeyInput(input);
+      hash.update(tag);
+      if (payload !== undefined) {
+        hash.update(payload);
       }
-      if (input === null) {
-        hash.update('null:');
-        hash.update('\0');
-        continue;
-      }
-      if (typeof input === 'string') {
-        hash.update('str:');
-        hash.update(input);
-        hash.update('\0');
-        continue;
-      }
-      if (typeof input === 'number') {
-        hash.update('num:');
-        hash.update(String(input));
-        hash.update('\0');
-        continue;
-      }
-      if (typeof input === 'boolean') {
-        hash.update('bool:');
-        hash.update(input ? '1' : '0');
-        hash.update('\0');
-        continue;
-      }
-      if (typeof input === 'bigint') {
-        hash.update('bigint:');
-        hash.update(input.toString());
-        hash.update('\0');
-        continue;
-      }
-      if (Buffer.isBuffer(input)) {
-        hash.update('buf:');
-        hash.update(input);
-        hash.update('\0');
-        continue;
-      }
-
-      if (typeof input === 'symbol') {
-        hash.update('sym:');
-        hash.update(input.toString());
-        hash.update('\0');
-        continue;
-      }
-
-      hash.update('json:');
-      let json: string;
-      try {
-        json =
-          JSON.stringify(input, (_key, value) =>
-            typeof value === 'symbol' ? value.toString() : value
-          ) ?? 'undefined';
-      } catch {
-        json = String(input);
-      }
-      hash.update(json);
       hash.update('\0');
     }
 
     return hash.digest('hex').substring(0, 16); // Use first 16 chars for readability
+  }
+
+  /**
+   * Encode a single key input as a type tag plus optional payload.
+   * Why: disambiguate types so "1" and 1 don't collide, and keep input boundaries so
+   * ["a", "bc"] doesn't collide with ["ab", "c"].
+   */
+  private static encodeKeyInput(input: unknown): {
+    tag: string;
+    payload?: string | Buffer;
+  } {
+    if (input === undefined) {
+      return { tag: 'undef:' };
+    }
+    if (input === null) {
+      return { tag: 'null:' };
+    }
+    if (typeof input === 'string') {
+      return { tag: 'str:', payload: input };
+    }
+    if (typeof input === 'number') {
+      return { tag: 'num:', payload: String(input) };
+    }
+    if (typeof input === 'boolean') {
+      return { tag: 'bool:', payload: input ? '1' : '0' };
+    }
+    if (typeof input === 'bigint') {
+      return { tag: 'bigint:', payload: input.toString() };
+    }
+    if (Buffer.isBuffer(input)) {
+      return { tag: 'buf:', payload: input };
+    }
+    if (typeof input === 'symbol') {
+      return { tag: 'sym:', payload: input.toString() };
+    }
+
+    return { tag: 'json:', payload: ArtifactCache.stringifyKeyInput(input) };
+  }
+
+  /**
+   * Stringify an arbitrary key input for hashing, normalizing symbols and
+   * falling back to String() when JSON serialization fails.
+   */
+  private static stringifyKeyInput(input: unknown): string {
+    try {
+      return (
+        JSON.stringify(input, (_key, value) =>
+          typeof value === 'symbol' ? value.toString() : value
+        ) ?? 'undefined'
+      );
+    } catch {
+      return String(input);
+    }
   }
 
   /**
