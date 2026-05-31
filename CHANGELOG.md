@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/bbopen/tywrap/compare/v0.5.0...v0.5.1) (2026-05-31)
+
+
+### Bug Fixes
+
+* drop native tree-sitter dep and delete the dead TS analyzer ([#238](https://github.com/bbopen/tywrap/issues/238)) ([4a5b354](https://github.com/bbopen/tywrap/commit/4a5b3544c857070bce10f7856b99ae4febf36456))
+* drop native tree-sitter dep and delete the dead TS analyzer ([#238](https://github.com/bbopen/tywrap/issues/238)) ([3cfe400](https://github.com/bbopen/tywrap/commit/3cfe400b0e1fd78157159aa01f16ee8c03d8c229))
+
 ## [0.5.0](https://github.com/bbopen/tywrap/compare/v0.4.0...v0.5.0) (2026-05-30)
 
 Bridges no longer extend a shared protocol base class. Each one (Node, HTTP, Pyodide) now holds an `RpcClient`, and `BridgeProtocol` is renamed to `RpcClient`.
