@@ -8,11 +8,10 @@
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import type { PythonRuntime, BridgeInfo } from '../types/index.js';
 import { autoRegisterArrowDecoder } from '../utils/codec.js';
 
-import { DisposableBase } from './bounded-context.js';
-import { RpcClient, type GetBridgeInfoOptions } from './rpc-client.js';
+import { BasePythonBridge } from './base-bridge.js';
+import { RpcClient } from './rpc-client.js';
 import { HttpTransport } from './http-transport.js';
 import type { CodecOptions } from './bridge-codec.js';
 
@@ -65,7 +64,7 @@ export interface HttpBridgeOptions {
  * await bridge.dispose();
  * ```
  */
-export class HttpBridge extends DisposableBase implements PythonRuntime {
+export class HttpBridge extends BasePythonBridge {
   private readonly rpc: RpcClient;
 
   /**
@@ -110,56 +109,13 @@ export class HttpBridge extends DisposableBase implements PythonRuntime {
   }
 
   // ===========================================================================
-  // RPC METHODS (delegate to the held RpcClient)
+  // RPC DELEGATION (the held RpcClient)
   // ===========================================================================
 
-  async call<T = unknown>(
-    module: string,
-    functionName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    await this.ensureReady();
-    return this.rpc.call<T>(module, functionName, args, kwargs);
-  }
-
-  async instantiate<T = unknown>(
-    module: string,
-    className: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    await this.ensureReady();
-    return this.rpc.instantiate<T>(module, className, args, kwargs);
-  }
-
-  async callMethod<T = unknown>(
-    handle: string,
-    methodName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    await this.ensureReady();
-    return this.rpc.callMethod<T>(handle, methodName, args, kwargs);
-  }
-
-  async disposeInstance(handle: string): Promise<void> {
-    await this.ensureReady();
-    return this.rpc.disposeInstance(handle);
-  }
-
-  async getBridgeInfo(options?: GetBridgeInfoOptions): Promise<BridgeInfo> {
-    await this.ensureReady();
-    return this.rpc.getBridgeInfo(options);
-  }
-
   /**
-   * Ensure the facade is initialized before delegating an RPC, replicating the
-   * auto-init that the bounded execute path provided pre-composition.
+   * Expose the held RpcClient to BasePythonBridge's shared delegating methods.
    */
-  private async ensureReady(): Promise<void> {
-    if (!this.isReady) {
-      await this.init();
-    }
+  protected getRpcClient(): RpcClient {
+    return this.rpc;
   }
 }
