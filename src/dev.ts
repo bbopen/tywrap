@@ -335,42 +335,44 @@ async function listExistingManagedFiles(outputDir: string): Promise<Set<string>>
   return managedFiles;
 }
 
+async function listChildDirectories(current: string): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(current, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter(entry => entry.isDirectory())
+    .map(entry => join(current, entry.name));
+}
+
+async function isWatchableDirectory(current: string, ignoredPaths: string[]): Promise<boolean> {
+  if (shouldIgnoreWatchPath(current, ignoredPaths)) {
+    return false;
+  }
+
+  try {
+    const currentStats = await stat(current);
+    return currentStats.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 async function collectWatchDirectories(root: string, ignoredPaths: string[]): Promise<string[]> {
   const queue = [resolve(root)];
   const directories: string[] = [];
 
   while (queue.length > 0) {
     const current = queue.shift()!;
-    if (shouldIgnoreWatchPath(current, ignoredPaths)) {
-      continue;
-    }
-
-    let currentStats;
-    try {
-      currentStats = await stat(current);
-    } catch {
-      continue;
-    }
-
-    if (!currentStats.isDirectory()) {
+    if (!(await isWatchableDirectory(current, ignoredPaths))) {
       continue;
     }
 
     directories.push(current);
-
-    let entries;
-    try {
-      entries = await readdir(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      if (!entry.isDirectory()) {
-        continue;
-      }
-      queue.push(join(current, entry.name));
-    }
+    queue.push(...(await listChildDirectories(current)));
   }
 
   return normalizePaths(directories);
@@ -444,7 +446,51 @@ async function promoteManagedFiles(
   }
 }
 
-async function resolveWatchTargets(config: TywrapOptions): Promise<WatchTarget[]> {
+interface WatchTargetPayload {
+  missing?: boolean;
+  origin?: string | null;
+  locations?: string[];
+  has_location?: boolean;
+}
+
+interface WatchPythonEnv {
+  pythonPath: string;
+  env: { PYTHONPATH: string } | undefined;
+  timeoutMs: number;
+}
+
+const WATCH_TARGET_RESOLUTION_SCRIPT = [
+  'import importlib',
+  'import importlib.util',
+  'import json',
+  'import sys',
+  '',
+  'module_name = sys.argv[1]',
+  'spec = importlib.util.find_spec(module_name)',
+  'if spec is None:',
+  "    print(json.dumps({'missing': True}))",
+  '    raise SystemExit(0)',
+  '',
+  'module_path = None',
+  'module_origin = spec.origin',
+  'if spec.submodule_search_locations:',
+  '    try:',
+  '        module = importlib.import_module(module_name)',
+  '    except Exception:',
+  '        module = None',
+  '    if module is not None:',
+  '        module_path = getattr(module, "__path__", None)',
+  '        module_origin = getattr(module, "__file__", None) or spec.origin',
+  'payload = {',
+  "    'missing': False,",
+  "    'origin': module_origin,",
+  "    'locations': list(module_path) if module_path is not None else list(spec.submodule_search_locations or []),",
+  "    'has_location': bool(spec.has_location),",
+  '}',
+  'print(json.dumps(payload))',
+].join('\n');
+
+async function resolveWatchPythonEnv(config: TywrapOptions): Promise<WatchPythonEnv> {
   const pythonPath = await resolvePythonExecutable({
     pythonPath: config.runtime?.node?.pythonPath,
     virtualEnv: config.runtime?.node?.virtualEnv,
@@ -460,104 +506,100 @@ async function resolveWatchTargets(config: TywrapOptions): Promise<WatchTarget[]
   const env = mergedPyPath ? { PYTHONPATH: mergedPyPath } : undefined;
   const timeoutMs = config.runtime?.node?.timeout ?? 30000;
 
+  return { pythonPath, env, timeoutMs };
+}
+
+async function resolveWatchTargetPayload(
+  moduleName: string,
+  pythonEnv: WatchPythonEnv
+): Promise<WatchTargetPayload> {
+  const result = await processUtils.exec(
+    pythonEnv.pythonPath,
+    ['-c', WATCH_TARGET_RESOLUTION_SCRIPT, moduleName],
+    {
+      timeoutMs: pythonEnv.timeoutMs,
+      env: pythonEnv.env,
+    }
+  );
+
+  if (result.code !== 0) {
+    throw new Error(
+      `Failed to resolve watch target for module "${moduleName}": ${result.stderr.trim() || result.stdout.trim() || 'unknown error'}`
+    );
+  }
+
+  try {
+    return JSON.parse(result.stdout) as WatchTargetPayload;
+  } catch (error) {
+    throw new Error(
+      `Failed to parse watch target for module "${moduleName}": ${(error as Error).message}`
+    );
+  }
+}
+
+async function resolvePackageWatchTargets(
+  moduleName: string,
+  packageLocations: string[]
+): Promise<WatchTarget[]> {
+  const targets: WatchTarget[] = [];
+  for (const location of packageLocations) {
+    const packageDir = resolve(location);
+    const stats = await stat(packageDir);
+    if (!stats.isDirectory()) {
+      throw new Error(
+        `Module "${moduleName}" resolved to "${packageDir}", but it is not a package directory`
+      );
+    }
+    targets.push({ moduleName, path: packageDir, kind: 'directory' });
+  }
+  return targets;
+}
+
+async function resolveFileWatchTarget(
+  moduleName: string,
+  payload: WatchTargetPayload
+): Promise<WatchTarget> {
+  if (typeof payload.origin !== 'string' || !payload.origin.endsWith('.py')) {
+    throw new Error(
+      `Module "${moduleName}" is not backed by a local Python source file or package directory and cannot be watched`
+    );
+  }
+
+  const modulePath = resolve(payload.origin);
+  const stats = await stat(modulePath);
+  if (!stats.isFile()) {
+    throw new Error(
+      `Module "${moduleName}" resolved to "${modulePath}", but it is not a Python source file`
+    );
+  }
+
+  return { moduleName, path: modulePath, kind: 'file' };
+}
+
+async function resolveModuleWatchTargets(
+  moduleName: string,
+  pythonEnv: WatchPythonEnv
+): Promise<WatchTarget[]> {
+  const payload = await resolveWatchTargetPayload(moduleName, pythonEnv);
+
+  if (payload.missing) {
+    throw new Error(`Module "${moduleName}" could not be resolved for watching`);
+  }
+
+  const packageLocations = Array.isArray(payload.locations) ? payload.locations : [];
+  if (packageLocations.length > 0) {
+    return resolvePackageWatchTargets(moduleName, packageLocations);
+  }
+
+  return [await resolveFileWatchTarget(moduleName, payload)];
+}
+
+async function resolveWatchTargets(config: TywrapOptions): Promise<WatchTarget[]> {
+  const pythonEnv = await resolveWatchPythonEnv(config);
+
   const watchTargets: WatchTarget[] = [];
-
   for (const moduleName of Object.keys(config.pythonModules ?? {})) {
-    const resolutionScript = [
-      'import importlib',
-      'import importlib.util',
-      'import json',
-      'import sys',
-      '',
-      'module_name = sys.argv[1]',
-      'spec = importlib.util.find_spec(module_name)',
-      'if spec is None:',
-      "    print(json.dumps({'missing': True}))",
-      '    raise SystemExit(0)',
-      '',
-      'module_path = None',
-      'module_origin = spec.origin',
-      'if spec.submodule_search_locations:',
-      '    try:',
-      '        module = importlib.import_module(module_name)',
-      '    except Exception:',
-      '        module = None',
-      '    if module is not None:',
-      '        module_path = getattr(module, "__path__", None)',
-      '        module_origin = getattr(module, "__file__", None) or spec.origin',
-      'payload = {',
-      "    'missing': False,",
-      "    'origin': module_origin,",
-      "    'locations': list(module_path) if module_path is not None else list(spec.submodule_search_locations or []),",
-      "    'has_location': bool(spec.has_location),",
-      '}',
-      'print(json.dumps(payload))',
-    ].join('\n');
-
-    const result = await processUtils.exec(pythonPath, ['-c', resolutionScript, moduleName], {
-      timeoutMs,
-      env,
-    });
-
-    if (result.code !== 0) {
-      throw new Error(
-        `Failed to resolve watch target for module "${moduleName}": ${result.stderr.trim() || result.stdout.trim() || 'unknown error'}`
-      );
-    }
-
-    let payload: {
-      missing?: boolean;
-      origin?: string | null;
-      locations?: string[];
-      has_location?: boolean;
-    };
-    try {
-      payload = JSON.parse(result.stdout) as {
-        missing?: boolean;
-        origin?: string | null;
-        locations?: string[];
-        has_location?: boolean;
-      };
-    } catch (error) {
-      throw new Error(
-        `Failed to parse watch target for module "${moduleName}": ${(error as Error).message}`
-      );
-    }
-
-    if (payload.missing) {
-      throw new Error(`Module "${moduleName}" could not be resolved for watching`);
-    }
-
-    const packageLocations = Array.isArray(payload.locations) ? payload.locations : [];
-    if (packageLocations.length > 0) {
-      for (const location of packageLocations) {
-        const packageDir = resolve(location);
-        const stats = await stat(packageDir);
-        if (!stats.isDirectory()) {
-          throw new Error(
-            `Module "${moduleName}" resolved to "${packageDir}", but it is not a package directory`
-          );
-        }
-        watchTargets.push({ moduleName, path: packageDir, kind: 'directory' });
-      }
-      continue;
-    }
-
-    if (typeof payload.origin !== 'string' || !payload.origin.endsWith('.py')) {
-      throw new Error(
-        `Module "${moduleName}" is not backed by a local Python source file or package directory and cannot be watched`
-      );
-    }
-
-    const modulePath = resolve(payload.origin);
-    const stats = await stat(modulePath);
-    if (!stats.isFile()) {
-      throw new Error(
-        `Module "${moduleName}" resolved to "${modulePath}", but it is not a Python source file`
-      );
-    }
-
-    watchTargets.push({ moduleName, path: modulePath, kind: 'file' });
+    watchTargets.push(...(await resolveModuleWatchTargets(moduleName, pythonEnv)));
   }
 
   return watchTargets;
@@ -786,6 +828,28 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
     return watcherRefreshPromise;
   };
 
+  interface ReloadState {
+    stage: StageResult | null;
+    nextBridge: T | null;
+    preparedWatchers: PreparedWatchers | null;
+  }
+
+  interface PreparedReload {
+    stage: StageResult;
+    preparedWatchers: PreparedWatchers;
+    nextIgnoredPaths: string[];
+    watchPaths: string[];
+  }
+
+  const disposeReloadFailure = async (state: ReloadState): Promise<void> => {
+    if (state.preparedWatchers) {
+      closePreparedWatchers(state.preparedWatchers);
+    }
+    if (state.nextBridge) {
+      await state.nextBridge.dispose().catch(() => {});
+    }
+  };
+
   const runReload = async (trigger: { path?: string; manual: boolean }): Promise<boolean> => {
     if (closed) {
       return false;
@@ -793,20 +857,18 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
 
     emit({ type: 'reload-start', path: trigger.path, manual: trigger.manual });
 
-    let stage: StageResult | null = null;
-    let nextBridge: T | null = null;
-    let preparedWatchers: PreparedWatchers | null = null;
+    const state: ReloadState = { stage: null, nextBridge: null, preparedWatchers: null };
 
     const abortReload = async (
       managerToDispose: ManagedBridgeReloader<T> | null = null
     ): Promise<boolean> => {
-      if (preparedWatchers) {
-        closePreparedWatchers(preparedWatchers);
-        preparedWatchers = null;
+      if (state.preparedWatchers) {
+        closePreparedWatchers(state.preparedWatchers);
+        state.preparedWatchers = null;
       }
-      if (nextBridge) {
-        await nextBridge.dispose().catch(() => {});
-        nextBridge = null;
+      if (state.nextBridge) {
+        await state.nextBridge.dispose().catch(() => {});
+        state.nextBridge = null;
       }
       if (managerToDispose) {
         await managerToDispose.dispose().catch(() => {});
@@ -814,10 +876,13 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
       return false;
     };
 
-    try {
-      stage = await generateToStage(configFile);
+    // Generate the next stage, prepare watchers, and warm the next bridge.
+    // Returns null when the session closed mid-flight (caller aborts).
+    const prepareReload = async (): Promise<PreparedReload | null> => {
+      const stage = await generateToStage(configFile);
+      state.stage = stage;
       if (closed) {
-        return abortReload();
+        return null;
       }
       currentBridgeConfig = stage.config;
       const nextIgnoredPaths = buildIgnoredPaths(stage.outputDir);
@@ -828,17 +893,50 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
         ...extraWatchSources,
       ]);
       const watchPaths = normalizePaths(watchSources.map(source => source.path));
-      preparedWatchers = await prepareWatchers(watchSources, nextIgnoredPaths);
+      const preparedWatchers = await prepareWatchers(watchSources, nextIgnoredPaths);
+      state.preparedWatchers = preparedWatchers;
       if (closed) {
-        return abortReload();
+        return null;
       }
 
       if (bridgeManager) {
-        nextBridge = await bridgeManager.prepareNextBridge();
+        state.nextBridge = await bridgeManager.prepareNextBridge();
         if (closed) {
-          return abortReload();
+          return null;
         }
       }
+
+      return { stage, preparedWatchers, nextIgnoredPaths, watchPaths };
+    };
+
+    // Activate (or create) the bridge for the freshly prepared stage.
+    // Returns the manager to dispose (or null) when the session closed
+    // mid-flight, otherwise null; sets `closedDuringActivation` accordingly.
+    let closedDuringActivation = false;
+    const activateReloadBridge = async (): Promise<ManagedBridgeReloader<T> | null> => {
+      if (bridgeManager && state.nextBridge) {
+        await bridgeManager.activatePreparedBridge(state.nextBridge);
+        state.nextBridge = null;
+        closedDuringActivation = closed;
+        return null;
+      }
+      if (!bridgeManager) {
+        const createdBridgeManager = await ManagedBridgeReloader.create(createBridgeForSession);
+        if (closed) {
+          closedDuringActivation = true;
+          return createdBridgeManager;
+        }
+        bridgeManager = createdBridgeManager;
+      }
+      return null;
+    };
+
+    try {
+      const prepared = await prepareReload();
+      if (!prepared) {
+        return abortReload();
+      }
+      const { stage } = prepared;
 
       const previousManagedFiles =
         activeOutputDir === stage.outputDir
@@ -853,29 +951,20 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
         return abortReload();
       }
 
-      if (bridgeManager && nextBridge) {
-        await bridgeManager.activatePreparedBridge(nextBridge);
-        nextBridge = null;
-        if (closed) {
-          return abortReload();
-        }
-      } else if (!bridgeManager) {
-        const createdBridgeManager = await ManagedBridgeReloader.create(createBridgeForSession);
-        if (closed) {
-          return abortReload(createdBridgeManager);
-        }
-        bridgeManager = createdBridgeManager;
+      const managerToDispose = await activateReloadBridge();
+      if (closedDuringActivation) {
+        return abortReload(managerToDispose);
       }
 
       managedFiles = promotedManagedFiles;
       activeOutputDir = stage.outputDir;
-      ignoredPaths = nextIgnoredPaths;
-      commitWatchers(preparedWatchers);
+      ignoredPaths = prepared.nextIgnoredPaths;
+      commitWatchers(prepared.preparedWatchers);
       emit({
         type: 'reload-success',
         path: trigger.path,
         manual: trigger.manual,
-        paths: watchPaths,
+        paths: prepared.watchPaths,
         written: [...stage.files.keys()].sort(),
         warnings: stage.warnings,
       });
@@ -883,12 +972,7 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
       return true;
     } catch (error) {
       lastReloadError = error instanceof Error ? error : new Error(String(error));
-      if (preparedWatchers) {
-        closePreparedWatchers(preparedWatchers);
-      }
-      if (nextBridge) {
-        await nextBridge.dispose().catch(() => {});
-      }
+      await disposeReloadFailure(state);
       emit({
         type: 'reload-error',
         path: trigger.path,
@@ -897,8 +981,8 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
       });
       return false;
     } finally {
-      if (stage) {
-        await rm(stage.tempDir, { recursive: true, force: true });
+      if (state.stage) {
+        await rm(state.stage.tempDir, { recursive: true, force: true });
       }
     }
   };
