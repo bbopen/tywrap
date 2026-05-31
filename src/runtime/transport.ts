@@ -19,6 +19,9 @@ import type { Disposable } from './disposable.js';
 /** Protocol identifier for tywrap communication */
 export const PROTOCOL_ID = 'tywrap/1';
 
+/** Numeric protocol version negotiated with the Python bridge */
+export const TYWRAP_PROTOCOL_VERSION = 1;
+
 // =============================================================================
 // PROTOCOL TYPES
 // =============================================================================

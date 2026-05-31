@@ -23,8 +23,12 @@ import type { BridgeInfo } from '../types/index.js';
 import { DisposableBase, type ExecuteOptions } from './bounded-context.js';
 import { BridgeProtocolError } from './errors.js';
 import { SafeCodec, type CodecOptions } from './safe-codec.js';
-import { TYWRAP_PROTOCOL_VERSION } from './protocol.js';
-import { PROTOCOL_ID, type Transport, type ProtocolMessage } from './transport.js';
+import {
+  PROTOCOL_ID,
+  TYWRAP_PROTOCOL_VERSION,
+  type Transport,
+  type ProtocolMessage,
+} from './transport.js';
 
 // =============================================================================
 // TYPES

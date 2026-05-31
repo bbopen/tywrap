@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'path';
 import { NodeBridge } from '../src/runtime/node.js';
 import { BridgeExecutionError, BridgeProtocolError } from '../src/runtime/errors.js';
-import { TYWRAP_PROTOCOL_VERSION } from '../src/runtime/protocol.js';
+import { TYWRAP_PROTOCOL_VERSION } from '../src/runtime/transport.js';
 import { getDefaultPythonPath, resolvePythonExecutable } from '../src/utils/python.js';
 import { isNodejs, getVenvBinDir } from '../src/utils/runtime.js';
 
