@@ -122,38 +122,61 @@ export class ModuleDiscovery {
       return cached.path;
     }
 
-    // Try to resolve using Python's module finder
-    if (processUtils.isAvailable()) {
-      try {
-        const pythonPath = await this.getPythonExecutable();
-        const result = await processUtils.exec(
-          pythonPath,
-          [
-            '-c',
-            `import ${moduleName}; print(${moduleName}.__file__ if hasattr(${moduleName}, '__file__') else '${moduleName}.__path__[0]' if hasattr(${moduleName}, '__path__') else 'builtin')`,
-          ],
-          { timeoutMs: this.options.timeoutMs }
-        );
+    // Try to resolve using Python's module finder, then fall back to a
+    // filesystem search across the known Python paths.
+    return (
+      (await this.resolveViaInterpreter(moduleName)) ??
+      (await this.resolveViaSearchPaths(moduleName))
+    );
+  }
 
-        if (result.code === 0 && result.stdout.trim() !== 'builtin') {
-          const modulePath = result.stdout.trim();
-
-          // Cache the result
-          this.moduleCache.set(moduleName, {
-            name: moduleName,
-            path: modulePath,
-            isPackage: modulePath.endsWith('__init__.py'),
-            dependencies: [],
-          });
-
-          return modulePath;
-        }
-      } catch (error) {
-        log.warn('Failed to resolve module', { moduleName, error: String(error) });
-      }
+  /**
+   * Resolve a module path by asking the Python interpreter for `__file__`.
+   * Caches and returns the resolved path, or `null` when the interpreter is
+   * unavailable, reports a builtin, or fails.
+   */
+  private async resolveViaInterpreter(moduleName: string): Promise<string | null> {
+    if (!processUtils.isAvailable()) {
+      return null;
     }
 
-    // Fallback: search in known Python paths
+    try {
+      const pythonPath = await this.getPythonExecutable();
+      const result = await processUtils.exec(
+        pythonPath,
+        [
+          '-c',
+          `import ${moduleName}; print(${moduleName}.__file__ if hasattr(${moduleName}, '__file__') else '${moduleName}.__path__[0]' if hasattr(${moduleName}, '__path__') else 'builtin')`,
+        ],
+        { timeoutMs: this.options.timeoutMs }
+      );
+
+      if (result.code === 0 && result.stdout.trim() !== 'builtin') {
+        const modulePath = result.stdout.trim();
+
+        // Cache the result
+        this.moduleCache.set(moduleName, {
+          name: moduleName,
+          path: modulePath,
+          isPackage: modulePath.endsWith('__init__.py'),
+          dependencies: [],
+        });
+
+        return modulePath;
+      }
+    } catch (error) {
+      log.warn('Failed to resolve module', { moduleName, error: String(error) });
+    }
+
+    return null;
+  }
+
+  /**
+   * Fallback resolution: probe `<path>/<module>.py` and
+   * `<path>/<module>/__init__.py` across the known Python search paths.
+   * Returns the first existing candidate, or `null`.
+   */
+  private async resolveViaSearchPaths(moduleName: string): Promise<string | null> {
     const searchPaths = await this.getPythonSearchPaths();
 
     for (const searchPath of searchPaths) {
@@ -237,40 +260,33 @@ export class ModuleDiscovery {
    */
   parseDependenciesFromSource(source: string): string[] {
     const dependencies: string[] = [];
-    const lines = source.split('\n');
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      // Skip comments and empty lines
-      if (trimmed.startsWith('#') || trimmed === '') {
-        continue;
-      }
-
-      // Match import statements
-      const importMatch = trimmed.match(/^import\s+([a-zA-Z_][a-zA-Z0-9_\.]*)/);
-      if (importMatch?.[1]) {
-        const fullModuleName = importMatch[1];
-        const moduleName = fullModuleName.split('.')[0]; // Get top-level module
-        if (moduleName) {
-          dependencies.push(moduleName);
-        }
-        continue;
-      }
-
-      // Match from ... import statements
-      const fromMatch = trimmed.match(/^from\s+([a-zA-Z_][a-zA-Z0-9_\.]*)\s+import/);
-      if (fromMatch?.[1]) {
-        const fullModuleName = fromMatch[1];
-        const moduleName = fullModuleName.split('.')[0]; // Get top-level module
-        if (moduleName) {
-          dependencies.push(moduleName);
-        }
-        continue;
+    for (const line of source.split('\n')) {
+      const moduleName = this.extractImportedModule(line.trim());
+      if (moduleName) {
+        dependencies.push(moduleName);
       }
     }
 
     return [...new Set(dependencies)]; // Remove duplicates
+  }
+
+  /**
+   * Extract the top-level module name imported by a single (trimmed) source
+   * line, or `null` when the line is a comment, blank, or not an import.
+   */
+  private extractImportedModule(trimmed: string): string | null {
+    // Skip comments and empty lines
+    if (trimmed.startsWith('#') || trimmed === '') {
+      return null;
+    }
+
+    // Match `import x.y.z` and `from x.y.z import ...` statements.
+    const match =
+      trimmed.match(/^import\s+([a-zA-Z_][a-zA-Z0-9_\.]*)/) ??
+      trimmed.match(/^from\s+([a-zA-Z_][a-zA-Z0-9_\.]*)\s+import/);
+
+    return match?.[1]?.split('.')[0] ?? null; // Get top-level module
   }
 
   /**
