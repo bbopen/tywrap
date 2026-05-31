@@ -2,7 +2,7 @@
  * Node.js runtime bridge.
  *
  * NodeBridge is a thin facade: it extends DisposableBase (lifecycle/resources)
- * and implements PythonRuntime by HOLDING an RpcClient. It uses ProcessIO
+ * and implements PythonRuntime by HOLDING an RpcClient. It uses SubprocessTransport
  * transports with optional pooling for concurrent Python execution.
  *
  * @see https://github.com/bbopen/tywrap/issues/149
@@ -22,10 +22,10 @@ import { globalCache } from '../utils/cache.js';
 import { DisposableBase } from './bounded-context.js';
 import { RpcClient, type GetBridgeInfoOptions } from './rpc-client.js';
 import { BridgeCodecError, BridgeExecutionError, BridgeProtocolError } from './errors.js';
-import { ProcessIO } from './process-io.js';
+import { SubprocessTransport } from './subprocess-transport.js';
 import { PooledTransport } from './pooled-transport.js';
-import type { CodecOptions } from './safe-codec.js';
-import type { PooledWorker } from './worker-pool.js';
+import type { CodecOptions } from './bridge-codec.js';
+import type { TransportLease } from './transport-pool.js';
 
 // =============================================================================
 // OPTIONS
@@ -84,12 +84,12 @@ export interface NodeBridgeOptions {
   // ===========================================================================
 
   /**
-   * @deprecated No longer used. Pool idle time is managed by WorkerPool.
+   * @deprecated No longer used. Pool idle time is managed by TransportPool.
    */
   maxIdleTime?: number;
 
   /**
-   * @deprecated No longer used. Process restart is managed by ProcessIO.
+   * @deprecated No longer used. Process restart is managed by SubprocessTransport.
    */
   maxRequestsPerProcess?: number;
 
@@ -99,7 +99,7 @@ export interface NodeBridgeOptions {
   enableJsonFallback?: boolean;
 
   /**
-   * @deprecated Use ProcessIO options instead.
+   * @deprecated Use SubprocessTransport options instead.
    */
   maxLineLength?: number;
 }
@@ -277,7 +277,7 @@ function normalizeWarmupCommands(commands: NodeBridgeOptions['warmupCommands']):
  * Features:
  * - Single or multi-process execution via process pooling
  * - Virtual environment support
- * - Full SafeCodec validation (NaN/Infinity rejection, key validation)
+ * - Full BridgeCodec validation (NaN/Infinity rejection, key validation)
  * - Automatic Arrow decoding for DataFrames/ndarrays
  * - Optional result caching for pure functions
  * - Process warmup commands
@@ -343,7 +343,7 @@ export class NodeBridge extends DisposableBase implements PythonRuntime {
       codec: options.codec,
       warmupCommands,
     };
-    // Build environment for ProcessIO
+    // Build environment for SubprocessTransport
     const processEnv = buildProcessEnv(resolvedOptions);
 
     // Why a late-bound holder: PooledTransport copies onWorkerReady eagerly at
@@ -360,10 +360,10 @@ export class NodeBridge extends DisposableBase implements PythonRuntime {
       resolvedOptions.timeoutMs
     );
 
-    // Create pooled transport with ProcessIO workers
+    // Create pooled transport with SubprocessTransport workers
     const transport = new PooledTransport({
-      createTransport: (): ProcessIO =>
-        new ProcessIO({
+      createTransport: (): SubprocessTransport =>
+        new SubprocessTransport({
           pythonPath: resolvedOptions.pythonPath,
           bridgeScript: resolvedOptions.scriptPath,
           env: processEnv,
@@ -676,8 +676,8 @@ function createWorkerReadyCallback(
   rpcHolder: { rpc?: RpcClient },
   warmupCommands: WarmupCommand[],
   timeoutMs: number
-): (worker: PooledWorker) => Promise<void> {
-  return async (worker: PooledWorker) => {
+): (worker: TransportLease) => Promise<void> {
+  return async (worker: TransportLease) => {
     const rpc = rpcHolder.rpc;
     if (!rpc) {
       throw new BridgeExecutionError('Worker warmup attempted before RpcClient was wired');
@@ -721,7 +721,7 @@ function createWorkerReadyCallback(
 // =============================================================================
 
 /**
- * Build environment variables for ProcessIO.
+ * Build environment variables for SubprocessTransport.
  */
 function buildProcessEnv(options: ResolvedOptions): Record<string, string> {
   const allowedPrefixes = ['TYWRAP_'];

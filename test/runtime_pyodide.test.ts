@@ -542,7 +542,7 @@ describe('Pyodide Runtime Bridge', () => {
 
   describe('Resource Cleanup', () => {
     it('should complete calls without memory leaks', async () => {
-      // In the new architecture, proxy cleanup is handled internally by PyodideIO.
+      // In the new architecture, proxy cleanup is handled internally by PyodideTransport.
       // This test verifies that calls complete successfully without issues.
       bridge = new PyodideBridge();
 

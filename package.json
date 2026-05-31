@@ -1,6 +1,6 @@
 {
   "name": "tywrap",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Generate type-safe TypeScript wrappers for any Python library — Node.js, Deno, Bun, and browsers via Pyodide.",
   "type": "module",
   "main": "dist/index.js",
@@ -38,7 +38,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "npm run build:pyodide-bootstrap && tsc && npm run build:tools",
+    "build": "npm run build:version && npm run build:pyodide-bootstrap && tsc && npm run build:tools",
+    "build:version": "node scripts/generate-version.mjs",
     "build:pyodide-bootstrap": "node scripts/generate-pyodide-bootstrap.mjs",
     "build:tools": "tsc -p tsconfig.tools.json",
     "dev": "tsc --watch",

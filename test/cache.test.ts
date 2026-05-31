@@ -1,16 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { IntelligentCache } from '../src/utils/cache.js';
+import { ArtifactCache } from '../src/utils/cache.js';
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-let cache: IntelligentCache;
+let cache: ArtifactCache;
 let dir: string;
 
-describe('IntelligentCache async operations', () => {
+describe('ArtifactCache async operations', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'tywrap-cache-'));
-    cache = new IntelligentCache({ baseDir: dir, persistToDisk: true });
+    cache = new ArtifactCache({ baseDir: dir, persistToDisk: true });
     await cache.clear();
   });
 

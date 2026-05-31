@@ -1,8 +1,8 @@
 /**
- * PooledTransport - Transport adapter that wraps WorkerPool for multi-process support.
+ * PooledTransport - Transport adapter that wraps TransportPool for multi-process support.
  *
- * This transport implements the Transport interface by delegating to a WorkerPool
- * of ProcessIO transports. Each send() acquires a worker, sends the message,
+ * This transport implements the Transport interface by delegating to a TransportPool
+ * of SubprocessTransport transports. Each send() acquires a worker, sends the message,
  * and releases the worker back to the pool.
  *
  * @see https://github.com/bbopen/tywrap/issues/149
@@ -11,7 +11,7 @@
 import { DisposableBase } from './bounded-context.js';
 import { BridgeDisposedError, BridgeExecutionError } from './errors.js';
 import type { Transport } from './transport.js';
-import { WorkerPool, type PooledWorker } from './worker-pool.js';
+import { TransportPool, type TransportLease } from './transport-pool.js';
 
 // =============================================================================
 // TYPES
@@ -40,12 +40,12 @@ export interface PooledTransportOptions {
    * Callback invoked after each worker is created and initialized.
    * Use this for per-worker warmup (e.g., importing modules, running setup).
    */
-  onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+  onWorkerReady?: (worker: TransportLease) => Promise<void>;
 
   /**
    * Optional callback used only for background replacement workers.
    */
-  onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
+  onReplacementWorkerReady?: (worker: TransportLease) => Promise<void>;
 }
 
 // =============================================================================
@@ -53,10 +53,10 @@ export interface PooledTransportOptions {
 // =============================================================================
 
 /**
- * Transport adapter that wraps WorkerPool for multi-process message handling.
+ * Transport adapter that wraps TransportPool for multi-process message handling.
  *
  * PooledTransport presents a single Transport interface while internally
- * distributing requests across multiple worker transports (typically ProcessIO).
+ * distributing requests across multiple worker transports (typically SubprocessTransport).
  *
  * Features:
  * - Lazy worker creation (transports created on demand)
@@ -67,7 +67,7 @@ export interface PooledTransportOptions {
  * @example
  * ```typescript
  * const transport = new PooledTransport({
- *   createTransport: () => new ProcessIO({
+ *   createTransport: () => new SubprocessTransport({
  *     bridgeScript: '/path/to/bridge.py',
  *   }),
  *   maxWorkers: 4,
@@ -87,10 +87,10 @@ export class PooledTransport extends DisposableBase implements Transport {
     Required<PooledTransportOptions>,
     'onWorkerReady' | 'onReplacementWorkerReady'
   > & {
-    onWorkerReady?: (worker: PooledWorker) => Promise<void>;
-    onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
+    onWorkerReady?: (worker: TransportLease) => Promise<void>;
+    onReplacementWorkerReady?: (worker: TransportLease) => Promise<void>;
   };
-  private pool?: WorkerPool;
+  private pool?: TransportPool;
 
   /**
    * Create a new PooledTransport.
@@ -122,11 +122,11 @@ export class PooledTransport extends DisposableBase implements Transport {
   /**
    * Initialize the pooled transport.
    *
-   * Creates and initializes the internal WorkerPool.
+   * Creates and initializes the internal TransportPool.
    * If minWorkers > 0, workers are pre-spawned during init.
    */
   protected async doInit(): Promise<void> {
-    this.pool = new WorkerPool({
+    this.pool = new TransportPool({
       createTransport: this.poolOptions.createTransport,
       maxWorkers: this.poolOptions.maxWorkers,
       minWorkers: this.poolOptions.minWorkers,
@@ -142,7 +142,7 @@ export class PooledTransport extends DisposableBase implements Transport {
   /**
    * Dispose the pooled transport.
    *
-   * Disposes the internal WorkerPool, which disposes all workers.
+   * Disposes the internal TransportPool, which disposes all workers.
    */
   protected async doDispose(): Promise<void> {
     if (this.pool) {

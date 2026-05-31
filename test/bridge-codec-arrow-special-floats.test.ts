@@ -12,13 +12,13 @@ vi.mock('../src/utils/codec.js', async () => {
   };
 });
 
-describe('SafeCodec.decodeResponseAsync - post-Arrow special float validation', () => {
+describe('BridgeCodec.decodeResponseAsync - post-Arrow special float validation', () => {
   it('rejects special floats introduced by Arrow decoding', async () => {
-    const { SafeCodec } = await import('../src/runtime/safe-codec.js');
+    const { BridgeCodec } = await import('../src/runtime/bridge-codec.js');
     const { BridgeCodecError } = await import('../src/runtime/errors.js');
     const { PROTOCOL_ID } = await import('../src/runtime/transport.js');
 
-    const codec = new SafeCodec({ rejectSpecialFloats: true });
+    const codec = new BridgeCodec({ rejectSpecialFloats: true });
     const payload = JSON.stringify({
       id: 1,
       protocol: PROTOCOL_ID,

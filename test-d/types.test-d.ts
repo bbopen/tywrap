@@ -11,10 +11,7 @@ import {
   tywrap,
   defineConfig,
   resolveConfig,
-  setRuntimeBridge,
-  getRuntimeBridge,
-  clearRuntimeBridge,
-  
+
   // Types
   PythonModule,
   PythonFunction,
@@ -29,14 +26,11 @@ import {
   AnalysisResult,
   TywrapOptions,
   RuntimeStrategy,
-  
-  // Runtime bridges
-  NodeBridge,
-  PyodideBridge,
-  HttpBridge,
+
+  // Bridge errors
   BridgeError,
   BridgeProtocolError,
-  
+
   // Runtime utilities
   detectRuntime,
   isNodejs,
@@ -44,6 +38,12 @@ import {
   isBun,
   isBrowser
 } from '../src/index.js';
+// Registry lives behind the `tywrap/runtime` subpath, not the package root.
+import { setRuntimeBridge, getRuntimeBridge, clearRuntimeBridge } from '../src/runtime/index.js';
+// Concrete bridges live behind their own subpaths, not the package root.
+import { NodeBridge } from '../src/runtime/node.js';
+import { PyodideBridge } from '../src/runtime/pyodide.js';
+import { HttpBridge } from '../src/runtime/http.js';
 
 // =============================================================================
 // Core API Type Tests
@@ -349,3 +349,77 @@ const fullConfig: TywrapOptions = {
   }
 };
 expectType<TywrapOptions>(fullConfig);
+
+// =============================================================================
+// Root Public Surface Lock
+// =============================================================================
+//
+// Snapshot the intended `tywrap` (package root) value-level export set. This
+// catches accidental additions/removals — including type-only moves, which a
+// runtime Object.keys() snapshot cannot see. The complementary runtime snapshot
+// lives in test/api_surface.test.ts.
+//
+// Keep this list in sync with src/index.ts. When the public surface changes on
+// purpose, update both this lock and the runtime snapshot in the same commit.
+
+import * as RootApi from '../src/index.js';
+
+// Intended value exports must be present (accessing each must type-check).
+expectType<typeof import('../src/tywrap.js').tywrap>(RootApi.tywrap);
+expectType<typeof RootApi.tywrap>(RootApi.default);
+expectType<typeof import('../src/config/index.js').defineConfig>(RootApi.defineConfig);
+expectType<typeof import('../src/config/index.js').resolveConfig>(RootApi.resolveConfig);
+expectType<typeof import('../src/tywrap.js').generate>(RootApi.generate);
+expectType<typeof import('../src/runtime/errors.js').BridgeError>(RootApi.BridgeError);
+expectType<typeof import('../src/runtime/errors.js').BridgeCodecError>(RootApi.BridgeCodecError);
+expectType<typeof import('../src/runtime/errors.js').BridgeProtocolError>(
+  RootApi.BridgeProtocolError
+);
+expectType<typeof import('../src/runtime/errors.js').BridgeTimeoutError>(
+  RootApi.BridgeTimeoutError
+);
+expectType<typeof import('../src/runtime/errors.js').BridgeDisposedError>(
+  RootApi.BridgeDisposedError
+);
+expectType<typeof import('../src/runtime/errors.js').BridgeExecutionError>(
+  RootApi.BridgeExecutionError
+);
+expectType<typeof import('../src/utils/codec.js').decodeValue>(RootApi.decodeValue);
+expectType<typeof import('../src/utils/codec.js').decodeValueAsync>(RootApi.decodeValueAsync);
+expectType<typeof import('../src/utils/codec.js').autoRegisterArrowDecoder>(
+  RootApi.autoRegisterArrowDecoder
+);
+expectType<typeof import('../src/utils/codec.js').registerArrowDecoder>(
+  RootApi.registerArrowDecoder
+);
+expectType<typeof import('../src/utils/codec.js').clearArrowDecoder>(RootApi.clearArrowDecoder);
+expectType<typeof import('../src/utils/runtime.js').detectRuntime>(RootApi.detectRuntime);
+expectType<typeof import('../src/utils/runtime.js').isNodejs>(RootApi.isNodejs);
+expectType<typeof import('../src/utils/runtime.js').isDeno>(RootApi.isDeno);
+expectType<typeof import('../src/utils/runtime.js').isBun>(RootApi.isBun);
+expectType<typeof import('../src/utils/runtime.js').isBrowser>(RootApi.isBrowser);
+expectType<typeof import('../src/version.js').VERSION>(RootApi.VERSION);
+
+// Moved/removed members must NOT be reachable from the package root.
+// Codec + transport contract moved to `tywrap/runtime`:
+expectError(RootApi.BridgeCodec);
+expectError(RootApi.isTransport);
+expectError(RootApi.isProtocolMessage);
+expectError(RootApi.isProtocolResponse);
+expectError(RootApi.PROTOCOL_ID);
+// Registry moved to `tywrap/runtime`:
+expectError(RootApi.setRuntimeBridge);
+expectError(RootApi.getRuntimeBridge);
+expectError(RootApi.clearRuntimeBridge);
+// Concrete bridges live behind their own subpaths:
+expectError(RootApi.NodeBridge);
+expectError(RootApi.PyodideBridge);
+expectError(RootApi.HttpBridge);
+// Deprecated alias removed:
+expectError(RootApi.RuntimeBridge);
+// Other runtime plumbing is non-public:
+expectError(RootApi.RpcClient);
+expectError(RootApi.DisposableBase);
+expectError(RootApi.TransportPool);
+expectError(RootApi.ProcessIO);
+expectError(RootApi.ValidationError);

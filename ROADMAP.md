@@ -8,65 +8,95 @@ The detailed technical appendix for the scientific data plane lives in
 
 ## Recently Shipped
 
+### v0.5.1: install with no native build (Node 25+)
+
+`v0.5.1` removed the dead TypeScript analyzer and the `tree-sitter`,
+`tree-sitter-python`, and `web-tree-sitter` packages. That native parser had no
+prebuilt binary for newer Node, so `npm install tywrap` broke on Node 25; the
+analyzer was unused (code generation runs through the Python `tywrap-ir`
+extractor), so deleting it fixes the install with no loss of capability. Closes
+the analyzer-removal half of #238; a Node 25 fresh-install CI smoke guards the
+regression.
+
+### v0.5.0: bridge composition
+
+`v0.5.0` made the bridges hold an `RpcClient` instead of extending a shared
+protocol base. Pyodide now speaks the same wire protocol as the subprocess
+bridge — the six scientific markers and `meta` work the same in the browser —
+and a cross-backend conformance suite runs every backend against the same cases.
+Breaking: `BridgeProtocol` is renamed to `RpcClient`.
+
 ### v0.4.0: development hot reload and contract cleanup
 
-`v0.4.0` established the real development reload story for Tywrap:
+`v0.4.0` established the development reload story: `tywrap/dev` as the public
+entrypoint, Node watch sessions that regenerate wrappers and swap the active
+bridge, and structured generation failures that keep the last known good output
+and bridge live.
 
-- `tywrap/dev` is the public development entrypoint
-- Node watch sessions regenerate wrappers and swap the active bridge
-- generated wrappers keep using the latest runtime bridge without re-imports
-- structured generation failures keep the last known good output and bridge live
-- placeholder config fields for reload behavior were removed in favor of the
-  explicit dev API
+## Now (0.6.0): one breaking cleanup pass
 
-The immediate `0.4.1` patch line is release hygiene, not a new roadmap theme.
-It exists to keep the release and CI baseline stable after the `v0.4.0` cut.
+This is the rest of the 0.5.0 refactor plan that 0.5.0/0.5.1 did not ship —
+collected into a single breaking release so users take the import and name churn
+once, before the data plane adds new surface. Pre-1.0 with very few users, the
+breaking budget is cheap; spend it here and emerge on clean names.
 
-## Now (0.4.x)
+Internal cleanup (invisible to callers):
 
-### Node 25 support, analyzer removal, and dev-contract stabilization
+- delete the four remaining dead modules (`bundle-optimizer`, `memory-profiler`,
+  `optimized-node`, `protocol` — drain its `PROTOCOL_VERSION` into `transport`
+  first)
+- decompose the live complexity hotspots (`decodeEnvelopeCore`,
+  `annotation-parser.parse`, `mapPresetType`, the config dispatches) behind
+  output-preserving characterization snapshots
+- extract a shared call-emission path in the generator (three near-identical
+  copies collapse to one, generated output byte-preserved)
+- convert the silent test skips to `it.skipIf` so a missing Python interpreter
+  skips loudly instead of passing vacuously
+- fix `VERSION` (still reports `0.3.0`) by single-sourcing it from a
+  build-generated module
 
-The `0.4.x` line is for tightening what `v0.4.0` introduced before the next
-minor release expands scope again.
+Breaking surface and naming:
 
-- remove the TypeScript-side analyzer and the required `tree-sitter` install
-  path so `npm install tywrap` no longer depends on a native parser build for
-  the supported Node story, including Node 25
-- stabilize `tywrap/dev` examples and hot-reload coverage, especially around
-  failure and recovery behavior
-- define and document the `tywrap` to `tywrap-ir` compatibility contract so
-  users get explicit expectations and explicit mismatch behavior
-- clean up deprecated runtime surface in docs and examples so new usage follows
-  the shipped public API rather than compatibility shims
+- trim `src/index.ts` to its real public surface and move `SafeCodec` plus the
+  `Transport` contract to `tywrap/runtime`, locked by a type-level surface test
+- standardize the runtime vocabulary on the four-layer glossary: `*IO` →
+  `*Transport`, `SafeCodec` → `BridgeCodec`, `IntelligentCache` →
+  `ArtifactCache`, `WorkerPool`/`PooledWorker` → `TransportPool`/`TransportLease`,
+  `marker` → `typeTag`; the on-the-wire keys do not change, only code identifiers
+- tighten config loading with per-section validators and demote the dead
+  per-module `runtime` field (#230)
+- single-source `IR_VERSION` (today duplicated across six files) and add a drift
+  check, the foundation of the `tywrap` ↔ `tywrap-ir` compatibility contract
+  (#229)
+- land the security must-dos that change behavior: the import/`getattr` allowlist
+  in the Python bridge and the module-name injection fix in discovery
 
-This release line should treat `tywrap_ir` as the single supported analysis
-path. The TypeScript analyzer is legacy internal code and should be fully
-removed rather than carried forward as a parallel implementation.
+## Next (0.7.0): the scientific data plane
 
-## Next (0.5.0)
+The release that makes large scientific payloads reliable and first-class, built
+on the clean foundation 0.6.0 establishes (this is the workstream that was
+labeled 0.5.0 before the refactor took that number). Tracked under #237.
 
-### Chunked transport and the scientific data plane
-
-`v0.5.0` should be the release that makes large scientific payloads reliable and
-first-class.
-
+- measure first: Arrow, large-payload, and pool benchmarks land before any perf
+  gate so the gates have real baselines
 - add a versioned artifact or chunked transport path so large payloads no longer
-  depend on single-line JSONL
-- make Arrow registration easier across the runtime story so the common
-  scientific path does not require avoidable manual setup
-- expand scientific codec validation and performance gates so release quality is
-  backed by real transport and payload-scale coverage
+  depend on single-line JSONL (#231)
+- make Arrow registration frictionless across the runtime story (#232)
+- expand scientific codec validation and performance gates (#233)
 - harden SciPy, Torch, and Sklearn envelope behavior so supported cases are
-  explicit and unsupported cases fail clearly
-- document transport capability expectations so Node, Pyodide, and HTTP support
-  boundaries stay easy to understand
+  explicit and unsupported cases fail clearly (#234)
+- document transport capability expectations across Node, Pyodide, and HTTP (#235)
+- capture the dropped Python member categories in `tywrap-ir` (`@classmethod`,
+  `@property`, `cached_property` via `inspect.classify_class_attrs`), bump the IR
+  schema, and regenerate goldens
+- stabilize the `tywrap/dev` examples with a watch/reload end-to-end smoke (#228)
 
 See [docs/codec-roadmap.md](./docs/codec-roadmap.md) for the deeper technical
 plan behind this release theme.
 
 ## Later
 
-These items are intentionally not part of `0.4.x` or `0.5.0`:
+These items are intentionally not part of `0.6.0` or `0.7.0`:
 
 - GPU-native transport such as DLPack or Arrow CUDA
 - HTTP server lifecycle management owned by Tywrap

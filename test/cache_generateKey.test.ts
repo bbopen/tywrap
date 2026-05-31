@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { IntelligentCache } from '../src/utils/cache.js';
+import { ArtifactCache } from '../src/utils/cache.js';
 
-describe('IntelligentCache.generateKey', () => {
+describe('ArtifactCache.generateKey', () => {
   it('disambiguates primitive types to avoid collisions', () => {
-    const cache = new IntelligentCache({ persistToDisk: false, cleanupInterval: 0 });
+    const cache = new ArtifactCache({ persistToDisk: false, cleanupInterval: 0 });
 
     expect(cache.generateKey('x', '1')).not.toBe(cache.generateKey('x', 1));
     expect(cache.generateKey('x', 'null')).not.toBe(cache.generateKey('x', null));
@@ -14,21 +14,21 @@ describe('IntelligentCache.generateKey', () => {
   });
 
   it('disambiguates input boundaries', () => {
-    const cache = new IntelligentCache({ persistToDisk: false, cleanupInterval: 0 });
+    const cache = new ArtifactCache({ persistToDisk: false, cleanupInterval: 0 });
 
     expect(cache.generateKey('x', 'a', 'bc')).not.toBe(cache.generateKey('x', 'ab', 'c'));
     expect(cache.generateKey('x', 'a', 'b')).not.toBe(cache.generateKey('x', 'ab'));
   });
 
   it('is deterministic for identical inputs', () => {
-    const cache = new IntelligentCache({ persistToDisk: false, cleanupInterval: 0 });
+    const cache = new ArtifactCache({ persistToDisk: false, cleanupInterval: 0 });
 
     expect(cache.generateKey('x', 1, 'a')).toBe(cache.generateKey('x', 1, 'a'));
     expect(cache.generateKey('x', null)).toBe(cache.generateKey('x', null));
   });
 
   it('handles Symbol inputs deterministically', () => {
-    const cache = new IntelligentCache({ persistToDisk: false, cleanupInterval: 0 });
+    const cache = new ArtifactCache({ persistToDisk: false, cleanupInterval: 0 });
 
     const sym = Symbol('a');
     expect(cache.generateKey('x', sym)).toBe(cache.generateKey('x', sym));

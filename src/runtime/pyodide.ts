@@ -2,7 +2,7 @@
  * Pyodide runtime bridge.
  *
  * PyodideBridge is a thin facade: it extends DisposableBase (lifecycle) and
- * implements PythonRuntime by HOLDING an RpcClient over a PyodideIO transport
+ * implements PythonRuntime by HOLDING an RpcClient over a PyodideTransport
  * for in-memory Python execution in browser environments via WebAssembly.
  *
  * @see https://github.com/bbopen/tywrap/issues/149
@@ -12,8 +12,8 @@ import type { PythonRuntime, BridgeInfo } from '../types/index.js';
 
 import { DisposableBase } from './bounded-context.js';
 import { RpcClient, type GetBridgeInfoOptions } from './rpc-client.js';
-import { PyodideIO } from './pyodide-io.js';
-import type { CodecOptions } from './safe-codec.js';
+import { PyodideTransport } from './pyodide-transport.js';
+import type { CodecOptions } from './bridge-codec.js';
 
 // =============================================================================
 // OPTIONS
@@ -51,7 +51,7 @@ export interface PyodideBridgeOptions {
  * - Zero network overhead (in-memory execution)
  * - Automatic Pyodide loading from CDN or module
  * - Python package loading support
- * - Full SafeCodec validation (NaN/Infinity rejection, key validation)
+ * - Full BridgeCodec validation (NaN/Infinity rejection, key validation)
  * - Proper proxy cleanup to prevent memory leaks
  *
  * @example
@@ -78,7 +78,7 @@ export class PyodideBridge extends DisposableBase implements PythonRuntime {
   constructor(options: PyodideBridgeOptions = {}) {
     super();
 
-    const transport = new PyodideIO({
+    const transport = new PyodideTransport({
       indexURL: options.indexURL,
       packages: options.packages,
     });
@@ -110,7 +110,7 @@ export class PyodideBridge extends DisposableBase implements PythonRuntime {
   }
 
   // ===========================================================================
-  // RPC METHODS (delegate to the held RpcClient; never PyodideIO directly)
+  // RPC METHODS (delegate to the held RpcClient; never PyodideTransport directly)
   // ===========================================================================
 
   async call<T = unknown>(

@@ -47,7 +47,7 @@ export interface CacheConfig {
   debug?: boolean;
 }
 
-export class IntelligentCache {
+export class ArtifactCache {
   private memoryCache = new Map<string, CacheEntry>();
   private stats = {
     hits: 0,
@@ -685,4 +685,4 @@ export class IntelligentCache {
 }
 
 // Export singleton instance
-export const globalCache = new IntelligentCache();
+export const globalCache = new ArtifactCache();

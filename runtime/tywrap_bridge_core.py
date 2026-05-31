@@ -6,10 +6,10 @@ protocol. It is imported by:
 
   - runtime/python_bridge.py  (the Node/Bun/Deno subprocess server and the HTTP
     server), which owns I/O concerns: the stdin/stdout JSONL loop, env-var size
-    guards, the real OS pid, bridge='python-subprocess', and the final SafeCodec
+    guards, the real OS pid, bridge='python-subprocess', and the final BridgeCodec
     encode wrapper.
 
-  - the in-WASM Pyodide server (src/runtime/pyodide-io.ts). Pyodide cannot read
+  - the in-WASM Pyodide server (src/runtime/pyodide-transport.ts). Pyodide cannot read
     this file from disk, so it is shipped as a build-time-generated TypeScript
     string constant (src/runtime/pyodide-bootstrap-core.generated.ts) produced by
     scripts/generate-pyodide-bootstrap.mjs and exec'd into a module registered in
@@ -17,7 +17,7 @@ protocol. It is imported by:
     asserts the generated constant stays byte-identical to this file.
 
 CROSS-LANGUAGE CONTRACT (Python <-> the TypeScript decoder in src/utils/codec.ts
-and the request encoder in src/runtime/safe-codec.ts):
+and the request encoder in src/runtime/bridge-codec.ts):
 
   * Every value-type "marker" envelope carries {'__tywrap__': <type>,
     'codecVersion': 1, 'encoding': ...}. The 6 markers are: ndarray, dataframe,
@@ -66,6 +66,123 @@ class InstanceHandleError(ValueError):
     """Raised when an instance handle is unknown or no longer valid."""
 
 
+class ImportNotAllowedError(PermissionError):
+    """Raised when a requested module import is not on the active allowlist."""
+
+    def __init__(self, module_name):
+        super().__init__(
+            f'Import of module {module_name!r} is not permitted by the tywrap bridge '
+            'allowlist; add it to TYWRAP_ALLOWED_MODULES (subprocess) or the '
+            'allowed_modules parameter to enable it'
+        )
+
+
+class AttributeNotAllowedError(PermissionError):
+    """Raised when access to a private/dunder attribute is denied by policy."""
+
+    def __init__(self, attr_name):
+        super().__init__(
+            f'Access to attribute {attr_name!r} is not permitted by the tywrap bridge: '
+            'underscore-prefixed (private/dunder) attributes are blocked to prevent '
+            'sandbox-escape via attributes like __globals__/__subclasses__/__builtins__; '
+            'set TYWRAP_ALLOW_PRIVATE_ATTRS=1 (subprocess) or pass allow_private_attrs=True '
+            'to override'
+        )
+
+
+# =============================================================================
+# IMPORT / ATTRIBUTE ALLOWLIST (trust boundary enforcement)
+# =============================================================================
+#
+# The bridge dispatches call/instantiate/call_method by importing the requested
+# module and getattr-ing the requested function/class/method. That is an
+# arbitrary import+getattr+call surface, so two complementary guards live here.
+# Both are PURE (no env reads) so the rules behave identically under the
+# subprocess server and the in-WASM Pyodide server; the subprocess server derives
+# the parameters from env vars (TYWRAP_ALLOWED_MODULES / TYWRAP_ALLOW_PRIVATE_ATTRS)
+# and threads them in, exactly like force_json_markers / torch_allow_copy.
+#
+# 1. MODULE ALLOWLIST (opt-in, default = allow all):
+#    allowed_modules=None means "no restriction" so existing configurations keep
+#    working unchanged. When a caller supplies a set, only those modules (plus the
+#    stdlib the bridge itself needs to serialize results, see _BRIDGE_REQUIRED_MODULES)
+#    may be imported; submodules of an allowed module are permitted (e.g. allowing
+#    'scipy' also allows 'scipy.sparse'). A non-allowlisted import fails LOUDLY with
+#    ImportNotAllowedError rather than silently importing.
+#
+# 2. PRIVATE-ATTRIBUTE BLOCK (default ON):
+#    getattr of any name starting with '_' (single-underscore private OR dunder) is
+#    rejected. This blocks the classic escape chain (obj.__class__.__subclasses__()
+#    /__globals__/__builtins__/__import__) without depending on the module allowlist.
+#    tywrap-generated wrappers never reference underscore-prefixed names (the IR
+#    analyzer skips them), so this does not regress generated code. Set
+#    allow_private_attrs=True to restore unrestricted getattr for trusted callers.
+
+# Stdlib modules the bridge's own serialization/handlers may need to import even
+# when a caller-supplied allowlist is active. Optional codec deps (numpy, pandas,
+# scipy, torch, sklearn, pyarrow) are intentionally NOT here: if a caller restricts
+# modules, they must opt those in explicitly. These names cover only what the
+# bridge core itself imports.
+_BRIDGE_REQUIRED_MODULES = frozenset(
+    {
+        'base64',
+        'datetime',
+        'decimal',
+        'importlib',
+        'json',
+        'math',
+        'sys',
+        'traceback',
+        'uuid',
+        'pathlib',
+    }
+)
+
+
+def _top_level_package(module_name):
+    """Return the top-level package of a dotted module name ('a.b.c' -> 'a')."""
+    return module_name.split('.', 1)[0]
+
+
+def _is_module_allowed(module_name, allowed_modules):
+    """
+    Return True when module_name may be imported under the active policy.
+
+    allowed_modules=None disables enforcement (allow all). Otherwise a module is
+    allowed when it (or its top-level package) is explicitly listed, or it is one
+    of the stdlib modules the bridge itself requires.
+    """
+    if allowed_modules is None:
+        return True
+    if module_name in allowed_modules or module_name in _BRIDGE_REQUIRED_MODULES:
+        return True
+    top = _top_level_package(module_name)
+    return top in allowed_modules or top in _BRIDGE_REQUIRED_MODULES
+
+
+def import_allowed_module(module_name, allowed_modules):
+    """
+    Import module_name only if permitted by the allowlist, else raise loudly.
+
+    This is the single chokepoint every handler routes module imports through.
+    """
+    if not _is_module_allowed(module_name, allowed_modules):
+        raise ImportNotAllowedError(module_name)
+    return importlib.import_module(module_name)
+
+
+def get_allowed_attr(obj, attr_name, *, allow_private_attrs):
+    """
+    getattr(obj, attr_name) with the private/dunder block applied.
+
+    Rejects any underscore-prefixed name unless allow_private_attrs is True. This
+    is the single chokepoint every handler routes attribute access through.
+    """
+    if not allow_private_attrs and attr_name.startswith('_'):
+        raise AttributeNotAllowedError(attr_name)
+    return getattr(obj, attr_name)
+
+
 class CodecError(Exception):
     """Raised when value encoding fails (e.g. NaN/Infinity not allowed)."""
 
@@ -85,10 +202,10 @@ def _deserialize_bytes_envelope(value):
     Decode base64-encoded bytes envelopes from JS into Python bytes.
 
     Supported shapes:
-    - { "__tywrap_bytes__": true, "b64": "..." }  (JS SafeCodec.encodeRequest)
+    - { "__tywrap_bytes__": true, "b64": "..." }  (JS BridgeCodec.encodeRequest)
     - { "__type__": "bytes", "encoding": "base64", "data": "..." }  (legacy/compat)
 
-    Why: TS SafeCodec encodes Uint8Array/ArrayBuffer as base64 objects, but
+    Why: TS BridgeCodec encodes Uint8Array/ArrayBuffer as base64 objects, but
     Python handlers expect real bytes/bytearray to preserve behavior (e.g., len()).
     """
     if not isinstance(value, dict):
@@ -530,7 +647,7 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
     """
     Top-level result serializer. Dispatch order is significant: numpy ndarray ->
     dataframe -> series -> scipy.sparse -> torch -> sklearn -> Pydantic -> stdlib
-    -> passthrough. The remaining SafeCodec value behaviors (numpy/pandas scalars,
+    -> passthrough. The remaining BridgeCodec value behaviors (numpy/pandas scalars,
     bytes, sets, complex rejection, NaN/Infinity) are applied later during JSON
     encoding by default_encoder.
     """
@@ -558,12 +675,12 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
 
 
 # =============================================================================
-# JSON ENCODE: SafeCodec-equivalent value handling (NaN reject, scalars, bytes)
+# JSON ENCODE: BridgeCodec-equivalent value handling (NaN reject, scalars, bytes)
 # =============================================================================
 #
-# This mirrors SafeCodec._default_encoder (runtime/safe_codec.py) for the VALUE
+# This mirrors BridgeCodec._default_encoder (runtime/safe_codec.py) for the VALUE
 # behaviors that are part of the wire contract. The subprocess server still uses
-# the real SafeCodec for its final encode (it also enforces size limits); this
+# the real BridgeCodec for its final encode (it also enforces size limits); this
 # core encoder exists so the Pyodide server gets identical value handling without
 # depending on safe_codec.py. The conformance suite asserts these behaviors match.
 
@@ -594,7 +711,7 @@ def _is_pandas_scalar(obj):
 
 def make_default_encoder(*, allow_nan):
     """
-    Build a json.dumps default= encoder matching SafeCodec's value handling.
+    Build a json.dumps default= encoder matching BridgeCodec's value handling.
 
     Raises CodecError for NaN/Infinity extracted from numpy scalars (json.dumps
     itself rejects top-level/nested NaN/Infinity floats when allow_nan=False).
@@ -663,11 +780,11 @@ def make_default_encoder(*, allow_nan):
 
 def encode_value(value, *, allow_nan):
     """
-    JSON-encode a fully-serialized response value, applying the SafeCodec-equivalent
+    JSON-encode a fully-serialized response value, applying the BridgeCodec-equivalent
     default encoder and rejecting NaN/Infinity when allow_nan is False.
 
     Raises CodecError (wrapping the json.dumps ValueError) on NaN/Infinity, matching
-    SafeCodec's "Cannot serialize NaN..." wording so error parity holds.
+    BridgeCodec's "Cannot serialize NaN..." wording so error parity holds.
     """
     try:
         return json.dumps(value, default=make_default_encoder(allow_nan=allow_nan), allow_nan=allow_nan)
@@ -729,31 +846,31 @@ def coerce_dict(value, key):
     return value
 
 
-def handle_call(params, *, force_json_markers, torch_allow_copy):
+def handle_call(params, *, force_json_markers, torch_allow_copy, allowed_modules, allow_private_attrs):
     module_name = require_str(params, 'module')
     function_name = require_str(params, 'functionName')
     args = deserialize(coerce_list(params.get('args'), 'args'))
     kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'))
-    mod = importlib.import_module(module_name)
-    func = getattr(mod, function_name)
+    mod = import_allowed_module(module_name, allowed_modules)
+    func = get_allowed_attr(mod, function_name, allow_private_attrs=allow_private_attrs)
     res = func(*args, **kwargs)
     return serialize(res, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy)
 
 
-def handle_instantiate(params, instances):
+def handle_instantiate(params, instances, *, allowed_modules, allow_private_attrs):
     module_name = require_str(params, 'module')
     class_name = require_str(params, 'className')
     args = deserialize(coerce_list(params.get('args'), 'args'))
     kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'))
-    mod = importlib.import_module(module_name)
-    cls = getattr(mod, class_name)
+    mod = import_allowed_module(module_name, allowed_modules)
+    cls = get_allowed_attr(mod, class_name, allow_private_attrs=allow_private_attrs)
     obj = cls(*args, **kwargs)
     handle_id = str(id(obj))
     instances[handle_id] = obj
     return handle_id
 
 
-def handle_call_method(params, instances, *, force_json_markers, torch_allow_copy):
+def handle_call_method(params, instances, *, force_json_markers, torch_allow_copy, allow_private_attrs):
     handle_id = require_str(params, 'handle')
     method_name = require_str(params, 'methodName')
     args = deserialize(coerce_list(params.get('args'), 'args'))
@@ -761,7 +878,7 @@ def handle_call_method(params, instances, *, force_json_markers, torch_allow_cop
     if handle_id not in instances:
         raise InstanceHandleError(f'Unknown instance handle: {handle_id}')
     obj = instances[handle_id]
-    func = getattr(obj, method_name)
+    func = get_allowed_attr(obj, method_name, allow_private_attrs=allow_private_attrs)
     res = func(*args, **kwargs)
     return serialize(res, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy)
 
@@ -815,6 +932,8 @@ def dispatch_request(
     python_version=None,
     torch_allow_copy=False,
     arrow_available_override=None,
+    allowed_modules=None,
+    allow_private_attrs=False,
 ):
     """
     Validate and route a request, returning the fully-serialized response dict
@@ -824,6 +943,13 @@ def dispatch_request(
 
     allow_nan is accepted for signature symmetry; NaN rejection happens during
     the final encode_value() call, which the caller performs.
+
+    allowed_modules: None (default) disables the import allowlist so existing
+    behavior is preserved. Supplying a set restricts call/instantiate imports to
+    those modules (plus the stdlib the bridge itself needs) and raises
+    ImportNotAllowedError otherwise. allow_private_attrs=False (default) blocks
+    getattr of underscore-prefixed names; True restores unrestricted access. See
+    the IMPORT / ATTRIBUTE ALLOWLIST section above for the full trust model.
     """
     mid = require_protocol(msg)
     method = msg.get('method')
@@ -832,13 +958,23 @@ def dispatch_request(
     params = coerce_dict(msg.get('params'), 'params')
     if method == 'call':
         result = handle_call(
-            params, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy
+            params,
+            force_json_markers=force_json_markers,
+            torch_allow_copy=torch_allow_copy,
+            allowed_modules=allowed_modules,
+            allow_private_attrs=allow_private_attrs,
         )
     elif method == 'instantiate':
-        result = handle_instantiate(params, instances)
+        result = handle_instantiate(
+            params, instances, allowed_modules=allowed_modules, allow_private_attrs=allow_private_attrs
+        )
     elif method == 'call_method':
         result = handle_call_method(
-            params, instances, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy
+            params,
+            instances,
+            force_json_markers=force_json_markers,
+            torch_allow_copy=torch_allow_copy,
+            allow_private_attrs=allow_private_attrs,
         )
     elif method == 'dispose_instance':
         result = handle_dispose_instance(params, instances)

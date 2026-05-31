@@ -46,23 +46,22 @@ function parseModules(modulesList?: string): string[] {
     .filter(Boolean);
 }
 
-function buildModulesConfig(
-  modules: string[],
-  runtime: RuntimeStrategy
-): TywrapOptions['pythonModules'] {
-  return Object.fromEntries(modules.map(name => [name, { runtime, typeHints: 'strict' }]));
+function buildModulesConfig(modules: string[]): TywrapOptions['pythonModules'] {
+  // The per-module `runtime` field is dead input (never read during generation);
+  // the active runtime is resolved from the top-level `runtime` config. Seed only
+  // the fields that actually affect generation.
+  return Object.fromEntries(modules.map(name => [name, { typeHints: 'strict' }]));
 }
 
 function renderConfigTemplate(options: {
   format: 'ts' | 'json';
   modules: string[];
-  runtime: RuntimeStrategy;
   outputDir: string;
 }): string {
   const modules = options.modules.length > 0 ? options.modules : ['math'];
   if (options.format === 'json') {
     const config = {
-      pythonModules: buildModulesConfig(modules, options.runtime),
+      pythonModules: buildModulesConfig(modules),
       output: { dir: options.outputDir, format: 'esm', declaration: false, sourceMap: false },
       runtime: { node: { pythonPath: 'python3' } },
       types: { presets: ['stdlib'] },
@@ -71,9 +70,7 @@ function renderConfigTemplate(options: {
   }
 
   const moduleLines = modules
-    .map(
-      name => `    ${JSON.stringify(name)}: { runtime: '${options.runtime}', typeHints: 'strict' },`
-    )
+    .map(name => `    ${JSON.stringify(name)}: { typeHints: 'strict' },`)
     .join('\n');
   return `import { defineConfig } from 'tywrap';
 
@@ -230,7 +227,7 @@ async function main(): Promise<void> {
 
         const overrides: NonNullable<ResolveConfigOptions['overrides']> = {};
         if (modules.length > 0) {
-          overrides.pythonModules = buildModulesConfig(modules, argv.runtime);
+          overrides.pythonModules = buildModulesConfig(modules);
         }
 
         if (
@@ -456,7 +453,6 @@ async function main(): Promise<void> {
         const content = renderConfigTemplate({
           format: argv.format,
           modules,
-          runtime: argv.runtime,
           outputDir: argv.outputDir,
         });
 

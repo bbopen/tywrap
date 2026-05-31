@@ -12,6 +12,32 @@ import { getComponentLogger } from '../utils/logger.js';
 
 const log = getComponentLogger('Discovery');
 
+/**
+ * Strict allow-list for Python module names.
+ *
+ * Module names are interpolated into a `python -c` source string, so anything
+ * outside a conservative identifier-plus-dots shape (e.g. quotes, semicolons,
+ * newlines, parentheses, whitespace) could break out of the intended
+ * expression and inject arbitrary code into the interpreter. Reject those
+ * before they ever reach the subprocess argv.
+ */
+const SAFE_MODULE_NAME = /^[A-Za-z_][A-Za-z0-9_.]*$/;
+
+/**
+ * Validate a Python module name against {@link SAFE_MODULE_NAME}.
+ *
+ * @throws {Error} if the name is empty or contains characters that could
+ *   escape the `python -c` expression it is interpolated into.
+ */
+function assertSafeModuleName(moduleName: string): void {
+  if (typeof moduleName !== 'string' || !SAFE_MODULE_NAME.test(moduleName)) {
+    throw new Error(
+      `Unsafe Python module name rejected: ${JSON.stringify(moduleName)}. ` +
+        'Module names must match /^[A-Za-z_][A-Za-z0-9_.]*$/.'
+    );
+  }
+}
+
 export interface ModuleInfo {
   name: string;
   path: string;
@@ -87,6 +113,9 @@ export class ModuleDiscovery {
    * Resolve Python module path from module name
    */
   async resolvePythonPath(moduleName: string): Promise<string | null> {
+    // Reject names that could break out of the `python -c` expression below.
+    assertSafeModuleName(moduleName);
+
     // Check cache first
     const cached = this.moduleCache.get(moduleName);
     if (cached) {
@@ -383,6 +412,9 @@ export class ModuleDiscovery {
    * Get module version information
    */
   async getModuleVersion(moduleName: string): Promise<string | undefined> {
+    // Reject names that could break out of the `python -c` expression below.
+    assertSafeModuleName(moduleName);
+
     if (!processUtils.isAvailable()) {
       return undefined;
     }

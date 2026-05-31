@@ -1,16 +1,16 @@
 /**
- * WorkerPool Test Suite
+ * TransportPool Test Suite
  *
- * Comprehensive tests for the WorkerPool: lifecycle management, acquire/release,
+ * Comprehensive tests for the TransportPool: lifecycle management, acquire/release,
  * concurrency control, timeout handling, and resource cleanup.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  WorkerPool,
-  type WorkerPoolOptions,
-  type PooledWorker,
-} from '../src/runtime/worker-pool.js';
+  TransportPool,
+  type TransportPoolOptions,
+  type TransportLease,
+} from '../src/runtime/transport-pool.js';
 import type { Transport } from '../src/runtime/transport.js';
 import {
   BridgeTimeoutError,
@@ -23,7 +23,7 @@ import {
 // =============================================================================
 
 /**
- * Mock transport for testing WorkerPool behavior.
+ * Mock transport for testing TransportPool behavior.
  * Tracks init/dispose calls and simulates transport behavior.
  */
 class MockTransport implements Transport {
@@ -74,7 +74,7 @@ function createMockTransportFactory() {
 /**
  * Create default pool options for testing.
  */
-function createTestOptions(overrides: Partial<WorkerPoolOptions> = {}): WorkerPoolOptions {
+function createTestOptions(overrides: Partial<TransportPoolOptions> = {}): TransportPoolOptions {
   const { factory } = createMockTransportFactory();
   return {
     createTransport: factory,
@@ -87,59 +87,59 @@ function createTestOptions(overrides: Partial<WorkerPoolOptions> = {}): WorkerPo
 // CONSTRUCTOR TESTS
 // =============================================================================
 
-describe('WorkerPool', () => {
+describe('TransportPool', () => {
   describe('constructor', () => {
     it('requires createTransport option', () => {
-      expect(() => new WorkerPool({} as WorkerPoolOptions)).toThrow();
+      expect(() => new TransportPool({} as TransportPoolOptions)).toThrow();
     });
 
     it('requires maxWorkers option', () => {
       const { factory } = createMockTransportFactory();
-      expect(() => new WorkerPool({ createTransport: factory } as WorkerPoolOptions)).toThrow();
+      expect(() => new TransportPool({ createTransport: factory } as TransportPoolOptions)).toThrow();
     });
 
     it('requires maxWorkers to be positive', () => {
       const { factory } = createMockTransportFactory();
-      expect(() => new WorkerPool({ createTransport: factory, maxWorkers: 0 })).toThrow();
-      expect(() => new WorkerPool({ createTransport: factory, maxWorkers: -1 })).toThrow();
+      expect(() => new TransportPool({ createTransport: factory, maxWorkers: 0 })).toThrow();
+      expect(() => new TransportPool({ createTransport: factory, maxWorkers: -1 })).toThrow();
     });
 
     it('creates instance with required options', () => {
-      const pool = new WorkerPool(createTestOptions());
-      expect(pool).toBeInstanceOf(WorkerPool);
+      const pool = new TransportPool(createTestOptions());
+      expect(pool).toBeInstanceOf(TransportPool);
     });
 
     it('uses default queueTimeoutMs of 30000', () => {
-      const pool = new WorkerPool(createTestOptions());
+      const pool = new TransportPool(createTestOptions());
       // Verify through behavior - this will be tested in timeout tests
-      expect(pool).toBeInstanceOf(WorkerPool);
+      expect(pool).toBeInstanceOf(TransportPool);
     });
 
     it('uses default maxConcurrentPerWorker of 1', () => {
-      const pool = new WorkerPool(createTestOptions());
+      const pool = new TransportPool(createTestOptions());
       // Verify through behavior - this will be tested in concurrency tests
-      expect(pool).toBeInstanceOf(WorkerPool);
+      expect(pool).toBeInstanceOf(TransportPool);
     });
 
     it('accepts custom queueTimeoutMs', () => {
-      const pool = new WorkerPool(createTestOptions({ queueTimeoutMs: 5000 }));
-      expect(pool).toBeInstanceOf(WorkerPool);
+      const pool = new TransportPool(createTestOptions({ queueTimeoutMs: 5000 }));
+      expect(pool).toBeInstanceOf(TransportPool);
     });
 
     it('accepts custom maxConcurrentPerWorker', () => {
-      const pool = new WorkerPool(createTestOptions({ maxConcurrentPerWorker: 5 }));
-      expect(pool).toBeInstanceOf(WorkerPool);
+      const pool = new TransportPool(createTestOptions({ maxConcurrentPerWorker: 5 }));
+      expect(pool).toBeInstanceOf(TransportPool);
     });
 
     it('accepts all custom options', () => {
       const { factory } = createMockTransportFactory();
-      const pool = new WorkerPool({
+      const pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 8,
         queueTimeoutMs: 10000,
         maxConcurrentPerWorker: 3,
       });
-      expect(pool).toBeInstanceOf(WorkerPool);
+      expect(pool).toBeInstanceOf(TransportPool);
     });
   });
 
@@ -148,7 +148,7 @@ describe('WorkerPool', () => {
   // ===========================================================================
 
   describe('lifecycle', () => {
-    let pool: WorkerPool;
+    let pool: TransportPool;
 
     afterEach(async () => {
       if (pool && !pool.isDisposed) {
@@ -157,19 +157,19 @@ describe('WorkerPool', () => {
     });
 
     it('starts in idle state', () => {
-      pool = new WorkerPool(createTestOptions());
+      pool = new TransportPool(createTestOptions());
       expect(pool.state).toBe('idle');
     });
 
     it('init() transitions to ready state', async () => {
-      pool = new WorkerPool(createTestOptions());
+      pool = new TransportPool(createTestOptions());
       await pool.init();
       expect(pool.state).toBe('ready');
       expect(pool.isReady).toBe(true);
     });
 
     it('init() is idempotent', async () => {
-      pool = new WorkerPool(createTestOptions());
+      pool = new TransportPool(createTestOptions());
       await pool.init();
       await pool.init();
       await pool.init();
@@ -177,7 +177,7 @@ describe('WorkerPool', () => {
     });
 
     it('dispose() transitions to disposed state', async () => {
-      pool = new WorkerPool(createTestOptions());
+      pool = new TransportPool(createTestOptions());
       await pool.init();
       await pool.dispose();
       expect(pool.state).toBe('disposed');
@@ -186,7 +186,7 @@ describe('WorkerPool', () => {
 
     it('dispose() disposes all workers', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 3,
       });
@@ -209,7 +209,7 @@ describe('WorkerPool', () => {
 
     it('dispose() rejects all waiters', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -232,7 +232,7 @@ describe('WorkerPool', () => {
 
     it('dispose() clears worker array', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 2,
       });
@@ -253,7 +253,7 @@ describe('WorkerPool', () => {
     });
 
     it('dispose() is idempotent', async () => {
-      pool = new WorkerPool(createTestOptions());
+      pool = new TransportPool(createTestOptions());
       await pool.init();
       await pool.dispose();
       await pool.dispose();
@@ -267,7 +267,7 @@ describe('WorkerPool', () => {
   // ===========================================================================
 
   describe('acquire', () => {
-    let pool: WorkerPool;
+    let pool: TransportPool;
 
     afterEach(async () => {
       if (pool && !pool.isDisposed) {
@@ -277,7 +277,7 @@ describe('WorkerPool', () => {
 
     it('creates worker lazily on first acquire', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
@@ -294,7 +294,7 @@ describe('WorkerPool', () => {
       const { factory, transports } = createMockTransportFactory();
       const onWorkerReady = vi.fn().mockRejectedValue(new Error('warmup failed'));
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 2,
         onWorkerReady,
@@ -311,7 +311,7 @@ describe('WorkerPool', () => {
 
     it('returns same worker on second acquire if available', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
         maxConcurrentPerWorker: 2,
@@ -329,7 +329,7 @@ describe('WorkerPool', () => {
 
     it('creates new worker when first is at capacity', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
         maxConcurrentPerWorker: 1,
@@ -352,7 +352,7 @@ describe('WorkerPool', () => {
         return transport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: slowFactory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 3,
@@ -384,7 +384,7 @@ describe('WorkerPool', () => {
 
     it('respects maxWorkers limit', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 2,
         maxConcurrentPerWorker: 1,
@@ -408,7 +408,7 @@ describe('WorkerPool', () => {
 
     it('queues when all workers are busy', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -431,16 +431,16 @@ describe('WorkerPool', () => {
     });
 
     it('rejects when disposed', async () => {
-      pool = new WorkerPool(createTestOptions());
+      pool = new TransportPool(createTestOptions());
       await pool.init();
       await pool.dispose();
 
       await expect(pool.acquire()).rejects.toThrow(BridgeExecutionError);
     });
 
-    it('returns a PooledWorker with transport and inFlightCount', async () => {
+    it('returns a TransportLease with transport and inFlightCount', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
@@ -461,7 +461,7 @@ describe('WorkerPool', () => {
   // ===========================================================================
 
   describe('release', () => {
-    let pool: WorkerPool;
+    let pool: TransportPool;
 
     afterEach(async () => {
       if (pool && !pool.isDisposed) {
@@ -471,7 +471,7 @@ describe('WorkerPool', () => {
 
     it('decrements inFlightCount', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
         maxConcurrentPerWorker: 2,
@@ -488,7 +488,7 @@ describe('WorkerPool', () => {
 
     it('makes worker available for next acquire', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -508,7 +508,7 @@ describe('WorkerPool', () => {
 
     it('resolves waiting requests from queue', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -536,15 +536,15 @@ describe('WorkerPool', () => {
 
     it('ignores release of unknown worker', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
 
       await pool.init();
 
-      // Create a fake PooledWorker that is not tracked by the pool
-      const fakeWorker: PooledWorker = {
+      // Create a fake TransportLease that is not tracked by the pool
+      const fakeWorker: TransportLease = {
         transport: new MockTransport(),
         inFlightCount: 1,
       };
@@ -555,7 +555,7 @@ describe('WorkerPool', () => {
 
     it('ignores double release (inFlightCount cannot go negative)', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
@@ -576,7 +576,7 @@ describe('WorkerPool', () => {
   // ===========================================================================
 
   describe('concurrency', () => {
-    let pool: WorkerPool;
+    let pool: TransportPool;
 
     afterEach(async () => {
       if (pool && !pool.isDisposed) {
@@ -586,7 +586,7 @@ describe('WorkerPool', () => {
 
     it('handles multiple concurrent acquires correctly', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
         maxConcurrentPerWorker: 1,
@@ -611,7 +611,7 @@ describe('WorkerPool', () => {
 
     it('maxConcurrentPerWorker controls per-worker concurrency with sequential acquires', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
         maxConcurrentPerWorker: 3,
@@ -621,7 +621,7 @@ describe('WorkerPool', () => {
 
       // Sequential acquires respect maxConcurrentPerWorker
       // Each acquire sees the updated inFlightCount from previous acquires
-      const workers: PooledWorker[] = [];
+      const workers: TransportLease[] = [];
       for (let i = 0; i < 6; i++) {
         workers.push(await pool.acquire());
       }
@@ -636,7 +636,7 @@ describe('WorkerPool', () => {
 
     it('maintains queue FIFO ordering', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -675,7 +675,7 @@ describe('WorkerPool', () => {
 
     it('handles high concurrency with sequential acquires', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
         maxConcurrentPerWorker: 5,
@@ -684,7 +684,7 @@ describe('WorkerPool', () => {
       await pool.init();
 
       // Sequential acquires - 20 acquires with 4 workers * 5 concurrent = 20 max capacity
-      const workers: PooledWorker[] = [];
+      const workers: TransportLease[] = [];
       for (let i = 0; i < 20; i++) {
         workers.push(await pool.acquire());
       }
@@ -703,7 +703,7 @@ describe('WorkerPool', () => {
       // has been incremented, so they all see the same initial state.
       // This is expected behavior for concurrent operations.
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 10,
         maxConcurrentPerWorker: 3,
@@ -725,7 +725,7 @@ describe('WorkerPool', () => {
   });
 
   describe('timeout recovery', () => {
-    let pool: WorkerPool;
+    let pool: TransportPool;
 
     afterEach(async () => {
       if (pool && !pool.isDisposed) {
@@ -735,7 +735,7 @@ describe('WorkerPool', () => {
 
     it('keeps a timed-out worker in the pool for later reuse', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         minWorkers: 1,
@@ -762,7 +762,7 @@ describe('WorkerPool', () => {
     it('disposes replacement workers that finish after the pool has been disposed', async () => {
       const transports: MockTransport[] = [];
       let createCount = 0;
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: () => {
           createCount += 1;
           const transport = new MockTransport();
@@ -781,7 +781,7 @@ describe('WorkerPool', () => {
 
       (
         pool as unknown as {
-          removeWorker(worker: PooledWorker): void;
+          removeWorker(worker: TransportLease): void;
         }
       ).removeWorker(worker);
       await pool.dispose();
@@ -794,7 +794,7 @@ describe('WorkerPool', () => {
 
     it('rejects acquire when dispose wins after worker creation starts', async () => {
       const transports: MockTransport[] = [];
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: () => {
           const transport = new MockTransport();
           transport.initDelay = 50;
@@ -822,7 +822,7 @@ describe('WorkerPool', () => {
   // ===========================================================================
 
   describe('timeout', () => {
-    let pool: WorkerPool;
+    let pool: TransportPool;
 
     afterEach(async () => {
       vi.useRealTimers();
@@ -835,7 +835,7 @@ describe('WorkerPool', () => {
       vi.useFakeTimers();
 
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -861,7 +861,7 @@ describe('WorkerPool', () => {
       vi.useFakeTimers();
 
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -892,7 +892,7 @@ describe('WorkerPool', () => {
       vi.useFakeTimers();
 
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -915,7 +915,7 @@ describe('WorkerPool', () => {
       vi.useFakeTimers();
 
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -942,7 +942,7 @@ describe('WorkerPool', () => {
   // ===========================================================================
 
   describe('withWorker', () => {
-    let pool: WorkerPool;
+    let pool: TransportPool;
 
     afterEach(async () => {
       if (pool && !pool.isDisposed) {
@@ -952,7 +952,7 @@ describe('WorkerPool', () => {
 
     it('acquires and releases correctly', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
@@ -972,7 +972,7 @@ describe('WorkerPool', () => {
 
     it('releases on success', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
@@ -989,7 +989,7 @@ describe('WorkerPool', () => {
 
     it('releases on error', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
@@ -1007,7 +1007,7 @@ describe('WorkerPool', () => {
 
     it('returns function result', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
@@ -1024,7 +1024,7 @@ describe('WorkerPool', () => {
 
     it('allows async operations in callback', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
@@ -1040,7 +1040,7 @@ describe('WorkerPool', () => {
     });
 
     it('rejects when disposed', async () => {
-      pool = new WorkerPool(createTestOptions());
+      pool = new TransportPool(createTestOptions());
       await pool.init();
       await pool.dispose();
 
@@ -1049,7 +1049,7 @@ describe('WorkerPool', () => {
 
     it('provides access to transport through worker', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
@@ -1064,7 +1064,7 @@ describe('WorkerPool', () => {
 
     it('replaces crashed workers in the background', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         minWorkers: 1,
@@ -1096,7 +1096,7 @@ describe('WorkerPool', () => {
   // ===========================================================================
 
   describe('edge cases', () => {
-    let pool: WorkerPool;
+    let pool: TransportPool;
 
     afterEach(async () => {
       if (pool && !pool.isDisposed) {
@@ -1106,7 +1106,7 @@ describe('WorkerPool', () => {
 
     it('handles maxWorkers of 1', async () => {
       const { factory, transports } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -1136,7 +1136,7 @@ describe('WorkerPool', () => {
         return transport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: failingFactory,
         maxWorkers: 4,
       });
@@ -1148,7 +1148,7 @@ describe('WorkerPool', () => {
 
     it('handles rapid acquire/release cycles', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 2,
         maxConcurrentPerWorker: 1,
@@ -1170,7 +1170,7 @@ describe('WorkerPool', () => {
       // the waiting acquire is resolved by release() before dispose()
       // can reject it. This is expected behavior.
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -1197,7 +1197,7 @@ describe('WorkerPool', () => {
 
     it('handles release after dispose', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
       });
@@ -1213,7 +1213,7 @@ describe('WorkerPool', () => {
 
     it('provides accurate worker count', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
         maxConcurrentPerWorker: 1,
@@ -1238,7 +1238,7 @@ describe('WorkerPool', () => {
 
     it('provides accurate totalInFlight count', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 4,
         maxConcurrentPerWorker: 2,
@@ -1275,7 +1275,7 @@ describe('WorkerPool', () => {
         return transport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: slowFactory,
         maxWorkers: 4,
       });
@@ -1312,7 +1312,7 @@ describe('WorkerPool', () => {
         return transport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: mixedFactory,
         maxWorkers: 4,
         maxConcurrentPerWorker: 1,
@@ -1341,7 +1341,7 @@ describe('WorkerPool', () => {
   // ===========================================================================
 
   describe('stats and monitoring', () => {
-    let pool: WorkerPool;
+    let pool: TransportPool;
 
     afterEach(async () => {
       if (pool && !pool.isDisposed) {
@@ -1351,7 +1351,7 @@ describe('WorkerPool', () => {
 
     it('reports queue length accurately', async () => {
       const { factory } = createMockTransportFactory();
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: factory,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -1383,7 +1383,7 @@ describe('WorkerPool', () => {
     });
 
     it('reports isReady correctly', async () => {
-      pool = new WorkerPool(createTestOptions());
+      pool = new TransportPool(createTestOptions());
 
       expect(pool.isReady).toBe(false);
 
@@ -1395,7 +1395,7 @@ describe('WorkerPool', () => {
     });
 
     it('reports isDisposed correctly', async () => {
-      pool = new WorkerPool(createTestOptions());
+      pool = new TransportPool(createTestOptions());
 
       expect(pool.isDisposed).toBe(false);
 

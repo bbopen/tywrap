@@ -230,6 +230,99 @@ import os
       expect(version).toBeUndefined();
     });
   });
+
+  describe('module-name injection hardening', () => {
+    // These cases would each break out of the `python -c` expression that the
+    // discovery subprocess builds, e.g. `import os; __import__('shutil')...`.
+    const unsafeNames: ReadonlyArray<[string, string]> = [
+      ['semicolon', "os; import shutil; shutil.rmtree('/')"],
+      ['quote', "os'; import shutil; '"],
+      ['double-quote', 'os"; import shutil; "'],
+      ['newline', 'os\nimport shutil'],
+      ['parenthesis', "os.__class__('x')"],
+      ['whitespace', 'os import sys'],
+      ['leading-digit', '0os'],
+      ['empty', ''],
+      ['dollar-sign', 'os$(rm -rf /)'],
+      ['backtick', 'os`whoami`'],
+    ];
+
+    it.each(unsafeNames)(
+      'rejects unsafe module name (%s) in resolvePythonPath without spawning Python',
+      async (_label, name) => {
+        // Pretend Python is available so we would otherwise reach the subprocess.
+        const isAvailableSpy = vi
+          .spyOn(runtimeModule.processUtils, 'isAvailable')
+          .mockReturnValue(true);
+        const execSpy = vi
+          .spyOn(runtimeModule.processUtils, 'exec')
+          .mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+        // Guard against the validator accidentally resolving a real interpreter.
+        const resolveSpy = vi
+          .spyOn(pythonModule, 'resolvePythonExecutable')
+          .mockResolvedValue('python3');
+
+        const d = new ModuleDiscovery();
+        await expect(d.resolvePythonPath(name)).rejects.toThrow(/Unsafe Python module name/);
+
+        // The name must never have been interpolated into a `-c` source string.
+        expect(execSpy).not.toHaveBeenCalled();
+        expect(resolveSpy).not.toHaveBeenCalled();
+
+        execSpy.mockRestore();
+        isAvailableSpy.mockRestore();
+        resolveSpy.mockRestore();
+      }
+    );
+
+    it.each(unsafeNames)(
+      'rejects unsafe module name (%s) in getModuleVersion without spawning Python',
+      async (_label, name) => {
+        const isAvailableSpy = vi
+          .spyOn(runtimeModule.processUtils, 'isAvailable')
+          .mockReturnValue(true);
+        const execSpy = vi
+          .spyOn(runtimeModule.processUtils, 'exec')
+          .mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+        const resolveSpy = vi
+          .spyOn(pythonModule, 'resolvePythonExecutable')
+          .mockResolvedValue('python3');
+
+        const d = new ModuleDiscovery();
+        await expect(d.getModuleVersion(name)).rejects.toThrow(/Unsafe Python module name/);
+
+        expect(execSpy).not.toHaveBeenCalled();
+        expect(resolveSpy).not.toHaveBeenCalled();
+
+        execSpy.mockRestore();
+        isAvailableSpy.mockRestore();
+        resolveSpy.mockRestore();
+      }
+    );
+
+    it('accepts valid dotted/underscored module names', async () => {
+      const isAvailableSpy = vi
+        .spyOn(runtimeModule.processUtils, 'isAvailable')
+        .mockReturnValue(true);
+      const execSpy = vi
+        .spyOn(runtimeModule.processUtils, 'exec')
+        .mockResolvedValue({ code: 0, stdout: '/tmp/pkg/__init__.py\n', stderr: '' });
+      const resolveSpy = vi
+        .spyOn(pythonModule, 'resolvePythonExecutable')
+        .mockResolvedValue('python3');
+
+      const d = new ModuleDiscovery();
+      for (const valid of ['os', 'os.path', 'my_pkg.sub_mod', '_private']) {
+        await expect(d.resolvePythonPath(valid)).resolves.not.toThrow();
+      }
+      // Valid names should reach the subprocess.
+      expect(execSpy).toHaveBeenCalled();
+
+      execSpy.mockRestore();
+      isAvailableSpy.mockRestore();
+      resolveSpy.mockRestore();
+    });
+  });
 });
 
 // Integration tests with real files

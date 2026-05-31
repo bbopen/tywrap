@@ -503,119 +503,134 @@ export class TypeMapper {
       readonly: false,
     });
 
-    if (this.hasPreset('stdlib')) {
-      const stdlibModule = moduleName ?? '';
-      const allowModule =
-        !moduleName ||
-        stdlibModule === 'datetime' ||
-        stdlibModule === 'decimal' ||
-        stdlibModule === 'uuid' ||
-        stdlibModule === 'pathlib';
-      if (allowModule) {
-        if (name === 'datetime' || name === 'date' || name === 'time') {
-          return { kind: 'primitive', name: 'string' };
-        }
-        if (name === 'timedelta') {
-          return { kind: 'primitive', name: 'number' };
-        }
-        if (name === 'Decimal' || name === 'UUID') {
-          return { kind: 'primitive', name: 'string' };
-        }
-        if (
-          name === 'Path' ||
-          name === 'PurePath' ||
-          name === 'PosixPath' ||
-          name === 'WindowsPath'
-        ) {
-          return { kind: 'primitive', name: 'string' };
-        }
-      }
-    }
+    const baseProps = [prop('shape', numberArray), prop('dtype', stringType, true)];
+    const buildSparse = (format: 'csr' | 'csc' | 'coo'): TSObjectType => ({
+      kind: 'object',
+      properties: [
+        prop('format', { kind: 'literal', value: format }),
+        ...baseProps,
+        prop('data', unknownArray),
+        ...(format === 'coo'
+          ? [prop('row', numberArray), prop('col', numberArray)]
+          : [prop('indices', numberArray), prop('indptr', numberArray)]),
+      ],
+    });
 
-    if (this.hasPreset('pandas')) {
-      const allowModule = !moduleName || moduleName.startsWith('pandas');
-      if (allowModule) {
-        if (name === 'DataFrame') {
-          const recordsArray: TSArrayType = { kind: 'array', elementType: recordObject };
-          return { kind: 'union', types: [recordObject, recordsArray] };
-        }
-        if (name === 'Series') {
-          const valuesArray: TSArrayType = {
-            kind: 'array',
-            elementType: { kind: 'primitive', name: 'unknown' },
-          };
-          return { kind: 'union', types: [valuesArray, recordObject] };
-        }
-      }
-    }
+    // Each entry pairs a preset with the module(s) it owns and a name->type resolver.
+    // Entries are evaluated in order; the first enabled preset whose module is allowed
+    // and whose resolver returns a type wins. This preserves the prior cascading-`if`
+    // precedence while keeping the per-preset rules table-driven.
+    const presetResolvers: ReadonlyArray<{
+      preset: TypePreset;
+      allowModule: (moduleName: string | undefined) => boolean;
+      resolve: (name: string) => TypescriptType | undefined;
+    }> = [
+      {
+        preset: 'stdlib',
+        allowModule: m =>
+          !m || m === 'datetime' || m === 'decimal' || m === 'uuid' || m === 'pathlib',
+        resolve: n => {
+          if (n === 'datetime' || n === 'date' || n === 'time') {
+            return { kind: 'primitive', name: 'string' };
+          }
+          if (n === 'timedelta') {
+            return { kind: 'primitive', name: 'number' };
+          }
+          if (n === 'Decimal' || n === 'UUID') {
+            return { kind: 'primitive', name: 'string' };
+          }
+          if (n === 'Path' || n === 'PurePath' || n === 'PosixPath' || n === 'WindowsPath') {
+            return { kind: 'primitive', name: 'string' };
+          }
+          return undefined;
+        },
+      },
+      {
+        preset: 'pandas',
+        allowModule: m => !m || m.startsWith('pandas'),
+        resolve: n => {
+          if (n === 'DataFrame') {
+            const recordsArray: TSArrayType = { kind: 'array', elementType: recordObject };
+            return { kind: 'union', types: [recordObject, recordsArray] };
+          }
+          if (n === 'Series') {
+            const valuesArray: TSArrayType = {
+              kind: 'array',
+              elementType: { kind: 'primitive', name: 'unknown' },
+            };
+            return { kind: 'union', types: [valuesArray, recordObject] };
+          }
+          return undefined;
+        },
+      },
+      {
+        preset: 'pydantic',
+        allowModule: m => !m || m.startsWith('pydantic'),
+        resolve: n => (n === 'BaseModel' ? recordObject : undefined),
+      },
+      {
+        preset: 'scipy',
+        allowModule: m => !m || m.startsWith('scipy'),
+        resolve: n => {
+          if (n === 'csr_matrix') {
+            return buildSparse('csr');
+          }
+          if (n === 'csc_matrix') {
+            return buildSparse('csc');
+          }
+          if (n === 'coo_matrix') {
+            return buildSparse('coo');
+          }
+          if (n === 'spmatrix') {
+            return {
+              kind: 'union',
+              types: [buildSparse('csr'), buildSparse('csc'), buildSparse('coo')],
+            };
+          }
+          return undefined;
+        },
+      },
+      {
+        preset: 'torch',
+        allowModule: m => !m || m.startsWith('torch'),
+        resolve: n =>
+          n === 'Tensor'
+            ? {
+                kind: 'object',
+                properties: [
+                  prop('data', unknownType),
+                  prop('shape', numberArray),
+                  prop('dtype', stringType, true),
+                  prop('device', stringType, true),
+                ],
+              }
+            : undefined,
+      },
+      {
+        preset: 'sklearn',
+        allowModule: m => !m || m.startsWith('sklearn'),
+        resolve: n =>
+          n === 'BaseEstimator'
+            ? {
+                kind: 'object',
+                properties: [
+                  prop('className', stringType),
+                  prop('module', stringType),
+                  prop('version', stringType, true),
+                  prop('params', recordObject),
+                ],
+              }
+            : undefined,
+      },
+    ];
 
-    if (this.hasPreset('pydantic')) {
-      const allowModule = !moduleName || moduleName.startsWith('pydantic');
-      if (allowModule && name === 'BaseModel') {
-        return recordObject;
+    for (const entry of presetResolvers) {
+      if (!this.hasPreset(entry.preset) || !entry.allowModule(moduleName)) {
+        continue;
       }
-    }
-
-    if (this.hasPreset('scipy')) {
-      const allowModule = !moduleName || moduleName.startsWith('scipy');
-      if (allowModule) {
-        const baseProps = [prop('shape', numberArray), prop('dtype', stringType, true)];
-        const buildSparse = (format: 'csr' | 'csc' | 'coo'): TSObjectType => ({
-          kind: 'object',
-          properties: [
-            prop('format', { kind: 'literal', value: format }),
-            ...baseProps,
-            prop('data', unknownArray),
-            ...(format === 'coo'
-              ? [prop('row', numberArray), prop('col', numberArray)]
-              : [prop('indices', numberArray), prop('indptr', numberArray)]),
-          ],
-        });
-        if (name === 'csr_matrix') {
-          return buildSparse('csr');
-        }
-        if (name === 'csc_matrix') {
-          return buildSparse('csc');
-        }
-        if (name === 'coo_matrix') {
-          return buildSparse('coo');
-        }
-        if (name === 'spmatrix') {
-          return {
-            kind: 'union',
-            types: [buildSparse('csr'), buildSparse('csc'), buildSparse('coo')],
-          };
-        }
-      }
-    }
-
-    if (this.hasPreset('torch')) {
-      const allowModule = !moduleName || moduleName.startsWith('torch');
-      if (allowModule && name === 'Tensor') {
-        return {
-          kind: 'object',
-          properties: [
-            prop('data', unknownType),
-            prop('shape', numberArray),
-            prop('dtype', stringType, true),
-            prop('device', stringType, true),
-          ],
-        };
-      }
-    }
-
-    if (this.hasPreset('sklearn')) {
-      const allowModule = !moduleName || moduleName.startsWith('sklearn');
-      if (allowModule && name === 'BaseEstimator') {
-        return {
-          kind: 'object',
-          properties: [
-            prop('className', stringType),
-            prop('module', stringType),
-            prop('version', stringType, true),
-            prop('params', recordObject),
-          ],
-        };
+      const resolved = entry.resolve(name);
+      if (resolved !== undefined) {
+        return resolved;
       }
     }
 

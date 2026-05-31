@@ -15,6 +15,9 @@ import weakref
 import gc
 from dataclasses import dataclass, asdict
 
+# Single source of truth for the IR schema version (defined in __init__).
+from . import IR_VERSION
+
 # Reuse existing IR classes from ir.py
 from .ir import (
     IRParam, IRFunction, IRClass, IRConstant, IRTypeAlias, IRModule,
@@ -158,7 +161,7 @@ class OptimizedIRExtractor:
     def extract_module_ir_optimized(self,
                                    module_name: str,
                                    *,
-                                   ir_version: str = "0.2.0",
+                                   ir_version: str = IR_VERSION,
                                    include_private: bool = False) -> Dict[str, Any]:
         """
         Extract IR with performance optimizations
@@ -411,7 +414,7 @@ _global_extractor = OptimizedIRExtractor()
 
 def extract_module_ir_optimized(module_name: str,
                                 *,
-                                ir_version: str = "0.2.0",
+                                ir_version: str = IR_VERSION,
                                 include_private: bool = False,
                                 enable_caching: bool = True,
                                 enable_parallel: bool = True) -> Dict[str, Any]:

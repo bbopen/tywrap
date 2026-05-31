@@ -2,7 +2,7 @@
  * HTTP runtime bridge.
  *
  * HttpBridge is a thin facade: it extends DisposableBase (lifecycle/resources)
- * and implements PythonRuntime by HOLDING an RpcClient over an HttpIO transport
+ * and implements PythonRuntime by HOLDING an RpcClient over an HttpTransport
  * for stateless HTTP POST-based communication with a Python server.
  *
  * @see https://github.com/bbopen/tywrap/issues/149
@@ -13,8 +13,8 @@ import { autoRegisterArrowDecoder } from '../utils/codec.js';
 
 import { DisposableBase } from './bounded-context.js';
 import { RpcClient, type GetBridgeInfoOptions } from './rpc-client.js';
-import { HttpIO } from './http-io.js';
-import type { CodecOptions } from './safe-codec.js';
+import { HttpTransport } from './http-transport.js';
+import type { CodecOptions } from './bridge-codec.js';
 
 // =============================================================================
 // OPTIONS
@@ -51,7 +51,7 @@ export interface HttpBridgeOptions {
  * Features:
  * - Stateless HTTP POST communication
  * - Timeout handling via AbortController
- * - Full SafeCodec validation (NaN/Infinity rejection, key validation)
+ * - Full BridgeCodec validation (NaN/Infinity rejection, key validation)
  * - Automatic Arrow decoding for DataFrames/ndarrays
  *
  * @example
@@ -76,7 +76,7 @@ export class HttpBridge extends DisposableBase implements PythonRuntime {
   constructor(options: HttpBridgeOptions) {
     super();
 
-    const transport = new HttpIO({
+    const transport = new HttpTransport({
       baseURL: options.baseURL,
       headers: options.headers,
       defaultTimeoutMs: options.timeoutMs,

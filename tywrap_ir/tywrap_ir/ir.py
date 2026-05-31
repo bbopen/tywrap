@@ -17,6 +17,11 @@ try:
 except Exception:  # pragma: no cover
     import importlib_metadata  # type: ignore
 
+# Single source of truth for the IR schema version. Defined in __init__ and
+# imported here so every default stays in lockstep. Safe from circular import:
+# IR_VERSION is bound in __init__ before it imports this module.
+from . import IR_VERSION
+
 
 @dataclass
 class IRTypeParam:
@@ -660,7 +665,7 @@ def _collect_metadata(module_name: str, ir_version: str) -> Dict[str, Any]:
 def extract_module_ir(
     module_name: str,
     *,
-    ir_version: str = "0.2.0",
+    ir_version: str = IR_VERSION,
     include_private: bool = False,
 ) -> Dict[str, Any]:
     module = importlib.import_module(module_name)
@@ -704,7 +709,7 @@ def extract_module_ir(
 def emit_ir_json(
     module_name: str,
     *,
-    ir_version: str = "0.2.0",
+    ir_version: str = IR_VERSION,
     include_private: bool = False,
     pretty: bool = True,
 ) -> str:

@@ -3,70 +3,20 @@
  *
  * @description Build-time code generation system that makes Python libraries
  * feel native in TypeScript with zero runtime overhead
+ *
+ * This is the package root. It intentionally exposes only the stable,
+ * consumer-facing surface. Runtime plumbing (codec, transport, bridge
+ * implementations, disposables, validators) lives behind the subpath
+ * entrypoints: `tywrap/runtime`, `tywrap/node`, `tywrap/pyodide`, `tywrap/http`.
  */
 
 import { tywrap } from './tywrap.js';
 
+// Configuration
 export type { TywrapConfig, ResolvedTywrapConfig } from './config/index.js';
 export { defineConfig, resolveConfig } from './config/index.js';
-// DisposableBase - lifecycle/resource base for cross-boundary components
-export {
-  DisposableBase,
-  type ContextState,
-  type ExecuteOptions,
-} from './runtime/bounded-context.js';
-// RpcClient - the single correlated-RPC client (codec + transport), held by bridges
-export { RpcClient, type RpcClientOptions } from './runtime/rpc-client.js';
-// SafeCodec - validation and serialization for JS<->Python boundary
-export { SafeCodec, type CodecOptions } from './runtime/safe-codec.js';
-// Transport - abstract I/O channel interface
-export type {
-  Transport,
-  TransportOptions,
-  ProtocolMessage,
-  ProtocolResponse,
-} from './runtime/transport.js';
-export {
-  PROTOCOL_ID,
-  isTransport,
-  isProtocolMessage,
-  isProtocolResponse,
-} from './runtime/transport.js';
-// Transport implementations
-export { ProcessIO, type ProcessIOOptions } from './runtime/process-io.js';
-export { HttpIO, type HttpIOOptions } from './runtime/http-io.js';
-export { PyodideIO, type PyodideIOOptions } from './runtime/pyodide-io.js';
-// WorkerPool - concurrent transport management
-export { WorkerPool, type WorkerPoolOptions, type PooledWorker } from './runtime/worker-pool.js';
-// PooledTransport - Transport adapter that wraps WorkerPool
-export { PooledTransport, type PooledTransportOptions } from './runtime/pooled-transport.js';
-export type { Disposable } from './runtime/disposable.js';
-export { isDisposable, safeDispose, disposeAll } from './runtime/disposable.js';
-export {
-  ValidationError,
-  isFiniteNumber,
-  isPositiveNumber,
-  isNonNegativeNumber,
-  isNonEmptyString,
-  isPlainObject,
-  assertFiniteNumber,
-  assertPositive,
-  assertNonNegative,
-  assertString,
-  assertNonEmptyString,
-  assertArray,
-  assertObject,
-  containsSpecialFloat,
-  assertNoSpecialFloats,
-  sanitizeForFilename,
-  containsPathTraversal,
-} from './runtime/validators.js';
 
-/**
- * @deprecated Use DisposableBase instead. RuntimeBridge will be removed in the next major version.
- */
-export { RuntimeBridge } from './runtime/base.js';
-
+// Bridge error hierarchy
 export {
   BridgeError,
   BridgeCodecError,
@@ -75,12 +25,6 @@ export {
   BridgeDisposedError,
   BridgeExecutionError,
 } from './runtime/errors.js';
-export { getRuntimeBridge, setRuntimeBridge, clearRuntimeBridge } from './runtime/index.js';
-
-// Runtime-specific exports (Bridge facades that HOLD an RpcClient)
-export { NodeBridge, type NodeBridgeOptions } from './runtime/node.js';
-export { PyodideBridge, type PyodideBridgeOptions } from './runtime/pyodide.js';
-export { HttpBridge, type HttpBridgeOptions } from './runtime/http.js';
 
 // Core types
 export type {
@@ -138,6 +82,8 @@ export type { GenerateFailure, GenerateResult, GenerateRunOptions } from './tywr
 
 // Runtime detection utilities
 export { detectRuntime, isNodejs, isDeno, isBun, isBrowser } from './utils/runtime.js';
+
+// Arrow/codec public helpers
 export {
   decodeValue,
   decodeValueAsync,
@@ -146,11 +92,8 @@ export {
   clearArrowDecoder,
 } from './utils/codec.js';
 
-// Version info
-export const VERSION = '0.3.0';
+// Version info — single-sourced from package.json via scripts/generate-version.mjs
+export { VERSION } from './version.js';
 
-/**
- * Quick setup function for getting started
- */
 // Default export for convenience
 export default tywrap;

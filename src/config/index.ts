@@ -17,6 +17,7 @@ import type {
   OutputConfig,
   RuntimeConfig,
   PerformanceConfig,
+  PythonModuleConfig,
 } from '../types/index.js';
 import { getDefaultPythonPath } from '../utils/python.js';
 
@@ -114,93 +115,173 @@ function detectLegacyFields(config: TywrapConfig): void {
   }
 }
 
-/**
- * Validate configuration values and throw user-friendly errors when invalid.
- */
-function validateConfig(config: ResolvedTywrapConfig): void {
-  detectLegacyFields(config);
-  const allowedTopLevel = new Set([
-    'pythonModules',
-    'pythonImportPath',
-    'output',
-    'runtime',
-    'performance',
-    'types',
-    'debug',
-  ]);
-  for (const key of Object.keys(config)) {
-    if (!allowedTopLevel.has(key)) {
-      throw new Error(`Unknown configuration option \"${key}\"`);
+const ALLOWED_TOP_LEVEL = new Set([
+  'pythonModules',
+  'pythonImportPath',
+  'output',
+  'runtime',
+  'performance',
+  'types',
+  'debug',
+]);
+
+const VALID_OUTPUT_FORMATS = ['esm', 'cjs', 'both'];
+const VALID_COMPRESSION = ['auto', 'gzip', 'brotli', 'none'];
+const VALID_TYPE_HINTS = ['strict', 'loose', 'ignore'];
+const VALID_TYPE_PRESETS = new Set([
+  'numpy',
+  'pandas',
+  'pydantic',
+  'stdlib',
+  'scipy',
+  'torch',
+  'sklearn',
+]);
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function validateModuleConfig(scope: string, moduleConfig: PythonModuleConfig): void {
+  const { version, alias, functions, classes, exclude, excludePatterns, typeHints } = moduleConfig;
+  if (version !== undefined && typeof version !== 'string') {
+    throw new Error(`${scope}.version must be a string`);
+  }
+  if (alias !== undefined && typeof alias !== 'string') {
+    throw new Error(`${scope}.alias must be a string`);
+  }
+  const stringArrayFields: ReadonlyArray<readonly [string, unknown]> = [
+    ['functions', functions],
+    ['classes', classes],
+    ['exclude', exclude],
+    ['excludePatterns', excludePatterns],
+  ];
+  for (const [field, value] of stringArrayFields) {
+    if (value !== undefined && !isStringArray(value)) {
+      throw new Error(`${scope}.${field} must be an array of strings`);
     }
   }
+  if (typeHints !== undefined && !VALID_TYPE_HINTS.includes(typeHints)) {
+    throw new Error(`${scope}.typeHints must be one of ${VALID_TYPE_HINTS.join(', ')}`);
+  }
+  // Note: `runtime` is a deprecated, dead per-module field (see PythonModuleConfig).
+  // It is intentionally not validated so legacy configs keep loading; it has no effect.
+}
 
-  const out: OutputConfig = config.output;
+function validatePythonModules(modules: Record<string, PythonModuleConfig>): void {
+  for (const [name, moduleConfig] of Object.entries(modules)) {
+    if (!isPlainObject(moduleConfig)) {
+      throw new Error(`pythonModules.${name} must be an object`);
+    }
+    validateModuleConfig(`pythonModules.${name}`, moduleConfig);
+  }
+}
+
+function validateOutput(out: OutputConfig): void {
   if (typeof out.dir !== 'string') {
     throw new Error('output.dir must be a string');
   }
-
-  if (config.pythonImportPath !== undefined) {
-    if (
-      !Array.isArray(config.pythonImportPath) ||
-      config.pythonImportPath.some(p => typeof p !== 'string')
-    ) {
-      throw new Error('pythonImportPath must be an array of strings');
-    }
-  }
-  if (!['esm', 'cjs', 'both'].includes(out.format)) {
+  if (!VALID_OUTPUT_FORMATS.includes(out.format)) {
     throw new Error('output.format must be one of "esm", "cjs" or "both"');
   }
   if (typeof out.declaration !== 'boolean' || typeof out.sourceMap !== 'boolean') {
     throw new Error('output.declaration and output.sourceMap must be boolean');
   }
+}
 
-  const runtime: RuntimeConfig = config.runtime;
+function validateRuntime(runtime: RuntimeConfig): void {
   if (runtime.node) {
     if (runtime.node.pythonPath !== undefined && typeof runtime.node.pythonPath !== 'string') {
       throw new Error('runtime.node.pythonPath must be a string');
     }
-    if (runtime.node.timeout !== undefined) {
-      if (typeof runtime.node.timeout !== 'number' || runtime.node.timeout < 0) {
-        throw new Error('runtime.node.timeout must be a non-negative number');
-      }
+    if (runtime.node.virtualEnv !== undefined && typeof runtime.node.virtualEnv !== 'string') {
+      throw new Error('runtime.node.virtualEnv must be a string');
+    }
+    if (
+      runtime.node.timeout !== undefined &&
+      (typeof runtime.node.timeout !== 'number' || runtime.node.timeout < 0)
+    ) {
+      throw new Error('runtime.node.timeout must be a non-negative number');
     }
   }
+  if (runtime.http) {
+    if (typeof runtime.http.baseURL !== 'string' || runtime.http.baseURL.length === 0) {
+      throw new Error('runtime.http.baseURL must be a non-empty string');
+    }
+    if (
+      runtime.http.timeout !== undefined &&
+      (typeof runtime.http.timeout !== 'number' || runtime.http.timeout < 0)
+    ) {
+      throw new Error('runtime.http.timeout must be a non-negative number');
+    }
+  }
+  if (runtime.pyodide) {
+    if (runtime.pyodide.indexURL !== undefined && typeof runtime.pyodide.indexURL !== 'string') {
+      throw new Error('runtime.pyodide.indexURL must be a string');
+    }
+    if (runtime.pyodide.packages !== undefined && !isStringArray(runtime.pyodide.packages)) {
+      throw new Error('runtime.pyodide.packages must be an array of strings');
+    }
+  }
+}
 
-  const perf: PerformanceConfig = config.performance;
+function validatePerformance(perf: PerformanceConfig): void {
   if (typeof perf.caching !== 'boolean') {
     throw new Error('performance.caching must be a boolean');
   }
   if (typeof perf.batching !== 'boolean') {
     throw new Error('performance.batching must be a boolean');
   }
-  const validCompression = ['auto', 'gzip', 'brotli', 'none'];
-  if (!validCompression.includes(perf.compression)) {
-    throw new Error(`performance.compression must be one of ${validCompression.join(', ')}`);
+  if (!VALID_COMPRESSION.includes(perf.compression)) {
+    throw new Error(`performance.compression must be one of ${VALID_COMPRESSION.join(', ')}`);
+  }
+}
+
+function validateTypes(types: NonNullable<ResolvedTywrapConfig['types']>): void {
+  const presets = types.presets;
+  if (presets === undefined) {
+    return;
+  }
+  if (!isStringArray(presets)) {
+    throw new Error('types.presets must be an array of strings');
+  }
+  for (const preset of presets) {
+    if (!VALID_TYPE_PRESETS.has(preset)) {
+      throw new Error(
+        `types.presets contains invalid value "${preset}". Allowed: ${Array.from(VALID_TYPE_PRESETS).join(', ')}`
+      );
+    }
+  }
+}
+
+/**
+ * Validate configuration values and throw user-friendly errors when invalid.
+ */
+function validateConfig(config: ResolvedTywrapConfig): void {
+  detectLegacyFields(config);
+  for (const key of Object.keys(config)) {
+    if (!ALLOWED_TOP_LEVEL.has(key)) {
+      throw new Error(`Unknown configuration option \"${key}\"`);
+    }
   }
 
-  if (config.types) {
-    const presets = config.types.presets;
-    const validPresets = new Set([
-      'numpy',
-      'pandas',
-      'pydantic',
-      'stdlib',
-      'scipy',
-      'torch',
-      'sklearn',
-    ]);
-    if (presets !== undefined) {
-      if (!Array.isArray(presets) || presets.some(p => typeof p !== 'string')) {
-        throw new Error('types.presets must be an array of strings');
-      }
-      for (const preset of presets) {
-        if (!validPresets.has(preset)) {
-          throw new Error(
-            `types.presets contains invalid value "${preset}". Allowed: ${Array.from(validPresets).join(', ')}`
-          );
-        }
-      }
+  if (config.pythonModules !== undefined) {
+    if (!isPlainObject(config.pythonModules)) {
+      throw new Error('pythonModules must be an object');
     }
+    validatePythonModules(config.pythonModules);
+  }
+
+  if (config.pythonImportPath !== undefined && !isStringArray(config.pythonImportPath)) {
+    throw new Error('pythonImportPath must be an array of strings');
+  }
+
+  validateOutput(config.output);
+  validateRuntime(config.runtime);
+  validatePerformance(config.performance);
+
+  if (config.types) {
+    validateTypes(config.types);
   }
 
   if (typeof config.debug !== 'boolean') {
@@ -264,127 +345,152 @@ export async function loadConfigFile(configFile: string): Promise<Partial<Tywrap
     throw new Error(`Configuration file not found: ${resolved}`);
   }
 
-  if (ext === '.json') {
-    const txt = await safeReadFileAsync(resolved);
-    try {
-      const parsed = JSON.parse(txt) as unknown;
-      return ensureConfigObject(parsed, resolved);
-    } catch (err) {
-      throw new Error(`Failed to parse JSON config ${resolved}: ${(err as Error).message}`);
-    }
+  // Dispatch by file extension. Each loader receives the resolved absolute path
+  // and the lowercased extension and returns the parsed config object.
+  const loader = CONFIG_LOADERS[ext];
+  if (!loader) {
+    throw new Error(`Unsupported configuration file extension: ${ext}`);
   }
-
-  if (ext === '.cjs') {
-    const require = createRequire(import.meta.url);
-    // eslint-disable-next-line security/detect-non-literal-require -- config path is user-controlled and resolved
-    const mod = require(resolved) as Record<string, unknown>;
-    const loaded = mod.default ?? mod;
-    return ensureConfigObject(loaded ?? {}, resolved);
-  }
-
-  if (ext === '.js' || ext === '.mjs') {
-    const mod = (await import(pathToFileURL(resolved).href)) as Record<string, unknown>;
-    const loaded = mod.default ?? mod;
-    return ensureConfigObject(loaded ?? {}, resolved);
-  }
-
-  if (ext === '.ts' || ext === '.mts' || ext === '.cts') {
-    const ts = await import('typescript');
-    const source = await safeReadFileAsync(resolved);
-    // Why: many configs want to `import { defineConfig } from 'tywrap'`. The tywrap package is ESM,
-    // so evaluating a transpiled CommonJS config would try `require('tywrap')` and fail. Treat
-    // `.ts`/`.mts` configs as ESM, and only treat `.cts` as CommonJS to match Node conventions.
-    const emitCommonJs = ext === '.cts';
-    const output = ts.transpileModule(source, {
-      compilerOptions: {
-        module: emitCommonJs ? ts.ModuleKind.CommonJS : ts.ModuleKind.ES2020,
-        target: ts.ScriptTarget.ES2020,
-        esModuleInterop: true,
-      },
-      fileName: resolved,
-    });
-
-    let transpiledOutput = output.outputText;
-    if (!emitCommonJs) {
-      try {
-        // Preserve support for `import { defineConfig } from 'tywrap'` when ESM config
-        // is evaluated from an OS temp directory outside the package scope.
-        const tywrapEntryHref = await import.meta.resolve('tywrap');
-        transpiledOutput = transpiledOutput
-          .replaceAll("'tywrap'", `'${tywrapEntryHref}'`)
-          .replaceAll('\"tywrap\"', `\"${tywrapEntryHref}\"`);
-      } catch {
-        // Best-effort: leave source as-is when tywrap cannot be resolved.
-      }
-    }
-
-    if (emitCommonJs) {
-      // Why: `.cts` is explicitly CommonJS. We evaluate the transpiled output in-memory using
-      // Node's Module internals (`Module._compile` / `_nodeModulePaths`) to avoid writing an extra
-      // temp file. These are private Node APIs, so we keep this tooling path scoped and rely on
-      // supported Node versions (see package.json engines).
-      const require = createRequire(import.meta.url);
-      const nodeModule = require('module') as typeof import('module');
-      const moduleCtor = nodeModule.Module as unknown as typeof import('module').Module & {
-        _nodeModulePaths?: (path: string) => string[];
-      };
-      if (typeof moduleCtor !== 'function') {
-        throw new Error(
-          '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node Module constructor'
-        );
-      }
-      const nodeModulePaths = moduleCtor._nodeModulePaths;
-      if (typeof nodeModulePaths !== 'function') {
-        throw new Error(
-          '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node private API Module._nodeModulePaths'
-        );
-      }
-      const mod = new moduleCtor(resolved) as import('module').Module & {
-        _compile?: (code: string, filename: string) => void;
-      };
-      const compile = mod._compile;
-      if (typeof compile !== 'function') {
-        throw new Error(
-          '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node private API Module._compile'
-        );
-      }
-      mod.filename = resolved;
-      mod.paths = nodeModulePaths(dirname(resolved));
-      compile.call(mod, output.outputText, resolved);
-      const loaded = (mod.exports as Record<string, unknown>).default ?? mod.exports;
-      return ensureConfigObject(loaded ?? {}, resolved);
-    }
-
-    // Why: Node can't import ESM from a string without a custom loader. We write transpiled
-    // output to a temporary `.mjs` file under the OS temp directory (not next to user config),
-    // then clean up both file and temporary directory after loading.
-    const tempDir = await mkdtemp(resolve(tmpdir(), 'tywrap-config-'));
-    const tmpPath = resolve(tempDir, `.tywrap.config.${randomUUID()}.mjs`);
-    try {
-      const localNodeModules = resolve(process.cwd(), 'node_modules');
-      if (safeExists(localNodeModules)) {
-        const tempNodeModules = resolve(tempDir, 'node_modules');
-        try {
-          // eslint-disable-next-line security/detect-non-literal-fs-filename -- temp path is derived from OS temp directory
-          await symlink(localNodeModules, tempNodeModules, 'dir');
-        } catch {
-          // Best-effort only; regular resolution may still succeed without a symlink.
-        }
-      }
-
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- temp path is derived from OS temp directory
-      await writeFile(tmpPath, transpiledOutput, 'utf-8');
-      const mod = (await import(pathToFileURL(tmpPath).href)) as Record<string, unknown>;
-      const loaded = mod.default ?? mod;
-      return ensureConfigObject(loaded ?? {}, resolved);
-    } finally {
-      await rm(tmpPath, { force: true });
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  }
-
-  throw new Error(`Unsupported configuration file extension: ${ext}`);
+  return loader(resolved, ext);
 }
+
+async function loadJsonConfig(resolved: string): Promise<Partial<TywrapOptions>> {
+  const txt = await safeReadFileAsync(resolved);
+  try {
+    const parsed = JSON.parse(txt) as unknown;
+    return ensureConfigObject(parsed, resolved);
+  } catch (err) {
+    throw new Error(`Failed to parse JSON config ${resolved}: ${(err as Error).message}`);
+  }
+}
+
+async function loadCjsConfig(resolved: string): Promise<Partial<TywrapOptions>> {
+  const require = createRequire(import.meta.url);
+  // eslint-disable-next-line security/detect-non-literal-require -- config path is user-controlled and resolved
+  const mod = require(resolved) as Record<string, unknown>;
+  const loaded = mod.default ?? mod;
+  return ensureConfigObject(loaded ?? {}, resolved);
+}
+
+async function loadEsmConfig(resolved: string): Promise<Partial<TywrapOptions>> {
+  const mod = (await import(pathToFileURL(resolved).href)) as Record<string, unknown>;
+  const loaded = mod.default ?? mod;
+  return ensureConfigObject(loaded ?? {}, resolved);
+}
+
+async function loadTypeScriptConfig(
+  resolved: string,
+  ext: string
+): Promise<Partial<TywrapOptions>> {
+  const ts = await import('typescript');
+  const source = await safeReadFileAsync(resolved);
+  // Why: many configs want to `import { defineConfig } from 'tywrap'`. The tywrap package is ESM,
+  // so evaluating a transpiled CommonJS config would try `require('tywrap')` and fail. Treat
+  // `.ts`/`.mts` configs as ESM, and only treat `.cts` as CommonJS to match Node conventions.
+  const emitCommonJs = ext === '.cts';
+  const output = ts.transpileModule(source, {
+    compilerOptions: {
+      module: emitCommonJs ? ts.ModuleKind.CommonJS : ts.ModuleKind.ES2020,
+      target: ts.ScriptTarget.ES2020,
+      esModuleInterop: true,
+    },
+    fileName: resolved,
+  });
+
+  let transpiledOutput = output.outputText;
+  if (!emitCommonJs) {
+    try {
+      // Preserve support for `import { defineConfig } from 'tywrap'` when ESM config
+      // is evaluated from an OS temp directory outside the package scope.
+      const tywrapEntryHref = await import.meta.resolve('tywrap');
+      transpiledOutput = transpiledOutput
+        .replaceAll("'tywrap'", `'${tywrapEntryHref}'`)
+        .replaceAll('\"tywrap\"', `\"${tywrapEntryHref}\"`);
+    } catch {
+      // Best-effort: leave source as-is when tywrap cannot be resolved.
+    }
+  }
+
+  if (emitCommonJs) {
+    // Why: `.cts` is explicitly CommonJS. We evaluate the transpiled output in-memory using
+    // Node's Module internals (`Module._compile` / `_nodeModulePaths`) to avoid writing an extra
+    // temp file. These are private Node APIs, so we keep this tooling path scoped and rely on
+    // supported Node versions (see package.json engines).
+    const require = createRequire(import.meta.url);
+    const nodeModule = require('module') as typeof import('module');
+    const moduleCtor = nodeModule.Module as unknown as typeof import('module').Module & {
+      _nodeModulePaths?: (path: string) => string[];
+    };
+    if (typeof moduleCtor !== 'function') {
+      throw new Error(
+        '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node Module constructor'
+      );
+    }
+    const nodeModulePaths = moduleCtor._nodeModulePaths;
+    if (typeof nodeModulePaths !== 'function') {
+      throw new Error(
+        '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node private API Module._nodeModulePaths'
+      );
+    }
+    const mod = new moduleCtor(resolved) as import('module').Module & {
+      _compile?: (code: string, filename: string) => void;
+    };
+    const compile = mod._compile;
+    if (typeof compile !== 'function') {
+      throw new Error(
+        '[tywrap] Unable to evaluate .cts config in-memory (emitCommonJs=true): missing Node private API Module._compile'
+      );
+    }
+    mod.filename = resolved;
+    mod.paths = nodeModulePaths(dirname(resolved));
+    compile.call(mod, output.outputText, resolved);
+    const loaded = (mod.exports as Record<string, unknown>).default ?? mod.exports;
+    return ensureConfigObject(loaded ?? {}, resolved);
+  }
+
+  // Why: Node can't import ESM from a string without a custom loader. We write transpiled
+  // output to a temporary `.mjs` file under the OS temp directory (not next to user config),
+  // then clean up both file and temporary directory after loading.
+  const tempDir = await mkdtemp(resolve(tmpdir(), 'tywrap-config-'));
+  const tmpPath = resolve(tempDir, `.tywrap.config.${randomUUID()}.mjs`);
+  try {
+    const localNodeModules = resolve(process.cwd(), 'node_modules');
+    if (safeExists(localNodeModules)) {
+      const tempNodeModules = resolve(tempDir, 'node_modules');
+      try {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- temp path is derived from OS temp directory
+        await symlink(localNodeModules, tempNodeModules, 'dir');
+      } catch {
+        // Best-effort only; regular resolution may still succeed without a symlink.
+      }
+    }
+
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- temp path is derived from OS temp directory
+    await writeFile(tmpPath, transpiledOutput, 'utf-8');
+    const mod = (await import(pathToFileURL(tmpPath).href)) as Record<string, unknown>;
+    const loaded = mod.default ?? mod;
+    return ensureConfigObject(loaded ?? {}, resolved);
+  } finally {
+    await rm(tmpPath, { force: true });
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Loaders for each supported configuration file extension. The map keys are the
+ * lowercased extensions returned by `extname`; the matching loader parses the file.
+ */
+const CONFIG_LOADERS: Readonly<
+  Record<string, (resolved: string, ext: string) => Promise<Partial<TywrapOptions>>>
+> = {
+  '.json': loadJsonConfig,
+  '.cjs': loadCjsConfig,
+  '.js': loadEsmConfig,
+  '.mjs': loadEsmConfig,
+  '.ts': loadTypeScriptConfig,
+  '.mts': loadTypeScriptConfig,
+  '.cts': loadTypeScriptConfig,
+};
 
 async function safeReadFileAsync(path: string): Promise<string> {
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- config path is user-controlled and resolved

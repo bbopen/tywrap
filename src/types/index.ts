@@ -310,7 +310,14 @@ export interface TywrapOptions {
 
 export interface PythonModuleConfig {
   version?: string;
-  runtime: RuntimeStrategy;
+  /**
+   * @deprecated Dead input. The per-module runtime is never read during code
+   * generation — the active runtime is resolved from the top-level
+   * {@link RuntimeConfig} (`runtime.node`, etc.). Kept optional so existing
+   * configs that still set it continue to validate; it has no effect and will
+   * be removed in a future major release.
+   */
+  runtime?: RuntimeStrategy;
   functions?: string[];
   classes?: string[];
   /** Exclude specific exports by exact name. */
@@ -343,11 +350,13 @@ export interface PyodideConfig {
 export interface NodeConfig {
   pythonPath?: string;
   virtualEnv?: string;
+  /** Per-call timeout in milliseconds for the subprocess bridge. */
   timeout?: number;
 }
 
 export interface HttpConfig {
   baseURL: string;
+  /** Per-request timeout in milliseconds for the HTTP bridge. */
   timeout?: number;
   headers?: Record<string, string>;
 }

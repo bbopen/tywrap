@@ -1,5 +1,5 @@
 /**
- * ProcessIO Transport - Subprocess-based Python communication for Node.js.
+ * SubprocessTransport - Subprocess-based Python communication for Node.js.
  *
  * This transport implements the Transport interface for spawning and communicating
  * with a Python subprocess via stdio streams. It provides:
@@ -46,9 +46,9 @@ const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u0080-\u
 // =============================================================================
 
 /**
- * Options for ProcessIO transport.
+ * Options for the SubprocessTransport.
  */
-export interface ProcessIOOptions {
+export interface SubprocessTransportOptions {
   /** Python executable path. Default: 'python3' */
   pythonPath?: string;
 
@@ -135,14 +135,14 @@ function extractMessageId(json: string): number | null {
 /**
  * Transport implementation for subprocess-based Python communication.
  *
- * ProcessIO spawns a Python child process and communicates via stdio:
+ * SubprocessTransport spawns a Python child process and communicates via stdio:
  * - Requests are written to stdin as JSON lines
  * - Responses are read from stdout as JSON lines
  * - Stderr is captured for diagnostics
  *
  * @example
  * ```typescript
- * const transport = new ProcessIO({
+ * const transport = new SubprocessTransport({
  *   bridgeScript: '/path/to/bridge.py',
  *   pythonPath: 'python3',
  * });
@@ -157,7 +157,7 @@ function extractMessageId(json: string): number | null {
  * await transport.dispose();
  * ```
  */
-export class ProcessIO extends DisposableBase implements Transport {
+export class SubprocessTransport extends DisposableBase implements Transport {
   // Configuration
   private readonly pythonPath: string;
   private readonly bridgeScript: string;
@@ -189,11 +189,11 @@ export class ProcessIO extends DisposableBase implements Transport {
   private draining = false;
 
   /**
-   * Create a new ProcessIO transport.
+   * Create a new SubprocessTransport.
    *
    * @param options - Transport configuration options
    */
-  constructor(options: ProcessIOOptions) {
+  constructor(options: SubprocessTransportOptions) {
     super();
 
     this.pythonPath = options.pythonPath ?? 'python3';

@@ -20,9 +20,9 @@ import type { Transport } from './transport.js';
 // =============================================================================
 
 /**
- * Configuration options for HttpIO transport.
+ * Configuration options for the HttpTransport.
  */
-export interface HttpIOOptions {
+export interface HttpTransportOptions {
   /** Base URL for the Python server (e.g., 'http://localhost:8000') */
   baseURL: string;
 
@@ -52,7 +52,7 @@ export interface HttpIOOptions {
  *
  * @example
  * ```typescript
- * const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+ * const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
  * await transport.init(); // No-op but follows Transport contract
  *
  * const response = await transport.send(
@@ -63,13 +63,13 @@ export interface HttpIOOptions {
  * await transport.dispose(); // Marks as disposed
  * ```
  */
-export class HttpIO implements Transport {
+export class HttpTransport implements Transport {
   private readonly baseURL: string;
   private readonly headers: Record<string, string>;
   private readonly defaultTimeoutMs: number;
   private _isDisposed = false;
 
-  constructor(options: HttpIOOptions) {
+  constructor(options: HttpTransportOptions) {
     // Normalize URL - remove trailing slash
     this.baseURL = options.baseURL.replace(/\/$/, '');
     this.headers = {
