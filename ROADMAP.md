@@ -8,6 +8,38 @@ The detailed technical appendix for the scientific data plane lives in
 
 ## Recently Shipped
 
+### v0.6.1: maintenance (complexity and dedup)
+
+`v0.6.1` is internal-only — no API, behavior, or wire-protocol changes. It
+removed two dead exports, broke the eleven worst complexity hotspots into
+smaller output-preserving helpers (cache-key generation, type-hint validation,
+the dev watch/reload paths, the subprocess write queue, module discovery, path
+and interpreter resolution, an annotation-parser helper), and factored the
+duplicated request/response dispatch in the codec and RPC client into one path.
+Static-analysis actionable complexity dropped from 14 to 3.
+
+### v0.6.0: one breaking cleanup pass
+
+`v0.6.0` collected the rest of the 0.5.0 refactor plan into a single breaking
+release so users take the import and name churn once, before the data plane adds
+new surface. The wire protocol did not change, so a 0.5.x client and a 0.6.0
+bridge still talk.
+
+- trimmed `src/index.ts` to its real public surface; `SafeCodec` (renamed
+  `BridgeCodec`) and the `Transport` contract moved to `tywrap/runtime`
+- standardized the runtime vocabulary on the four-layer glossary (`*IO` →
+  `*Transport`, `IntelligentCache` → `ArtifactCache`,
+  `WorkerPool`/`PooledWorker` → `TransportPool`/`TransportLease`, `marker` →
+  `typeTag`); on-the-wire keys unchanged
+- stricter per-section config validation; dropped the dead per-module `runtime`
+  field (#230)
+- the Python bridge blocks private-attribute access by default
+  (`TYWRAP_ALLOW_PRIVATE_ATTRS=1` to opt out) and validates module names before
+  discovery, closing two escape paths
+- single-sourced `VERSION` and `IR_VERSION` with a TS↔Python drift check (#229)
+- deleted four dead modules and collapsed the generator's three duplicated
+  call-emission paths into one, output byte-preserved
+
 ### v0.5.1: install with no native build (Node 25+)
 
 `v0.5.1` removed the dead TypeScript analyzer and the `tree-sitter`,
@@ -33,70 +65,49 @@ entrypoint, Node watch sessions that regenerate wrappers and swap the active
 bridge, and structured generation failures that keep the last known good output
 and bridge live.
 
-## Now (0.6.0): one breaking cleanup pass
+## Now (0.7.0): the scientific data plane — foundation
 
-This is the rest of the 0.5.0 refactor plan that 0.5.0/0.5.1 did not ship —
-collected into a single breaking release so users take the import and name churn
-once, before the data plane adds new surface. Pre-1.0 with very few users, the
-breaking budget is cheap; spend it here and emerge on clean names.
+The scientific data plane (tracked under #237) makes large numpy/pandas/Arrow
+payloads reliable and first-class. It is large, and the roadmap's own rule is
+*measure first: benchmarks land before any perf gate*. The headline chunked
+transport (#231) is still undesigned. So the theme ships in two releases.
 
-Internal cleanup (invisible to callers):
+`0.7.0` is the foundation half — everything buildable today with no
+wire-protocol design pass:
 
-- delete the four remaining dead modules (`bundle-optimizer`, `memory-profiler`,
-  `optimized-node`, `protocol` — drain its `PROTOCOL_VERSION` into `transport`
-  first)
-- decompose the live complexity hotspots (`decodeEnvelopeCore`,
-  `annotation-parser.parse`, `mapPresetType`, the config dispatches) behind
-  output-preserving characterization snapshots
-- extract a shared call-emission path in the generator (three near-identical
-  copies collapse to one, generated output byte-preserved)
-- convert the silent test skips to `it.skipIf` so a missing Python interpreter
-  skips loudly instead of passing vacuously
-- fix `VERSION` (still reports `0.3.0`) by single-sourcing it from a
-  build-generated module
-
-Breaking surface and naming:
-
-- trim `src/index.ts` to its real public surface and move `SafeCodec` plus the
-  `Transport` contract to `tywrap/runtime`, locked by a type-level surface test
-- standardize the runtime vocabulary on the four-layer glossary: `*IO` →
-  `*Transport`, `SafeCodec` → `BridgeCodec`, `IntelligentCache` →
-  `ArtifactCache`, `WorkerPool`/`PooledWorker` → `TransportPool`/`TransportLease`,
-  `marker` → `typeTag`; the on-the-wire keys do not change, only code identifiers
-- tighten config loading with per-section validators and demote the dead
-  per-module `runtime` field (#230)
-- single-source `IR_VERSION` (today duplicated across six files) and add a drift
-  check, the foundation of the `tywrap` ↔ `tywrap-ir` compatibility contract
-  (#229)
-- land the security must-dos that change behavior: the import/`getattr` allowlist
-  in the Python bridge and the module-name injection fix in discovery
-
-## Next (0.7.0): the scientific data plane
-
-The release that makes large scientific payloads reliable and first-class, built
-on the clean foundation 0.6.0 establishes (this is the workstream that was
-labeled 0.5.0 before the refactor took that number). Tracked under #237.
-
-- measure first: Arrow, large-payload, and pool benchmarks land before any perf
-  gate so the gates have real baselines
-- add a versioned artifact or chunked transport path so large payloads no longer
-  depend on single-line JSONL (#231)
-- make Arrow registration frictionless across the runtime story (#232)
-- expand scientific codec validation and performance gates (#233)
-- harden SciPy, Torch, and Sklearn envelope behavior so supported cases are
-  explicit and unsupported cases fail clearly (#234)
-- document transport capability expectations across Node, Pyodide, and HTTP (#235)
+- measure first: Arrow round-trip, large-payload decode, size-check overhead,
+  and pool-throughput benchmarks land against current behavior so 0.8.0's perf
+  gates have real baselines
+- make Arrow registration frictionless — the JS runtime auto-registers an Arrow
+  decoder when `apache-arrow` is present (#232)
+- a `TransportCapabilities` descriptor on each backend, reconciled with the
+  bridge `meta` report, plus a documented capability matrix across Node,
+  Pyodide, and HTTP (#235) — the contract #231 chunking keys off
 - capture the dropped Python member categories in `tywrap-ir` (`@classmethod`,
   `@property`, `cached_property` via `inspect.classify_class_attrs`), bump the IR
-  schema, and regenerate goldens
+  schema, and regenerate goldens — the one breaking change
 - stabilize the `tywrap/dev` examples with a watch/reload end-to-end smoke (#228)
+- fold in the complexity cleanup deferred from 0.6.1 (decompose `generate` and
+  `fetchPythonIr`; collapse the cross-bridge `call`/`instantiate` boilerplate)
 
 See [docs/codec-roadmap.md](./docs/codec-roadmap.md) for the deeper technical
 plan behind this release theme.
 
+## Next (0.8.0): large-payload transport
+
+The design-then-build half, built on 0.7.0's baselines and capability
+descriptor:
+
+- design and add a versioned artifact or chunked transport path so large
+  payloads no longer depend on single-line JSONL (#231)
+- expand scientific codec validation and set performance gates from the 0.7.0
+  baselines (#233)
+- harden SciPy, Torch, and Sklearn envelope behavior so supported cases are
+  explicit and unsupported cases fail clearly (#234)
+
 ## Later
 
-These items are intentionally not part of `0.6.0` or `0.7.0`:
+These items are intentionally not part of `0.7.0` or `0.8.0`:
 
 - GPU-native transport such as DLPack or Arrow CUDA
 - HTTP server lifecycle management owned by Tywrap
