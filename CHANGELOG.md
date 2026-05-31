@@ -2,11 +2,9 @@
 
 ## [0.5.1](https://github.com/bbopen/tywrap/compare/v0.5.0...v0.5.1) (2026-05-31)
 
+tywrap now installs with no native build, so it works on Node 25 and later.
 
-### Bug Fixes
-
-* drop native tree-sitter dep and delete the dead TS analyzer ([#238](https://github.com/bbopen/tywrap/issues/238)) ([4a5b354](https://github.com/bbopen/tywrap/commit/4a5b3544c857070bce10f7856b99ae4febf36456))
-* drop native tree-sitter dep and delete the dead TS analyzer ([#238](https://github.com/bbopen/tywrap/issues/238)) ([3cfe400](https://github.com/bbopen/tywrap/commit/3cfe400b0e1fd78157159aa01f16ee8c03d8c229))
+The legacy TypeScript analyzer pulled in a native `tree-sitter` dependency with no prebuilt binary for newer Node, which broke `npm install` there. That analyzer was unused — code generation has run through the Python IR extractor (`tywrap-ir`) since 0.4.x — so it's removed, along with the `tree-sitter`, `tree-sitter-python`, and `web-tree-sitter` packages. Nothing you call changes. ([#238](https://github.com/bbopen/tywrap/issues/238))
 
 ## [0.5.0](https://github.com/bbopen/tywrap/compare/v0.4.0...v0.5.0) (2026-05-30)
 
