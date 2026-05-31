@@ -44,30 +44,43 @@ export function getDefaultPythonPath(): string {
   return getPythonExecutableName();
 }
 
+/**
+ * Whether the configured pythonPath is the default interpreter (or unset),
+ * meaning a virtual environment lookup should take precedence.
+ */
+function usesDefaultPython(pythonPath: string | undefined): boolean {
+  return !pythonPath || pythonPath === 'python3' || pythonPath === 'python';
+}
+
+/**
+ * Resolve the Python executable inside a virtual environment, preferring the
+ * Node path module when available and falling back to cross-runtime pathUtils.
+ */
+async function resolveVenvPython(virtualEnv: string, cwd: string): Promise<string> {
+  const binDir = getVenvBinDir();
+  const exe = getVenvPythonExe();
+  const pathMod = await loadNodePathModule();
+
+  if (pathMod) {
+    const venvRoot = pathMod.resolve(cwd, virtualEnv);
+    return pathMod.join(venvRoot, binDir, exe);
+  }
+
+  const venvRoot = isAbsolutePath(virtualEnv)
+    ? pathUtils.join(virtualEnv)
+    : pathUtils.join(cwd, virtualEnv);
+  return pathUtils.join(venvRoot, binDir, exe);
+}
+
 export async function resolvePythonExecutable(options: PythonResolveOptions = {}): Promise<string> {
   const pythonPath = options.pythonPath?.trim();
   const virtualEnv = options.virtualEnv?.trim();
 
-  if (virtualEnv) {
-    const usesDefaultPython = !pythonPath || pythonPath === 'python3' || pythonPath === 'python';
-    if (usesDefaultPython) {
-      const cwd =
-        options.cwd ??
-        (typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '.');
-      const binDir = getVenvBinDir();
-      const exe = getVenvPythonExe();
-      const pathMod = await loadNodePathModule();
-
-      if (pathMod) {
-        const venvRoot = pathMod.resolve(cwd, virtualEnv);
-        return pathMod.join(venvRoot, binDir, exe);
-      }
-
-      const venvRoot = isAbsolutePath(virtualEnv)
-        ? pathUtils.join(virtualEnv)
-        : pathUtils.join(cwd, virtualEnv);
-      return pathUtils.join(venvRoot, binDir, exe);
-    }
+  if (virtualEnv && usesDefaultPython(pythonPath)) {
+    const cwd =
+      options.cwd ??
+      (typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '.');
+    return resolveVenvPython(virtualEnv, cwd);
   }
 
   if (pythonPath) {

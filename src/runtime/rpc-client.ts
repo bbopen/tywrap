@@ -281,26 +281,7 @@ export class RpcClient extends DisposableBase {
     message: Omit<ProtocolMessage, 'id' | 'protocol'>,
     options?: ExecuteOptions<T>
   ): Promise<T> {
-    const fullMessage: ProtocolMessage = {
-      ...message,
-      id: this.generateId(),
-      protocol: PROTOCOL_ID,
-    };
-
-    return this.execute(async () => {
-      // 1. Encode request (validates args)
-      const encoded = this.codec.encodeRequest(fullMessage);
-
-      // 2. Send via transport
-      const responseStr = await this.transport.send(
-        encoded,
-        options?.timeoutMs ?? this.defaultTimeoutMs,
-        options?.signal
-      );
-
-      // 3. Decode response (validates result)
-      return this.codec.decodeResponse<T>(responseStr);
-    }, options);
+    return this.sendVia(message, options, responseStr => this.codec.decodeResponse<T>(responseStr));
   }
 
   /**
@@ -321,11 +302,27 @@ export class RpcClient extends DisposableBase {
     message: Omit<ProtocolMessage, 'id' | 'protocol'>,
     options?: ExecuteOptions<T>
   ): Promise<T> {
-    const fullMessage: ProtocolMessage = {
-      ...message,
-      id: this.generateId(),
-      protocol: PROTOCOL_ID,
-    };
+    return this.sendVia(message, options, responseStr =>
+      this.codec.decodeResponseAsync<T>(responseStr)
+    );
+  }
+
+  /**
+   * Shared body for sendMessage/sendMessageAsync: stamp the frame, run the
+   * encode -> transport.send -> decode pipeline inside this.execute() (which
+   * supplies auto-init, timeout/retry/abort), where the only difference between
+   * the sync and Arrow-aware paths is the supplied `decode` step.
+   *
+   * Behavior-preserving extraction of the two twins; ordering, the
+   * `options?.timeoutMs ?? this.defaultTimeoutMs` fallback, and the
+   * `this.execute(..., options)` wrapping are unchanged.
+   */
+  private async sendVia<T>(
+    message: Omit<ProtocolMessage, 'id' | 'protocol'>,
+    options: ExecuteOptions<T> | undefined,
+    decode: (responseStr: string) => T | Promise<T>
+  ): Promise<T> {
+    const fullMessage = this.stampMessage(message);
 
     return this.execute(async () => {
       // 1. Encode request (validates args)
@@ -338,8 +335,8 @@ export class RpcClient extends DisposableBase {
         options?.signal
       );
 
-      // 3. Decode response with Arrow support
-      return this.codec.decodeResponseAsync<T>(responseStr);
+      // 3. Decode response (sync or Arrow-aware, per caller)
+      return decode(responseStr);
     }, options);
   }
 
@@ -364,11 +361,7 @@ export class RpcClient extends DisposableBase {
     message: Omit<ProtocolMessage, 'id' | 'protocol'>,
     opts?: { timeoutMs?: number; signal?: AbortSignal }
   ): Promise<T> {
-    const fullMessage: ProtocolMessage = {
-      ...message,
-      id: this.generateId(),
-      protocol: PROTOCOL_ID,
-    };
+    const fullMessage = this.stampMessage(message);
     const encoded = this.codec.encodeRequest(fullMessage);
     const responseStr = await transport.send(
       encoded,
@@ -376,6 +369,20 @@ export class RpcClient extends DisposableBase {
       opts?.signal
     );
     return this.codec.decodeResponseAsync<T>(responseStr);
+  }
+
+  /**
+   * Stamp a partial message into a full wire frame: assign the next request id
+   * and the protocol marker. The single id counter + protocol stamping live
+   * here so every send path (sendMessage/sendMessageAsync/sendOn) is correlated
+   * identically.
+   */
+  private stampMessage(message: Omit<ProtocolMessage, 'id' | 'protocol'>): ProtocolMessage {
+    return {
+      ...message,
+      id: this.generateId(),
+      protocol: PROTOCOL_ID,
+    };
   }
 
   /**

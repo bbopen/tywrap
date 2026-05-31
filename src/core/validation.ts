@@ -195,60 +195,96 @@ export class ValidationEngine {
     errors: AnalysisError[],
     warnings: AnalysisWarning[]
   ): void {
-    // Check return type (skip __init__ methods as they conventionally don't need return type annotations)
-    if (this.isEmptyType(func.returnType) && func.name !== '__init__') {
-      if (this.config.allowMissingTypeHints) {
-        warnings.push({
-          type: 'missing-type',
-          message: `Function '${func.name}' is missing return type annotation`,
-        });
-      } else if (this.config.strictTypeChecking) {
-        // In strict mode without allowMissingTypeHints, we warn first then error
-        warnings.push({
-          type: 'missing-type',
-          message: `Function '${func.name}' is missing return type annotation`,
-        });
-        errors.push({
-          type: 'type',
-          message: `Function '${func.name}' requires return type annotation`,
-        });
-      }
-    }
+    this.checkReturnTypeHint(func, errors, warnings);
 
     // Check parameter types (skip 'self' and 'cls' parameters)
     for (const param of func.parameters) {
-      if (this.isEmptyType(param.type) && param.name !== 'self' && param.name !== 'cls') {
-        if (this.config.allowMissingTypeHints) {
-          warnings.push({
-            type: 'missing-type',
-            message: `Parameter '${param.name}' in function '${func.name}' is missing type annotation`,
-          });
-        } else if (this.config.strictTypeChecking) {
-          // In strict mode without allowMissingTypeHints, we warn first then error
-          warnings.push({
-            type: 'missing-type',
-            message: `Parameter '${param.name}' in function '${func.name}' is missing type annotation`,
-          });
-          errors.push({
-            type: 'type',
-            message: `Parameter '${param.name}' in function '${func.name}' requires type annotation`,
-          });
-        }
-      }
-
-      // Validate type structure only in strict mode (skip 'self' and 'cls' parameters)
-      if (
-        this.config.strictTypeChecking &&
-        !this.config.allowMissingTypeHints &&
-        param.name !== 'self' &&
-        param.name !== 'cls'
-      ) {
-        const typeErrors = this.validateTypeAnnotation(param.type, `parameter '${param.name}'`);
-        errors.push(...typeErrors);
-      }
+      this.checkParameterTypeHint(func, param, errors, warnings);
+      this.checkParameterTypeStructure(param, errors);
     }
 
-    // Validate return type structure only in strict mode
+    this.checkReturnTypeStructure(func, errors);
+  }
+
+  /**
+   * Emit a missing-type warning, and—in strict mode—an accompanying error.
+   * In strict mode without allowMissingTypeHints, we warn first then error.
+   */
+  private reportMissingType(
+    warningMessage: string,
+    errorMessage: string,
+    warnings: AnalysisWarning[],
+    errors: AnalysisError[]
+  ): void {
+    if (this.config.allowMissingTypeHints) {
+      warnings.push({ type: 'missing-type', message: warningMessage });
+    } else if (this.config.strictTypeChecking) {
+      warnings.push({ type: 'missing-type', message: warningMessage });
+      errors.push({ type: 'type', message: errorMessage });
+    }
+  }
+
+  /**
+   * Check the function return type annotation (skip __init__ methods as they
+   * conventionally don't need return type annotations).
+   */
+  private checkReturnTypeHint(
+    func: PythonFunction,
+    errors: AnalysisError[],
+    warnings: AnalysisWarning[]
+  ): void {
+    if (this.isEmptyType(func.returnType) && func.name !== '__init__') {
+      this.reportMissingType(
+        `Function '${func.name}' is missing return type annotation`,
+        `Function '${func.name}' requires return type annotation`,
+        warnings,
+        errors
+      );
+    }
+  }
+
+  /**
+   * Check a single parameter's type annotation (skip 'self' and 'cls').
+   */
+  private checkParameterTypeHint(
+    func: PythonFunction,
+    param: PythonFunction['parameters'][number],
+    errors: AnalysisError[],
+    warnings: AnalysisWarning[]
+  ): void {
+    if (this.isEmptyType(param.type) && param.name !== 'self' && param.name !== 'cls') {
+      this.reportMissingType(
+        `Parameter '${param.name}' in function '${func.name}' is missing type annotation`,
+        `Parameter '${param.name}' in function '${func.name}' requires type annotation`,
+        warnings,
+        errors
+      );
+    }
+  }
+
+  /**
+   * Validate a single parameter's type structure only in strict mode
+   * (skip 'self' and 'cls' parameters).
+   */
+  private checkParameterTypeStructure(
+    param: PythonFunction['parameters'][number],
+    errors: AnalysisError[]
+  ): void {
+    if (
+      this.config.strictTypeChecking &&
+      !this.config.allowMissingTypeHints &&
+      param.name !== 'self' &&
+      param.name !== 'cls'
+    ) {
+      const typeErrors = this.validateTypeAnnotation(param.type, `parameter '${param.name}'`);
+      errors.push(...typeErrors);
+    }
+  }
+
+  /**
+   * Validate the return type structure only in strict mode.
+   */
+  private checkReturnTypeStructure(func: PythonFunction, errors: AnalysisError[]): void {
     if (this.config.strictTypeChecking && !this.config.allowMissingTypeHints) {
       const returnTypeErrors = this.validateTypeAnnotation(func.returnType, 'return type');
       errors.push(...returnTypeErrors);

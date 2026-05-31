@@ -410,6 +410,60 @@ export class BridgeCodec {
     return bridgeError;
   }
 
+  /**
+   * Shared prelude for both decode paths: size guard, JSON parse (with bytes
+   * revival), protocol-version validation, and RPC-envelope unwrapping.
+   *
+   * Behavior-preserving extraction of the common head of decodeResponse and
+   * decodeResponseAsync; the only divergence between the two is what they do
+   * with the returned result (sync returns it as-is, async applies Arrow
+   * decoding) and so that divergence stays in the callers.
+   */
+  private parseResponseResult(payload: string): unknown {
+    // Check payload size first
+    const payloadBytes = new TextEncoder().encode(payload).length;
+    if (payloadBytes > this.maxPayloadBytes) {
+      throw new BridgeCodecError(
+        `Response payload size ${payloadBytes} bytes exceeds maximum ${this.maxPayloadBytes} bytes`,
+        { codecPhase: 'decode', valueType: 'payload' }
+      );
+    }
+
+    // Parse JSON
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(payload, this.reviveValueBound);
+    } catch (err) {
+      if (err instanceof BridgeCodecError || err instanceof BridgeProtocolError) {
+        throw err;
+      }
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      throw new BridgeCodecError(
+        `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`,
+        { codecPhase: 'decode', valueType: 'json' }
+      );
+    }
+
+    // Validate protocol version (if present)
+    validateProtocolVersion(parsed);
+
+    return this.extractResultFromRpcResponse(parsed);
+  }
+
+  /**
+   * Post-decode guard: reject non-finite numbers (NaN/Infinity) when enabled.
+   * Shared by both decode paths.
+   */
+  private assertNoSpecialFloats(value: unknown): void {
+    if (this.rejectSpecialFloats && containsSpecialFloat(value)) {
+      const floatPath = findSpecialFloatPath(value);
+      throw new BridgeCodecError(
+        `Response contains non-finite number (NaN or Infinity) at ${floatPath}`,
+        { codecPhase: 'decode', valueType: 'number' }
+      );
+    }
+  }
+
   private extractResultFromRpcResponse(parsed: unknown): unknown {
     if (isRpcResponse(parsed)) {
       const response = parsed;
@@ -526,43 +580,10 @@ export class BridgeCodec {
    * @throws BridgeExecutionError if response contains a Python error
    */
   decodeResponse<T>(payload: string): T {
-    // Check payload size first
-    const payloadBytes = new TextEncoder().encode(payload).length;
-    if (payloadBytes > this.maxPayloadBytes) {
-      throw new BridgeCodecError(
-        `Response payload size ${payloadBytes} bytes exceeds maximum ${this.maxPayloadBytes} bytes`,
-        { codecPhase: 'decode', valueType: 'payload' }
-      );
-    }
-
-    // Parse JSON
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(payload, this.reviveValueBound);
-    } catch (err) {
-      if (err instanceof BridgeCodecError || err instanceof BridgeProtocolError) {
-        throw err;
-      }
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      throw new BridgeCodecError(
-        `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`,
-        { codecPhase: 'decode', valueType: 'json' }
-      );
-    }
-
-    // Validate protocol version (if present)
-    validateProtocolVersion(parsed);
-
-    const result = this.extractResultFromRpcResponse(parsed);
+    const result = this.parseResponseResult(payload);
 
     // Post-decode validation for special floats if enabled
-    if (this.rejectSpecialFloats && containsSpecialFloat(result)) {
-      const floatPath = findSpecialFloatPath(result);
-      throw new BridgeCodecError(
-        `Response contains non-finite number (NaN or Infinity) at ${floatPath}`,
-        { codecPhase: 'decode', valueType: 'number' }
-      );
-    }
+    this.assertNoSpecialFloats(result);
 
     return result as T;
   }
@@ -578,34 +599,7 @@ export class BridgeCodec {
    * @throws BridgeExecutionError if response contains a Python error
    */
   async decodeResponseAsync<T>(payload: string): Promise<T> {
-    // Check payload size first
-    const payloadBytes = new TextEncoder().encode(payload).length;
-    if (payloadBytes > this.maxPayloadBytes) {
-      throw new BridgeCodecError(
-        `Response payload size ${payloadBytes} bytes exceeds maximum ${this.maxPayloadBytes} bytes`,
-        { codecPhase: 'decode', valueType: 'payload' }
-      );
-    }
-
-    // Parse JSON
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(payload, this.reviveValueBound);
-    } catch (err) {
-      if (err instanceof BridgeCodecError || err instanceof BridgeProtocolError) {
-        throw err;
-      }
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      throw new BridgeCodecError(
-        `JSON parse failed: ${errorMessage}. Payload snippet: ${summarizePayloadForError(payload)}`,
-        { codecPhase: 'decode', valueType: 'json' }
-      );
-    }
-
-    // Validate protocol version (if present)
-    validateProtocolVersion(parsed);
-
-    const result = this.extractResultFromRpcResponse(parsed);
+    const result = this.parseResponseResult(payload);
 
     // Apply Arrow decoding to the result
     let decoded: unknown;
@@ -621,13 +615,7 @@ export class BridgeCodec {
 
     // Post-decode validation for special floats if enabled
     // Note: Arrow decoders can introduce NaN/Infinity from binary representations.
-    if (this.rejectSpecialFloats && containsSpecialFloat(decoded)) {
-      const floatPath = findSpecialFloatPath(decoded);
-      throw new BridgeCodecError(
-        `Response contains non-finite number (NaN or Infinity) at ${floatPath}`,
-        { codecPhase: 'decode', valueType: 'number' }
-      );
-    }
+    this.assertNoSpecialFloats(decoded);
 
     return decoded as T;
   }

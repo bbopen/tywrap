@@ -118,30 +118,35 @@ export function parseAnnotationToPythonType(
     return { kind: 'custom', name: n };
   };
 
+  // Extracts the leading quoted string from the body of a `Name(...)` factory call
+  // (the `inner` already stripped of the outer `Name(` and trailing `)`). Returns
+  // the unquoted name, or null when the body is not a well-formed quoted argument.
+  const extractQuotedFactoryArg = (inner: string): string | null => {
+    if (inner.length < 2) {
+      return null;
+    }
+
+    const quote = inner[0];
+    if ((quote !== "'" && quote !== '"') || inner[inner.length - 1] !== quote) {
+      return null;
+    }
+
+    const commaIndex = inner.indexOf(',');
+    const quoted = commaIndex === -1 ? inner : inner.slice(0, commaIndex).trimEnd();
+    if (quoted.length < 2 || quoted[quoted.length - 1] !== quote) {
+      return null;
+    }
+
+    return quoted.slice(1, -1);
+  };
+
   const parseTypingFactoryName = (text: string, name: string): string | null => {
     for (const prefix of modulePrefixes) {
       const start = `${prefix}${name}(`;
       if (!text.startsWith(start) || !text.endsWith(')')) {
         continue;
       }
-
-      const inner = text.slice(start.length, -1).trim();
-      if (inner.length < 2) {
-        return null;
-      }
-
-      const quote = inner[0];
-      if ((quote !== "'" && quote !== '"') || inner[inner.length - 1] !== quote) {
-        return null;
-      }
-
-      const commaIndex = inner.indexOf(',');
-      const quoted = commaIndex === -1 ? inner : inner.slice(0, commaIndex).trimEnd();
-      if (quoted.length < 2 || quoted[quoted.length - 1] !== quote) {
-        return null;
-      }
-
-      return quoted.slice(1, -1);
+      return extractQuotedFactoryArg(text.slice(start.length, -1).trim());
     }
 
     return null;

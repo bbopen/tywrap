@@ -52,30 +52,6 @@ export async function tywrap(options: Partial<TywrapOptions> = {}): Promise<Tywr
   };
 }
 
-export default tywrap;
-
-/**
- * Append minimal tsd tests for a generated module (optional dev aid)
- */
-export async function emitTypeTestsForModule(
-  moduleName: string,
-  outDir = 'test-d/generated'
-): Promise<void> {
-  const { writeFile, mkdir } = await import('fs/promises');
-  const { join } = await import('path');
-  try {
-    await mkdir(outDir, { recursive: true });
-  } catch {}
-  const filePath = join(outDir, `${moduleName}.test-d.ts`);
-  const content = `import { expectType } from 'tsd';
-import * as mod from '../../generated/${moduleName}.generated.ts';
-
-// Opportunistic: ensure module namespace is an object
-expectType<Record<string, unknown>>(mod);
-`;
-  await writeFile(filePath, content, 'utf-8');
-}
-
 export interface GenerateRunOptions {
   /**
    * If true, do not write files; instead compare generated output to what's on disk.
