@@ -258,6 +258,29 @@ jobs:
       - name: Run Bun tests
         run: bun run test:bun
 
+  node25-smoke:
+    # Closes #238: tywrap must install with no native build on newer Node.
+    # tree-sitter (native, no Node 25 prebuild) was removed; this guards the regression.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25
+          cache: npm
+      - name: Fresh install must not native-build
+        run: |
+          npm ci --prefer-offline --no-audit
+          if npm ls tree-sitter tree-sitter-python web-tree-sitter 2>/dev/null | grep -qiE 'tree-sitter'; then
+            echo "::error::tree-sitter dependency present — would break install on Node 25"; exit 1
+          fi
+      - name: Typecheck and build on Node 25
+        run: |
+          npm run typecheck
+          npm run build
+
   required:
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-latest
@@ -269,6 +292,7 @@ jobs:
       - living-app
       - os
       - bun
+      - node25-smoke
     steps:
       - name: Check required jobs
         run: |
@@ -280,4 +304,5 @@ jobs:
           if [ "${{ needs.living-app.result }}" != "success" ]; then echo "::error::living-app: ${{ needs.living-app.result }}"; fail=1; fi
           if [ "${{ needs.os.result }}" != "success" ]; then echo "::error::os: ${{ needs.os.result }}"; fail=1; fi
           if [ "${{ needs.bun.result }}" != "success" ]; then echo "::error::bun: ${{ needs.bun.result }}"; fail=1; fi
+          if [ "${{ needs.node25-smoke.result }}" != "success" ]; then echo "::error::node25-smoke: ${{ needs.node25-smoke.result }}"; fail=1; fi
           if [ "$fail" -ne 0 ]; then exit 1; fi
