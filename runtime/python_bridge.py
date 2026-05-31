@@ -7,9 +7,24 @@ subprocess transport and the HTTP transport:
   - the stdin/stdout JSONL request/response loop (main())
   - env-var size guards (TYWRAP_CODEC_MAX_BYTES / TYWRAP_REQUEST_MAX_BYTES)
   - TYWRAP_CODEC_FALLBACK=json marker mode and TYWRAP_TORCH_ALLOW_COPY
+  - the import/attribute allowlist policy (TYWRAP_ALLOWED_MODULES /
+    TYWRAP_ALLOW_PRIVATE_ATTRS), threaded into core.dispatch_request
   - the real OS pid and bridge='python-subprocess' identity
   - the final BridgeCodec.encode wrapper (NaN rejection + numpy scalar coercion +
     the explicit byte-size limit error message)
+
+SECURITY / TRUST MODEL: the bridge imports the requested module and getattrs the
+requested function/class/method, so call/instantiate/call_method are an arbitrary
+import+getattr+call surface. Two guards (implemented in tywrap_bridge_core) bound
+that surface:
+  * TYWRAP_ALLOWED_MODULES (comma/space separated): when set, only those modules
+    (plus the stdlib the bridge itself needs) may be imported; anything else fails
+    with ImportNotAllowedError. UNSET = no restriction (preserves prior behavior).
+  * TYWRAP_ALLOW_PRIVATE_ATTRS=1: opt out of the default block on underscore-prefixed
+    (private/dunder) attribute access, which otherwise prevents the classic
+    __globals__/__subclasses__/__builtins__ escape chain.
+The bridge does NOT sandbox the called code itself; only trusted Python should be
+exposed. See SECURITY.md for the full threat model.
 
 The protocol dispatch, request deserialization, and the 6 __tywrap__ marker
 serializers live in the shared, pure module tywrap_bridge_core (so the in-WASM
@@ -34,6 +49,10 @@ from tywrap_bridge_core import (  # noqa: F401
     CODEC_VERSION,
     ProtocolError,
     InstanceHandleError,
+    ImportNotAllowedError,
+    AttributeNotAllowedError,
+    import_allowed_module,
+    get_allowed_attr,
     deserialize,
     arrow_available,
     module_available,
@@ -75,6 +94,33 @@ instances = {}
 FALLBACK_JSON = os.environ.get('TYWRAP_CODEC_FALLBACK', '').lower() == 'json'
 TORCH_ALLOW_COPY = os.environ.get('TYWRAP_TORCH_ALLOW_COPY', '').lower() in ('1', 'true', 'yes')
 BRIDGE_NAME = 'python-subprocess'
+
+
+def parse_allowed_modules():
+    """
+    Parse TYWRAP_ALLOWED_MODULES into an allowlist set, or None when unset.
+
+    Why: returning None preserves the historical "import anything" behavior so
+    existing configurations keep working; supplying the env var (comma- and/or
+    whitespace-separated module names) switches the bridge into allowlist mode,
+    where only the listed modules plus the stdlib the bridge itself needs may be
+    imported. An empty/blank value is treated as unset (no restriction).
+    """
+    raw = os.environ.get('TYWRAP_ALLOWED_MODULES')
+    if raw is None:
+        return None
+    names = {name.strip() for chunk in raw.split(',') for name in chunk.split()}
+    names.discard('')
+    if not names:
+        return None
+    return frozenset(names)
+
+
+# Why: parse once at startup. None => no allowlist (prior behavior preserved).
+ALLOWED_MODULES = parse_allowed_modules()
+# Why: underscore-prefixed (private/dunder) attribute access is blocked by default
+# to prevent sandbox-escape via __globals__/__subclasses__/__builtins__; this opts out.
+ALLOW_PRIVATE_ATTRS = os.environ.get('TYWRAP_ALLOW_PRIVATE_ATTRS', '').lower() in ('1', 'true', 'yes')
 
 
 class CodecConfigError(ValueError):
@@ -241,6 +287,8 @@ def dispatch_request(msg):
         allow_nan=False,
         python_version=sys.version.split()[0],
         torch_allow_copy=TORCH_ALLOW_COPY,
+        allowed_modules=ALLOWED_MODULES,
+        allow_private_attrs=ALLOW_PRIVATE_ATTRS,
     )
     return out['id'], out['result']
 
