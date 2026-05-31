@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses as _dataclasses
+import functools
 import importlib
 import inspect
 import json
@@ -9,6 +10,7 @@ import platform
 import sys
 import types
 import typing
+import warnings as _warnings
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, get_type_hints
 
@@ -50,6 +52,37 @@ class IRFunction:
     is_async: bool
     is_generator: bool
     type_params: List[IRTypeParam]
+    # 'instance' | 'class' | 'static'. Defaults to 'instance' so callers that
+    # construct IRFunction positionally (or omit the kwarg) keep working.
+    method_kind: str = "instance"
+    # @typing.overload signatures declared for this callable (Python 3.11+).
+    # Empty for non-overloaded callables and on interpreters without
+    # typing.get_overloads (3.10), where extraction degrades with a warning.
+    overloads: List["IROverload"] = _dataclasses.field(default_factory=list)
+
+
+@dataclass
+class IROverload:
+    """A single @typing.overload signature for a function or method."""
+
+    parameters: List[IRParam]
+    returns: Optional[str]
+
+
+@dataclass
+class IRAccessor:
+    """A @property or functools.cached_property exposed on a class.
+
+    Distinct from ``IRClass.fields`` (which model TypedDict/NamedTuple/dataclass
+    data shapes). Accessors are computed attributes backed by a getter.
+    """
+
+    name: str
+    returns: Optional[str]
+    docstring: Optional[str]
+    # True when there is no setter (read-only). None when undeterminable.
+    read_only: Optional[bool]
+    is_cached: bool
 
 
 @dataclass
@@ -67,6 +100,7 @@ class IRClass:
     is_dataclass: bool
     is_pydantic: bool
     type_params: List[IRTypeParam]
+    accessors: List[IRAccessor] = _dataclasses.field(default_factory=list)
 
 
 @dataclass
@@ -417,6 +451,7 @@ def _extract_function(
     include_type_params: bool = True,
     inherited_type_params: List[IRTypeParam] | None = None,
     display_name: str | None = None,
+    method_kind: str = "instance",
 ) -> Optional[IRFunction]:
     try:
         sig = inspect.signature(obj)
@@ -470,7 +505,146 @@ def _extract_function(
         is_async=is_async,
         is_generator=is_generator,
         type_params=type_params,
+        method_kind=method_kind,
+        overloads=_extract_overloads(obj),
     )
+
+
+# Guard so the 3.10 degradation warning is emitted at most once per process.
+_overload_warning_emitted = False
+
+
+def _extract_overloads(obj: Any) -> List[IROverload]:
+    """Capture @typing.overload signatures for ``obj`` (Python 3.11+).
+
+    On interpreters without ``typing.get_overloads`` (3.10 and earlier) this
+    degrades to an empty list and emits a single warning rather than crashing.
+    """
+    get_overloads = getattr(typing, "get_overloads", None)
+    if get_overloads is None:
+        global _overload_warning_emitted
+        if not _overload_warning_emitted:
+            _overload_warning_emitted = True
+            _warnings.warn(
+                "typing.get_overloads is unavailable (Python < 3.11); "
+                "@overload signatures will not be captured in the IR.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return []
+
+    try:
+        registered = get_overloads(obj)
+    except Exception:
+        return []
+
+    out: List[IROverload] = []
+    for ov in registered or ():
+        try:
+            sig = inspect.signature(ov)
+        except Exception:
+            continue
+        try:
+            hints = get_type_hints(ov, include_extras=True)
+        except Exception:
+            try:
+                hints = get_type_hints(ov)
+            except Exception:
+                hints = {}
+        params: List[IRParam] = []
+        for pname, p in sig.parameters.items():
+            ann = hints.get(pname, p.annotation)
+            params.append(
+                IRParam(
+                    name=pname,
+                    kind=_param_kind_to_str(p.kind),
+                    annotation=_stringify_annotation(ann),
+                    default=(p.default is not inspect._empty),  # type: ignore[attr-defined]
+                )
+            )
+        ret = hints.get("return", sig.return_annotation)
+        out.append(IROverload(parameters=params, returns=_stringify_annotation(ret)))
+    return out
+
+
+def _accessor_return_annotation(getter: Any) -> Optional[str]:
+    """Best-effort return annotation for a property/cached_property getter.
+
+    Resolves forward references via ``get_type_hints`` when possible and falls
+    back to the raw signature annotation. Never raises.
+    """
+    if getter is None:
+        return None
+    try:
+        hints = get_type_hints(getter, include_extras=True)
+    except Exception:
+        try:
+            hints = get_type_hints(getter)
+        except Exception:
+            hints = {}
+    if "return" in hints:
+        return _stringify_annotation(hints["return"])
+    try:
+        sig = inspect.signature(getter)
+    except Exception:
+        return None
+    if sig.return_annotation is inspect._empty:  # type: ignore[attr-defined]
+        return None
+    return _stringify_annotation(sig.return_annotation)
+
+
+def _build_accessor(name: str, obj: Any) -> Optional[IRAccessor]:
+    """Build an IRAccessor for a property or functools.cached_property.
+
+    Handles cached_property explicitly (its object is not callable and
+    ``inspect.signature`` raises on it) so nothing downstream blows up.
+    """
+    cached_property_type = getattr(functools, "cached_property", None)
+    if cached_property_type is not None and isinstance(obj, cached_property_type):
+        getter = getattr(obj, "func", None)
+        return IRAccessor(
+            name=name,
+            returns=_accessor_return_annotation(getter),
+            docstring=inspect.getdoc(getter) if getter is not None else None,
+            # cached_property installs a value on first access; it has no setter
+            # and is conceptually read-only from the caller's perspective.
+            read_only=True,
+            is_cached=True,
+        )
+
+    if isinstance(obj, property):
+        getter = obj.fget
+        return IRAccessor(
+            name=name,
+            returns=_accessor_return_annotation(getter),
+            docstring=inspect.getdoc(obj) or (inspect.getdoc(getter) if getter is not None else None),
+            read_only=obj.fset is None,
+            is_cached=False,
+        )
+
+    return None
+
+
+def _resolve_method_callable(kind: str, attr_obj: Any, cls: type, meth_name: str) -> Any:
+    """Resolve the callable to introspect for a classified class attribute.
+
+    - 'static method'/'class method': unwrap the descriptor to its underlying
+      function so the signature reflects the declared parameters (classmethods
+      keep ``cls``; staticmethods keep none).
+    - 'method': use the attribute object directly (a plain function for
+      Python-defined methods, a descriptor for C-defined ones), preserving the
+      pre-existing behavior where ``self`` appears in the parameter list.
+    """
+    if kind in ("static method", "class method"):
+        func = getattr(attr_obj, "__func__", None)
+        if func is not None:
+            return func
+        # Fall back to the bound attribute (still callable for introspection).
+        try:
+            return getattr(cls, meth_name)
+        except Exception:
+            return attr_obj
+    return attr_obj
 
 
 def _extract_class(cls: type, module_name: str, include_private: bool) -> Optional[IRClass]:
@@ -484,17 +658,60 @@ def _extract_class(cls: type, module_name: str, include_private: bool) -> Option
     class_type_params = _collect_type_params_from_object_and_annotations(cls)
 
     methods: List[IRFunction] = []
-    for meth_name, value in inspect.getmembers(
-        cls,
-        predicate=lambda x: inspect.isfunction(x) or inspect.ismethoddescriptor(x) or inspect.isbuiltin(x),
-    ):
+    accessors: List[IRAccessor] = []
+
+    # classify_class_attrs is the canonical classifier: it walks the MRO and
+    # labels every attribute as 'class method' | 'static method' | 'method' |
+    # 'property' | 'data', honoring descriptors, inheritance, and metaclasses.
+    # This captures @classmethod/@staticmethod/@property that the previous
+    # getmembers(predicate=isfunction|...) filter silently dropped/mislabeled.
+    try:
+        classified = inspect.classify_class_attrs(cls)
+    except Exception:
+        classified = []
+
+    cached_property_type = getattr(functools, "cached_property", None)
+    seen_accessors: set[str] = set()
+
+    for attr in classified:
+        meth_name = attr.name
+        kind = attr.kind
+        attr_obj = attr.object
+
         if not include_private and meth_name.startswith("_") and meth_name != "__init__":
             continue
+
+        # Accessors: @property and functools.cached_property. classify_class_attrs
+        # labels cached_property as kind='method' (its object is a descriptor),
+        # so we detect it by object type BEFORE any signature() call (which would
+        # raise on a cached_property instance).
+        is_cached = cached_property_type is not None and isinstance(attr_obj, cached_property_type)
+        if kind == "property" or isinstance(attr_obj, property) or is_cached:
+            accessor = _build_accessor(meth_name, attr_obj)
+            if accessor is not None and accessor.name not in seen_accessors:
+                seen_accessors.add(accessor.name)
+                accessors.append(accessor)
+            continue
+
+        if kind not in ("method", "class method", "static method"):
+            # 'data' attributes are handled by the field-extraction blocks below.
+            continue
+
+        if kind == "class method":
+            member_kind = "class"
+        elif kind == "static method":
+            member_kind = "static"
+        else:
+            member_kind = "instance"
+
+        target = _resolve_method_callable(kind, attr_obj, cls, meth_name)
+
         fn = _extract_function(
-            value,
+            target,
             f"{module_name}.{cls.__name__}.{meth_name}",
             inherited_type_params=class_type_params,
             display_name=meth_name,
+            method_kind=member_kind,
         )
         if fn is not None:
             methods.append(fn)
@@ -634,6 +851,7 @@ def _extract_class(cls: type, module_name: str, include_private: bool) -> Option
         is_dataclass=is_dataclass,
         is_pydantic=is_pydantic,
         type_params=class_type_params,
+        accessors=accessors,
     )
 
 

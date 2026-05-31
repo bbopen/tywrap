@@ -22,7 +22,7 @@ import { globalCache } from './utils/cache.js';
 import { resolvePythonExecutable } from './utils/python.js';
 import { computeIrCacheFilename } from './utils/ir-cache.js';
 
-const TYWRAP_IR_VERSION = '0.2.0';
+const TYWRAP_IR_VERSION = '0.3.0';
 
 // Collect unknown typing constructs encountered during annotation parsing (per-generate run)
 let unknownTypeNamesCollector: Map<string, number> = new Map();
