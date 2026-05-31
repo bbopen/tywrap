@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1](https://github.com/bbopen/tywrap/compare/v0.5.0...v0.5.1) (2026-05-31)
+
+tywrap now installs with no native build, so it works on Node 25 and later.
+
+The legacy TypeScript analyzer pulled in a native `tree-sitter` dependency with no prebuilt binary for newer Node, which broke `npm install` there. That analyzer was unused — code generation has run through the Python IR extractor (`tywrap-ir`) since 0.4.x — so it's removed, along with the `tree-sitter`, `tree-sitter-python`, and `web-tree-sitter` packages. Nothing you call changes. ([#238](https://github.com/bbopen/tywrap/issues/238))
+
 ## [0.5.0](https://github.com/bbopen/tywrap/compare/v0.4.0...v0.5.0) (2026-05-30)
 
 Bridges no longer extend a shared protocol base class. Each one (Node, HTTP, Pyodide) now holds an `RpcClient`, and `BridgeProtocol` is renamed to `RpcClient`.
