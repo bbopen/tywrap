@@ -17,6 +17,7 @@ import type {
   OutputConfig,
   RuntimeConfig,
   PerformanceConfig,
+  PythonModuleConfig,
 } from '../types/index.js';
 import { getDefaultPythonPath } from '../utils/python.js';
 
@@ -114,93 +115,171 @@ function detectLegacyFields(config: TywrapConfig): void {
   }
 }
 
-/**
- * Validate configuration values and throw user-friendly errors when invalid.
- */
-function validateConfig(config: ResolvedTywrapConfig): void {
-  detectLegacyFields(config);
-  const allowedTopLevel = new Set([
-    'pythonModules',
-    'pythonImportPath',
-    'output',
-    'runtime',
-    'performance',
-    'types',
-    'debug',
-  ]);
-  for (const key of Object.keys(config)) {
-    if (!allowedTopLevel.has(key)) {
-      throw new Error(`Unknown configuration option \"${key}\"`);
-    }
-  }
+const ALLOWED_TOP_LEVEL = new Set([
+  'pythonModules',
+  'pythonImportPath',
+  'output',
+  'runtime',
+  'performance',
+  'types',
+  'debug',
+]);
 
-  const out: OutputConfig = config.output;
+const VALID_OUTPUT_FORMATS = ['esm', 'cjs', 'both'];
+const VALID_COMPRESSION = ['auto', 'gzip', 'brotli', 'none'];
+const VALID_TYPE_HINTS = ['strict', 'loose', 'ignore'];
+const VALID_TYPE_PRESETS = new Set([
+  'numpy',
+  'pandas',
+  'pydantic',
+  'stdlib',
+  'scipy',
+  'torch',
+  'sklearn',
+]);
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function validatePythonModules(modules: Record<string, PythonModuleConfig>): void {
+  for (const [name, moduleConfig] of Object.entries(modules)) {
+    if (!isPlainObject(moduleConfig)) {
+      throw new Error(`pythonModules.${name} must be an object`);
+    }
+    const scope = `pythonModules.${name}`;
+    const { version, alias, functions, classes, exclude, excludePatterns, typeHints } =
+      moduleConfig;
+    if (version !== undefined && typeof version !== 'string') {
+      throw new Error(`${scope}.version must be a string`);
+    }
+    if (alias !== undefined && typeof alias !== 'string') {
+      throw new Error(`${scope}.alias must be a string`);
+    }
+    const stringArrayFields: ReadonlyArray<readonly [string, unknown]> = [
+      ['functions', functions],
+      ['classes', classes],
+      ['exclude', exclude],
+      ['excludePatterns', excludePatterns],
+    ];
+    for (const [field, value] of stringArrayFields) {
+      if (value !== undefined && !isStringArray(value)) {
+        throw new Error(`${scope}.${field} must be an array of strings`);
+      }
+    }
+    if (typeHints !== undefined && !VALID_TYPE_HINTS.includes(typeHints)) {
+      throw new Error(`${scope}.typeHints must be one of ${VALID_TYPE_HINTS.join(', ')}`);
+    }
+    // Note: `runtime` is a deprecated, dead per-module field (see PythonModuleConfig).
+    // It is intentionally not validated so legacy configs keep loading; it has no effect.
+  }
+}
+
+function validateOutput(out: OutputConfig): void {
   if (typeof out.dir !== 'string') {
     throw new Error('output.dir must be a string');
   }
-
-  if (config.pythonImportPath !== undefined) {
-    if (
-      !Array.isArray(config.pythonImportPath) ||
-      config.pythonImportPath.some(p => typeof p !== 'string')
-    ) {
-      throw new Error('pythonImportPath must be an array of strings');
-    }
-  }
-  if (!['esm', 'cjs', 'both'].includes(out.format)) {
+  if (!VALID_OUTPUT_FORMATS.includes(out.format)) {
     throw new Error('output.format must be one of "esm", "cjs" or "both"');
   }
   if (typeof out.declaration !== 'boolean' || typeof out.sourceMap !== 'boolean') {
     throw new Error('output.declaration and output.sourceMap must be boolean');
   }
+}
 
-  const runtime: RuntimeConfig = config.runtime;
+function validateRuntime(runtime: RuntimeConfig): void {
   if (runtime.node) {
     if (runtime.node.pythonPath !== undefined && typeof runtime.node.pythonPath !== 'string') {
       throw new Error('runtime.node.pythonPath must be a string');
     }
-    if (runtime.node.timeout !== undefined) {
-      if (typeof runtime.node.timeout !== 'number' || runtime.node.timeout < 0) {
-        throw new Error('runtime.node.timeout must be a non-negative number');
-      }
+    if (runtime.node.virtualEnv !== undefined && typeof runtime.node.virtualEnv !== 'string') {
+      throw new Error('runtime.node.virtualEnv must be a string');
+    }
+    if (
+      runtime.node.timeout !== undefined &&
+      (typeof runtime.node.timeout !== 'number' || runtime.node.timeout < 0)
+    ) {
+      throw new Error('runtime.node.timeout must be a non-negative number');
     }
   }
+  if (runtime.http) {
+    if (typeof runtime.http.baseURL !== 'string' || runtime.http.baseURL.length === 0) {
+      throw new Error('runtime.http.baseURL must be a non-empty string');
+    }
+    if (
+      runtime.http.timeout !== undefined &&
+      (typeof runtime.http.timeout !== 'number' || runtime.http.timeout < 0)
+    ) {
+      throw new Error('runtime.http.timeout must be a non-negative number');
+    }
+  }
+  if (runtime.pyodide) {
+    if (runtime.pyodide.indexURL !== undefined && typeof runtime.pyodide.indexURL !== 'string') {
+      throw new Error('runtime.pyodide.indexURL must be a string');
+    }
+    if (runtime.pyodide.packages !== undefined && !isStringArray(runtime.pyodide.packages)) {
+      throw new Error('runtime.pyodide.packages must be an array of strings');
+    }
+  }
+}
 
-  const perf: PerformanceConfig = config.performance;
+function validatePerformance(perf: PerformanceConfig): void {
   if (typeof perf.caching !== 'boolean') {
     throw new Error('performance.caching must be a boolean');
   }
   if (typeof perf.batching !== 'boolean') {
     throw new Error('performance.batching must be a boolean');
   }
-  const validCompression = ['auto', 'gzip', 'brotli', 'none'];
-  if (!validCompression.includes(perf.compression)) {
-    throw new Error(`performance.compression must be one of ${validCompression.join(', ')}`);
+  if (!VALID_COMPRESSION.includes(perf.compression)) {
+    throw new Error(`performance.compression must be one of ${VALID_COMPRESSION.join(', ')}`);
+  }
+}
+
+function validateTypes(types: NonNullable<ResolvedTywrapConfig['types']>): void {
+  const presets = types.presets;
+  if (presets === undefined) {
+    return;
+  }
+  if (!isStringArray(presets)) {
+    throw new Error('types.presets must be an array of strings');
+  }
+  for (const preset of presets) {
+    if (!VALID_TYPE_PRESETS.has(preset)) {
+      throw new Error(
+        `types.presets contains invalid value "${preset}". Allowed: ${Array.from(VALID_TYPE_PRESETS).join(', ')}`
+      );
+    }
+  }
+}
+
+/**
+ * Validate configuration values and throw user-friendly errors when invalid.
+ */
+function validateConfig(config: ResolvedTywrapConfig): void {
+  detectLegacyFields(config);
+  for (const key of Object.keys(config)) {
+    if (!ALLOWED_TOP_LEVEL.has(key)) {
+      throw new Error(`Unknown configuration option \"${key}\"`);
+    }
   }
 
-  if (config.types) {
-    const presets = config.types.presets;
-    const validPresets = new Set([
-      'numpy',
-      'pandas',
-      'pydantic',
-      'stdlib',
-      'scipy',
-      'torch',
-      'sklearn',
-    ]);
-    if (presets !== undefined) {
-      if (!Array.isArray(presets) || presets.some(p => typeof p !== 'string')) {
-        throw new Error('types.presets must be an array of strings');
-      }
-      for (const preset of presets) {
-        if (!validPresets.has(preset)) {
-          throw new Error(
-            `types.presets contains invalid value "${preset}". Allowed: ${Array.from(validPresets).join(', ')}`
-          );
-        }
-      }
+  if (config.pythonModules !== undefined) {
+    if (!isPlainObject(config.pythonModules)) {
+      throw new Error('pythonModules must be an object');
     }
+    validatePythonModules(config.pythonModules);
+  }
+
+  if (config.pythonImportPath !== undefined && !isStringArray(config.pythonImportPath)) {
+    throw new Error('pythonImportPath must be an array of strings');
+  }
+
+  validateOutput(config.output);
+  validateRuntime(config.runtime);
+  validatePerformance(config.performance);
+
+  if (config.types) {
+    validateTypes(config.types);
   }
 
   if (typeof config.debug !== 'boolean') {

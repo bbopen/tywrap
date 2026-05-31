@@ -158,7 +158,9 @@ describe('CLI', () => {
       }
     });
 
-    it('initializes with custom runtime', () => {
+    it('accepts the --runtime flag and writes a valid config', () => {
+      // The per-module `runtime` field is dead input and is no longer emitted, so
+      // --runtime is accepted but does not appear in the generated config.
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
         const res = spawnSync(
@@ -170,10 +172,17 @@ describe('CLI', () => {
           }
         );
         expect(res.status).toBe(0);
+        expect(res.stderr).not.toContain('Unknown argument');
 
         const configPath = join(tempDir, 'tywrap.config.json');
         const content = readFileSync(configPath, 'utf-8');
-        expect(content).toContain('"pyodide"');
+        const parsed = JSON.parse(content) as {
+          pythonModules: Record<string, Record<string, unknown>>;
+        };
+        // Generated module entries no longer carry the dead per-module runtime field.
+        for (const moduleConfig of Object.values(parsed.pythonModules)) {
+          expect(moduleConfig).not.toHaveProperty('runtime');
+        }
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
