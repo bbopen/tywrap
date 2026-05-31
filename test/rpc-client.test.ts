@@ -4,7 +4,7 @@
  * Comprehensive tests for the RpcClient correlated-RPC client that integrates:
  * - BridgeCodec (encoding/decoding with validation)
  * - Transport (message sending/receiving)
- * - WorkerPool (concurrent transport management)
+ * - TransportPool (concurrent transport management)
  *
  * These tests verify that all components work together correctly across
  * the JS<->Python boundary abstraction.
@@ -19,10 +19,10 @@ import {
   type ProtocolResponse,
 } from '../src/runtime/transport.js';
 import {
-  WorkerPool,
-  type WorkerPoolOptions,
-  type PooledWorker,
-} from '../src/runtime/worker-pool.js';
+  TransportPool,
+  type TransportPoolOptions,
+  type TransportLease,
+} from '../src/runtime/transport-pool.js';
 import {
   BridgeCodecError,
   BridgeProtocolError,
@@ -678,8 +678,8 @@ describe('BridgeProtocol Integration', () => {
   // INTEGRATION: BRIDGEPROTOCOL + WORKERPOOL
   // ===========================================================================
 
-  describe('BridgeProtocol + WorkerPool', () => {
-    let pool: WorkerPool;
+  describe('BridgeProtocol + TransportPool', () => {
+    let pool: TransportPool;
     let transportFactory: () => MockTransport;
     let createdTransports: MockTransport[];
 
@@ -700,7 +700,7 @@ describe('BridgeProtocol Integration', () => {
     });
 
     it('multiple requests use pool correctly', async () => {
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: transportFactory,
         maxWorkers: 2,
         maxConcurrentPerWorker: 1,
@@ -731,7 +731,7 @@ describe('BridgeProtocol Integration', () => {
     });
 
     it('concurrent requests work', async () => {
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: transportFactory,
         maxWorkers: 4,
         maxConcurrentPerWorker: 1,
@@ -759,7 +759,7 @@ describe('BridgeProtocol Integration', () => {
     });
 
     it('pool disposal cleans up all transports', async () => {
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: transportFactory,
         maxWorkers: 3,
         maxConcurrentPerWorker: 1,
@@ -788,7 +788,7 @@ describe('BridgeProtocol Integration', () => {
         return mockTransport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: protocolFactory,
         maxWorkers: 2,
         maxConcurrentPerWorker: 1,
@@ -818,7 +818,7 @@ describe('BridgeProtocol Integration', () => {
   // ===========================================================================
 
   describe('Full stack (BridgeCodec + Transport + Pool + Protocol)', () => {
-    let pool: WorkerPool;
+    let pool: TransportPool;
 
     afterEach(async () => {
       if (pool && !pool.isDisposed) {
@@ -839,7 +839,7 @@ describe('BridgeProtocol Integration', () => {
         return transport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: createProtocolTransport,
         maxWorkers: 2,
         maxConcurrentPerWorker: 1,
@@ -880,7 +880,7 @@ describe('BridgeProtocol Integration', () => {
         return transport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: createErrorTransport,
         maxWorkers: 1,
       });
@@ -916,7 +916,7 @@ describe('BridgeProtocol Integration', () => {
         return transport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: createTrackingTransport,
         maxWorkers: 1,
       });
@@ -957,7 +957,7 @@ describe('BridgeProtocol Integration', () => {
         return transport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: createMathTransport,
         maxWorkers: 4,
         maxConcurrentPerWorker: 2,
@@ -1030,7 +1030,7 @@ describe('BridgeProtocol Integration', () => {
         return transport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: createRecoveringTransport,
         maxWorkers: 1,
         maxConcurrentPerWorker: 1,
@@ -1075,7 +1075,7 @@ describe('BridgeProtocol Integration', () => {
         return transport;
       };
 
-      pool = new WorkerPool({
+      pool = new TransportPool({
         createTransport: createIdentifiedTransport,
         maxWorkers: 3,
         maxConcurrentPerWorker: 1,

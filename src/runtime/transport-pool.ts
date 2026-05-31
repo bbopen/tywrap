@@ -1,5 +1,5 @@
 /**
- * WorkerPool - Manages multiple Transport instances for concurrent request handling.
+ * TransportPool - Manages multiple Transport instances for concurrent request handling.
  *
  * Provides semaphore-based concurrency control with configurable limits per worker
  * and a wait queue for callers when all workers are at capacity.
@@ -16,9 +16,9 @@ import type { Transport } from './transport.js';
 // =============================================================================
 
 /**
- * Configuration options for the WorkerPool.
+ * Configuration options for the TransportPool.
  */
-export interface WorkerPoolOptions {
+export interface TransportPoolOptions {
   /** Factory function to create transports */
   createTransport: () => Transport;
 
@@ -38,20 +38,20 @@ export interface WorkerPoolOptions {
    * Callback invoked after each worker is created and initialized.
    * Use this for per-worker warmup (e.g., importing modules, running setup).
    */
-  onWorkerReady?: (worker: PooledWorker) => Promise<void>;
+  onWorkerReady?: (worker: TransportLease) => Promise<void>;
 
   /**
    * Optional callback used only for background replacement workers after a
    * fatal timeout/crash. This lets callers publish a replacement only after it
    * is proven ready, without charging hidden work to normal request startup.
    */
-  onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
+  onReplacementWorkerReady?: (worker: TransportLease) => Promise<void>;
 }
 
 /**
  * A pooled worker with its transport and current in-flight request count.
  */
-export interface PooledWorker {
+export interface TransportLease {
   /** The underlying transport instance */
   transport: Transport;
 
@@ -64,7 +64,7 @@ export interface PooledWorker {
  */
 interface QueuedWaiter {
   /** Resolve function to fulfill the promise with a worker */
-  resolve: (worker: PooledWorker) => void;
+  resolve: (worker: TransportLease) => void;
 
   /** Reject function to reject the promise with an error */
   reject: (error: Error) => void;
@@ -88,7 +88,7 @@ interface QueuedWaiter {
  *
  * @example
  * ```typescript
- * const pool = new WorkerPool({
+ * const pool = new TransportPool({
  *   createTransport: () => new SubprocessTransport({ pythonPath: 'python3' }),
  *   maxWorkers: 4,
  *   maxConcurrentPerWorker: 2,
@@ -105,25 +105,25 @@ interface QueuedWaiter {
  * await pool.dispose();
  * ```
  */
-export class WorkerPool extends DisposableBase {
+export class TransportPool extends DisposableBase {
   private readonly options: Omit<
-    Required<WorkerPoolOptions>,
+    Required<TransportPoolOptions>,
     'onWorkerReady' | 'onReplacementWorkerReady'
   > & {
-    onWorkerReady?: (worker: PooledWorker) => Promise<void>;
-    onReplacementWorkerReady?: (worker: PooledWorker) => Promise<void>;
+    onWorkerReady?: (worker: TransportLease) => Promise<void>;
+    onReplacementWorkerReady?: (worker: TransportLease) => Promise<void>;
   };
-  private readonly workers: PooledWorker[] = [];
+  private readonly workers: TransportLease[] = [];
   private readonly waitQueue: QueuedWaiter[] = [];
   /** Tracks workers being created to prevent race condition in acquire() */
   private pendingCreations = 0;
 
   /**
-   * Create a new WorkerPool.
+   * Create a new TransportPool.
    *
    * @param options - Pool configuration options
    */
-  constructor(options: WorkerPoolOptions) {
+  constructor(options: TransportPoolOptions) {
     super();
 
     // Validate required options
@@ -216,7 +216,7 @@ export class WorkerPool extends DisposableBase {
    * @throws BridgeTimeoutError if queue timeout expires
    * @throws BridgeExecutionError if pool is disposed while waiting
    */
-  async acquire(): Promise<PooledWorker> {
+  async acquire(): Promise<TransportLease> {
     // Check for disposed state
     if (this.isDisposed || this.state === 'disposing') {
       throw new BridgeExecutionError('Pool has been disposed');
@@ -261,7 +261,7 @@ export class WorkerPool extends DisposableBase {
    *
    * @param worker - The worker to release
    */
-  release(worker: PooledWorker): void {
+  release(worker: TransportLease): void {
     // Validate the worker belongs to this pool
     if (!this.workers.includes(worker)) {
       return;
@@ -288,7 +288,7 @@ export class WorkerPool extends DisposableBase {
    * });
    * ```
    */
-  async withWorker<T>(fn: (worker: PooledWorker) => Promise<T>): Promise<T> {
+  async withWorker<T>(fn: (worker: TransportLease) => Promise<T>): Promise<T> {
     const worker = await this.acquire();
     let workerRemoved = false;
 
@@ -341,7 +341,7 @@ export class WorkerPool extends DisposableBase {
    * This is called when a worker is detected as dead (crashed, pipe error, etc.).
    * The worker's transport is disposed in the background.
    */
-  private removeWorker(worker: PooledWorker): void {
+  private removeWorker(worker: TransportLease): void {
     const index = this.workers.indexOf(worker);
     if (index !== -1) {
       this.workers.splice(index, 1);
@@ -387,7 +387,7 @@ export class WorkerPool extends DisposableBase {
   /**
    * Find an available worker with capacity for another request.
    */
-  private findAvailableWorker(): PooledWorker | undefined {
+  private findAvailableWorker(): TransportLease | undefined {
     return this.workers.find(w => w.inFlightCount < this.options.maxConcurrentPerWorker);
   }
 
@@ -452,7 +452,7 @@ export class WorkerPool extends DisposableBase {
     this.publishAvailableWorker(worker);
   }
 
-  private publishAvailableWorker(worker: PooledWorker): void {
+  private publishAvailableWorker(worker: TransportLease): void {
     while (
       this.waitQueue.length > 0 &&
       worker.inFlightCount < this.options.maxConcurrentPerWorker
@@ -473,13 +473,13 @@ export class WorkerPool extends DisposableBase {
    * If onWorkerReady is configured, calls it after the transport is initialized.
    * This is useful for per-worker warmup (importing modules, running setup).
    */
-  private async createWorker(onWorkerReady = this.options.onWorkerReady): Promise<PooledWorker> {
+  private async createWorker(onWorkerReady = this.options.onWorkerReady): Promise<TransportLease> {
     const transport = this.options.createTransport();
 
     // Initialize the transport
     await transport.init();
 
-    const worker: PooledWorker = {
+    const worker: TransportLease = {
       transport,
       inFlightCount: 0,
     };
@@ -512,8 +512,8 @@ export class WorkerPool extends DisposableBase {
   /**
    * Wait in queue for a worker to become available.
    */
-  private waitForWorker(): Promise<PooledWorker> {
-    return new Promise<PooledWorker>((resolve, reject) => {
+  private waitForWorker(): Promise<TransportLease> {
+    return new Promise<TransportLease>((resolve, reject) => {
       const timer = setTimeout(() => {
         // Remove this waiter from the queue
         const index = this.waitQueue.findIndex(w => w.timer === timer);

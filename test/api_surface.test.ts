@@ -63,7 +63,7 @@ describe('public API surface', () => {
     // Other runtime plumbing is non-public.
     expect(root.RpcClient).toBeUndefined();
     expect(root.DisposableBase).toBeUndefined();
-    expect(root.WorkerPool).toBeUndefined();
+    expect(root.TransportPool).toBeUndefined();
     expect(root.SubprocessTransport).toBeUndefined();
     expect(root.ValidationError).toBeUndefined();
   });

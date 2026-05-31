@@ -25,7 +25,7 @@ import { BridgeCodecError, BridgeExecutionError, BridgeProtocolError } from './e
 import { SubprocessTransport } from './subprocess-transport.js';
 import { PooledTransport } from './pooled-transport.js';
 import type { CodecOptions } from './bridge-codec.js';
-import type { PooledWorker } from './worker-pool.js';
+import type { TransportLease } from './transport-pool.js';
 
 // =============================================================================
 // OPTIONS
@@ -84,7 +84,7 @@ export interface NodeBridgeOptions {
   // ===========================================================================
 
   /**
-   * @deprecated No longer used. Pool idle time is managed by WorkerPool.
+   * @deprecated No longer used. Pool idle time is managed by TransportPool.
    */
   maxIdleTime?: number;
 
@@ -676,8 +676,8 @@ function createWorkerReadyCallback(
   rpcHolder: { rpc?: RpcClient },
   warmupCommands: WarmupCommand[],
   timeoutMs: number
-): (worker: PooledWorker) => Promise<void> {
-  return async (worker: PooledWorker) => {
+): (worker: TransportLease) => Promise<void> {
+  return async (worker: TransportLease) => {
     const rpc = rpcHolder.rpc;
     if (!rpc) {
       throw new BridgeExecutionError('Worker warmup attempted before RpcClient was wired');

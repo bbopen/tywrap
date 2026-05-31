@@ -474,7 +474,7 @@ describeAdversarial('Adversarial playground', () => {
   it(
     'recovers after the Python process exits unexpectedly',
     async () => {
-      // With crash recovery implemented in WorkerPool, crashed workers are
+      // With crash recovery implemented in TransportPool, crashed workers are
       // automatically removed from the pool, allowing subsequent requests
       // to spawn new workers.
       const pythonPath = await resolvePythonForTests();
@@ -772,7 +772,7 @@ describeAdversarial('Multi-worker adversarial tests', () => {
   it(
     'quarantines a failing worker and replaces it',
     async () => {
-      // With crash recovery implemented in WorkerPool, crashed workers are
+      // With crash recovery implemented in TransportPool, crashed workers are
       // automatically removed from the pool when they fail with fatal errors,
       // allowing new workers to be spawned for subsequent requests.
       const bridge = await createPooledBridge({ minProcesses: 2, maxProcesses: 2 });
@@ -917,7 +917,7 @@ describeAdversarial('Multi-worker adversarial tests', () => {
   it(
     'handles multiple worker crashes in sequence',
     async () => {
-      // With crash recovery implemented in WorkerPool, each crash causes the failed
+      // With crash recovery implemented in TransportPool, each crash causes the failed
       // worker to be removed from the pool. New workers are spawned for subsequent
       // requests, allowing the pool to recover from multiple sequential crashes.
       const bridge = await createPooledBridge({ minProcesses: 2, maxProcesses: 2 });

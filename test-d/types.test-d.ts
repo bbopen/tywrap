@@ -420,6 +420,6 @@ expectError(RootApi.RuntimeBridge);
 // Other runtime plumbing is non-public:
 expectError(RootApi.RpcClient);
 expectError(RootApi.DisposableBase);
-expectError(RootApi.WorkerPool);
+expectError(RootApi.TransportPool);
 expectError(RootApi.ProcessIO);
 expectError(RootApi.ValidationError);
