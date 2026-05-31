@@ -245,6 +245,19 @@ export function parseAnnotationToPythonType(
     return results;
   };
 
+  // Returns the content between the first `[` and the last `]` of a special-form
+  // annotation (e.g. the `int, str` of `Union[int, str]`). Callers gate this on a
+  // prefix check, so the brackets are known to be present.
+  const bracketInner = (raw: string): string => raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
+
+  // True when `raw` opens with one of the supported module prefixes followed by
+  // `name[`. Mirrors the inlined `raw.startsWith('typing.Name[') || ...` checks so
+  // the branch ordering in `parse` is unchanged.
+  const startsWithSpecialForm = (raw: string, name: string): boolean =>
+    raw.startsWith(`typing.${name}[`) ||
+    raw.startsWith(`typing_extensions.${name}[`) ||
+    raw.startsWith(`${name}[`);
+
   const splitGenericInvocation = (raw: string): { name: string; inner: string } | null => {
     if (!raw.endsWith(']')) {
       return null;
@@ -275,6 +288,86 @@ export function parseAnnotationToPythonType(
       name: raw.slice(0, bracketStart).trim(),
       inner: raw.slice(bracketStart + 1, -1),
     };
+  };
+
+  // Parses the body of a `Callable[...]` form (the `inner` already stripped of the
+  // outer brackets). `recurse` is the top-level `parse`, threaded in so this stays a
+  // standalone helper. Returns null only when the form has fewer than the required
+  // two comma-separated sections, matching the original guarded branch exactly.
+  const parseCallableInner = (
+    inner: string,
+    depth: number,
+    recurse: (ann: unknown, depth?: number) => PythonType
+  ): PythonType | null => {
+    const parts = splitTopLevel(inner, ',');
+    if (parts.length < 2) {
+      return null;
+    }
+
+    const paramsPart = (parts[0] ?? '').trim();
+    const returnPart = parts.slice(1).join(',').trim();
+    const returnType = recurse(returnPart, depth + 1);
+
+    if (paramsPart === '...' || paramsPart === 'Ellipsis') {
+      return {
+        kind: 'callable',
+        parameters: [{ kind: 'custom', name: '...' }],
+        returnType,
+      };
+    }
+
+    const directParamSpec = recurse(paramsPart, depth + 1);
+    if (directParamSpec.kind === 'paramspec') {
+      return {
+        kind: 'callable',
+        parameters: [],
+        parameterSpec: directParamSpec,
+        returnType,
+      };
+    }
+
+    const paramInner =
+      paramsPart.startsWith('[') && paramsPart.endsWith(']') ? paramsPart.slice(1, -1) : '';
+    const trimmed = paramInner.trim();
+    if (trimmed === '...' || trimmed === 'Ellipsis') {
+      return {
+        kind: 'callable',
+        parameters: [{ kind: 'custom', name: '...' }],
+        returnType,
+      };
+    }
+
+    const parameters = trimmed
+      ? splitTopLevel(trimmed, ',').map(p => recurse(p.trim(), depth + 1))
+      : [];
+    return { kind: 'callable', parameters, returnType };
+  };
+
+  // Handles the `typing.TypeVar('T')` / `ParamSpec('P')` / `TypeVarTuple('Ts')`
+  // factory-call forms. Returns null when `rawText` is none of them, preserving
+  // the original sequential fall-through (TypeVar, then ParamSpec, then TypeVarTuple).
+  const parseTypingFactory = (rawText: string): PythonType | null => {
+    const typeVarName = parseTypingFactoryName(rawText, 'TypeVar');
+    if (typeVarName) {
+      return mapKnownTypeParameter(typeVarName) ?? { kind: 'typevar', name: typeVarName };
+    }
+
+    const paramSpecName = parseTypingFactoryName(rawText, 'ParamSpec');
+    if (paramSpecName) {
+      return mapKnownTypeParameter(paramSpecName) ?? { kind: 'paramspec', name: paramSpecName };
+    }
+
+    const typeVarTupleName = parseTypingFactoryName(rawText, 'TypeVarTuple');
+    if (typeVarTupleName) {
+      return (
+        mapKnownTypeParameter(typeVarTupleName) ?? {
+          kind: 'typevartuple',
+          name: typeVarTupleName,
+        }
+      );
+    }
+
+    return null;
   };
 
   const parse = (ann: unknown, depth = 0): PythonType => {
@@ -320,33 +413,18 @@ export function parseAnnotationToPythonType(
       }
     }
 
-    if (
-      raw.startsWith('typing.Union[') ||
-      raw.startsWith('typing_extensions.Union[') ||
-      raw.startsWith('Union[')
-    ) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const parts = splitTopLevel(inner, ',');
+    if (startsWithSpecialForm(raw, 'Union')) {
+      const parts = splitTopLevel(bracketInner(raw), ',');
       const types = parts.map(p => parse(p.trim(), depth + 1));
       return { kind: 'union', types };
     }
 
-    if (
-      raw.startsWith('typing.Optional[') ||
-      raw.startsWith('typing_extensions.Optional[') ||
-      raw.startsWith('Optional[')
-    ) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      return { kind: 'optional', type: parse(inner, depth + 1) };
+    if (startsWithSpecialForm(raw, 'Optional')) {
+      return { kind: 'optional', type: parse(bracketInner(raw), depth + 1) };
     }
 
-    if (
-      raw.startsWith('typing.Literal[') ||
-      raw.startsWith('typing_extensions.Literal[') ||
-      raw.startsWith('Literal[')
-    ) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const parts = splitTopLevel(inner, ',');
+    if (startsWithSpecialForm(raw, 'Literal')) {
+      const parts = splitTopLevel(bracketInner(raw), ',');
       if (parts.length === 1) {
         return mapLiteral(String(parts[0] ?? '').trim());
       }
@@ -360,24 +438,9 @@ export function parseAnnotationToPythonType(
       return parse(extMatch[3] ?? '', depth + 1);
     }
 
-    const typeVarName = parseTypingFactoryName(rawText, 'TypeVar');
-    if (typeVarName) {
-      return mapKnownTypeParameter(typeVarName) ?? { kind: 'typevar', name: typeVarName };
-    }
-
-    const paramSpecName = parseTypingFactoryName(rawText, 'ParamSpec');
-    if (paramSpecName) {
-      return mapKnownTypeParameter(paramSpecName) ?? { kind: 'paramspec', name: paramSpecName };
-    }
-
-    const typeVarTupleName = parseTypingFactoryName(rawText, 'TypeVarTuple');
-    if (typeVarTupleName) {
-      return (
-        mapKnownTypeParameter(typeVarTupleName) ?? {
-          kind: 'typevartuple',
-          name: typeVarTupleName,
-        }
-      );
+    const typingFactory = parseTypingFactory(rawText);
+    if (typingFactory) {
+      return typingFactory;
     }
     if (
       raw === 'typing.LiteralString' ||
@@ -387,61 +450,15 @@ export function parseAnnotationToPythonType(
       return { kind: 'primitive', name: 'str' };
     }
 
-    if (
-      raw.startsWith('typing.Callable[') ||
-      raw.startsWith('typing_extensions.Callable[') ||
-      raw.startsWith('Callable[')
-    ) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const parts = splitTopLevel(inner, ',');
-      if (parts.length >= 2) {
-        const paramsPart = (parts[0] ?? '').trim();
-        const returnPart = parts.slice(1).join(',').trim();
-        const returnType = parse(returnPart, depth + 1);
-
-        if (paramsPart === '...' || paramsPart === 'Ellipsis') {
-          return {
-            kind: 'callable',
-            parameters: [{ kind: 'custom', name: '...' }],
-            returnType,
-          };
-        }
-
-        const directParamSpec = parse(paramsPart, depth + 1);
-        if (directParamSpec.kind === 'paramspec') {
-          return {
-            kind: 'callable',
-            parameters: [],
-            parameterSpec: directParamSpec,
-            returnType,
-          };
-        }
-
-        const paramInner =
-          paramsPart.startsWith('[') && paramsPart.endsWith(']') ? paramsPart.slice(1, -1) : '';
-        const trimmed = paramInner.trim();
-        if (trimmed === '...' || trimmed === 'Ellipsis') {
-          return {
-            kind: 'callable',
-            parameters: [{ kind: 'custom', name: '...' }],
-            returnType,
-          };
-        }
-
-        const parameters = trimmed
-          ? splitTopLevel(trimmed, ',').map(p => parse(p.trim(), depth + 1))
-          : [];
-        return { kind: 'callable', parameters, returnType };
+    if (startsWithSpecialForm(raw, 'Callable')) {
+      const callable = parseCallableInner(bracketInner(raw), depth, parse);
+      if (callable) {
+        return callable;
       }
     }
 
-    if (
-      raw.startsWith('typing.Mapping[') ||
-      raw.startsWith('typing_extensions.Mapping[') ||
-      raw.startsWith('Mapping[')
-    ) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const parts = splitTopLevel(inner, ',');
+    if (startsWithSpecialForm(raw, 'Mapping')) {
+      const parts = splitTopLevel(bracketInner(raw), ',');
       return {
         kind: 'collection',
         name: 'dict',
@@ -449,13 +466,8 @@ export function parseAnnotationToPythonType(
       };
     }
 
-    if (
-      raw.startsWith('typing.Annotated[') ||
-      raw.startsWith('typing_extensions.Annotated[') ||
-      raw.startsWith('Annotated[')
-    ) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      const parts = splitTopLevel(inner, ',');
+    if (startsWithSpecialForm(raw, 'Annotated')) {
+      const parts = splitTopLevel(bracketInner(raw), ',');
       if (parts.length > 0) {
         return {
           kind: 'annotated',
@@ -465,13 +477,8 @@ export function parseAnnotationToPythonType(
       }
     }
 
-    if (
-      raw.startsWith('typing.Unpack[') ||
-      raw.startsWith('typing_extensions.Unpack[') ||
-      raw.startsWith('Unpack[')
-    ) {
-      const inner = raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
-      return { kind: 'unpack', type: parse(inner, depth + 1) };
+    if (startsWithSpecialForm(raw, 'Unpack')) {
+      return { kind: 'unpack', type: parse(bracketInner(raw), depth + 1) };
     }
 
     const coll = normalizeCollectionName(raw);
