@@ -1459,3 +1459,129 @@ def get_bad():
     );
   });
 });
+
+// Python-free unit coverage for NodeBridge construction, stats, and lifecycle.
+// These tests only instantiate the bridge (no init()/call()), so they run
+// without a Python runtime. Folded in from the former optimized-node.test.ts
+// when the OptimizedNodeBridge shim was removed.
+describeNodeOnly('NodeBridge construction and stats', () => {
+  let bridge: NodeBridge | undefined;
+
+  afterEach(async () => {
+    if (bridge) {
+      try {
+        await bridge.dispose();
+      } catch {
+        // Ignore disposal errors in tests
+      }
+      bridge = undefined;
+    }
+  });
+
+  describe('constructor', () => {
+    it('should create instance with default options', () => {
+      bridge = new NodeBridge();
+      expect(bridge).toBeInstanceOf(NodeBridge);
+    });
+
+    it('should create instance with custom pool and timeout options', () => {
+      bridge = new NodeBridge({
+        minProcesses: 1,
+        maxProcesses: 2,
+        maxIdleTime: 5000,
+        maxRequestsPerProcess: 100,
+        timeoutMs: 10000,
+        enableJsonFallback: true,
+      });
+      expect(bridge).toBeInstanceOf(NodeBridge);
+    });
+
+    it('should accept virtual environment option', () => {
+      bridge = new NodeBridge({ virtualEnv: '.venv' });
+      expect(bridge).toBeInstanceOf(NodeBridge);
+    });
+
+    it('should accept custom python path', () => {
+      bridge = new NodeBridge({ pythonPath: 'python3' });
+      expect(bridge).toBeInstanceOf(NodeBridge);
+    });
+
+    it('should accept warmup commands', () => {
+      bridge = new NodeBridge({
+        warmupCommands: [{ module: 'math', functionName: 'sqrt', args: [16] }],
+      });
+      expect(bridge).toBeInstanceOf(NodeBridge);
+    });
+
+    it('should accept custom environment variables', () => {
+      bridge = new NodeBridge({ env: { CUSTOM_VAR: 'custom_value' } });
+      expect(bridge).toBeInstanceOf(NodeBridge);
+    });
+
+    it('should reject legacy warmup command format', () => {
+      const createBridge = (): NodeBridge =>
+        new NodeBridge({
+          warmupCommands: [{ method: 'import', params: { module: 'os' } }],
+        });
+
+      expect(createBridge).toThrow(BridgeProtocolError);
+      expect(createBridge).toThrow(/legacy \{ method, params \} format is no longer supported/i);
+    });
+
+    it('should reject non-array warmupCommands', () => {
+      const createBridge = (): NodeBridge =>
+        new NodeBridge({
+          warmupCommands: {
+            module: 'math',
+            functionName: 'sqrt',
+            args: [16],
+          } as unknown as Array<{ module: string; functionName: string; args?: unknown[] }>,
+        });
+
+      expect(createBridge).toThrow(BridgeProtocolError);
+      expect(createBridge).toThrow(/warmupCommands must be an array/i);
+    });
+  });
+
+  describe('getStats', () => {
+    beforeEach(() => {
+      bridge = new NodeBridge();
+    });
+
+    it('should return a stats object with the expected shape', () => {
+      const stats = bridge!.getStats();
+
+      expect(stats).toHaveProperty('totalRequests');
+      expect(stats).toHaveProperty('totalTime');
+      expect(stats).toHaveProperty('cacheHits');
+      expect(stats).toHaveProperty('poolHits');
+      expect(stats).toHaveProperty('poolMisses');
+      expect(stats).toHaveProperty('processSpawns');
+      expect(stats).toHaveProperty('processDeaths');
+      expect(stats).toHaveProperty('memoryPeak');
+      expect(stats).toHaveProperty('averageTime');
+      expect(stats).toHaveProperty('cacheHitRate');
+    });
+
+    it('should report zeroed stats before any calls', () => {
+      const stats = bridge!.getStats();
+
+      expect(stats.totalRequests).toBe(0);
+      expect(stats.totalTime).toBe(0);
+      expect(stats.cacheHits).toBe(0);
+    });
+  });
+
+  describe('dispose', () => {
+    it('should dispose without error', async () => {
+      bridge = new NodeBridge();
+      await expect(bridge.dispose()).resolves.not.toThrow();
+    });
+
+    it('should be idempotent', async () => {
+      bridge = new NodeBridge();
+      await bridge.dispose();
+      await expect(bridge.dispose()).resolves.not.toThrow();
+    });
+  });
+});
