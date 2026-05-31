@@ -4,10 +4,9 @@
 
 import { describe, it, expect } from 'vitest';
 import { existsSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { NodeBridge } from '../src/runtime/node.js';
-import { resolvePythonExecutable } from '../src/utils/python.js';
 import { isNodejs } from '../src/utils/runtime.js';
+import { PYTHON, PYTHON_AVAILABLE, hasPythonModule } from './helpers/python-probe.js';
 
 const describeNodeOnly = isNodejs() ? describe : describe.skip;
 
@@ -19,37 +18,23 @@ const isCi =
 const scientificTimeoutMs = isCi ? 60_000 : 30_000;
 const bridgeTimeoutMs = isCi ? 60_000 : 30_000;
 
-const resolvePythonForTests = async (): Promise<string | null> => {
-  const explicit = process.env.TYWRAP_CODEC_PYTHON?.trim();
-  if (explicit) {
-    return explicit;
-  }
-  try {
-    return await resolvePythonExecutable();
-  } catch {
-    return null;
-  }
-};
-
-const pythonAvailable = (pythonPath: string | null): boolean => {
-  if (!pythonPath) return false;
-  const res = spawnSync(pythonPath, ['--version'], { encoding: 'utf-8' });
-  return res.status === 0;
-};
-
-const hasModule = (pythonPath: string, moduleName: string): boolean => {
-  const res = spawnSync(pythonPath, ['-c', `import ${moduleName}`], { encoding: 'utf-8' });
-  return res.status === 0;
-};
+// Synchronous availability gates feeding it.skipIf(...). A missing interpreter or
+// scientific module makes the test SKIP loudly instead of silently early-returning
+// (which would report a vacuous pass). PYTHON is the resolved interpreter path.
+const BASE_OK = PYTHON_AVAILABLE && existsSync(scriptPath);
+const SCIPY_OK = BASE_OK && hasPythonModule('scipy');
+const SKLEARN_OK = BASE_OK && hasPythonModule('sklearn');
+const ARROW_OK = BASE_OK && hasPythonModule('pyarrow');
+const NUMPY_ARROW_OK = ARROW_OK && hasPythonModule('numpy');
+const TORCH_ARROW_OK = ARROW_OK && hasPythonModule('torch');
+// PYTHON is non-null whenever any *_OK gate is true; this assertion keeps the
+// bridge constructor calls below type-safe without re-probing inside each test.
+const pythonPath = PYTHON as string;
 
 describeNodeOnly('Scientific Codecs', () => {
-  it(
+  it.skipIf(!SCIPY_OK)(
     'serializes scipy sparse matrices',
     async () => {
-      const pythonPath = await resolvePythonForTests();
-      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-      if (!pythonPath || !hasModule(pythonPath, 'scipy')) return;
-
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
@@ -83,16 +68,11 @@ describeNodeOnly('Scientific Codecs', () => {
     scientificTimeoutMs
   );
 
-  it(
+  // Torch tensor serialization requires pyarrow for Arrow encoding of ndarrays.
+  // Multi-dimensional arrays are flattened on encode and reshaped on decode.
+  it.skipIf(!TORCH_ARROW_OK)(
     'serializes torch tensors',
     async () => {
-      const pythonPath = await resolvePythonForTests();
-      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-      if (!pythonPath || !hasModule(pythonPath, 'torch')) return;
-      // Torch tensor serialization requires pyarrow for Arrow encoding of ndarrays
-      // Multi-dimensional arrays are flattened on encode and reshaped on decode
-      if (!hasModule(pythonPath, 'pyarrow')) return;
-
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
@@ -126,13 +106,9 @@ describeNodeOnly('Scientific Codecs', () => {
     scientificTimeoutMs
   );
 
-  it(
+  it.skipIf(!SKLEARN_OK)(
     'serializes sklearn estimators',
     async () => {
-      const pythonPath = await resolvePythonForTests();
-      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-      if (!pythonPath || !hasModule(pythonPath, 'sklearn')) return;
-
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
@@ -164,14 +140,9 @@ describeNodeOnly('Scientific Codecs', () => {
  * on Python side and reshaped on JS side.
  */
 describeNodeOnly('ndarray Flatten+Reshape', () => {
-  it(
+  it.skipIf(!NUMPY_ARROW_OK)(
     'handles 1D arrays (no reshape needed)',
     async () => {
-      const pythonPath = await resolvePythonForTests();
-      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-      if (!pythonPath || !hasModule(pythonPath, 'numpy')) return;
-      if (!hasModule(pythonPath, 'pyarrow')) return;
-
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
@@ -188,14 +159,9 @@ describeNodeOnly('ndarray Flatten+Reshape', () => {
     scientificTimeoutMs
   );
 
-  it(
+  it.skipIf(!NUMPY_ARROW_OK)(
     'handles 3D arrays',
     async () => {
-      const pythonPath = await resolvePythonForTests();
-      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-      if (!pythonPath || !hasModule(pythonPath, 'numpy')) return;
-      if (!hasModule(pythonPath, 'pyarrow')) return;
-
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
@@ -223,14 +189,9 @@ describeNodeOnly('ndarray Flatten+Reshape', () => {
     scientificTimeoutMs
   );
 
-  it(
+  it.skipIf(!TORCH_ARROW_OK)(
     'handles 3D torch tensors with Arrow encoding',
     async () => {
-      const pythonPath = await resolvePythonForTests();
-      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-      if (!pythonPath || !hasModule(pythonPath, 'torch')) return;
-      if (!hasModule(pythonPath, 'pyarrow')) return;
-
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
@@ -280,14 +241,9 @@ describeNodeOnly('ndarray Flatten+Reshape', () => {
     scientificTimeoutMs
   );
 
-  it(
+  it.skipIf(!NUMPY_ARROW_OK)(
     'handles single-element arrays',
     async () => {
-      const pythonPath = await resolvePythonForTests();
-      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-      if (!pythonPath || !hasModule(pythonPath, 'numpy')) return;
-      if (!hasModule(pythonPath, 'pyarrow')) return;
-
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
@@ -304,14 +260,9 @@ describeNodeOnly('ndarray Flatten+Reshape', () => {
     scientificTimeoutMs
   );
 
-  it(
+  it.skipIf(!TORCH_ARROW_OK)(
     'handles single-element multi-dimensional arrays',
     async () => {
-      const pythonPath = await resolvePythonForTests();
-      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-      if (!pythonPath || !hasModule(pythonPath, 'torch')) return;
-      if (!hasModule(pythonPath, 'pyarrow')) return;
-
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
@@ -334,14 +285,9 @@ describeNodeOnly('ndarray Flatten+Reshape', () => {
     scientificTimeoutMs
   );
 
-  it(
+  it.skipIf(!TORCH_ARROW_OK)(
     'preserves dtype for float arrays',
     async () => {
-      const pythonPath = await resolvePythonForTests();
-      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-      if (!pythonPath || !hasModule(pythonPath, 'torch')) return;
-      if (!hasModule(pythonPath, 'pyarrow')) return;
-
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,
@@ -374,14 +320,9 @@ describeNodeOnly('ndarray Flatten+Reshape', () => {
     scientificTimeoutMs
   );
 
-  it(
+  it.skipIf(!TORCH_ARROW_OK)(
     'handles 4D tensors (image-like batches)',
     async () => {
-      const pythonPath = await resolvePythonForTests();
-      if (!pythonAvailable(pythonPath) || !existsSync(scriptPath)) return;
-      if (!pythonPath || !hasModule(pythonPath, 'torch')) return;
-      if (!hasModule(pythonPath, 'pyarrow')) return;
-
       const bridge = new NodeBridge({
         scriptPath,
         pythonPath,

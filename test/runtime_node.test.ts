@@ -3,7 +3,7 @@
  * Tests subprocess Python execution, timeout handling, virtual environments, and data transfer
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -12,15 +12,38 @@ import { delimiter, join } from 'path';
 import { NodeBridge } from '../src/runtime/node.js';
 import { BridgeExecutionError, BridgeProtocolError } from '../src/runtime/errors.js';
 import { TYWRAP_PROTOCOL_VERSION } from '../src/runtime/transport.js';
-import { getDefaultPythonPath, resolvePythonExecutable } from '../src/utils/python.js';
+import { getDefaultPythonPath } from '../src/utils/python.js';
 import { isNodejs, getVenvBinDir } from '../src/utils/runtime.js';
+import { PYTHON_AVAILABLE, pythonExprTruthy, hasPythonBinary } from './helpers/python-probe.js';
 
 // Skip all tests if not running in Node.js
 const describeNodeOnly = isNodejs() ? describe : describe.skip;
 
+// Synchronous availability gates. These feed it.skipIf(...) so that tests
+// requiring a real Python interpreter SKIP loudly (visible in the reporter)
+// instead of silently early-returning and reporting a vacuous pass.
+const scriptPath = 'runtime/python_bridge.py';
+const BRIDGE_SCRIPT_OK = existsSync(scriptPath);
+// The interpreter is required for every live bridge test; the bridge script is
+// always present in the repo, so PYTHON_OK is the effective gate.
+const PYTHON_OK = PYTHON_AVAILABLE && BRIDGE_SCRIPT_OK;
+// Pydantic v2 (BaseModel.model_dump) feature gate, probed once at load.
+const PYDANTIC_V2_OK =
+  PYTHON_OK &&
+  pythonExprTruthy(
+    "import pydantic; from pydantic import BaseModel; print('1' if hasattr(BaseModel, 'model_dump') else '0')"
+  );
+// Protocol-error fixtures live in test/fixtures and are always present in the
+// repo, so these gates collapse to PYTHON availability in practice.
+const fixturePath = (name: string): string => join(process.cwd(), 'test', 'fixtures', name);
+const NOISY_FIXTURE_OK = PYTHON_OK && existsSync(fixturePath('noisy_bridge.py'));
+const FRAGMENTED_FIXTURE_OK = PYTHON_OK && existsSync(fixturePath('fragmented_bridge.py'));
+const INVALID_FIXTURE_OK = PYTHON_OK && existsSync(fixturePath('invalid_json_bridge.py'));
+// One test pins the `python` (not `python3`) binary specifically.
+const PYTHON_BINARY_OK = BRIDGE_SCRIPT_OK && hasPythonBinary('python');
+
 describeNodeOnly('Node.js Runtime Bridge', () => {
   let bridge: NodeBridge;
-  const scriptPath = 'runtime/python_bridge.py';
   const isCi =
     ['1', 'true'].includes((process.env.CI ?? '').toLowerCase()) ||
     ['1', 'true'].includes((process.env.GITHUB_ACTIONS ?? '').toLowerCase()) ||
@@ -31,53 +54,6 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
   const averageThresholdMs = isCi ? 2000 : 1000;
   const defaultPythonPath = getDefaultPythonPath();
 
-  // Helper function to check if Python is available
-  const isPythonAvailable = async (pythonPath?: string): Promise<boolean> => {
-    try {
-      const { exec } = await import('child_process');
-      const { promisify } = await import('util');
-      const execAsync = promisify(exec);
-      const resolvedPython = pythonPath ?? (await resolvePythonExecutable());
-      await execAsync(`${resolvedPython} --version`);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const isPythonExprTruthy = async (expr: string): Promise<boolean> => {
-    try {
-      const { execFile } = await import('child_process');
-      const { promisify } = await import('util');
-      const resolvedPython = await resolvePythonExecutable();
-      const execFileAsync = promisify(execFile);
-      const { stdout } = await execFileAsync(resolvedPython, ['-c', expr], {
-        encoding: 'utf-8',
-        timeout: 10_000,
-      });
-      return String(stdout).trim() === '1';
-    } catch {
-      return false;
-    }
-  };
-
-  // Helper function to check if Python bridge script exists
-  const isBridgeScriptAvailable = (): boolean => {
-    return existsSync(scriptPath);
-  };
-
-  beforeAll(async () => {
-    const pythonAvailable = await isPythonAvailable();
-    const scriptAvailable = isBridgeScriptAvailable();
-
-    if (!pythonAvailable) {
-      console.warn('Python3 not available, skipping Node.js bridge tests');
-    }
-    if (!scriptAvailable) {
-      console.warn('Python bridge script not found, skipping Node.js bridge tests');
-    }
-  });
-
   describe('Basic Bridge Operations', () => {
     beforeEach(async () => {
       bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });
@@ -87,12 +63,9 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       await bridge?.dispose();
     });
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should initialize and dispose cleanly',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         await bridge.init();
         await bridge.dispose();
         expect(true).toBe(true); // Test passes if no errors thrown
@@ -100,24 +73,18 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle basic math operations',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const result = await bridge.call<number>('math', 'sqrt', [16]);
         expect(result).toBe(4);
       },
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should not timeout when args include nested id fields',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const result = await bridge.call<string>('builtins', 'str', [{ id: 999, value: 'ok' }]);
         expect(result).toContain("'id': 999");
         expect(result).toContain("'value': 'ok'");
@@ -125,12 +92,9 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should roundtrip Uint8Array as Python bytes',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const input = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
 
         const length = await bridge.call<number>('builtins', 'len', [input]);
@@ -143,12 +107,9 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should support zero-length Uint8Array as Python bytes',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const input = new Uint8Array([]);
 
         const length = await bridge.call<number>('builtins', 'len', [input]);
@@ -161,12 +122,9 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should reject malformed bytes envelopes with explicit protocol error',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         await expect(
           bridge.call('builtins', 'len', [{ __tywrap_bytes__: true, b64: '%%%' }])
         ).rejects.toThrow(/Invalid bytes envelope: invalid base64/);
@@ -174,12 +132,9 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle function calls with kwargs',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         // Test with built-in pow function
         const result = await bridge.call<number>('builtins', 'pow', [2], { exp: 3 });
         expect(result).toBe(8);
@@ -187,12 +142,9 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle class instantiation',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         // Test with built-in Counter class
         const counterHandle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2, 3]]);
         expect(typeof counterHandle).toBe('string');
@@ -210,12 +162,9 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should report bridge info and track instance counts',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const info = await bridge.getBridgeInfo();
         expect(info.protocol).toBe('tywrap/1');
         expect(info.protocolVersion).toBe(TYWRAP_PROTOCOL_VERSION);
@@ -248,12 +197,9 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
   });
 
   describe('Stdlib Serialization', () => {
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should serialize datetime, Decimal, UUID, and Path values',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         let tempDir: string | undefined;
         try {
           tempDir = await mkdtemp(join(tmpdir(), 'tywrap-stdlib-'));
@@ -328,18 +274,10 @@ def get_path():
   });
 
   describe('Pydantic Serialization', () => {
-    it(
+    // Only applies to pydantic v2 (BaseModel.model_dump); PYDANTIC_V2_OK implies PYTHON.
+    it.skipIf(!PYDANTIC_V2_OK)(
       'surfaces model_dump failures explicitly',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
-        // Only applies to pydantic v2 (BaseModel.model_dump).
-        const pydanticV2Available = await isPythonExprTruthy(
-          "import pydantic; from pydantic import BaseModel; print('1' if hasattr(BaseModel, 'model_dump') else '0')"
-        );
-        if (!pydanticV2Available) return;
-
         let tempDir: string | undefined;
         try {
           tempDir = await mkdtemp(join(tmpdir(), 'tywrap-pydantic-'));
@@ -386,12 +324,9 @@ def get_bad():
       await bridge?.dispose();
     });
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should timeout long-running operations',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         bridge = new NodeBridge({ scriptPath, timeoutMs: 1000 });
 
         // Test with a sleep operation that should timeout
@@ -400,12 +335,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle timeout configuration',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const shortTimeoutBridge = new NodeBridge({
           scriptPath,
           timeoutMs: 500,
@@ -418,12 +350,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should ignore late responses for timed-out requests',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         bridge = new NodeBridge({ scriptPath, timeoutMs: 1000 });
         const sleepSeconds = 1.5;
 
@@ -457,46 +386,34 @@ def get_bad():
       await bridge?.dispose();
     });
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle Python exceptions gracefully',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         // Try to divide by zero
         await expect(bridge.call('operator', 'truediv', [1, 0])).rejects.toThrow();
       },
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle module import errors',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         await expect(bridge.call('nonexistent_module', 'some_function', [])).rejects.toThrow();
       },
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle invalid function names',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         await expect(bridge.call('math', 'nonexistent_function', [])).rejects.toThrow();
       },
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should reject invalid instance handles',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
         await bridge.disposeInstance(handle);
 
@@ -507,12 +424,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should allow disposing the same instance handle twice',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
         await bridge.disposeInstance(handle);
 
@@ -521,12 +435,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should reject responses that exceed TYWRAP_CODEC_MAX_BYTES',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         let tempDir: string | undefined;
         let limitBridge: NodeBridge | undefined;
         try {
@@ -563,11 +474,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!BRIDGE_SCRIPT_OK)(
       'should emit a descriptive error when Python fails to start',
       async () => {
-        if (!isBridgeScriptAvailable()) return;
-
         const badBridge = new NodeBridge({
           scriptPath,
           pythonPath: 'nonexistent_python',
@@ -586,13 +495,10 @@ def get_bad():
   });
 
   describe('Environment Configuration', () => {
-    it(
+    it.skipIf(!PYTHON_BINARY_OK)(
       'should support custom Python paths',
       async () => {
         // Test with python instead of python3 if available
-        const pythonAvailable = await isPythonAvailable('python');
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const customBridge = new NodeBridge({
           pythonPath: 'python',
           scriptPath,
@@ -607,12 +513,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should support custom working directories',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const customBridge = new NodeBridge({
           scriptPath: join('..', scriptPath),
           cwd: process.cwd(),
@@ -632,12 +535,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should support custom environment variables',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const customBridge = new NodeBridge({
           scriptPath,
           env: { TEST_ENV_VAR: 'test_value' },
@@ -676,12 +576,9 @@ def get_bad():
       }
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should filter environment variables by TYWRAP_ prefix',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         process.env.UNSAFE_VAR = 'secret';
         process.env.TYWRAP_SAFE = 'exposed';
 
@@ -701,12 +598,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should support JSON fallback configuration',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const fallbackBridge = new NodeBridge({
           scriptPath,
           enableJsonFallback: true,
@@ -724,12 +618,9 @@ def get_bad():
   });
 
   describe('Warmup Commands', () => {
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should execute warmup commands during init',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         let tempDir: string | undefined;
         let warmupBridge: NodeBridge | undefined;
         try {
@@ -768,12 +659,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_AVAILABLE)(
       'should allow timeoutMs 0 to disable the worker readiness timeout',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable) return;
-
         let tempDir: string | undefined;
         let warmupBridge: NodeBridge | undefined;
         try {
@@ -819,12 +707,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should surface warmup failures and keep bridge not ready',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         let tempDir: string | undefined;
         let warmupBridge: NodeBridge | undefined;
         try {
@@ -864,12 +749,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should surface warmup request encoding failures with command context',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         let warmupBridge: NodeBridge | undefined;
         try {
           warmupBridge = new NodeBridge({
@@ -891,12 +773,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_AVAILABLE)(
       'should reject malformed warmup success envelopes',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable) return;
-
         let tempDir: string | undefined;
         let warmupBridge: NodeBridge | undefined;
         try {
@@ -954,12 +833,9 @@ def get_bad():
       await bridge?.dispose();
     });
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle various data types',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         // Test numbers
         const num = await bridge.call<number>('builtins', 'float', [42.5]);
         expect(num).toBe(42.5);
@@ -975,12 +851,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle lists and arrays',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const inputList = [1, 2, 3, 4, 5];
         const result = await bridge.call<number[]>('builtins', 'list', [inputList]);
         expect(result).toEqual(inputList);
@@ -988,12 +861,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle dictionaries and objects',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const inputDict = { a: 1, b: 2, c: 3 };
         const result = await bridge.call<Record<string, number>>('builtins', 'dict', [], inputDict);
         expect(result).toEqual(inputDict);
@@ -1001,12 +871,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle large data transfers',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         // Create a large list
         const largeList = Array.from({ length: 10000 }, (_, i) => i);
         const result = await bridge.call<number[]>('builtins', 'list', [largeList]);
@@ -1017,12 +884,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle large string payloads',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const payload = 'x'.repeat(256 * 1024);
         const result = await bridge.call<string>('builtins', 'str', [payload]);
         expect(result.length).toBe(payload.length);
@@ -1034,12 +898,9 @@ def get_bad():
   });
 
   describe('Process Management', () => {
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle subprocess lifecycle correctly',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });
 
         // Initialize
@@ -1058,12 +919,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle multiple concurrent calls',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });
 
         // Make multiple concurrent calls
@@ -1080,12 +938,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle process crashes gracefully',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });
 
         // Initialize bridge
@@ -1102,14 +957,13 @@ def get_bad():
   });
 
   describe('Protocol Errors', () => {
-    it(
+    it.skipIf(!NOISY_FIXTURE_OK)(
       'should surface invalid stdout lines as errors',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        const noisyScriptPath = join(process.cwd(), 'test', 'fixtures', 'noisy_bridge.py');
-        if (!pythonAvailable || !existsSync(noisyScriptPath)) return;
-
-        bridge = new NodeBridge({ scriptPath: noisyScriptPath, timeoutMs: defaultTimeoutMs });
+        bridge = new NodeBridge({
+          scriptPath: fixturePath('noisy_bridge.py'),
+          timeoutMs: defaultTimeoutMs,
+        });
 
         // In the new architecture, invalid stdout lines cause protocol errors
         await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow('Protocol error');
@@ -1119,19 +973,13 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!FRAGMENTED_FIXTURE_OK)(
       'should handle fragmented JSON frames',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        const fragmentedScriptPath = join(
-          process.cwd(),
-          'test',
-          'fixtures',
-          'fragmented_bridge.py'
-        );
-        if (!pythonAvailable || !existsSync(fragmentedScriptPath)) return;
-
-        bridge = new NodeBridge({ scriptPath: fragmentedScriptPath, timeoutMs: defaultTimeoutMs });
+        bridge = new NodeBridge({
+          scriptPath: fixturePath('fragmented_bridge.py'),
+          timeoutMs: defaultTimeoutMs,
+        });
 
         const result = await bridge.call<number>('math', 'sqrt', [4]);
         expect(result).toBe(42);
@@ -1141,14 +989,13 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!INVALID_FIXTURE_OK)(
       'should surface invalid JSON frames as errors',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        const invalidScriptPath = join(process.cwd(), 'test', 'fixtures', 'invalid_json_bridge.py');
-        if (!pythonAvailable || !existsSync(invalidScriptPath)) return;
-
-        bridge = new NodeBridge({ scriptPath: invalidScriptPath, timeoutMs: defaultTimeoutMs });
+        bridge = new NodeBridge({
+          scriptPath: fixturePath('invalid_json_bridge.py'),
+          timeoutMs: defaultTimeoutMs,
+        });
 
         // In the new architecture, invalid JSON causes protocol errors
         await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow('Protocol error');
@@ -1160,12 +1007,9 @@ def get_bad():
   });
 
   describe('Virtual Environment Support', () => {
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should respect PYTHONPATH environment',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         // Test that the bridge includes tywrap_ir in PYTHONPATH by default
         bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });
 
@@ -1181,12 +1025,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should support custom PYTHONPATH additions',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const customPythonPath = '/custom/python/path';
         bridge = new NodeBridge({
           scriptPath,
@@ -1206,12 +1047,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should set VIRTUAL_ENV and PATH when virtualEnv is provided',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         let tempDir: string | undefined;
         try {
           tempDir = await mkdtemp(join(tmpdir(), 'tywrap-venv-'));
@@ -1246,13 +1084,10 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should preserve distinct lowercase path env overrides on POSIX',
       async () => {
         if (process.platform === 'win32') return;
-
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
 
         let tempDir: string | undefined;
         try {
@@ -1288,12 +1123,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should not append an empty PATH segment when PATH is blank',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         let tempDir: string | undefined;
         try {
           const { execFile } = await import('child_process');
@@ -1348,12 +1180,9 @@ def get_bad():
       await bridge?.dispose();
     });
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should have reasonable startup time',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const start = Date.now();
         await bridge.init();
         const initTime = Date.now() - start;
@@ -1364,12 +1193,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle rapid successive calls efficiently',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         const start = Date.now();
         const calls = 10;
 
@@ -1388,12 +1214,9 @@ def get_bad():
   });
 
   describe('Edge Cases and Error Recovery', () => {
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle very large argument lists',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });
 
         // Test with max function and many arguments
@@ -1404,12 +1227,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle special floating point values',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });
 
         // Test with basic float operations that should work
@@ -1427,12 +1247,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle Unicode strings correctly',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });
 
         const unicodeString = '🐍 Python with Unicode: αβγδε ñáéíóú 中文';
@@ -1442,12 +1259,9 @@ def get_bad():
       testTimeout
     );
 
-    it(
+    it.skipIf(!PYTHON_OK)(
       'should handle None/null values',
       async () => {
-        const pythonAvailable = await isPythonAvailable();
-        if (!pythonAvailable || !isBridgeScriptAvailable()) return;
-
         bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });
 
         const listHandle = await bridge.instantiate('builtins', 'list', []);
