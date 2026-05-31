@@ -142,36 +142,38 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === 'string');
 }
 
+function validateModuleConfig(scope: string, moduleConfig: PythonModuleConfig): void {
+  const { version, alias, functions, classes, exclude, excludePatterns, typeHints } = moduleConfig;
+  if (version !== undefined && typeof version !== 'string') {
+    throw new Error(`${scope}.version must be a string`);
+  }
+  if (alias !== undefined && typeof alias !== 'string') {
+    throw new Error(`${scope}.alias must be a string`);
+  }
+  const stringArrayFields: ReadonlyArray<readonly [string, unknown]> = [
+    ['functions', functions],
+    ['classes', classes],
+    ['exclude', exclude],
+    ['excludePatterns', excludePatterns],
+  ];
+  for (const [field, value] of stringArrayFields) {
+    if (value !== undefined && !isStringArray(value)) {
+      throw new Error(`${scope}.${field} must be an array of strings`);
+    }
+  }
+  if (typeHints !== undefined && !VALID_TYPE_HINTS.includes(typeHints)) {
+    throw new Error(`${scope}.typeHints must be one of ${VALID_TYPE_HINTS.join(', ')}`);
+  }
+  // Note: `runtime` is a deprecated, dead per-module field (see PythonModuleConfig).
+  // It is intentionally not validated so legacy configs keep loading; it has no effect.
+}
+
 function validatePythonModules(modules: Record<string, PythonModuleConfig>): void {
   for (const [name, moduleConfig] of Object.entries(modules)) {
     if (!isPlainObject(moduleConfig)) {
       throw new Error(`pythonModules.${name} must be an object`);
     }
-    const scope = `pythonModules.${name}`;
-    const { version, alias, functions, classes, exclude, excludePatterns, typeHints } =
-      moduleConfig;
-    if (version !== undefined && typeof version !== 'string') {
-      throw new Error(`${scope}.version must be a string`);
-    }
-    if (alias !== undefined && typeof alias !== 'string') {
-      throw new Error(`${scope}.alias must be a string`);
-    }
-    const stringArrayFields: ReadonlyArray<readonly [string, unknown]> = [
-      ['functions', functions],
-      ['classes', classes],
-      ['exclude', exclude],
-      ['excludePatterns', excludePatterns],
-    ];
-    for (const [field, value] of stringArrayFields) {
-      if (value !== undefined && !isStringArray(value)) {
-        throw new Error(`${scope}.${field} must be an array of strings`);
-      }
-    }
-    if (typeHints !== undefined && !VALID_TYPE_HINTS.includes(typeHints)) {
-      throw new Error(`${scope}.typeHints must be one of ${VALID_TYPE_HINTS.join(', ')}`);
-    }
-    // Note: `runtime` is a deprecated, dead per-module field (see PythonModuleConfig).
-    // It is intentionally not validated so legacy configs keep loading; it has no effect.
+    validateModuleConfig(`pythonModules.${name}`, moduleConfig);
   }
 }
 
