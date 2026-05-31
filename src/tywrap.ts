@@ -18,7 +18,6 @@ import type {
 } from './types/index.js';
 import { fsUtils, pathUtils, processUtils, isWindows } from './utils/runtime.js';
 import { globalCache } from './utils/cache.js';
-import { globalParallelProcessor } from './utils/parallel-processor.js';
 import { resolvePythonExecutable } from './utils/python.js';
 import { computeIrCacheFilename } from './utils/ir-cache.js';
 
@@ -45,7 +44,6 @@ export async function tywrap(options: Partial<TywrapOptions> = {}): Promise<Tywr
   const generator = new CodeGenerator(mapper);
 
   globalCache.setDebug(options.debug ?? false);
-  globalParallelProcessor.setDebug(options.debug ?? false);
 
   return {
     mapper,
@@ -155,7 +153,7 @@ export async function generate(
     const moduleConfig = entry[1];
     // reset collector for each module
     unknownTypeNamesCollector = new Map();
-    // Prefer Python IR extractor over TS analyzer with optional cache
+    // Resolve module IR via the Python extractor (with optional cache)
     const cacheKey = await computeCacheKey(moduleKey, resolvedOptions);
     let ir: unknown | null = null;
     let irError: string | undefined;
