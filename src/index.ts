@@ -146,8 +146,8 @@ export {
   clearArrowDecoder,
 } from './utils/codec.js';
 
-// Version info
-export const VERSION = '0.3.0';
+// Version info — single-sourced from package.json via scripts/generate-version.mjs
+export { VERSION } from './version.js';
 
 /**
  * Quick setup function for getting started
