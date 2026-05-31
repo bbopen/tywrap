@@ -1,8 +1,30 @@
 /**
- * Runtime bridge registry for generated wrappers.
+ * tywrap/runtime entrypoint.
+ *
+ * Exposes the runtime bridge registry used by generated wrappers, plus the
+ * lower-level boundary primitives (codec + transport contract) for consumers
+ * building custom bridges. These were previously re-exported from the package
+ * root; they now live here so the root surface stays small.
  */
 
 import type { RuntimeExecution } from '../types/index.js';
+
+// SafeCodec — validation and serialization for the JS<->Python boundary
+export { SafeCodec, type CodecOptions } from './safe-codec.js';
+
+// Transport contract — abstract I/O channel interface and guards
+export type {
+  Transport,
+  TransportOptions,
+  ProtocolMessage,
+  ProtocolResponse,
+} from './transport.js';
+export {
+  PROTOCOL_ID,
+  isTransport,
+  isProtocolMessage,
+  isProtocolResponse,
+} from './transport.js';
 
 let runtimeBridge: RuntimeExecution | null = null;
 
