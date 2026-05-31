@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/bbopen/tywrap/compare/v0.4.0...v0.5.0) (2026-05-30)
+
+Bridges no longer extend a shared protocol base class. Each one (Node, HTTP, Pyodide) now holds an `RpcClient`, and `BridgeProtocol` is renamed to `RpcClient`.
+
+**Breaking:** replace `BridgeProtocol` with `RpcClient` in your imports. The `python_bridge` serializer helpers (`serialize_ndarray` and the rest) are no longer re-exported.
+
+Pyodide now speaks the same wire protocol as the subprocess bridge, so the six scientific markers and `meta` work the same in the browser. A conformance suite runs every backend against the same cases.
+
+### Bug Fixes
+
+Minor fixes across the codec and runtime.
+
+### Dependencies
+
+Dependency updates.
+
 ## [0.4.0](https://github.com/bbopen/tywrap/compare/v0.3.1...v0.4.0) (2026-04-12)
 
 ### Features
