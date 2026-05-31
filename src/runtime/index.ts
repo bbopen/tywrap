@@ -9,8 +9,8 @@
 
 import type { RuntimeExecution } from '../types/index.js';
 
-// SafeCodec — validation and serialization for the JS<->Python boundary
-export { SafeCodec, type CodecOptions } from './safe-codec.js';
+// BridgeCodec — validation and serialization for the JS<->Python boundary
+export { BridgeCodec, type CodecOptions } from './bridge-codec.js';
 
 // Transport contract — abstract I/O channel interface and guards
 export type {

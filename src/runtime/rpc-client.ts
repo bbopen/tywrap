@@ -1,7 +1,7 @@
 /**
  * RpcClient - the single correlated-RPC client for JS<->Python communication.
  *
- * It HOLDS a Transport and a codec (SafeCodec) and is, in turn, HELD by the
+ * It HOLDS a Transport and a codec (BridgeCodec) and is, in turn, HELD by the
  * bridge facades (NodeBridge/HttpBridge/PyodideBridge) via composition — it is
  * NOT a base class bridges extend. It owns the one place where the wire frame
  * is built and correlated: id generation, {id, protocol} stamping, codec
@@ -22,7 +22,7 @@ import type { BridgeInfo } from '../types/index.js';
 
 import { DisposableBase, type ExecuteOptions } from './bounded-context.js';
 import { BridgeProtocolError } from './errors.js';
-import { SafeCodec, type CodecOptions } from './safe-codec.js';
+import { BridgeCodec, type CodecOptions } from './bridge-codec.js';
 import {
   PROTOCOL_ID,
   TYWRAP_PROTOCOL_VERSION,
@@ -184,7 +184,7 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
 // =============================================================================
 
 /**
- * RpcClient holds a SafeCodec + Transport and composes DisposableBase for
+ * RpcClient holds a BridgeCodec + Transport and composes DisposableBase for
  * lifecycle/bounded-execution. It is the one correlated-RPC client; bridge
  * facades HOLD an instance and delegate their PythonRuntime methods to it.
  *
@@ -204,7 +204,7 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
  */
 export class RpcClient extends DisposableBase {
   /** Codec instance for validation and serialization */
-  readonly codec: SafeCodec;
+  readonly codec: BridgeCodec;
 
   /** Transport instance for message passing */
   readonly transport: Transport;
@@ -225,7 +225,7 @@ export class RpcClient extends DisposableBase {
    */
   constructor(options: RpcClientOptions) {
     super();
-    this.codec = new SafeCodec(options.codec);
+    this.codec = new BridgeCodec(options.codec);
     this.transport = options.transport;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30000;
 

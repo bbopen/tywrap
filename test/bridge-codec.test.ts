@@ -1,12 +1,12 @@
 /**
- * SafeCodec Test Suite
+ * BridgeCodec Test Suite
  *
- * Comprehensive tests for the SafeCodec class that provides unified
+ * Comprehensive tests for the BridgeCodec class that provides unified
  * validation and serialization for JS<->Python boundary crossing.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { SafeCodec, type CodecOptions } from '../src/runtime/safe-codec.js';
+import { BridgeCodec, type CodecOptions } from '../src/runtime/bridge-codec.js';
 import {
   BridgeCodecError,
   BridgeProtocolError,
@@ -19,7 +19,7 @@ import {
 
 describe('CodecOptions defaults', () => {
   it('applies default values when no options provided', () => {
-    const codec = new SafeCodec();
+    const codec = new BridgeCodec();
     // Test defaults by verifying behavior
     // rejectSpecialFloats defaults to true
     expect(() => codec.encodeRequest(NaN)).toThrow(BridgeCodecError);
@@ -31,7 +31,7 @@ describe('CodecOptions defaults', () => {
   });
 
   it('allows custom options to override defaults', () => {
-    const codec = new SafeCodec({
+    const codec = new BridgeCodec({
       rejectSpecialFloats: false,
       rejectNonStringKeys: false,
       maxPayloadBytes: 100,
@@ -53,7 +53,7 @@ describe('CodecOptions defaults', () => {
   });
 
   it('uses bytesHandling default of base64', () => {
-    const codec = new SafeCodec();
+    const codec = new BridgeCodec();
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const payload = codec.encodeRequest({ data: bytes });
     const parsed = JSON.parse(payload);
@@ -67,10 +67,10 @@ describe('CodecOptions defaults', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('encodeRequest - Special Float Rejection', () => {
-  let codec: SafeCodec;
+  let codec: BridgeCodec;
 
   beforeEach(() => {
-    codec = new SafeCodec({ rejectSpecialFloats: true });
+    codec = new BridgeCodec({ rejectSpecialFloats: true });
   });
 
   it('rejects NaN at top level', () => {
@@ -117,7 +117,7 @@ describe('encodeRequest - Special Float Rejection', () => {
   });
 
   it('can be disabled via rejectSpecialFloats: false', () => {
-    const permissiveCodec = new SafeCodec({ rejectSpecialFloats: false });
+    const permissiveCodec = new BridgeCodec({ rejectSpecialFloats: false });
     // NaN becomes null in JSON
     const payload = permissiveCodec.encodeRequest({ value: NaN });
     expect(JSON.parse(payload)).toEqual({ value: null });
@@ -132,10 +132,10 @@ describe('encodeRequest - Special Float Rejection', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('encodeRequest - Non-String Key Rejection', () => {
-  let codec: SafeCodec;
+  let codec: BridgeCodec;
 
   beforeEach(() => {
-    codec = new SafeCodec({ rejectNonStringKeys: true });
+    codec = new BridgeCodec({ rejectNonStringKeys: true });
   });
 
   it('rejects Map with number keys', () => {
@@ -199,7 +199,7 @@ describe('encodeRequest - Non-String Key Rejection', () => {
   });
 
   it('can be disabled via rejectNonStringKeys: false', () => {
-    const permissiveCodec = new SafeCodec({ rejectNonStringKeys: false });
+    const permissiveCodec = new BridgeCodec({ rejectNonStringKeys: false });
     const map = new Map<number, string>([[1, 'one']]);
     // Validation should pass (though JSON.stringify still won't serialize Map properly)
     expect(() => permissiveCodec.encodeRequest({ data: map })).not.toThrow();
@@ -212,7 +212,7 @@ describe('encodeRequest - Non-String Key Rejection', () => {
 
 describe('encodeRequest - Size Limits', () => {
   it('rejects payload exceeding maxPayloadBytes', () => {
-    const codec = new SafeCodec({ maxPayloadBytes: 100 });
+    const codec = new BridgeCodec({ maxPayloadBytes: 100 });
     const largeData = { data: 'x'.repeat(200) };
     expect(() => codec.encodeRequest(largeData)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(largeData)).toThrow(/exceeds maximum/);
@@ -220,13 +220,13 @@ describe('encodeRequest - Size Limits', () => {
   });
 
   it('passes payload under limit', () => {
-    const codec = new SafeCodec({ maxPayloadBytes: 1000 });
+    const codec = new BridgeCodec({ maxPayloadBytes: 1000 });
     const smallData = { data: 'x'.repeat(50) };
     expect(() => codec.encodeRequest(smallData)).not.toThrow();
   });
 
   it('allows custom limit to be set', () => {
-    const tinyCodec = new SafeCodec({ maxPayloadBytes: 50 });
+    const tinyCodec = new BridgeCodec({ maxPayloadBytes: 50 });
     const smallData = { a: 1 };
     expect(() => tinyCodec.encodeRequest(smallData)).not.toThrow();
     const biggerData = { data: 'x'.repeat(100) };
@@ -234,14 +234,14 @@ describe('encodeRequest - Size Limits', () => {
   });
 
   it('default limit is 10MB', () => {
-    const codec = new SafeCodec();
+    const codec = new BridgeCodec();
     // Just under 10MB should pass (we use a smaller value for test speed)
     const safeData = { data: 'x'.repeat(1000) };
     expect(() => codec.encodeRequest(safeData)).not.toThrow();
   });
 
   it('calculates size in bytes not characters (handles unicode)', () => {
-    const codec = new SafeCodec({ maxPayloadBytes: 50 });
+    const codec = new BridgeCodec({ maxPayloadBytes: 50 });
     // Multi-byte unicode characters: emoji is typically 4 bytes
     const emojiData = { data: '\u{1F600}'.repeat(10) }; // 10 emoji = 40+ bytes
     // The JSON encoding will be larger due to unicode escape sequences or UTF-8
@@ -259,7 +259,7 @@ describe('encodeRequest - Size Limits', () => {
 
 describe('encodeRequest - Serialization Errors', () => {
   it('circular references throw BridgeCodecError by default', () => {
-    const codec = new SafeCodec();
+    const codec = new BridgeCodec();
     const circular: Record<string, unknown> = { a: 1 };
     circular.self = circular;
     expect(() => codec.encodeRequest(circular)).toThrow(BridgeCodecError);
@@ -267,7 +267,7 @@ describe('encodeRequest - Serialization Errors', () => {
   });
 
   it('circular references throw BridgeCodecError when validation guardrails are disabled', () => {
-    const codec = new SafeCodec({ rejectSpecialFloats: false, rejectNonStringKeys: false });
+    const codec = new BridgeCodec({ rejectSpecialFloats: false, rejectNonStringKeys: false });
     const circular: Record<string, unknown> = { a: 1 };
     circular.self = circular;
     expect(() => codec.encodeRequest(circular)).toThrow(BridgeCodecError);
@@ -275,14 +275,14 @@ describe('encodeRequest - Serialization Errors', () => {
   });
 
   it('BigInt throws BridgeCodecError', () => {
-    const codec = new SafeCodec();
+    const codec = new BridgeCodec();
     const data = { value: BigInt(12345678901234567890n) };
     expect(() => codec.encodeRequest(data)).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest(data)).toThrow(/JSON serialization failed/);
   });
 
   it('functions are omitted by JSON.stringify', () => {
-    const codec = new SafeCodec();
+    const codec = new BridgeCodec();
     const data = { fn: () => 'test' };
     // Functions are converted to undefined/omitted by JSON.stringify
     // Actually they're just omitted, so this should not throw
@@ -291,7 +291,7 @@ describe('encodeRequest - Serialization Errors', () => {
   });
 
   it('undefined values are handled by JSON.stringify', () => {
-    const codec = new SafeCodec();
+    const codec = new BridgeCodec();
     const data = { a: undefined, b: 1 };
     const payload = codec.encodeRequest(data);
     // undefined properties are omitted
@@ -305,7 +305,7 @@ describe('encodeRequest - Serialization Errors', () => {
 
 describe('encodeRequest - Bytes Handling', () => {
   it('encodes Uint8Array to base64 with marker (default)', () => {
-    const codec = new SafeCodec({ bytesHandling: 'base64' });
+    const codec = new BridgeCodec({ bytesHandling: 'base64' });
     const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
     const payload = codec.encodeRequest({ data: bytes });
     const parsed = JSON.parse(payload);
@@ -314,7 +314,7 @@ describe('encodeRequest - Bytes Handling', () => {
   });
 
   it('encodes ArrayBuffer to base64 with marker', () => {
-    const codec = new SafeCodec({ bytesHandling: 'base64' });
+    const codec = new BridgeCodec({ bytesHandling: 'base64' });
     const buffer = new Uint8Array([1, 2, 3, 4]).buffer;
     const payload = codec.encodeRequest({ data: buffer });
     const parsed = JSON.parse(payload);
@@ -323,7 +323,7 @@ describe('encodeRequest - Bytes Handling', () => {
   });
 
   it('rejects binary data when bytesHandling is reject', () => {
-    const codec = new SafeCodec({ bytesHandling: 'reject' });
+    const codec = new BridgeCodec({ bytesHandling: 'reject' });
     const bytes = new Uint8Array([1, 2, 3]);
     expect(() => codec.encodeRequest({ data: bytes })).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest({ data: bytes })).toThrow(/binary data found/);
@@ -331,7 +331,7 @@ describe('encodeRequest - Bytes Handling', () => {
   });
 
   it('passes through binary data when bytesHandling is passthrough', () => {
-    const codec = new SafeCodec({ bytesHandling: 'passthrough' });
+    const codec = new BridgeCodec({ bytesHandling: 'passthrough' });
     const bytes = new Uint8Array([1, 2, 3]);
     // passthrough means we don't transform, but JSON.stringify will still fail
     // to serialize Uint8Array properly (it becomes an object with indices)
@@ -346,10 +346,10 @@ describe('encodeRequest - Bytes Handling', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('decodeResponse - Basic', () => {
-  let codec: SafeCodec;
+  let codec: BridgeCodec;
 
   beforeEach(() => {
-    codec = new SafeCodec();
+    codec = new BridgeCodec();
   });
 
   it('parses valid JSON', () => {
@@ -378,7 +378,7 @@ describe('decodeResponse - Basic', () => {
   });
 
   it('decodes bytes envelope even when bytesHandling is reject', () => {
-    const rejectCodec = new SafeCodec({ bytesHandling: 'reject' });
+    const rejectCodec = new BridgeCodec({ bytesHandling: 'reject' });
     const payload = JSON.stringify({
       id: 1,
       result: { __type__: 'bytes', encoding: 'base64', data: 'SGVsbG8=' }, // "Hello"
@@ -421,7 +421,7 @@ describe('decodeResponse - Basic', () => {
   });
 
   it('respects maxPayloadBytes on response', () => {
-    const smallCodec = new SafeCodec({ maxPayloadBytes: 50 });
+    const smallCodec = new BridgeCodec({ maxPayloadBytes: 50 });
     const largePayload = JSON.stringify({ data: 'x'.repeat(100) });
     expect(() => smallCodec.decodeResponse(largePayload)).toThrow(BridgeCodecError);
     expect(() => smallCodec.decodeResponse(largePayload)).toThrow(/exceeds maximum/);
@@ -433,10 +433,10 @@ describe('decodeResponse - Basic', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('decodeResponse - Error Detection', () => {
-  let codec: SafeCodec;
+  let codec: BridgeCodec;
 
   beforeEach(() => {
-    codec = new SafeCodec();
+    codec = new BridgeCodec();
   });
 
   it('detects { error: { type, message } } format', () => {
@@ -525,7 +525,7 @@ describe('decodeResponse - Post-decode Validation', () => {
   // checking that valid JSON passes through correctly
 
   it('passes valid JSON with finite numbers', () => {
-    const codec = new SafeCodec({ rejectSpecialFloats: true });
+    const codec = new BridgeCodec({ rejectSpecialFloats: true });
     const payload = JSON.stringify({ value: 3.14159, nested: [1, 2, 3] });
     const result = codec.decodeResponse<{ value: number; nested: number[] }>(payload);
     expect(result.value).toBeCloseTo(3.14159);
@@ -533,7 +533,7 @@ describe('decodeResponse - Post-decode Validation', () => {
   });
 
   it('handles null values correctly', () => {
-    const codec = new SafeCodec({ rejectSpecialFloats: true });
+    const codec = new BridgeCodec({ rejectSpecialFloats: true });
     const payload = JSON.stringify({ value: null, list: [null, 1, null] });
     const result = codec.decodeResponse<{ value: null; list: (null | number)[] }>(payload);
     expect(result.value).toBeNull();
@@ -546,10 +546,10 @@ describe('decodeResponse - Post-decode Validation', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('decodeResponseAsync - Arrow Integration', () => {
-  let codec: SafeCodec;
+  let codec: BridgeCodec;
 
   beforeEach(() => {
-    codec = new SafeCodec();
+    codec = new BridgeCodec();
   });
 
   it('handles simple JSON without Arrow markers', async () => {
@@ -559,7 +559,7 @@ describe('decodeResponseAsync - Arrow Integration', () => {
   });
 
   it('respects maxPayloadBytes', async () => {
-    const smallCodec = new SafeCodec({ maxPayloadBytes: 50 });
+    const smallCodec = new BridgeCodec({ maxPayloadBytes: 50 });
     const largePayload = JSON.stringify({ data: 'x'.repeat(100) });
     await expect(smallCodec.decodeResponseAsync(largePayload)).rejects.toThrow(BridgeCodecError);
   });
@@ -620,10 +620,10 @@ describe('decodeResponseAsync - Arrow Integration', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('Round-trip encoding/decoding', () => {
-  let codec: SafeCodec;
+  let codec: BridgeCodec;
 
   beforeEach(() => {
-    codec = new SafeCodec();
+    codec = new BridgeCodec();
   });
 
   it('round-trips simple objects', () => {
@@ -660,7 +660,7 @@ describe('Round-trip encoding/decoding', () => {
   });
 
   it('round-trips with special values converted', () => {
-    const permissiveCodec = new SafeCodec({ rejectSpecialFloats: false });
+    const permissiveCodec = new BridgeCodec({ rejectSpecialFloats: false });
     const original = { normal: 42, special: NaN };
     const encoded = permissiveCodec.encodeRequest(original);
     const decoded = permissiveCodec.decodeResponse<{ normal: number; special: null }>(encoded);
@@ -675,10 +675,10 @@ describe('Round-trip encoding/decoding', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('Edge Cases', () => {
-  let codec: SafeCodec;
+  let codec: BridgeCodec;
 
   beforeEach(() => {
-    codec = new SafeCodec();
+    codec = new BridgeCodec();
   });
 
   it('handles empty objects', () => {
@@ -749,10 +749,10 @@ describe('Edge Cases', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('decodeResponse - Protocol Validation', () => {
-  let codec: SafeCodec;
+  let codec: BridgeCodec;
 
   beforeEach(() => {
-    codec = new SafeCodec();
+    codec = new BridgeCodec();
   });
 
   it('accepts response without protocol field (backwards compatibility)', () => {

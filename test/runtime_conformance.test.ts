@@ -624,7 +624,7 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
         const backend = get();
         if (!backend) continue;
 
-        // New JS SafeCodec shape.
+        // New JS BridgeCodec shape.
         const modern = await backend.dispatch({
           method: 'call',
           params: {
@@ -727,7 +727,7 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
   );
 
   // -------------------------------------------------------------------------
-  // Case 11: SafeCodec value edge cases (set/frozenset, complex rejection)
+  // Case 11: BridgeCodec value edge cases (set/frozenset, complex rejection)
   // -------------------------------------------------------------------------
   it.skipIf(!PYTHON_OK)(
     'set serializes to list and complex is rejected',

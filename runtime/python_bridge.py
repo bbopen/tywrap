@@ -8,7 +8,7 @@ subprocess transport and the HTTP transport:
   - env-var size guards (TYWRAP_CODEC_MAX_BYTES / TYWRAP_REQUEST_MAX_BYTES)
   - TYWRAP_CODEC_FALLBACK=json marker mode and TYWRAP_TORCH_ALLOW_COPY
   - the real OS pid and bridge='python-subprocess' identity
-  - the final SafeCodec.encode wrapper (NaN rejection + numpy scalar coercion +
+  - the final BridgeCodec.encode wrapper (NaN rejection + numpy scalar coercion +
     the explicit byte-size limit error message)
 
 The protocol dispatch, request deserialization, and the 6 __tywrap__ marker
@@ -22,7 +22,7 @@ import json
 import os
 import importlib  # noqa: F401  (re-exported for compat / used by handlers via core)
 
-from safe_codec import SafeCodec, CodecError
+from safe_codec import BridgeCodec, CodecError
 
 import tywrap_bridge_core as core
 
@@ -138,12 +138,12 @@ def get_codec_max_bytes():
 # Why: parse once at startup to avoid per-response env lookups.
 CODEC_MAX_BYTES = get_codec_max_bytes()
 
-# Why: use SafeCodec for final JSON encoding to reject NaN/Infinity and handle
-# edge cases like numpy scalars. We use sys.maxsize for SafeCodec's internal limit
+# Why: use BridgeCodec for final JSON encoding to reject NaN/Infinity and handle
+# edge cases like numpy scalars. We use sys.maxsize for BridgeCodec's internal limit
 # to preserve the original "no limit unless TYWRAP_CODEC_MAX_BYTES is set" behavior.
 # The explicit size check in encode_response() provides the specific error message
 # mentioning the env var name, which is important for debugging.
-_response_codec = SafeCodec(
+_response_codec = BridgeCodec(
     allow_nan=False,
     max_payload_bytes=sys.maxsize,
 )
@@ -250,7 +250,7 @@ def encode_response(out):
     Serialize the response and enforce size limits.
 
     Why: keep payload size checks outside the main loop for clarity and lint compliance.
-    Uses SafeCodec to reject NaN/Infinity and handle edge cases like numpy scalars.
+    Uses BridgeCodec to reject NaN/Infinity and handle edge cases like numpy scalars.
     """
     try:
         payload = _response_codec.encode(out)

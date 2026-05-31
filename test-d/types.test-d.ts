@@ -402,7 +402,7 @@ expectType<typeof import('../src/version.js').VERSION>(RootApi.VERSION);
 
 // Moved/removed members must NOT be reachable from the package root.
 // Codec + transport contract moved to `tywrap/runtime`:
-expectError(RootApi.SafeCodec);
+expectError(RootApi.BridgeCodec);
 expectError(RootApi.isTransport);
 expectError(RootApi.isProtocolMessage);
 expectError(RootApi.isProtocolResponse);

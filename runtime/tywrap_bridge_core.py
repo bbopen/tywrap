@@ -6,7 +6,7 @@ protocol. It is imported by:
 
   - runtime/python_bridge.py  (the Node/Bun/Deno subprocess server and the HTTP
     server), which owns I/O concerns: the stdin/stdout JSONL loop, env-var size
-    guards, the real OS pid, bridge='python-subprocess', and the final SafeCodec
+    guards, the real OS pid, bridge='python-subprocess', and the final BridgeCodec
     encode wrapper.
 
   - the in-WASM Pyodide server (src/runtime/pyodide-transport.ts). Pyodide cannot read
@@ -17,7 +17,7 @@ protocol. It is imported by:
     asserts the generated constant stays byte-identical to this file.
 
 CROSS-LANGUAGE CONTRACT (Python <-> the TypeScript decoder in src/utils/codec.ts
-and the request encoder in src/runtime/safe-codec.ts):
+and the request encoder in src/runtime/bridge-codec.ts):
 
   * Every value-type "marker" envelope carries {'__tywrap__': <type>,
     'codecVersion': 1, 'encoding': ...}. The 6 markers are: ndarray, dataframe,
@@ -85,10 +85,10 @@ def _deserialize_bytes_envelope(value):
     Decode base64-encoded bytes envelopes from JS into Python bytes.
 
     Supported shapes:
-    - { "__tywrap_bytes__": true, "b64": "..." }  (JS SafeCodec.encodeRequest)
+    - { "__tywrap_bytes__": true, "b64": "..." }  (JS BridgeCodec.encodeRequest)
     - { "__type__": "bytes", "encoding": "base64", "data": "..." }  (legacy/compat)
 
-    Why: TS SafeCodec encodes Uint8Array/ArrayBuffer as base64 objects, but
+    Why: TS BridgeCodec encodes Uint8Array/ArrayBuffer as base64 objects, but
     Python handlers expect real bytes/bytearray to preserve behavior (e.g., len()).
     """
     if not isinstance(value, dict):
@@ -530,7 +530,7 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
     """
     Top-level result serializer. Dispatch order is significant: numpy ndarray ->
     dataframe -> series -> scipy.sparse -> torch -> sklearn -> Pydantic -> stdlib
-    -> passthrough. The remaining SafeCodec value behaviors (numpy/pandas scalars,
+    -> passthrough. The remaining BridgeCodec value behaviors (numpy/pandas scalars,
     bytes, sets, complex rejection, NaN/Infinity) are applied later during JSON
     encoding by default_encoder.
     """
@@ -558,12 +558,12 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
 
 
 # =============================================================================
-# JSON ENCODE: SafeCodec-equivalent value handling (NaN reject, scalars, bytes)
+# JSON ENCODE: BridgeCodec-equivalent value handling (NaN reject, scalars, bytes)
 # =============================================================================
 #
-# This mirrors SafeCodec._default_encoder (runtime/safe_codec.py) for the VALUE
+# This mirrors BridgeCodec._default_encoder (runtime/safe_codec.py) for the VALUE
 # behaviors that are part of the wire contract. The subprocess server still uses
-# the real SafeCodec for its final encode (it also enforces size limits); this
+# the real BridgeCodec for its final encode (it also enforces size limits); this
 # core encoder exists so the Pyodide server gets identical value handling without
 # depending on safe_codec.py. The conformance suite asserts these behaviors match.
 
@@ -594,7 +594,7 @@ def _is_pandas_scalar(obj):
 
 def make_default_encoder(*, allow_nan):
     """
-    Build a json.dumps default= encoder matching SafeCodec's value handling.
+    Build a json.dumps default= encoder matching BridgeCodec's value handling.
 
     Raises CodecError for NaN/Infinity extracted from numpy scalars (json.dumps
     itself rejects top-level/nested NaN/Infinity floats when allow_nan=False).
@@ -663,11 +663,11 @@ def make_default_encoder(*, allow_nan):
 
 def encode_value(value, *, allow_nan):
     """
-    JSON-encode a fully-serialized response value, applying the SafeCodec-equivalent
+    JSON-encode a fully-serialized response value, applying the BridgeCodec-equivalent
     default encoder and rejecting NaN/Infinity when allow_nan is False.
 
     Raises CodecError (wrapping the json.dumps ValueError) on NaN/Infinity, matching
-    SafeCodec's "Cannot serialize NaN..." wording so error parity holds.
+    BridgeCodec's "Cannot serialize NaN..." wording so error parity holds.
     """
     try:
         return json.dumps(value, default=make_default_encoder(allow_nan=allow_nan), allow_nan=allow_nan)

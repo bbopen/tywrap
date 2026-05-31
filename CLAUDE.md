@@ -56,7 +56,7 @@ src/
     http.ts           #   HttpBridge — remote Python server
     base.ts           #   Abstract base bridge
     bridge-core.ts    #   Shared bridge logic
-    safe-codec.ts     #   Arrow/JSON codec with size limits
+    bridge-codec.ts   #   Arrow/JSON codec with size limits
     errors.ts         #   BridgeError, BridgeTimeoutError, etc.
     process-io.ts     #   Subprocess I/O management
     transport.ts      #   Transport abstraction layer

@@ -619,7 +619,7 @@ describeAdversarial('Adversarial playground', () => {
   describe('Protocol contract violations', () => {
     const fixtureCases: Array<{ script: string; pattern: RegExp; skip?: boolean }> = [
       {
-        // Protocol version validation implemented in SafeCodec
+        // Protocol version validation implemented in BridgeCodec
         script: 'wrong_protocol_bridge.py',
         pattern: /Invalid protocol/,
       },

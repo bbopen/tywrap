@@ -1,5 +1,5 @@
 /**
- * SafeCodec - Unified validation and serialization for JS<->Python boundary crossing.
+ * BridgeCodec - Unified validation and serialization for JS<->Python boundary crossing.
  *
  * Provides safe encoding/decoding with configurable guardrails for:
  * - Special float rejection (NaN, Infinity)
@@ -18,7 +18,7 @@ import { PROTOCOL_ID } from './transport.js';
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Configuration options for SafeCodec behavior.
+ * Configuration options for BridgeCodec behavior.
  */
 export interface CodecOptions {
   /** Reject NaN/Infinity in arguments. Default: true */
@@ -293,16 +293,16 @@ function findSpecialFloatPath(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SAFE CODEC CLASS
+// BRIDGE CODEC CLASS
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * SafeCodec provides unified validation and serialization for JS<->Python
+ * BridgeCodec provides unified validation and serialization for JS<->Python
  * boundary crossing with configurable guardrails.
  *
  * @example
  * ```typescript
- * const codec = new SafeCodec({ rejectSpecialFloats: true });
+ * const codec = new BridgeCodec({ rejectSpecialFloats: true });
  *
  * // Encoding a request
  * const payload = codec.encodeRequest({ data: [1, 2, 3] });
@@ -314,7 +314,7 @@ function findSpecialFloatPath(
  * const dataframe = await codec.decodeResponseAsync<ArrowTable>(arrowPayload);
  * ```
  */
-export class SafeCodec {
+export class BridgeCodec {
   private readonly rejectSpecialFloats: boolean;
   private readonly rejectNonStringKeys: boolean;
   private readonly maxPayloadBytes: number;
@@ -332,7 +332,7 @@ export class SafeCodec {
   }
 
   private assertValidBase64(b64: string): void {
-    if (!SafeCodec.base64Pattern.test(b64)) {
+    if (!BridgeCodec.base64Pattern.test(b64)) {
       throw new BridgeCodecError('Invalid base64 in bytes envelope', {
         codecPhase: 'decode',
         valueType: 'bytes',
@@ -368,8 +368,8 @@ export class SafeCodec {
    * JSON.parse reviver that decodes bytes envelopes.
    *
    * Supported shapes:
-   * - { "__tywrap_bytes__": true, "b64": "..." } (JS SafeCodec.encodeRequest; also allowed in responses)
-   * - { "__type__": "bytes", "encoding": "base64", "data": "..." } (Python SafeCodec default encoder)
+   * - { "__tywrap_bytes__": true, "b64": "..." } (JS BridgeCodec.encodeRequest; also allowed in responses)
+   * - { "__type__": "bytes", "encoding": "base64", "data": "..." } (Python BridgeCodec default encoder)
    */
   private reviveValue(_key: string, value: unknown): unknown {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {

@@ -47,7 +47,7 @@ describe('public API surface', () => {
   it('does not leak runtime plumbing from the package root', () => {
     const root = RootApi as Record<string, unknown>;
     // Codec + transport contract moved to tywrap/runtime.
-    expect(root.SafeCodec).toBeUndefined();
+    expect(root.BridgeCodec).toBeUndefined();
     expect(root.isTransport).toBeUndefined();
     expect(root.PROTOCOL_ID).toBeUndefined();
     // Registry moved to tywrap/runtime.
@@ -72,7 +72,7 @@ describe('public API surface', () => {
     expect(typeof RuntimeApi.setRuntimeBridge).toBe('function');
     expect(typeof RuntimeApi.getRuntimeBridge).toBe('function');
     expect(typeof RuntimeApi.clearRuntimeBridge).toBe('function');
-    expect(typeof RuntimeApi.SafeCodec).toBe('function');
+    expect(typeof RuntimeApi.BridgeCodec).toBe('function');
     expect(typeof RuntimeApi.isTransport).toBe('function');
     expect(typeof RuntimeApi.isProtocolMessage).toBe('function');
     expect(typeof RuntimeApi.isProtocolResponse).toBe('function');

@@ -14,7 +14,7 @@ import { autoRegisterArrowDecoder } from '../utils/codec.js';
 import { DisposableBase } from './bounded-context.js';
 import { RpcClient, type GetBridgeInfoOptions } from './rpc-client.js';
 import { HttpTransport } from './http-transport.js';
-import type { CodecOptions } from './safe-codec.js';
+import type { CodecOptions } from './bridge-codec.js';
 
 // =============================================================================
 // OPTIONS
@@ -51,7 +51,7 @@ export interface HttpBridgeOptions {
  * Features:
  * - Stateless HTTP POST communication
  * - Timeout handling via AbortController
- * - Full SafeCodec validation (NaN/Infinity rejection, key validation)
+ * - Full BridgeCodec validation (NaN/Infinity rejection, key validation)
  * - Automatic Arrow decoding for DataFrames/ndarrays
  *
  * @example

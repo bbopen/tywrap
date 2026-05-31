@@ -2,7 +2,7 @@
  * RpcClient Integration Test Suite
  *
  * Comprehensive tests for the RpcClient correlated-RPC client that integrates:
- * - SafeCodec (encoding/decoding with validation)
+ * - BridgeCodec (encoding/decoding with validation)
  * - Transport (message sending/receiving)
  * - WorkerPool (concurrent transport management)
  *
@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RpcClient, type RpcClientOptions } from '../src/runtime/rpc-client.js';
-import { SafeCodec, type CodecOptions } from '../src/runtime/safe-codec.js';
+import { BridgeCodec, type CodecOptions } from '../src/runtime/bridge-codec.js';
 import {
   type Transport,
   type ProtocolMessage,
@@ -43,9 +43,9 @@ import {
  * - Success: { id: string, result: T }
  * - Error: { id: string, error: { type, message, traceback? } }
  *
- * The SafeCodec decodes this and returns the full parsed object.
+ * The BridgeCodec decodes this and returns the full parsed object.
  * BridgeProtocol's call/instantiate/callMethod methods return the full
- * response object as decoded by SafeCodec (not just the result field).
+ * response object as decoded by BridgeCodec (not just the result field).
  */
 class MockTransport implements Transport {
   public lastMessage?: string;
@@ -167,7 +167,7 @@ class TestBridgeProtocol extends RpcClient {
   /**
    * Expose the codec for inspection.
    */
-  getCodec(): SafeCodec {
+  getCodec(): BridgeCodec {
     return this.codec;
   }
 }
@@ -333,7 +333,7 @@ describe('BridgeProtocol', () => {
       }
     });
 
-    it('encodes request via SafeCodec', async () => {
+    it('encodes request via BridgeCodec', async () => {
       transport.setDynamicResponse(msg => 'success');
 
       await protocol.testSendMessage<ProtocolResponse>({
@@ -371,7 +371,7 @@ describe('BridgeProtocol', () => {
       expect(transport.lastMessage).toContain('"module":"math"');
     });
 
-    it('decodes response via SafeCodec', async () => {
+    it('decodes response via BridgeCodec', async () => {
       transport.setDynamicResponse(() => ({ value: 42, nested: { data: 'test' } }));
 
       const result = await protocol.testSendMessage<{ value: number; nested: { data: string } }>({
@@ -383,7 +383,7 @@ describe('BridgeProtocol', () => {
         },
       });
 
-      // SafeCodec extracts the result field from the response
+      // BridgeCodec extracts the result field from the response
       expect(result).toEqual({ value: 42, nested: { data: 'test' } });
     });
 
@@ -482,7 +482,7 @@ describe('BridgeProtocol', () => {
     it('call() sends correct message type', async () => {
       transport.setDynamicResponse(() => 4);
 
-      // call() returns the extracted result (SafeCodec extracts from response envelope)
+      // call() returns the extracted result (BridgeCodec extracts from response envelope)
       const result = await protocol.call<number>('math', 'sqrt', [16]);
 
       expect(result).toBe(4);
@@ -566,7 +566,7 @@ describe('BridgeProtocol', () => {
 // =============================================================================
 
 describe('BridgeProtocol Integration', () => {
-  describe('SafeCodec + Transport', () => {
+  describe('BridgeCodec + Transport', () => {
     let protocol: TestBridgeProtocol;
     let transport: MockTransport;
 
@@ -817,7 +817,7 @@ describe('BridgeProtocol Integration', () => {
   // FULL STACK INTEGRATION
   // ===========================================================================
 
-  describe('Full stack (SafeCodec + Transport + Pool + Protocol)', () => {
+  describe('Full stack (BridgeCodec + Transport + Pool + Protocol)', () => {
     let pool: WorkerPool;
 
     afterEach(async () => {
@@ -848,7 +848,7 @@ describe('BridgeProtocol Integration', () => {
 
       // Execute a full request through the pool
       const result = await pool.withWorker(async worker => {
-        const codec = new SafeCodec();
+        const codec = new BridgeCodec();
 
         // Encode request
         const request = codec.encodeRequest({
@@ -865,7 +865,7 @@ describe('BridgeProtocol Integration', () => {
         // Send through transport
         const responseStr = await worker.transport.send(request, 5000);
 
-        // Decode response (SafeCodec extracts the result)
+        // Decode response (BridgeCodec extracts the result)
         const response = codec.decodeResponse<number>(responseStr);
         return response;
       });
@@ -888,7 +888,7 @@ describe('BridgeProtocol Integration', () => {
 
       await expect(
         pool.withWorker(async worker => {
-          const codec = new SafeCodec();
+          const codec = new BridgeCodec();
           const request = codec.encodeRequest({
             id: 1,
             protocol: 'tywrap/1',
@@ -924,7 +924,7 @@ describe('BridgeProtocol Integration', () => {
 
       await expect(
         pool.withWorker(async worker => {
-          const codec = new SafeCodec({ rejectSpecialFloats: true });
+          const codec = new BridgeCodec({ rejectSpecialFloats: true });
           // This should throw before reaching transport
           codec.encodeRequest({
             id: 1,
@@ -966,7 +966,7 @@ describe('BridgeProtocol Integration', () => {
 
       const operations = [
         pool.withWorker(async worker => {
-          const codec = new SafeCodec();
+          const codec = new BridgeCodec();
           const req = codec.encodeRequest({
             id: 1,
             protocol: 'tywrap/1',
@@ -977,7 +977,7 @@ describe('BridgeProtocol Integration', () => {
           return codec.decodeResponse<number>(res);
         }),
         pool.withWorker(async worker => {
-          const codec = new SafeCodec();
+          const codec = new BridgeCodec();
           const req = codec.encodeRequest({
             id: 2,
             protocol: 'tywrap/1',
@@ -988,7 +988,7 @@ describe('BridgeProtocol Integration', () => {
           return codec.decodeResponse<number>(res);
         }),
         pool.withWorker(async worker => {
-          const codec = new SafeCodec();
+          const codec = new BridgeCodec();
           const req = codec.encodeRequest({
             id: 3,
             protocol: 'tywrap/1',

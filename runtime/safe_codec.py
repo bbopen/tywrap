@@ -87,7 +87,7 @@ def _has_pydantic_model_dump(obj: Any) -> bool:
     return callable(model_dump)
 
 
-class SafeCodec:
+class BridgeCodec:
     """
     Safe JSON codec with explicit edge case handling.
 
@@ -103,7 +103,7 @@ class SafeCodec:
         max_payload_bytes: Maximum payload size in bytes (default 10MB).
 
     Example:
-        >>> codec = SafeCodec()
+        >>> codec = BridgeCodec()
         >>> codec.encode({"key": "value"})
         '{"key": "value"}'
         >>> codec.decode('{"key": "value"}')
@@ -300,19 +300,19 @@ class SafeCodec:
 
 
 # Module-level convenience instance with default settings
-_default_codec: Optional[SafeCodec] = None
+_default_codec: Optional[BridgeCodec] = None
 
 
-def get_default_codec() -> SafeCodec:
+def get_default_codec() -> BridgeCodec:
     """
-    Get or create the default SafeCodec instance.
+    Get or create the default BridgeCodec instance.
 
     Returns:
-        The default SafeCodec instance with standard settings.
+        The default BridgeCodec instance with standard settings.
     """
     global _default_codec
     if _default_codec is None:
-        _default_codec = SafeCodec()
+        _default_codec = BridgeCodec()
     return _default_codec
 
 
@@ -331,7 +331,7 @@ def encode(value: Any, *, allow_nan: bool = False) -> str:
         CodecError: If encoding fails.
     """
     if allow_nan:
-        codec = SafeCodec(allow_nan=True)
+        codec = BridgeCodec(allow_nan=True)
         return codec.encode(value)
     return get_default_codec().encode(value)
 

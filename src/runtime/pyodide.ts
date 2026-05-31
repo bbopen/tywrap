@@ -13,7 +13,7 @@ import type { PythonRuntime, BridgeInfo } from '../types/index.js';
 import { DisposableBase } from './bounded-context.js';
 import { RpcClient, type GetBridgeInfoOptions } from './rpc-client.js';
 import { PyodideTransport } from './pyodide-transport.js';
-import type { CodecOptions } from './safe-codec.js';
+import type { CodecOptions } from './bridge-codec.js';
 
 // =============================================================================
 // OPTIONS
@@ -51,7 +51,7 @@ export interface PyodideBridgeOptions {
  * - Zero network overhead (in-memory execution)
  * - Automatic Pyodide loading from CDN or module
  * - Python package loading support
- * - Full SafeCodec validation (NaN/Infinity rejection, key validation)
+ * - Full BridgeCodec validation (NaN/Infinity rejection, key validation)
  * - Proper proxy cleanup to prevent memory leaks
  *
  * @example

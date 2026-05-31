@@ -24,7 +24,7 @@ import { RpcClient, type GetBridgeInfoOptions } from './rpc-client.js';
 import { BridgeCodecError, BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import { SubprocessTransport } from './subprocess-transport.js';
 import { PooledTransport } from './pooled-transport.js';
-import type { CodecOptions } from './safe-codec.js';
+import type { CodecOptions } from './bridge-codec.js';
 import type { PooledWorker } from './worker-pool.js';
 
 // =============================================================================
@@ -277,7 +277,7 @@ function normalizeWarmupCommands(commands: NodeBridgeOptions['warmupCommands']):
  * Features:
  * - Single or multi-process execution via process pooling
  * - Virtual environment support
- * - Full SafeCodec validation (NaN/Infinity rejection, key validation)
+ * - Full BridgeCodec validation (NaN/Infinity rejection, key validation)
  * - Automatic Arrow decoding for DataFrames/ndarrays
  * - Optional result caching for pure functions
  * - Process warmup commands
