@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.1](https://github.com/bbopen/tywrap/compare/v0.6.0...v0.6.1) (2026-05-31)
+
+A maintenance release. Nothing you call changes — no API, behavior, or wire-protocol changes.
+
+Internal cleanup only: removed two dead exports, broke the eleven worst complexity hotspots into smaller helpers with their output unchanged (cache-key generation, type-hint validation, the dev watch/reload paths, the subprocess write queue, module discovery, path and interpreter resolution, and an annotation-parser helper), and factored the duplicated request/response dispatch in the codec and RPC client into one path. The static-analysis actionable-complexity count dropped from 14 to 3 — the remaining three are deferred to 0.7.0 or left as-is on purpose.
+
 ## [0.6.0](https://github.com/bbopen/tywrap/compare/v0.5.1...v0.6.0) (2026-05-31)
 
 A cleanup release. There are no new features — this is one breaking pass that renames much of the runtime vocabulary, trims the public API, and tightens a couple of defaults, so the churn happens once instead of dribbling across several releases. If you only use the high-level `tywrap()`, `generate()`, and `defineConfig()` API, most of this won't touch you. The wire protocol is unchanged, so a 0.5.x client and a 0.6.0 bridge still talk to each other.
