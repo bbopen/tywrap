@@ -9,7 +9,7 @@ protocol. It is imported by:
     guards, the real OS pid, bridge='python-subprocess', and the final SafeCodec
     encode wrapper.
 
-  - the in-WASM Pyodide server (src/runtime/pyodide-io.ts). Pyodide cannot read
+  - the in-WASM Pyodide server (src/runtime/pyodide-transport.ts). Pyodide cannot read
     this file from disk, so it is shipped as a build-time-generated TypeScript
     string constant (src/runtime/pyodide-bootstrap-core.generated.ts) produced by
     scripts/generate-pyodide-bootstrap.mjs and exec'd into a module registered in

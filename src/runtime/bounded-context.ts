@@ -6,8 +6,8 @@
  * ownership tracking. It carries ZERO RPC methods by design — the
  * cross-boundary RPC contract (call/instantiate/callMethod/disposeInstance)
  * is PythonRuntime, implemented only by the bridge facades, never by a base
- * class or a transport. This separation is what keeps transports (ProcessIO,
- * PooledTransport, WorkerPool, PyodideIO) and RpcClient from having to stub
+ * class or a transport. This separation is what keeps transports (SubprocessTransport,
+ * PooledTransport, WorkerPool, PyodideTransport) and RpcClient from having to stub
  * RPC methods they do not implement.
  *
  * Reused by RpcClient and all transports.

@@ -194,7 +194,7 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
  *   private readonly rpc: RpcClient;
  *   constructor(options: NodeBridgeOptions) {
  *     super();
- *     const transport = new ProcessIO(options);
+ *     const transport = new SubprocessTransport(options);
  *     this.rpc = new RpcClient({ transport, defaultTimeoutMs: options.timeout });
  *     this.trackResource(this.rpc);
  *   }

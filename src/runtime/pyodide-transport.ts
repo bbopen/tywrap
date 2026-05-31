@@ -1,5 +1,5 @@
 /**
- * PyodideIO Transport - In-memory Pyodide communication for browser environments.
+ * PyodideTransport - In-memory Pyodide communication for browser environments.
  *
  * This transport implements the Transport interface for direct in-memory
  * communication with Pyodide (Python compiled to WebAssembly). It is designed
@@ -29,9 +29,9 @@ import {
 // =============================================================================
 
 /**
- * Options for configuring the PyodideIO transport.
+ * Options for configuring the PyodideTransport.
  */
-export interface PyodideIOOptions {
+export interface PyodideTransportOptions {
   /** URL for Pyodide CDN. Default: official CDN */
   indexURL?: string;
   /** Python packages to load during initialization */
@@ -176,7 +176,7 @@ def __tywrap_dispatch(message_json):
  *
  * @example
  * ```typescript
- * const transport = new PyodideIO({ packages: ['numpy'] });
+ * const transport = new PyodideTransport({ packages: ['numpy'] });
  * await transport.init();
  *
  * const response = await transport.send(
@@ -192,17 +192,17 @@ def __tywrap_dispatch(message_json):
  * await transport.dispose();
  * ```
  */
-export class PyodideIO extends DisposableBase implements Transport {
+export class PyodideTransport extends DisposableBase implements Transport {
   private readonly indexURL: string;
   private readonly packages: readonly string[];
   private py?: PyodideInstance;
 
   /**
-   * Create a new PyodideIO transport.
+   * Create a new PyodideTransport.
    *
    * @param options - Configuration options
    */
-  constructor(options: PyodideIOOptions = {}) {
+  constructor(options: PyodideTransportOptions = {}) {
     super();
     this.indexURL = options.indexURL ?? DEFAULT_INDEX_URL;
     this.packages = Object.freeze([...(options.packages ?? [])]);

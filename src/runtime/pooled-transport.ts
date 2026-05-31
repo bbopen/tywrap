@@ -2,7 +2,7 @@
  * PooledTransport - Transport adapter that wraps WorkerPool for multi-process support.
  *
  * This transport implements the Transport interface by delegating to a WorkerPool
- * of ProcessIO transports. Each send() acquires a worker, sends the message,
+ * of SubprocessTransport transports. Each send() acquires a worker, sends the message,
  * and releases the worker back to the pool.
  *
  * @see https://github.com/bbopen/tywrap/issues/149
@@ -56,7 +56,7 @@ export interface PooledTransportOptions {
  * Transport adapter that wraps WorkerPool for multi-process message handling.
  *
  * PooledTransport presents a single Transport interface while internally
- * distributing requests across multiple worker transports (typically ProcessIO).
+ * distributing requests across multiple worker transports (typically SubprocessTransport).
  *
  * Features:
  * - Lazy worker creation (transports created on demand)
@@ -67,7 +67,7 @@ export interface PooledTransportOptions {
  * @example
  * ```typescript
  * const transport = new PooledTransport({
- *   createTransport: () => new ProcessIO({
+ *   createTransport: () => new SubprocessTransport({
  *     bridgeScript: '/path/to/bridge.py',
  *   }),
  *   maxWorkers: 4,

@@ -3,9 +3,9 @@
  *
  * Provides an abstract I/O channel for all bridge communications across
  * the JS-Python boundary. Concrete implementations handle different runtimes:
- * - ProcessIO: Child process with stdio streams (Node.js)
- * - HttpIO: HTTP POST requests (remote Python server)
- * - PyodideIO: In-memory Pyodide calls (browser/WASM)
+ * - SubprocessTransport: Child process with stdio streams (Node.js)
+ * - HttpTransport: HTTP POST requests (remote Python server)
+ * - PyodideTransport: In-memory Pyodide calls (browser/WASM)
  *
  * @see https://github.com/bbopen/tywrap/issues/149
  */
@@ -115,13 +115,13 @@ export interface ProtocolResponse {
  * 4. Call `dispose()` to release resources
  *
  * Implementations:
- * - ProcessIO: Spawns a Python child process, communicates via stdio
- * - HttpIO: Sends HTTP POST requests to a Python server
- * - PyodideIO: Calls Pyodide directly in-memory (WASM)
+ * - SubprocessTransport: Spawns a Python child process, communicates via stdio
+ * - HttpTransport: Sends HTTP POST requests to a Python server
+ * - PyodideTransport: Calls Pyodide directly in-memory (WASM)
  *
  * @example
  * ```typescript
- * const transport = new ProcessIO({ pythonPath: 'python3' });
+ * const transport = new SubprocessTransport({ pythonPath: 'python3' });
  * await transport.init();
  *
  * const response = await transport.send(

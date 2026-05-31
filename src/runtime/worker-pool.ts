@@ -89,7 +89,7 @@ interface QueuedWaiter {
  * @example
  * ```typescript
  * const pool = new WorkerPool({
- *   createTransport: () => new ProcessIO({ pythonPath: 'python3' }),
+ *   createTransport: () => new SubprocessTransport({ pythonPath: 'python3' }),
  *   maxWorkers: 4,
  *   maxConcurrentPerWorker: 2,
  *   queueTimeoutMs: 5000,

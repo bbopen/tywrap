@@ -20,7 +20,7 @@
  *                      and protect nothing. Instead we run the EXACT generated core
  *                      module (runtime/tywrap_bridge_core.py) the bootstrap embeds,
  *                      invoking core.dispatch_request(..., force_json_markers=True,
- *                      allow_nan=False) the same way pyodide-io.ts does. This is the
+ *                      allow_nan=False) the same way pyodide-transport.ts does. This is the
  *                      row that actually validates Pyodide parity on every run.
  *
  * The pyodide-core backend forces JSON marker encoding (no Arrow), so marker
@@ -38,7 +38,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { isNodejs } from '../src/utils/runtime.js';
 import { resolvePythonExecutable } from '../src/utils/python.js';
-import { BOOTSTRAP_PYTHON } from '../src/runtime/pyodide-io.js';
+import { BOOTSTRAP_PYTHON } from '../src/runtime/pyodide-transport.js';
 
 // ---------------------------------------------------------------------------
 // Availability gates (mirrors the established repo idioms)
@@ -280,7 +280,7 @@ class HttpReferenceBackend implements ConformanceBackend {
 // ---------------------------------------------------------------------------
 
 /**
- * Runs the EXACT Pyodide bootstrap source (src/runtime/pyodide-io.ts
+ * Runs the EXACT Pyodide bootstrap source (src/runtime/pyodide-transport.ts
  * BOOTSTRAP_PYTHON) under CPython, then drives it via a thin stdin loop calling
  * its real __tywrap_dispatch. This exercises the production glue end-to-end on
  * every CI run — the generated core constant the bootstrap inlines, the

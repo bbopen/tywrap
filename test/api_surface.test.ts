@@ -64,7 +64,7 @@ describe('public API surface', () => {
     expect(root.RpcClient).toBeUndefined();
     expect(root.DisposableBase).toBeUndefined();
     expect(root.WorkerPool).toBeUndefined();
-    expect(root.ProcessIO).toBeUndefined();
+    expect(root.SubprocessTransport).toBeUndefined();
     expect(root.ValidationError).toBeUndefined();
   });
 

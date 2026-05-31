@@ -3,9 +3,9 @@
  *
  * Comprehensive tests for the Transport interface and all implementations:
  * - Transport interface type guards
- * - ProcessIO (subprocess-based transport)
- * - HttpIO (HTTP POST-based transport)
- * - PyodideIO (in-memory Pyodide transport)
+ * - SubprocessTransport (subprocess-based transport)
+ * - HttpTransport (HTTP POST-based transport)
+ * - PyodideTransport (in-memory Pyodide transport)
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -18,9 +18,9 @@ import {
   type ProtocolMessage,
   type ProtocolResponse,
 } from '../src/runtime/transport.js';
-import { ProcessIO, type ProcessIOOptions } from '../src/runtime/process-io.js';
-import { HttpIO, type HttpIOOptions } from '../src/runtime/http-io.js';
-import { PyodideIO, type PyodideIOOptions } from '../src/runtime/pyodide-io.js';
+import { SubprocessTransport, type SubprocessTransportOptions } from '../src/runtime/subprocess-transport.js';
+import { HttpTransport, type HttpTransportOptions } from '../src/runtime/http-transport.js';
+import { PyodideTransport, type PyodideTransportOptions } from '../src/runtime/pyodide-transport.js';
 import {
   BridgeDisposedError,
   BridgeProtocolError,
@@ -398,11 +398,11 @@ describe('Transport Interface', () => {
 // PROCESSIO TESTS
 // =============================================================================
 
-describe('ProcessIO', () => {
+describe('SubprocessTransport', () => {
   // Skip tests if Python is not available
   let pythonAvailable: boolean;
 
-  interface ProcessIOInternals {
+  interface SubprocessTransportInternals {
     _state: string;
     processExited: boolean;
     stderrBuffer: string;
@@ -417,17 +417,17 @@ describe('ProcessIO', () => {
 
   describe('constructor', () => {
     it('creates instance with required options', () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
-      expect(transport).toBeInstanceOf(ProcessIO);
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
+      expect(transport).toBeInstanceOf(SubprocessTransport);
     });
 
     it('uses default pythonPath when not specified', () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
       expect(transport).toBeDefined();
     });
 
     it('accepts custom pythonPath', () => {
-      const transport = new ProcessIO({
+      const transport = new SubprocessTransport({
         bridgeScript: '/path/to/bridge.py',
         pythonPath: '/usr/local/bin/python3',
       });
@@ -435,7 +435,7 @@ describe('ProcessIO', () => {
     });
 
     it('accepts custom environment variables', () => {
-      const transport = new ProcessIO({
+      const transport = new SubprocessTransport({
         bridgeScript: '/path/to/bridge.py',
         env: { CUSTOM_VAR: 'value' },
       });
@@ -443,7 +443,7 @@ describe('ProcessIO', () => {
     });
 
     it('accepts custom maxLineLength', () => {
-      const transport = new ProcessIO({
+      const transport = new SubprocessTransport({
         bridgeScript: '/path/to/bridge.py',
         maxLineLength: 1024 * 1024,
       });
@@ -451,7 +451,7 @@ describe('ProcessIO', () => {
     });
 
     it('accepts restartAfterRequests option', () => {
-      const transport = new ProcessIO({
+      const transport = new SubprocessTransport({
         bridgeScript: '/path/to/bridge.py',
         restartAfterRequests: 100,
       });
@@ -461,14 +461,14 @@ describe('ProcessIO', () => {
 
   describe('lifecycle', () => {
     it('starts in idle state', () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
       expect(transport.state).toBe('idle');
       expect(transport.isReady).toBe(false);
       expect(transport.isDisposed).toBe(false);
     });
 
     it('transitions to disposed state after dispose', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
       await transport.dispose();
       expect(transport.state).toBe('disposed');
       expect(transport.isReady).toBe(false);
@@ -476,14 +476,14 @@ describe('ProcessIO', () => {
     });
 
     it('double dispose is idempotent', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
       await transport.dispose();
       await transport.dispose(); // Should not throw
       expect(transport.isDisposed).toBe(true);
     });
 
     it('rejects send after dispose', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
       await transport.dispose();
       const message = JSON.stringify(createValidMessage());
       await expect(transport.send(message, 1000)).rejects.toThrow(BridgeDisposedError);
@@ -492,7 +492,7 @@ describe('ProcessIO', () => {
 
   describe('send - validation', () => {
     it('rejects when process is not running (process exited)', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
 
       // Mock the state to ready but process exited
       (transport as any)._state = 'ready';
@@ -510,11 +510,11 @@ describe('ProcessIO', () => {
     });
 
     it('does not duplicate a write when backpressure starts', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
       const writes: string[] = [];
       let firstWrite = true;
 
-      const internals = transport as unknown as ProcessIOInternals;
+      const internals = transport as unknown as SubprocessTransportInternals;
       internals._state = 'ready';
       internals.processExited = false;
       internals.process = {
@@ -544,11 +544,11 @@ describe('ProcessIO', () => {
     });
 
     it('does not replay queued writes when drain write returns false', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
       const writes: string[] = [];
       let writeCount = 0;
 
-      const internals = transport as unknown as ProcessIOInternals;
+      const internals = transport as unknown as SubprocessTransportInternals;
       internals._state = 'ready';
       internals.processExited = false;
       internals.process = {
@@ -590,9 +590,9 @@ describe('ProcessIO', () => {
     });
 
     it('correlates responses using the top-level request id when args contain nested id fields', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
 
-      const internals = transport as unknown as ProcessIOInternals;
+      const internals = transport as unknown as SubprocessTransportInternals;
       internals._state = 'ready';
       internals.processExited = false;
       internals.process = {
@@ -620,9 +620,9 @@ describe('ProcessIO', () => {
     });
 
     it('accepts id=0 for request/response correlation', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
 
-      const internals = transport as unknown as ProcessIOInternals;
+      const internals = transport as unknown as SubprocessTransportInternals;
       internals._state = 'ready';
       internals.processExited = false;
       internals.process = {
@@ -639,9 +639,9 @@ describe('ProcessIO', () => {
     });
 
     it('rejects pending requests when an unexpected response id arrives', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
 
-      const internals = transport as unknown as ProcessIOInternals;
+      const internals = transport as unknown as SubprocessTransportInternals;
       internals._state = 'ready';
       internals.processExited = false;
       internals.process = {
@@ -660,9 +660,9 @@ describe('ProcessIO', () => {
     });
 
     it('ignores late responses for requests that already timed out', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
 
-      const internals = transport as unknown as ProcessIOInternals;
+      const internals = transport as unknown as SubprocessTransportInternals;
       internals._state = 'ready';
       internals.processExited = false;
       internals.process = {
@@ -681,9 +681,9 @@ describe('ProcessIO', () => {
     });
 
     it('includes stderr diagnostics when stdin write fails', async () => {
-      const transport = new ProcessIO({ bridgeScript: '/path/to/bridge.py' });
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
 
-      const internals = transport as unknown as ProcessIOInternals;
+      const internals = transport as unknown as SubprocessTransportInternals;
       internals._state = 'ready';
       internals.processExited = false;
       internals.stderrBuffer =
@@ -717,7 +717,7 @@ describe('ProcessIO', () => {
 // HTTPIO TESTS
 // =============================================================================
 
-describe('HttpIO', () => {
+describe('HttpTransport', () => {
   // Store original fetch
   const originalFetch = globalThis.fetch;
 
@@ -729,17 +729,17 @@ describe('HttpIO', () => {
 
   describe('constructor', () => {
     it('creates instance with required options', () => {
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
-      expect(transport).toBeInstanceOf(HttpIO);
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
+      expect(transport).toBeInstanceOf(HttpTransport);
     });
 
     it('normalizes URL by removing trailing slash', () => {
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000/' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000/' });
       expect(transport).toBeDefined();
     });
 
     it('accepts custom headers', () => {
-      const transport = new HttpIO({
+      const transport = new HttpTransport({
         baseURL: 'http://localhost:8000',
         headers: { Authorization: 'Bearer token' },
       });
@@ -747,7 +747,7 @@ describe('HttpIO', () => {
     });
 
     it('accepts custom defaultTimeoutMs', () => {
-      const transport = new HttpIO({
+      const transport = new HttpTransport({
         baseURL: 'http://localhost:8000',
         defaultTimeoutMs: 5000,
       });
@@ -757,18 +757,18 @@ describe('HttpIO', () => {
 
   describe('lifecycle', () => {
     it('is ready immediately after construction', () => {
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       expect(transport.isReady).toBe(true);
     });
 
     it('init is a no-op', async () => {
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       await transport.init(); // Should not throw
       expect(transport.isReady).toBe(true);
     });
 
     it('init can be called multiple times', async () => {
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       await transport.init();
       await transport.init();
       await transport.init();
@@ -776,14 +776,14 @@ describe('HttpIO', () => {
     });
 
     it('dispose marks as not ready', async () => {
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       expect(transport.isReady).toBe(true);
       await transport.dispose();
       expect(transport.isReady).toBe(false);
     });
 
     it('double dispose is idempotent', async () => {
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       await transport.dispose();
       await transport.dispose();
       expect(transport.isReady).toBe(false);
@@ -792,7 +792,7 @@ describe('HttpIO', () => {
 
   describe('send', () => {
     it('rejects when disposed', async () => {
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       await transport.dispose();
 
       const message = JSON.stringify(createValidMessage());
@@ -807,7 +807,7 @@ describe('HttpIO', () => {
       });
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({
+      const transport = new HttpTransport({
         baseURL: 'http://localhost:8000',
         headers: { 'X-Custom': 'value' },
       });
@@ -836,7 +836,7 @@ describe('HttpIO', () => {
       });
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
       const result = await transport.send(message, 1000);
 
@@ -852,7 +852,7 @@ describe('HttpIO', () => {
       });
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
       await expect(transport.send(message, 1000)).rejects.toThrow(BridgeExecutionError);
@@ -868,7 +868,7 @@ describe('HttpIO', () => {
       });
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
       await expect(transport.send(message, 1000)).rejects.toThrow(BridgeExecutionError);
@@ -879,7 +879,7 @@ describe('HttpIO', () => {
       const mockFetch = vi.fn().mockRejectedValue(new TypeError('fetch failed: network error'));
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
       await expect(transport.send(message, 1000)).rejects.toThrow(BridgeExecutionError);
@@ -894,7 +894,7 @@ describe('HttpIO', () => {
       });
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
       await expect(transport.send(message, 100)).rejects.toThrow(BridgeTimeoutError);
@@ -905,7 +905,7 @@ describe('HttpIO', () => {
       const controller = new AbortController();
       controller.abort();
 
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
       await expect(transport.send(message, 1000, controller.signal)).rejects.toThrow(
@@ -922,7 +922,7 @@ describe('HttpIO', () => {
       globalThis.fetch = mockFetch;
 
       const externalController = new AbortController();
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
       await transport.send(message, 1000, externalController.signal);
@@ -942,7 +942,7 @@ describe('HttpIO', () => {
       });
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({
+      const transport = new HttpTransport({
         baseURL: 'http://localhost:8000',
         defaultTimeoutMs: 5000,
       });
@@ -963,7 +963,7 @@ describe('HttpIO', () => {
       });
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
       await expect(transport.send(message, 1000)).rejects.toThrow(BridgeExecutionError);
@@ -974,7 +974,7 @@ describe('HttpIO', () => {
       const mockFetch = vi.fn().mockRejectedValue(new BridgeTimeoutError('Custom timeout'));
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
       await expect(transport.send(message, 1000)).rejects.toThrow(BridgeTimeoutError);
@@ -985,7 +985,7 @@ describe('HttpIO', () => {
       const mockFetch = vi.fn().mockRejectedValue(new BridgeExecutionError('Custom error'));
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
       await expect(transport.send(message, 1000)).rejects.toThrow(BridgeExecutionError);
@@ -996,7 +996,7 @@ describe('HttpIO', () => {
       const mockFetch = vi.fn().mockRejectedValue('string error');
       globalThis.fetch = mockFetch;
 
-      const transport = new HttpIO({ baseURL: 'http://localhost:8000' });
+      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
       const message = JSON.stringify(createValidMessage());
 
       await expect(transport.send(message, 1000)).rejects.toThrow(BridgeExecutionError);
@@ -1009,22 +1009,22 @@ describe('HttpIO', () => {
 // PYODIDEIO TESTS
 // =============================================================================
 
-describe('PyodideIO', () => {
+describe('PyodideTransport', () => {
   describe('constructor', () => {
     it('creates instance with default options', () => {
-      const transport = new PyodideIO();
-      expect(transport).toBeInstanceOf(PyodideIO);
+      const transport = new PyodideTransport();
+      expect(transport).toBeInstanceOf(PyodideTransport);
     });
 
     it('accepts custom indexURL', () => {
-      const transport = new PyodideIO({
+      const transport = new PyodideTransport({
         indexURL: 'https://custom-cdn.example.com/pyodide/',
       });
       expect(transport).toBeDefined();
     });
 
     it('accepts packages option', () => {
-      const transport = new PyodideIO({
+      const transport = new PyodideTransport({
         packages: ['numpy', 'pandas'],
       });
       expect(transport).toBeDefined();
@@ -1033,14 +1033,14 @@ describe('PyodideIO', () => {
 
   describe('lifecycle', () => {
     it('starts in idle state', () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
       expect(transport.state).toBe('idle');
       expect(transport.isReady).toBe(false);
       expect(transport.isDisposed).toBe(false);
     });
 
     it('transitions to disposed state after dispose', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
       await transport.dispose();
       expect(transport.state).toBe('disposed');
       expect(transport.isReady).toBe(false);
@@ -1048,7 +1048,7 @@ describe('PyodideIO', () => {
     });
 
     it('double dispose is idempotent', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
       await transport.dispose();
       await transport.dispose();
       expect(transport.isDisposed).toBe(true);
@@ -1061,27 +1061,27 @@ describe('PyodideIO', () => {
 
   describe('interface compliance', () => {
     it('implements Transport interface', () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
       expect(isTransport(transport)).toBe(true);
     });
 
     it('has init method', () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
       expect(typeof transport.init).toBe('function');
     });
 
     it('has send method', () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
       expect(typeof transport.send).toBe('function');
     });
 
     it('has dispose method', () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
       expect(typeof transport.dispose).toBe('function');
     });
 
     it('has isReady property', () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
       expect('isReady' in transport).toBe(true);
       expect(typeof transport.isReady).toBe('boolean');
     });
@@ -1090,7 +1090,7 @@ describe('PyodideIO', () => {
   describe('send - with mocked Pyodide', () => {
     it('validates message JSON', async () => {
       // Create transport and mock the Pyodide instance
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
 
       // Manually set the state to ready and inject a mock Pyodide
       (transport as any)._state = 'ready';
@@ -1105,7 +1105,7 @@ describe('PyodideIO', () => {
     });
 
     it('validates message has required fields', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
 
       (transport as any)._state = 'ready';
       (transport as any).py = {
@@ -1120,7 +1120,7 @@ describe('PyodideIO', () => {
     });
 
     it('rejects legacy type-only message envelopes', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
 
       (transport as any)._state = 'ready';
       (transport as any).py = {
@@ -1141,7 +1141,7 @@ describe('PyodideIO', () => {
     });
 
     it('rejects when Pyodide not initialized', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
 
       (transport as any)._state = 'ready';
       (transport as any).py = undefined;
@@ -1152,7 +1152,7 @@ describe('PyodideIO', () => {
     });
 
     it('rejects when dispatch function not found', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
 
       (transport as any)._state = 'ready';
       (transport as any).py = {
@@ -1169,7 +1169,7 @@ describe('PyodideIO', () => {
     });
 
     it('handles successful dispatch', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
 
       const expectedResponse = JSON.stringify({
         ...createValidResponse(),
@@ -1207,7 +1207,7 @@ describe('PyodideIO', () => {
     });
 
     it('cleans up Pyodide proxy after dispatch', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
 
       const mockDestroy = vi.fn();
       const mockDispatch = Object.assign(
@@ -1229,7 +1229,7 @@ describe('PyodideIO', () => {
     });
 
     it('handles error response from Python', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
 
       const errorResponse = JSON.stringify({
         id: 1,
@@ -1256,7 +1256,7 @@ describe('PyodideIO', () => {
     });
 
     it('returns unknown-method protocol error envelopes as-is', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
       const mockDispatch = vi.fn().mockImplementation((message: string) => {
         const parsed = JSON.parse(message);
         return JSON.stringify({
@@ -1295,7 +1295,7 @@ describe('PyodideIO', () => {
     });
 
     it('handles invalid JSON response from Python', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
 
       const mockDispatch = vi.fn().mockReturnValue('not valid json');
 
@@ -1314,7 +1314,7 @@ describe('PyodideIO', () => {
     });
 
     it('rejects responses with invalid id types', async () => {
-      const transport = new PyodideIO();
+      const transport = new PyodideTransport();
       const mockDispatch = vi.fn().mockReturnValue(
         JSON.stringify({
           id: 'not-a-number',
@@ -1345,9 +1345,9 @@ describe('PyodideIO', () => {
 
 describe('Cross-Transport Interface Compliance', () => {
   const transports: { name: string; create: () => Transport }[] = [
-    { name: 'ProcessIO', create: () => new ProcessIO({ bridgeScript: '/path/to/bridge.py' }) },
-    { name: 'HttpIO', create: () => new HttpIO({ baseURL: 'http://localhost:8000' }) },
-    { name: 'PyodideIO', create: () => new PyodideIO() },
+    { name: 'SubprocessTransport', create: () => new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' }) },
+    { name: 'HttpTransport', create: () => new HttpTransport({ baseURL: 'http://localhost:8000' }) },
+    { name: 'PyodideTransport', create: () => new PyodideTransport() },
   ];
 
   transports.forEach(({ name, create }) => {
@@ -1360,7 +1360,7 @@ describe('Cross-Transport Interface Compliance', () => {
       it('has init method that returns Promise', async () => {
         const transport = create();
         expect(typeof transport.init).toBe('function');
-        // Note: init may throw for some transports (e.g., PyodideIO without Pyodide)
+        // Note: init may throw for some transports (e.g., PyodideTransport without Pyodide)
         // but should still return a Promise
       });
 
