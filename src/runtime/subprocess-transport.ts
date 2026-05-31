@@ -14,6 +14,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import type { Writable } from 'stream';
 import { DisposableBase } from './bounded-context.js';
 import { BridgeDisposedError, BridgeProtocolError, BridgeTimeoutError } from './errors.js';
 import { TimedOutRequestTracker } from './timed-out-request-tracker.js';
@@ -765,19 +766,79 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   }
 
   /**
+   * Reject and clear every entry currently in the write queue.
+   * Clears each entry's timeout before rejecting so no late timer fires.
+   */
+  private rejectAllQueuedWrites(error: Error): void {
+    for (const q of this.writeQueue) {
+      this.clearQueuedWriteTimeout(q);
+      q.reject(error);
+    }
+    this.writeQueue.length = 0;
+  }
+
+  /**
+   * Process a single dequeued write entry: enforce the fallback queue timeout,
+   * then attempt the stdin write. The returned status tells {@link flushWriteQueue}
+   * how to proceed:
+   * - `'continue'`: entry settled (written or timed out); process the next entry.
+   * - `'backpressure'`: write accepted but stream is full; pause until the next drain.
+   * - `'error'`: synchronous write failure; the caller must reject the remaining queue.
+   *
+   * The entry's own timeout must already be cleared by the caller before this runs.
+   */
+  private processQueuedWrite(
+    queued: QueuedWrite,
+    stdin: Writable,
+    now: number
+  ): 'continue' | 'backpressure' | 'error' {
+    // Check for write queue timeout (fallback check, timer should have handled this)
+    if (now - queued.queuedAt > this.writeQueueTimeoutMs) {
+      queued.reject(
+        new BridgeTimeoutError(
+          `Write queue timeout: entry waited ${now - queued.queuedAt}ms (limit: ${this.writeQueueTimeoutMs}ms)`
+        )
+      );
+      return 'continue';
+    }
+
+    try {
+      const canWrite = stdin.write(queued.data);
+
+      if (canWrite) {
+        queued.resolve();
+        return 'continue';
+      }
+
+      // Backpressure - this write has been accepted by stream buffer.
+      // Pause further queued writes until the next "drain" event.
+      queued.resolve();
+      this.draining = true;
+      return 'backpressure';
+    } catch (err) {
+      // Synchronous write error (e.g., EPIPE) - reject this entry; caller rejects the rest.
+      const errorMessage = err instanceof Error ? err.message : 'unknown';
+      const error = new BridgeProtocolError(this.withStderrTail(`Write error: ${errorMessage}`));
+      queued.reject(error);
+      this.rejectAllQueuedWrites(error);
+      this.markForRestart();
+      return 'error';
+    }
+  }
+
+  /**
    * Flush queued writes when backpressure clears.
    */
   private flushWriteQueue(): void {
     const now = Date.now();
 
     while (this.writeQueue.length > 0 && !this.draining) {
-      if (!this.process?.stdin || this.processExited) {
+      const stdin = this.process?.stdin;
+      if (!stdin || this.processExited) {
         // Process died - reject all queued writes
-        for (const q of this.writeQueue) {
-          this.clearQueuedWriteTimeout(q);
-          q.reject(new BridgeProtocolError(this.withStderrTail('Process stdin not available')));
-        }
-        this.writeQueue.length = 0;
+        this.rejectAllQueuedWrites(
+          new BridgeProtocolError(this.withStderrTail('Process stdin not available'))
+        );
         this.markForRestart();
         return;
       }
@@ -790,39 +851,8 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       // Clear the timeout since we're processing this entry now
       this.clearQueuedWriteTimeout(queued);
 
-      // Check for write queue timeout (fallback check, timer should have handled this)
-      if (now - queued.queuedAt > this.writeQueueTimeoutMs) {
-        queued.reject(
-          new BridgeTimeoutError(
-            `Write queue timeout: entry waited ${now - queued.queuedAt}ms (limit: ${this.writeQueueTimeoutMs}ms)`
-          )
-        );
-        continue; // Process next entry
-      }
-
-      try {
-        const canWrite = this.process.stdin.write(queued.data);
-
-        if (canWrite) {
-          queued.resolve();
-        } else {
-          // Backpressure - this write has been accepted by stream buffer.
-          // Pause further queued writes until the next "drain" event.
-          queued.resolve();
-          this.draining = true;
-          return;
-        }
-      } catch (err) {
-        // Synchronous write error (e.g., EPIPE) - reject this and all remaining writes
-        const errorMessage = err instanceof Error ? err.message : 'unknown';
-        const error = new BridgeProtocolError(this.withStderrTail(`Write error: ${errorMessage}`));
-        queued.reject(error);
-        for (const q of this.writeQueue) {
-          this.clearQueuedWriteTimeout(q);
-          q.reject(error);
-        }
-        this.writeQueue.length = 0;
-        this.markForRestart();
+      const status = this.processQueuedWrite(queued, stdin, now);
+      if (status === 'backpressure' || status === 'error') {
         return;
       }
     }
