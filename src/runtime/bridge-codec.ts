@@ -48,7 +48,7 @@ interface NormalizedPythonError {
   traceback?: string;
 }
 
-interface ProtocolEnvelope {
+interface RpcResponse {
   id: number;
   protocol?: string;
   result?: unknown;
@@ -167,10 +167,10 @@ function isPythonErrorResponse(value: unknown): value is PythonErrorResponse {
 }
 
 /**
- * Type guard for protocol response envelope.
- * Envelopes must include a numeric id.
+ * Type guard for the RPC response wrapper ({ id, result | error }).
+ * Responses must include a numeric id.
  */
-function isProtocolEnvelope(value: unknown): value is ProtocolEnvelope {
+function isRpcResponse(value: unknown): value is RpcResponse {
   if (value === null || typeof value !== 'object') {
     return false;
   }
@@ -233,7 +233,7 @@ function summarizePayloadForError(payload: string): string {
 
 /**
  * Validate the protocol version in a response.
- * Only validates when the response looks like a protocol envelope (has 'id' field).
+ * Only validates when the response looks like an RPC response (has 'id' field).
  * Throws if protocol is present but doesn't match expected version.
  * Allows missing protocol for backwards compatibility.
  */
@@ -242,7 +242,7 @@ function validateProtocolVersion(value: unknown): void {
     return;
   }
   const obj = value as Record<string, unknown>;
-  // Only validate protocol on protocol envelopes (responses with 'id' field)
+  // Only validate protocol on RPC responses (responses with 'id' field)
   // This avoids false positives on user data that happens to contain 'protocol' key
   if (!('id' in obj)) {
     return;
@@ -410,20 +410,20 @@ export class BridgeCodec {
     return bridgeError;
   }
 
-  private extractResultFromResponseEnvelope(parsed: unknown): unknown {
-    if (isProtocolEnvelope(parsed)) {
-      const envelope = parsed;
-      const hasResult = hasOwnKey(envelope, 'result');
-      const hasError = hasOwnKey(envelope, 'error');
+  private extractResultFromRpcResponse(parsed: unknown): unknown {
+    if (isRpcResponse(parsed)) {
+      const response = parsed;
+      const hasResult = hasOwnKey(response, 'result');
+      const hasError = hasOwnKey(response, 'error');
 
       if (hasResult && hasError) {
         throw new BridgeProtocolError('Protocol response cannot include both "result" and "error"');
       }
 
       if (hasError) {
-        const normalizedError = normalizeErrorPayload(envelope.error);
+        const normalizedError = normalizeErrorPayload(response.error);
         if (!normalizedError) {
-          const details = describeInvalidErrorPayload(envelope.error);
+          const details = describeInvalidErrorPayload(response.error);
           throw new BridgeProtocolError(`Invalid response "error" payload: ${details}`);
         }
         throw this.toBridgeExecutionError(normalizedError);
@@ -433,7 +433,7 @@ export class BridgeCodec {
         throw new BridgeProtocolError('Protocol response missing "result" or "error" field');
       }
 
-      return envelope.result;
+      return response.result;
     }
 
     if (isPythonErrorResponse(parsed)) {
@@ -522,7 +522,7 @@ export class BridgeCodec {
    * @param payload - The JSON string received from Python
    * @returns Decoded and validated result
    * @throws BridgeCodecError if payload is invalid or decoding fails
-   * @throws BridgeProtocolError if protocol envelope is invalid
+   * @throws BridgeProtocolError if the RPC response is invalid
    * @throws BridgeExecutionError if response contains a Python error
    */
   decodeResponse<T>(payload: string): T {
@@ -553,7 +553,7 @@ export class BridgeCodec {
     // Validate protocol version (if present)
     validateProtocolVersion(parsed);
 
-    const result = this.extractResultFromResponseEnvelope(parsed);
+    const result = this.extractResultFromRpcResponse(parsed);
 
     // Post-decode validation for special floats if enabled
     if (this.rejectSpecialFloats && containsSpecialFloat(result)) {
@@ -574,7 +574,7 @@ export class BridgeCodec {
    * @param payload - The JSON string received from Python
    * @returns Decoded and validated result with Arrow decoding applied
    * @throws BridgeCodecError if payload is invalid or decoding fails
-   * @throws BridgeProtocolError if protocol envelope is invalid
+   * @throws BridgeProtocolError if the RPC response is invalid
    * @throws BridgeExecutionError if response contains a Python error
    */
   async decodeResponseAsync<T>(payload: string): Promise<T> {
@@ -605,7 +605,7 @@ export class BridgeCodec {
     // Validate protocol version (if present)
     validateProtocolVersion(parsed);
 
-    const result = this.extractResultFromResponseEnvelope(parsed);
+    const result = this.extractResultFromRpcResponse(parsed);
 
     // Apply Arrow decoding to the result
     let decoded: unknown;

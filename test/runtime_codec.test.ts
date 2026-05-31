@@ -11,7 +11,7 @@ import {
   registerArrowDecoder,
   clearArrowDecoder,
   hasArrowDecoder,
-  type CodecEnvelope,
+  type ValueEnvelope,
   type DecodedValue,
   type ArrowTable,
 } from '../src/utils/codec.js';
@@ -103,7 +103,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       const mockDecoder = vi.fn().mockReturnValue(mockTable);
       registerArrowDecoder(mockDecoder);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'dataframe',
         encoding: 'arrow',
         b64: btoa('test data'), // Mock base64 data
@@ -122,7 +122,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       registerArrowDecoder(mockDecoder);
 
       const testData = 'test data';
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'dataframe',
         encoding: 'arrow',
         b64: btoa(testData),
@@ -148,7 +148,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       (globalThis as any).Buffer = mockBuffer;
       registerArrowDecoder(bytes => bytes);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'ndarray',
         encoding: 'arrow',
         b64: 'dGVzdA==', // 'test' in base64
@@ -166,7 +166,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       delete (globalThis as any).Buffer;
       registerArrowDecoder(bytes => bytes);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'ndarray',
         encoding: 'arrow',
         b64: 'dGVzdA==',
@@ -183,7 +183,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       delete (globalThis as any).atob;
       registerArrowDecoder(bytes => bytes);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'ndarray',
         encoding: 'arrow',
         b64: 'dGVzdA==',
@@ -198,7 +198,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       const mockTable = { numRows: 100, numCols: 5, data: [[1, 2, 3]] } as ArrowTable;
       registerArrowDecoder(() => mockTable);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'dataframe',
         encoding: 'arrow',
         b64: btoa('mock arrow data'),
@@ -231,7 +231,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       const mockTable = { numRows: 50, numCols: 3 } as ArrowTable;
       registerArrowDecoder(() => mockTable);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'dataframe',
         encoding: 'arrow',
         b64: btoa('mock data'),
@@ -247,7 +247,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       });
 
       const testData = 'invalid arrow data';
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'dataframe',
         encoding: 'arrow',
         b64: btoa(testData),
@@ -262,7 +262,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       const mockTable = { numRows: 1000, numCols: 1, data: [1, 2, 3] } as ArrowTable;
       registerArrowDecoder(() => mockTable);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'series',
         encoding: 'arrow',
         b64: btoa('mock series data'),
@@ -276,7 +276,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     it('should decode JSON Series envelope', async () => {
       const seriesData = [10, 20, 30, 40, 50];
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'series',
         encoding: 'json',
         data: seriesData,
@@ -290,7 +290,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     it('should handle Series without name', async () => {
       const seriesData = ['a', 'b', 'c'];
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'series',
         encoding: 'json',
         data: seriesData,
@@ -303,7 +303,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     it('should handle Series with null name', async () => {
       const seriesData = [true, false, true];
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'series',
         encoding: 'json',
         data: seriesData,
@@ -321,7 +321,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       globalThis.atob = vi.fn().mockReturnValue(String.fromCharCode(...testData));
       registerArrowDecoder(bytes => bytes);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'ndarray',
         encoding: 'arrow',
         b64: 'AQIDBAU=', // Base64 of [1,2,3,4,5]
@@ -339,7 +339,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         dtype: 'int32',
       };
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'ndarray',
         encoding: 'json',
         data: arrayData,
@@ -357,7 +357,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         dtype: 'float64',
       };
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'ndarray',
         encoding: 'json',
         data: tensorData,
@@ -373,7 +373,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       globalThis.atob = vi.fn().mockReturnValue(testData);
       registerArrowDecoder(bytes => bytes);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'ndarray',
         encoding: 'arrow',
         b64: btoa(testData),
@@ -386,7 +386,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
 
   describe('SciPy Sparse Decoding', () => {
     it('should decode JSON sparse matrix envelope', async () => {
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'scipy.sparse',
         codecVersion: 1,
         encoding: 'json',
@@ -452,7 +452,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
 
   describe('Torch Tensor Decoding', () => {
     it('should decode nested ndarray envelope', async () => {
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'torch.tensor',
         encoding: 'ndarray',
         value: {
@@ -479,7 +479,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       registerArrowDecoder(bytes => bytes);
       const testData = 'binary array data';
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'torch.tensor',
         codecVersion: 1,
         encoding: 'ndarray',
@@ -506,7 +506,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     });
 
     it('should fail when Arrow decoder is not registered (nested)', async () => {
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'torch.tensor',
         codecVersion: 1,
         encoding: 'ndarray',
@@ -529,7 +529,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         throw new Error('Decoder failed');
       });
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'torch.tensor',
         codecVersion: 1,
         encoding: 'ndarray',
@@ -550,7 +550,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     it('should decode nested Arrow ndarray synchronously', () => {
       registerArrowDecoder(bytes => bytes);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'torch.tensor',
         codecVersion: 1,
         encoding: 'ndarray',
@@ -597,7 +597,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
 
   describe('Sklearn Estimator Decoding', () => {
     it('should decode estimator metadata envelope', async () => {
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'sklearn.estimator',
         codecVersion: 1,
         encoding: 'json',
@@ -772,7 +772,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
 
       // Simulate large base64 data
       const largeData = 'x'.repeat(1024 * 1024); // 1MB
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'dataframe',
         encoding: 'arrow',
         b64: btoa(largeData),
@@ -854,7 +854,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       // Mock decoder that works synchronously
       registerArrowDecoder(() => mockTable);
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'dataframe',
         encoding: 'arrow',
         b64: btoa('test data'),
@@ -873,7 +873,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         throw new Error('Decoder error');
       });
 
-      const envelope: CodecEnvelope = {
+      const envelope: ValueEnvelope = {
         __tywrap__: 'dataframe',
         encoding: 'arrow',
         b64: btoa('test data'),
@@ -940,7 +940,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         // Use a simple base64 string for testing
         const testBase64 = 'SGVsbG8sIHdvcmxkIQ=='; // "Hello, world!"
 
-        const envelope: CodecEnvelope = {
+        const envelope: ValueEnvelope = {
           __tywrap__: 'ndarray',
           encoding: 'arrow',
           b64: testBase64,
@@ -963,7 +963,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       try {
         // Test with standard TypedArray
         registerArrowDecoder(bytes => bytes);
-        const envelope: CodecEnvelope = {
+        const envelope: ValueEnvelope = {
           __tywrap__: 'ndarray',
           encoding: 'arrow',
           b64: btoa('test'),

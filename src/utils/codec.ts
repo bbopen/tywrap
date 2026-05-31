@@ -40,7 +40,7 @@ export interface SklearnEstimator {
   params: Record<string, unknown>;
 }
 
-export type CodecEnvelope =
+export type ValueEnvelope =
   | {
       readonly __tywrap__: 'dataframe';
       readonly codecVersion?: number;
@@ -337,7 +337,7 @@ function reshapeArray(flat: unknown[], shape: readonly number[]): unknown {
 // Why: decoding needs to reject incompatible envelopes before we attempt to interpret payloads.
 const CODEC_VERSION = 1;
 
-function assertCodecVersion(envelope: { codecVersion?: unknown }, marker: string): void {
+function assertCodecVersion(envelope: { codecVersion?: unknown }, typeTag: string): void {
   if (!('codecVersion' in envelope)) {
     return;
   }
@@ -346,19 +346,19 @@ function assertCodecVersion(envelope: { codecVersion?: unknown }, marker: string
     return;
   }
   if (typeof version !== 'number' || !Number.isFinite(version)) {
-    throw new Error(`Invalid ${marker} envelope: codecVersion must be a number`);
+    throw new Error(`Invalid ${typeTag} envelope: codecVersion must be a number`);
   }
   if (version !== CODEC_VERSION) {
-    throw new Error(`Unsupported ${marker} envelope codecVersion: ${version}`);
+    throw new Error(`Unsupported ${typeTag} envelope codecVersion: ${version}`);
   }
 }
 
 /**
- * Per-marker decode handler.
+ * Per-typeTag decode handler.
  *
- * Why: each scientific envelope marker (dataframe, series, ndarray, scipy.sparse,
+ * Why: each scientific value envelope type (dataframe, series, ndarray, scipy.sparse,
  * torch.tensor, sklearn.estimator) has its own validation and decode logic. Splitting
- * the dispatch into one handler per marker keeps each branch focused and testable while
+ * the dispatch into one handler per type keeps each branch focused and testable while
  * preserving byte-identical decoded output.
  */
 type EnvelopeHandler = <T>(
@@ -371,29 +371,29 @@ type EnvelopeHandler = <T>(
  * Decode an Arrow-or-JSON envelope (dataframe / series).
  *
  * Why: dataframe and series share identical arrow/json handling; the only difference
- * is the marker name used in error messages.
+ * is the typeTag name used in error messages.
  */
 function decodeArrowOrJsonEnvelope<T>(
   value: { [k: string]: unknown },
   decodeArrow: (bytes: Uint8Array) => MaybePromise<T>,
-  marker: string
+  typeTag: string
 ): MaybePromise<T | unknown> {
   const encoding = value.encoding;
   if (encoding === 'arrow') {
     const b64 = value.b64;
     if (typeof b64 !== 'string') {
-      throw new Error(`Invalid ${marker} envelope: missing b64`);
+      throw new Error(`Invalid ${typeTag} envelope: missing b64`);
     }
     const bytes = fromBase64(b64);
     return decodeArrow(bytes);
   }
   if (encoding === 'json') {
     if (!('data' in value)) {
-      throw new Error(`Invalid ${marker} envelope: missing data`);
+      throw new Error(`Invalid ${typeTag} envelope: missing data`);
     }
     return value.data;
   }
-  throw new Error(`Invalid ${marker} envelope: unsupported encoding ${String(encoding)}`);
+  throw new Error(`Invalid ${typeTag} envelope: unsupported encoding ${String(encoding)}`);
 }
 
 const decodeDataframeEnvelope: EnvelopeHandler = (value, decodeArrow) =>
@@ -563,10 +563,10 @@ const decodeSklearnEstimatorEnvelope: EnvelopeHandler = value => {
   } satisfies SklearnEstimator;
 };
 
-// Why: dispatch over the __tywrap__ typeTag instead of a long if-chain so each marker's
-// decode logic lives in one focused handler. The marker strings are the on-the-wire keys
-// emitted by the Python bridge and MUST stay byte-identical. A Map keyed by the marker
-// avoids prototype-chain lookups when dispatching on attacker-controlled marker strings.
+// Why: dispatch over the __tywrap__ typeTag instead of a long if-chain so each type's
+// decode logic lives in one focused handler. The typeTag strings are the on-the-wire keys
+// emitted by the Python bridge and MUST stay byte-identical. A Map keyed by the typeTag
+// avoids prototype-chain lookups when dispatching on attacker-controlled typeTag strings.
 const ENVELOPE_HANDLERS: ReadonlyMap<string, EnvelopeHandler> = new Map([
   ['dataframe', decodeDataframeEnvelope],
   ['series', decodeSeriesEnvelope],
@@ -584,17 +584,17 @@ function decodeEnvelopeCore<T>(
   if (!isObject(value)) {
     return value;
   }
-  const marker = (value as { __tywrap__?: unknown }).__tywrap__;
-  if (typeof marker !== 'string') {
+  const typeTag = (value as { __tywrap__?: unknown }).__tywrap__;
+  if (typeof typeTag !== 'string') {
     return value as unknown;
   }
 
-  const handler = ENVELOPE_HANDLERS.get(marker);
+  const handler = ENVELOPE_HANDLERS.get(typeTag);
   if (!handler) {
     return value as unknown;
   }
 
-  assertCodecVersion(value as { codecVersion?: unknown }, marker);
+  assertCodecVersion(value as { codecVersion?: unknown }, typeTag);
   return handler(value, decodeArrow, recurse);
 }
 
