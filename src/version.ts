@@ -9,4 +9,4 @@
  * Regenerate with: node scripts/generate-version.mjs
  */
 
-export const VERSION: string = "0.5.1";
+export const VERSION: string = "0.6.0";

@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.6.0](https://github.com/bbopen/tywrap/compare/v0.5.1...v0.6.0) (2026-05-31)
+
+A cleanup release. There are no new features — this is one breaking pass that renames much of the runtime vocabulary, trims the public API, and tightens a couple of defaults, so the churn happens once instead of dribbling across several releases. If you only use the high-level `tywrap()`, `generate()`, and `defineConfig()` API, most of this won't touch you. The wire protocol is unchanged, so a 0.5.x client and a 0.6.0 bridge still talk to each other.
+
+### Breaking changes
+
+**The root export is smaller.** `tywrap` now exports just its real public surface: `defineConfig`, `resolveConfig`, `generate`, the `tywrap` factory, the `Bridge*Error` classes, the Arrow/codec helpers, the runtime-detection functions, the public types, and `VERSION`. The codec and transport plumbing moved to the `tywrap/runtime` entrypoint:
+
+- Import `SafeCodec` (now `BridgeCodec`), `CodecOptions`, and the `Transport` contract from `tywrap/runtime` instead of `tywrap`.
+- The deprecated `RuntimeBridge` alias is removed. `NodeBridge`, `PyodideBridge`, and `HttpBridge` are still on their `tywrap/node`, `tywrap/pyodide`, and `tywrap/http` subpaths.
+
+**Runtime classes were renamed** onto a consistent four-layer vocabulary — a Transport moves bytes, an RpcClient correlates requests, a Bridge is the public facade, a BridgeCodec serializes values. Only the identifiers change:
+
+| Before | After |
+|---|---|
+| `ProcessIO` | `SubprocessTransport` |
+| `HttpIO` | `HttpTransport` |
+| `PyodideIO` | `PyodideTransport` |
+| `SafeCodec` | `BridgeCodec` |
+| `IntelligentCache` | `ArtifactCache` |
+| `WorkerPool` | `TransportPool` |
+| `PooledWorker` | `TransportLease` |
+
+The `{ id, result | error }` RPC wrapper is now `RpcResponse` and the `{ __tywrap__: … }` typed-value wrapper is `ValueEnvelope`; both used to be called "envelope".
+
+**Config validation is stricter.** Each section is validated on load and bad input is rejected with a clear message. The dead per-module `runtime` field is removed — it was never read; configure the runtime under the top-level `runtime` key.
+
+**The Python bridge blocks private attribute access by default.** A call through the bridge can no longer `getattr` an underscore-prefixed name, which closes the `__globals__` / `__subclasses__` escape path. Generated wrappers never reference private names, so generated code is unaffected. Set `TYWRAP_ALLOW_PRIVATE_ATTRS=1` to opt out. You can also restrict which modules the bridge may import with `TYWRAP_ALLOWED_MODULES` (unrestricted by default).
+
+### Bug Fixes
+
+- `VERSION` reported `0.3.0` on a 0.5.x package; it's now single-sourced from `package.json` at build time.
+- Module names are validated before they reach `python -c` in discovery, closing a command-injection path.
+
+### Internal
+
+Removed four dead modules (`bundle-optimizer`, `memory-profiler`, `optimized-node`, `protocol`), decomposed the worst complexity hotspots (codec decode, the annotation parser, the type mapper) with output preserved, and collapsed the generator's three duplicated call-emission paths into one. `IR_VERSION` is single-sourced with a drift check between the TypeScript and Python sides, and Python-dependent tests now skip loudly instead of passing when no interpreter is present.
+
 ## [0.5.1](https://github.com/bbopen/tywrap/compare/v0.5.0...v0.5.1) (2026-05-31)
 
 tywrap now installs with no native build, so it works on Node 25 and later.
