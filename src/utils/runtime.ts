@@ -230,25 +230,36 @@ async function loadPathModule(): Promise<PathModule | null> {
 }
 
 /**
+ * Apply a single path segment to the accumulated normalized segments,
+ * resolving '..' and dropping '.'/empty segments in place.
+ */
+function applyPathSegment(normalized: string[], segment: string, isAbsolute: boolean): void {
+  if (segment === '.' || segment === '') {
+    return; // Skip current directory and empty segments
+  }
+
+  if (segment !== '..') {
+    normalized.push(segment);
+    return;
+  }
+
+  // '..' segment: go up one directory when possible.
+  if (normalized.length > 0 && normalized[normalized.length - 1] !== '..') {
+    normalized.pop();
+  } else if (!isAbsolute) {
+    normalized.push(segment); // Keep '..' if not absolute and at root
+  }
+}
+
+/**
  * Normalize path by stripping '.' and resolving '..' components
  */
 function normalizePath(path: string): string {
   const isAbsolute = path.startsWith('/');
-  const segments = path.split('/');
   const normalized: string[] = [];
 
-  for (const segment of segments) {
-    if (segment === '.' || segment === '') {
-      continue; // Skip current directory and empty segments
-    } else if (segment === '..') {
-      if (normalized.length > 0 && normalized[normalized.length - 1] !== '..') {
-        normalized.pop(); // Go up one directory
-      } else if (!isAbsolute) {
-        normalized.push(segment); // Keep '..' if not absolute and at root
-      }
-    } else {
-      normalized.push(segment);
-    }
+  for (const segment of path.split('/')) {
+    applyPathSegment(normalized, segment, isAbsolute);
   }
 
   const result = normalized.join('/');
