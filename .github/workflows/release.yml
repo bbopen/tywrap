@@ -1,4 +1,4 @@
-name: Release Please
+name: Release
 
 on:
   push:
@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   detect_release_state:
@@ -73,20 +72,6 @@ jobs:
           echo "publish_from_main=${PUBLISH_FROM_MAIN}" >> "$GITHUB_OUTPUT"
           echo "publish_existing_tag=${PUBLISH_EXISTING_TAG}" >> "$GITHUB_OUTPUT"
 
-  release_please:
-    needs: detect_release_state
-    if: ${{ needs.detect_release_state.outputs.publish_from_main != 'true' && needs.detect_release_state.outputs.publish_existing_tag != 'true' }}
-    runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created || 'false' }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-    steps:
-      - uses: googleapis/release-please-action@v5
-        id: release
-        with:
-          release-type: node
-          token: ${{ secrets.GITHUB_TOKEN }}
-
   publish_existing_main_release:
     needs: detect_release_state
     if: ${{ needs.detect_release_state.outputs.publish_from_main == 'true' }}
@@ -143,12 +128,11 @@ jobs:
           echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
 
   publish_npm:
-    needs: [detect_release_state, release_please, publish_existing_main_release]
+    needs: [detect_release_state, publish_existing_main_release]
     if: >-
       ${{
         always() &&
         (
-          needs.release_please.outputs.release_created == 'true' ||
           needs.publish_existing_main_release.outputs.release_ready == 'true' ||
           needs.detect_release_state.outputs.publish_existing_tag == 'true'
         )
@@ -163,8 +147,6 @@ jobs:
         with:
           ref: >-
             ${{
-              needs.release_please.outputs.release_created == 'true' &&
-              needs.release_please.outputs.tag_name ||
               needs.publish_existing_main_release.outputs.release_ready == 'true' &&
               needs.publish_existing_main_release.outputs.tag_name ||
               needs.detect_release_state.outputs.tag_name
