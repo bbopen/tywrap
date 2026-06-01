@@ -6,11 +6,16 @@ protocol that fragments one logical message across multiple wire frames and
 reassembles it on the other side, so a payload larger than one frame can still
 cross the boundary without a silent lossy fallback.
 
-This document is the spec. As of 0.8.0 it describes the **wire contract and the
-negotiation handshake**; the framing constants, the `BridgeInfo.transport`
-negotiation block, and the relaxed `meta` validator land in W1 with **no runtime
-behavior change**. The actual fragment/reassembly machinery lands in later
-workstreams (W3–W6) and implements exactly what is written here.
+This document is the spec. As of 0.8.0 the wire contract, the negotiation
+handshake, and the fragment/reassembly machinery are **fully implemented** for the
+subprocess backend: the TS side fragments/reassembles in
+`src/runtime/subprocess-transport.ts` (with the pure codec in
+`src/runtime/frame-codec.ts`), and the Python side does the same in
+`runtime/python_bridge.py`. Chunking composes with the worker pool — each leased
+worker negotiates independently and a chunked request or response routed through a
+`PooledTransport` lease reassembles correctly (see
+[the capability matrix](./transport-capabilities.md)). The env vars that drive
+negotiation are listed in the [environment variable reference](./reference/env-vars.md).
 
 ## Scope: subprocess only
 
@@ -224,3 +229,11 @@ response-read + reassembly. On timeout or abort:
   `totalBytes` mismatch, an unknown `frameProtocol`, or non-frame stdout
   pollution — rejects the pending `id` and marks the subprocess for restart,
   because the stdout stream can no longer be trusted to be frame-aligned.
+
+## See also
+
+- [Transport capability matrix](./transport-capabilities.md) — which backends
+  chunk, and how `PooledTransport` reports chunking honestly.
+- [Environment variables](./reference/env-vars.md) — the `TYWRAP_TRANSPORT_*`
+  negotiation env vars and the `TYWRAP_*_MAX_BYTES` size guards (enforced
+  post-reassembly).

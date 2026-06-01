@@ -39,6 +39,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { isNodejs } from '../src/utils/runtime.js';
 import { resolvePythonExecutable } from '../src/utils/python.js';
 import { BOOTSTRAP_PYTHON } from '../src/runtime/pyodide-transport.js';
+import { SubprocessTransport } from '../src/runtime/subprocess-transport.js';
+import { HttpTransport } from '../src/runtime/http-transport.js';
+import { PyodideTransport } from '../src/runtime/pyodide-transport.js';
+import { PROTOCOL_ID } from '../src/runtime/transport.js';
 
 // ---------------------------------------------------------------------------
 // Availability gates (mirrors the established repo idioms)
@@ -166,6 +170,21 @@ def make_callable_param():
 
 def make_nested_estimator_param():
     return NestedEstimatorParam()
+`;
+
+// W6 chunking-conformance fixture: returns an exact n-byte ASCII string with a
+// position-sensitive repeating pattern so a dropped/duplicated slice surfaces as
+// a content mismatch, not merely a length mismatch. Used to prove the subprocess
+// backend reassembles a payload that exceeds a small frame ceiling while HTTP and
+// Pyodide carry the same payload single-frame.
+const CHUNKING_FIXTURE_MODULE = '_tywrap_conformance_chunking_fixtures';
+const CHUNKING_FIXTURE_PATH = resolve(RUNTIME_DIR, `${CHUNKING_FIXTURE_MODULE}.py`);
+const CHUNKING_FIXTURE_SOURCE = `
+def big_string(n):
+    """Return an n-byte ASCII string (deterministic, position-sensitive)."""
+    pattern = 'tywrap-0123456789-'
+    reps = (n // len(pattern)) + 1
+    return (pattern * reps)[:n]
 `;
 
 const MODULES = {
@@ -387,6 +406,8 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     // stdlib-only — written unconditionally so the member-dispatch case runs
     // on every backend that has a Python interpreter.
     writeFileSync(MEMBER_FIXTURE_PATH, MEMBER_FIXTURE_SOURCE, 'utf-8');
+    // stdlib-only chunking fixture (W6 cross-backend large-payload conformance).
+    writeFileSync(CHUNKING_FIXTURE_PATH, CHUNKING_FIXTURE_SOURCE, 'utf-8');
     if (MODULES.sklearn) {
       writeFileSync(SKLEARN_HARDENING_PATH, SKLEARN_HARDENING_SOURCE, 'utf-8');
     }
@@ -421,6 +442,11 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     }
     try {
       rmSync(MEMBER_FIXTURE_PATH, { force: true });
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(CHUNKING_FIXTURE_PATH, { force: true });
     } catch {
       // ignore
     }
@@ -1376,6 +1402,151 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     },
     caseTimeoutMs
   );
+
+  // -------------------------------------------------------------------------
+  // W6: cross-backend chunking conformance.
+  //
+  // Proves the single transport-level invariant that keeps large payloads
+  // correct across every backend: ONLY the subprocess backend splits a logical
+  // message across `tywrap-frame/1` frames; HTTP and Pyodide stay single-frame
+  // (supportsChunking:false) and carry the SAME large payload via their own
+  // buffering — never silently truncating. The capability descriptors are
+  // asserted statically (no Python), then the subprocess chunk path is proven
+  // live against the real bridge.
+  // -------------------------------------------------------------------------
+  describe('cross-backend chunking capability descriptors', () => {
+    it('HTTP and Pyodide always report supportsChunking:false; subprocess only after negotiation', () => {
+      // HTTP: no line ceiling, whole body buffered in one shot -> never chunks.
+      const http = new HttpTransport({ baseURL: 'http://127.0.0.1:1' });
+      expect(http.capabilities().supportsChunking).toBe(false);
+      expect(http.capabilities().supportsStreaming).toBe(false);
+      expect(http.capabilities().maxFrameBytes).toBe(Number.POSITIVE_INFINITY);
+
+      // Pyodide: in-memory string passing, no framing -> never chunks.
+      const pyodide = new PyodideTransport();
+      expect(pyodide.capabilities().supportsChunking).toBe(false);
+      expect(pyodide.capabilities().supportsStreaming).toBe(false);
+      expect(pyodide.capabilities().maxFrameBytes).toBe(Number.POSITIVE_INFINITY);
+
+      // Subprocess WITHOUT negotiation (enableChunking omitted): also false. The
+      // un-init descriptor is honest — chunking only flips true after init()
+      // negotiates with a bridge that advertises the transport block.
+      const subNoChunk = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
+      expect(subNoChunk.capabilities().supportsChunking).toBe(false);
+
+      // Subprocess WITH enableChunking but pre-init: still false (no negotiation
+      // has happened yet). The live test below proves it flips true post-init.
+      const subChunk = new SubprocessTransport({
+        bridgeScript: '/path/to/bridge.py',
+        maxLineLength: 1024 * 1024,
+        enableChunking: true,
+      });
+      expect(subChunk.capabilities().supportsChunking).toBe(false);
+    });
+  });
+
+  describe('cross-backend large-payload correctness (subprocess chunks; http/pyodide single-frame)', () => {
+    const ONE_MIB = 1024 * 1024;
+    // A payload comfortably above the forced 1 MiB subprocess frame ceiling, but
+    // well under the default codec ceiling so http/pyodide carry it single-frame
+    // without raising any size limit.
+    const LARGE_N = 3 * ONE_MIB;
+
+    it.skipIf(!PYTHON_OK)(
+      'subprocess reassembles a >1 MiB payload from frames (supportsChunking:true)',
+      async () => {
+        // A dedicated chunking-enabled SubprocessTransport (NOT the raw JSONL
+        // driver) because only the real transport carries the frame reassembler;
+        // a raw JSONL reader would mis-parse the per-frame lines (each frame
+        // reuses the RPC id). maxLineLength is forced to 1 MiB so the ~3 MiB
+        // response MUST be framed.
+        const transport = new SubprocessTransport({
+          bridgeScript: REFERENCE_SCRIPT,
+          cwd: RUNTIME_DIR,
+          pythonPath: PYTHON,
+          maxLineLength: ONE_MIB,
+          enableChunking: true,
+        });
+        try {
+          await transport.init();
+          // Live negotiation flips chunking on against the real bridge.
+          expect(transport.capabilities().supportsChunking).toBe(true);
+          expect(transport.capabilities().maxFrameBytes).toBe(ONE_MIB);
+
+          const request = JSON.stringify({
+            id: 1,
+            protocol: PROTOCOL_ID,
+            method: 'call',
+            params: {
+              module: CHUNKING_FIXTURE_MODULE,
+              functionName: 'big_string',
+              args: [LARGE_N],
+              kwargs: {},
+            },
+          });
+          const responseLine = await transport.send(request, caseTimeoutMs);
+          const parsed = JSON.parse(responseLine) as { id: number; result: string };
+          expect(parsed.id).toBe(1);
+          // Byte-exact reassembly: length + content head pin the frame ordering.
+          expect(parsed.result.length).toBe(LARGE_N);
+          expect(parsed.result.startsWith('tywrap-0123456789-')).toBe(true);
+          expect(Buffer.byteLength(parsed.result, 'utf-8')).toBe(LARGE_N);
+        } finally {
+          await transport.dispose();
+        }
+      },
+      caseTimeoutMs
+    );
+
+    it.skipIf(!PYTHON_OK)(
+      'http carries the SAME large payload single-frame, correct and untruncated',
+      async () => {
+        // HttpReferenceBackend reads the whole response body in one shot (no line
+        // ceiling), so the identical big_string(LARGE_N) returns intact without
+        // any framing — supportsChunking stays false.
+        if (!httpBackend) return;
+        const resp = await httpBackend.dispatch({
+          method: 'call',
+          params: {
+            module: CHUNKING_FIXTURE_MODULE,
+            functionName: 'big_string',
+            args: [LARGE_N],
+            kwargs: {},
+          },
+        });
+        expect(resp.error, 'http large payload error').toBeUndefined();
+        const result = resp.result as string;
+        expect(typeof result).toBe('string');
+        expect(result.length).toBe(LARGE_N);
+        expect(result.startsWith('tywrap-0123456789-')).toBe(true);
+      },
+      caseTimeoutMs
+    );
+
+    it.skipIf(!PYTHON_OK || !CORE_OK)(
+      'pyodide-core carries the SAME large payload single-frame, correct and untruncated',
+      async () => {
+        // The pyodide-core harness is in-memory string passing with no framing;
+        // the identical big_string(LARGE_N) returns intact single-frame.
+        if (!coreBackend) return;
+        const resp = await coreBackend.dispatch({
+          method: 'call',
+          params: {
+            module: CHUNKING_FIXTURE_MODULE,
+            functionName: 'big_string',
+            args: [LARGE_N],
+            kwargs: {},
+          },
+        });
+        expect(resp.error, 'pyodide-core large payload error').toBeUndefined();
+        const result = resp.result as string;
+        expect(typeof result).toBe('string');
+        expect(result.length).toBe(LARGE_N);
+        expect(result.startsWith('tywrap-0123456789-')).toBe(true);
+      },
+      caseTimeoutMs
+    );
+  });
 
   // -------------------------------------------------------------------------
   // Drift guard: generated bootstrap constant must equal the source .py

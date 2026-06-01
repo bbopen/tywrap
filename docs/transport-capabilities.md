@@ -35,15 +35,28 @@ interface TransportCapabilities {
 
 ## Matrix
 
-| Backend (transport)            | `backend`     | `supportsArrow` | `supportsBinary` | `supportsChunking` | `supportsStreaming` | `maxFrameBytes`                  |
-| ------------------------------ | ------------- | --------------- | ---------------- | ------------------ | ------------------- | -------------------------------- |
-| `SubprocessTransport` (Node)   | `subprocess`  | `true`          | `true`           | `false`            | `false`             | JSONL line limit (default 100 MB) |
-| `HttpTransport`                | `http`        | `true`          | `true`           | `false`            | `false`             | `Number.POSITIVE_INFINITY`       |
-| `PyodideTransport` (WASM)      | `pyodide`     | `false`         | `true`           | `false`            | `false`             | `Number.POSITIVE_INFINITY`       |
+| Backend (transport)            | `backend`     | `supportsArrow` | `supportsBinary` | `supportsChunking`         | `supportsStreaming` | `maxFrameBytes`                  |
+| ------------------------------ | ------------- | --------------- | ---------------- | -------------------------- | ------------------- | -------------------------------- |
+| `SubprocessTransport` (Node)   | `subprocess`  | `true`          | `true`           | `true` once negotiated\*   | `false`             | JSONL line limit (default 100 MB) |
+| `HttpTransport`                | `http`        | `true`          | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`       |
+| `PyodideTransport` (WASM)      | `pyodide`     | `false`         | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`       |
+
+\* `SubprocessTransport.supportsChunking` is `false` until `init()` negotiates the
+`tywrap-frame/1` framing protocol with the bridge. It reports `true` **only** when
+the transport was created with `enableChunking: true` **and** the spawned bridge
+advertised the framing block in its `meta` probe. An un-negotiated transport, an
+old bridge, or `enableChunking: false` all keep it `false`. Chunking is
+subprocess-only — it is the only backend with a real frame ceiling (the JSONL
+line-length limit). See [Transport framing](./transport-framing.md).
 
 `PooledTransport` (the multi-process Node path) reports the capabilities of the
-worker transport it distributes across — in practice `SubprocessTransport`, so it
-mirrors the subprocess row.
+worker transport it distributes across — in practice `SubprocessTransport`. Its
+`capabilities()` is a **static** descriptor read from an un-initialized probe
+worker, so it honestly reports `supportsChunking: false` even when the pool's
+workers will negotiate chunking: negotiation is a per-worker, post-`init()` fact,
+and the pool builds no live worker just to answer a capability query. Each leased
+worker negotiates independently inside its own `init()`, and a chunked request or
+response routed through a pool lease reassembles correctly.
 
 ## Notes per flag
 
@@ -67,9 +80,16 @@ Whether the transport can carry arbitrary binary data (e.g. Python `bytes`).
 
 ### `supportsChunking` and `supportsStreaming`
 
-`false` on every backend today. No backend splits a logical message across
-multiple frames (`supportsChunking`) or streams incremental results for a single
-request (`supportsStreaming`). Both are planned for **0.8.0**.
+`supportsChunking` is implemented for the **subprocess** backend as of **0.8.0**:
+it splits one logical message across multiple `tywrap-frame/1` frames so a payload
+can exceed the JSONL line ceiling. It is reported `true` only after a successful
+negotiation (see the table note above); HTTP and Pyodide stay `false` — they have
+no line ceiling and buffer the whole payload in one frame. See
+[Transport framing](./transport-framing.md) for the wire format and negotiation
+handshake.
+
+`supportsStreaming` (incremental results for a single request) is `false` on every
+backend; it is not implemented in 0.8.0.
 
 ### `maxFrameBytes`
 
