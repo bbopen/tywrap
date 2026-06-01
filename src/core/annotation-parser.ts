@@ -253,7 +253,8 @@ export function parseAnnotationToPythonType(
   // Returns the content between the first `[` and the last `]` of a special-form
   // annotation (e.g. the `int, str` of `Union[int, str]`). Callers gate this on a
   // prefix check, so the brackets are known to be present.
-  const bracketInner = (raw: string): string => raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
+  const bracketInner = (raw: string): string =>
+    raw.slice(raw.indexOf('[') + 1, raw.lastIndexOf(']'));
 
   // True when `raw` opens with one of the supported module prefixes followed by
   // `name[`. Mirrors the inlined `raw.startsWith('typing.Name[') || ...` checks so

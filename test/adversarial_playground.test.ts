@@ -586,7 +586,7 @@ describeAdversarial('Adversarial playground', () => {
       },
       {
         name: 'return_invalid_sparse_shape',
-        pattern: /Invalid scipy\.sparse envelope: shape must be a 2-item number\[\]/,
+        pattern: /Invalid scipy\.sparse envelope: shape must be a 2-item non-negative integer\[\]/,
       },
       {
         name: 'return_invalid_torch_value',

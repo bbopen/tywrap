@@ -73,6 +73,20 @@ export interface NodeBridgeOptions {
   /** Codec options for validation/serialization */
   codec?: CodecOptions;
 
+  /**
+   * Negotiate the chunked transport (`tywrap-frame/1`) so a large result that
+   * would exceed a single JSONL line is split into frames and transparently
+   * reassembled. Default: `true`.
+   *
+   * Negotiation degrades safely: small payloads are unaffected, and a bridge
+   * that does not advertise chunking still fails loud on an oversize payload
+   * (never a silent single-frame fallback). Chunking only engages above the
+   * frame ceiling, so raising the codec payload cap (`codec`) is what unlocks
+   * genuinely large results — flipping this alone changes nothing for typical
+   * small-payload traffic.
+   */
+  enableChunking?: boolean;
+
   /** Commands to run on each process at startup for warming up. */
   warmupCommands?: Array<
     { module: string; functionName: string; args?: unknown[] } | { method: string; params: unknown } // Legacy shape preserved so runtime can surface a migration error
@@ -119,6 +133,7 @@ interface ResolvedOptions {
   queueTimeoutMs: number;
   inheritProcessEnv: boolean;
   enableCache: boolean;
+  enableChunking: boolean;
   env: Record<string, string | undefined>;
   codec?: CodecOptions;
   warmupCommands: WarmupCommand[];
@@ -338,6 +353,7 @@ export class NodeBridge extends BasePythonBridge {
       queueTimeoutMs: options.queueTimeoutMs ?? 30000,
       inheritProcessEnv: options.inheritProcessEnv ?? false,
       enableCache: options.enableCache ?? false,
+      enableChunking: options.enableChunking ?? true,
       env: options.env ?? {},
       codec: options.codec,
       warmupCommands,
@@ -367,6 +383,10 @@ export class NodeBridge extends BasePythonBridge {
           bridgeScript: resolvedOptions.scriptPath,
           env: processEnv,
           cwd: resolvedOptions.cwd,
+          enableChunking: resolvedOptions.enableChunking,
+          // Bound chunked-response reassembly to the codec's logical payload cap
+          // so a huge response fails loud early instead of buffering to OOM.
+          maxReassemblyBytes: resolvedOptions.codec?.maxPayloadBytes,
         }),
       maxWorkers: resolvedOptions.maxProcesses,
       minWorkers: resolvedOptions.minProcesses,
@@ -652,7 +672,11 @@ function createWorkerReadyCallback(
 
     // Readiness probe (mirrors getBridgeInfo's meta request, per-worker).
     try {
-      await rpc.sendOn(worker.transport, { method: 'meta', params: {} }, { timeoutMs: readyTimeoutMs });
+      await rpc.sendOn(
+        worker.transport,
+        { method: 'meta', params: {} },
+        { timeoutMs: readyTimeoutMs }
+      );
     } catch (error) {
       throw wrapWarmupError('Worker warmup check', error);
     }

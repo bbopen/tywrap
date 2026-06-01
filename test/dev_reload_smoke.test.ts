@@ -24,11 +24,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  startNodeWatchSession,
-  type NodeWatchEvent,
-  type NodeWatchSession,
-} from '../src/dev.js';
+import { startNodeWatchSession, type NodeWatchEvent, type NodeWatchSession } from '../src/dev.js';
 import { clearRuntimeBridge, getRuntimeBridge } from '../src/runtime/index.js';
 import type { RuntimeExecution } from '../src/types/index.js';
 import { getDefaultPythonPath } from '../src/utils/python.js';
@@ -317,10 +313,7 @@ describeNodeOnly('dev watch/reload smoke', () => {
         });
 
         // Initial generation succeeded and wrote a wrapper to disk.
-        await waitFor(
-          () => (countEvents(events, 'reload-success') > 0 ? true : undefined),
-          10000
-        );
+        await waitFor(() => (countEvents(events, 'reload-success') > 0 ? true : undefined), 10000);
         expect(existsSync(generatedFile)).toBe(true);
         const lastGoodOutput = readFileSync(generatedFile, 'utf-8');
         expect(getRuntimeBridge()).toBe(createdBridges[0]);

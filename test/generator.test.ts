@@ -790,9 +790,7 @@ describe('CodeGenerator', () => {
         bases: ['Protocol'],
         methods: [],
         properties: [],
-        accessors: [
-          { name: 'area', type: { kind: 'primitive', name: 'int' }, readOnly: true },
-        ],
+        accessors: [{ name: 'area', type: { kind: 'primitive', name: 'int' }, readOnly: true }],
         docstring: undefined,
         decorators: [],
         kind: 'protocol',
@@ -1310,9 +1308,7 @@ describe('CodeGenerator', () => {
     // The TS member name is escaped (camelCased) while the dotted RPC target
     // (Class.method) keeps the raw Python names.
     expect(code.typescript).toContain('static async createDog(name: string): Promise<Pet>');
-    expect(code.typescript).toContain(
-      "getRuntimeBridge().call('pets', 'Pet.create_dog', __args)"
-    );
+    expect(code.typescript).toContain("getRuntimeBridge().call('pets', 'Pet.create_dog', __args)");
     // staticmethod: static member, no implicit first param, class-routed call.
     expect(code.typescript).toContain('static async isValidName(name: string): Promise<boolean>');
     expect(code.typescript).toContain(
@@ -1341,7 +1337,11 @@ describe('CodeGenerator', () => {
           },
           {
             name: 'expensive',
-            type: { kind: 'collection', name: 'list', itemTypes: [{ kind: 'primitive', name: 'int' }] },
+            type: {
+              kind: 'collection',
+              name: 'list',
+              itemTypes: [{ kind: 'primitive', name: 'int' }],
+            },
             docstring: undefined,
             readOnly: true,
             isCached: true,

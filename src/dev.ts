@@ -343,9 +343,7 @@ async function listChildDirectories(current: string): Promise<string[]> {
     return [];
   }
 
-  return entries
-    .filter(entry => entry.isDirectory())
-    .map(entry => join(current, entry.name));
+  return entries.filter(entry => entry.isDirectory()).map(entry => join(current, entry.name));
 }
 
 async function isWatchableDirectory(current: string, ignoredPaths: string[]): Promise<boolean> {

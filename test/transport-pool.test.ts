@@ -95,7 +95,9 @@ describe('TransportPool', () => {
 
     it('requires maxWorkers option', () => {
       const { factory } = createMockTransportFactory();
-      expect(() => new TransportPool({ createTransport: factory } as TransportPoolOptions)).toThrow();
+      expect(
+        () => new TransportPool({ createTransport: factory } as TransportPoolOptions)
+      ).toThrow();
     });
 
     it('requires maxWorkers to be positive', () => {
@@ -1406,5 +1408,4 @@ describe('TransportPool', () => {
       expect(pool.isDisposed).toBe(true);
     });
   });
-
 });

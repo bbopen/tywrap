@@ -18,7 +18,7 @@
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import type { BridgeInfo } from '../types/index.js';
+import type { BridgeBackend, BridgeInfo, BridgeTransportInfo } from '../types/index.js';
 
 import { DisposableBase, type ExecuteOptions } from './bounded-context.js';
 import { BridgeProtocolError } from './errors.js';
@@ -75,7 +75,11 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
     torchAvailable?: unknown;
     sklearnAvailable?: unknown;
     instances?: unknown;
+    transport?: unknown;
   }
+
+  /** Honest set of backend identities a `meta` payload may report. */
+  const KNOWN_BRIDGES: readonly BridgeBackend[] = ['python-subprocess', 'pyodide', 'http'];
 
   const formatValue = (val: unknown): string => {
     try {
@@ -102,10 +106,16 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
     );
   }
 
+  // Accept the honest BridgeBackend union (subprocess/pyodide/http). All
+  // backends speak the identical "tywrap/1" protocol; relaxing this from the
+  // old hardcoded 'python-subprocess' lets the Pyodide/HTTP facades route
+  // getBridgeInfo() through this same validator without being rejected.
   const bridge = obj.bridge;
-  if (bridge !== 'python-subprocess') {
+  if (typeof bridge !== 'string' || !KNOWN_BRIDGES.includes(bridge as BridgeBackend)) {
     throw new BridgeProtocolError(
-      `Invalid bridge info payload: bridge expected "python-subprocess", got ${formatValue(bridge)}`
+      `Invalid bridge info payload: bridge expected one of ${KNOWN_BRIDGES.map(b => `"${b}"`).join(
+        ', '
+      )}, got ${formatValue(bridge)}`
     );
   }
 
@@ -116,10 +126,14 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
     );
   }
 
+  // pid is OPTIONAL across backends: subprocess reports a real OS pid (positive
+  // integer); in-WASM Pyodide (and HTTP) have no local process and report null.
+  // Accept a positive integer OR null; reject any other shape (e.g. 0, negative,
+  // non-integer, string).
   const pid = obj.pid;
-  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
+  if (pid !== null && (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0)) {
     throw new BridgeProtocolError(
-      `Invalid bridge info payload: pid expected positive integer, got ${formatValue(pid)}`
+      `Invalid bridge info payload: pid expected positive integer or null, got ${formatValue(pid)}`
     );
   }
 
@@ -165,10 +179,59 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
     );
   }
 
-  return {
+  // OPTIONAL chunked-transport negotiation block. Absent on old bridges and on
+  // HTTP/Pyodide (single-frame in 0.8.0) — absence is backward compatible. When
+  // present, validate every field and CARRY IT THROUGH so negotiation data
+  // survives the rebuild below (the old validator silently dropped unknown
+  // fields, which would have discarded this block).
+  let transport: BridgeTransportInfo | undefined;
+  const rawTransport = obj.transport;
+  if (rawTransport !== undefined) {
+    if (!rawTransport || typeof rawTransport !== 'object' || Array.isArray(rawTransport)) {
+      const kind =
+        rawTransport === null
+          ? 'null'
+          : Array.isArray(rawTransport)
+            ? 'array'
+            : typeof rawTransport;
+      throw new BridgeProtocolError(
+        `Invalid bridge info payload: transport expected object, got ${kind}`
+      );
+    }
+    const t = rawTransport as {
+      frameProtocol?: unknown;
+      supportsChunking?: unknown;
+      maxFrameBytes?: unknown;
+    };
+    const frameProtocol = t.frameProtocol;
+    if (typeof frameProtocol !== 'string' || frameProtocol.length === 0) {
+      throw new BridgeProtocolError(
+        `Invalid bridge info payload: transport.frameProtocol expected non-empty string, got ${formatValue(frameProtocol)}`
+      );
+    }
+    const supportsChunking = t.supportsChunking;
+    if (typeof supportsChunking !== 'boolean') {
+      throw new BridgeProtocolError(
+        `Invalid bridge info payload: transport.supportsChunking expected boolean, got ${formatValue(supportsChunking)}`
+      );
+    }
+    const maxFrameBytes = t.maxFrameBytes;
+    if (
+      typeof maxFrameBytes !== 'number' ||
+      !Number.isInteger(maxFrameBytes) ||
+      maxFrameBytes <= 0
+    ) {
+      throw new BridgeProtocolError(
+        `Invalid bridge info payload: transport.maxFrameBytes expected positive integer, got ${formatValue(maxFrameBytes)}`
+      );
+    }
+    transport = { frameProtocol, supportsChunking, maxFrameBytes };
+  }
+
+  const info: BridgeInfo = {
     protocol: PROTOCOL_ID,
     protocolVersion: TYWRAP_PROTOCOL_VERSION,
-    bridge: 'python-subprocess',
+    bridge: bridge as BridgeBackend,
     pythonVersion,
     pid,
     codecFallback,
@@ -178,6 +241,10 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
     sklearnAvailable,
     instances,
   };
+  if (transport !== undefined) {
+    info.transport = transport;
+  }
+  return info;
 }
 
 // =============================================================================

@@ -8,6 +8,41 @@ This is a forward-looking plan for adding codecs beyond numpy/pandas. The focus 
 - Torch tensors via ndarray envelope (CPU only; explicit copy opt-in).
 - Sklearn estimators via JSON metadata envelopes.
 
+## Supported vs. Explicit Failure (envelope hardening)
+
+The scientific codecs are deliberately narrow: a known-supported value round-trips,
+and everything else fails **loudly** with an actionable message — tywrap never
+silently coerces, densifies, pickles, or emits a payload the JS side cannot decode.
+The Python serializer (`runtime/tywrap_bridge_core.py`) is the producer; the JS
+decoder (`src/utils/codec.ts`) re-validates the envelope it receives as a cheap
+second line of defense (it validates only — it never reconstructs a Python object).
+
+### SciPy sparse
+
+| | Behavior |
+|---|---|
+| **Supported** | `csr` / `csc` / `coo`; int / float / bool dtypes; empty matrices; any shape. dtype + shape preserved. |
+| **Explicit failure (Python)** | Any other format (`dia`, `bsr`, `lil`, …) → names the supported set. Complex dtype → rejected (no silent coercion). |
+| **Explicit failure (JS re-validation)** | `indptr` length ≠ majorAxis + 1; `indices`/`data` (or COO `row`/`col`/`data`) length mismatch; any index non-integer or out of `[0, minorAxis)`; non-2-item shape. |
+
+### Torch tensors
+
+| | Behavior |
+|---|---|
+| **Supported** | CPU, contiguous, strided tensors: scalar / 1D / ND; int / float dtypes; Arrow or JSON nested ndarray. shape / dtype / device metadata preserved. |
+| **Opt-in (lossy/transfer)** | Non-CPU device **or** non-contiguous layout → rejected **unless** `TYWRAP_TORCH_ALLOW_COPY=1` (then a CPU / contiguous copy is made). Default is rejection. |
+| **Explicit failure (Python), NOT opt-in-able** | Sparse (any non-strided layout: COO/CSR/CSC/BSR/BSC), quantized, `meta`, and complex tensors are rejected categorically — `TYWRAP_TORCH_ALLOW_COPY` does **not** bypass them (they have no faithful dense-CPU JSON/Arrow representation). |
+| **Explicit failure (JS re-validation)** | `shape` dim negative/non-integer; `shape` element-count disagrees with the nested ndarray `shape`; `device` an empty string; nested `value` not an ndarray envelope. |
+
+### Sklearn estimators
+
+| | Behavior |
+|---|---|
+| **Supported** | Metadata only: `className`, `module`, `version`, and `get_params(deep=False)` when every param value is plain JSON (primitives / arrays / plain objects). |
+| **Explicit failure (Python)** | Any non-JSON param (callable, nested estimator/object, numpy array, NaN/Infinity) → rejected with the **offending param name** and a reminder that estimators are metadata-only (no pickle/joblib). |
+| **Explicit failure (JS re-validation)** | `params` not a plain JSON object; any nested param value that is a function / symbol / bigint / class instance / non-finite number. |
+| **Never** | `pickle` / `joblib`. Full-model serialization stays an explicit, opt-in follow-up. |
+
 ## Goals
 
 - Provide predictable, versioned envelopes for common scientific objects.
@@ -71,9 +106,10 @@ Envelope (current):
 ```
 
 Notes:
-- Only `csr`/`csc`/`coo` formats are supported.
+- Only `csr`/`csc`/`coo` formats are supported; any other format is rejected with a message naming the supported set.
 - Complex sparse matrices are rejected (explicit failure; no silent coercion).
 - No dense fallback: callers should convert explicitly if needed.
+- The JS decoder re-validates structural consistency (array lengths vs shape, index ranges) and rejects a corrupt envelope rather than passing it through.
 
 ## Torch (tensors)
 
@@ -106,7 +142,8 @@ Envelope (current):
 Notes:
 - Default to CPU tensors; require opt-in for `.cpu()` conversion.
 - Reject non-contiguous tensors unless explicitly allowed.
-- Opt-in copy/transfer via `TYWRAP_TORCH_ALLOW_COPY=1`.
+- Opt-in copy/transfer via `TYWRAP_TORCH_ALLOW_COPY=1` (covers non-CPU device + non-contiguous layout ONLY).
+- Sparse / quantized / `meta` / complex tensors are rejected categorically and are **not** bypassable by `TYWRAP_TORCH_ALLOW_COPY`; convert explicitly (`to_dense()` / `dequantize()` / materialize / split real-imag) before returning.
 - Future: GPU-native transport (DLPack/Arrow CUDA) to avoid implicit device transfers.
 
 ## Sklearn (models + outputs)
@@ -132,6 +169,7 @@ Envelope (current):
 Notes:
 - Avoid `pickle` or `joblib` without explicit opt-in due to security and size.
 - Keep model serialization as an advanced, explicit feature.
+- Every `get_params(deep=False)` value must be plain JSON; a callable, nested estimator, or other non-JSON param is rejected with the offending param name (no silent drop, no pickle). The JS decoder re-validates `params` is a plain JSON object.
 
 ## Implementation Phases
 

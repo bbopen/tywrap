@@ -536,7 +536,10 @@ def serialize_sparse_matrix(obj):
         raise RuntimeError('Failed to inspect scipy sparse matrix format') from exc
 
     if fmt not in ('csr', 'csc', 'coo'):
-        raise RuntimeError(f'Unsupported scipy sparse format: {fmt}')
+        raise RuntimeError(
+            f'Unsupported scipy sparse format: {fmt}; only csr/csc/coo are supported. '
+            'Convert explicitly (e.g. matrix.tocsr()) before returning'
+        )
 
     dtype = None
     try:
@@ -544,7 +547,10 @@ def serialize_sparse_matrix(obj):
     except Exception:
         dtype = None
     if getattr(obj.dtype, 'kind', None) == 'c':
-        raise RuntimeError('Complex sparse matrices are not supported by JSON codec')
+        raise RuntimeError(
+            'Complex scipy sparse matrices are not supported by the JSON codec; '
+            'split into real/imag components explicitly before returning'
+        )
 
     if fmt in ('csr', 'csc'):
         data = obj.data.tolist()
@@ -584,8 +590,58 @@ def serialize_torch_tensor(obj, *, force_json_markers, torch_allow_copy=False):
     Serialize torch.Tensor values via the nested ndarray envelope. CPU-only by
     default; device/copy behavior is explicit. force_json_markers is threaded
     into the nested ndarray serialization so Pyodide gets a JSON ndarray value.
+
+    Rejection order is significant: the categorical rejections (sparse / quantized
+    / meta / complex) are checked BEFORE the device/contiguous opt-in branch so
+    they fail with a clear, specific message and are NOT bypassable by
+    TYWRAP_TORCH_ALLOW_COPY. The opt-in only governs the lossy-but-lossless device
+    transfer and contiguous copy, never an unrepresentable layout/dtype.
     """
+    import torch  # already importable: is_torch_tensor() gated the dispatch
+
     tensor = obj.detach()
+
+    # Sparse tensors (COO/CSR/CSC/BSR/BSC -> any non-strided layout) have no dense
+    # numpy representation without a densify step, which is not the round-trip this
+    # envelope promises. Reject explicitly rather than emitting a misleading
+    # "not contiguous" error or silently densifying.
+    layout = getattr(tensor, 'layout', None)
+    if getattr(tensor, 'is_sparse', False) or (
+        layout is not None and layout != torch.strided
+    ):
+        raise RuntimeError(
+            f'Torch sparse tensors are not supported (layout={layout}); '
+            'convert to a dense CPU tensor explicitly (e.g. tensor.to_dense()) before returning'
+        )
+
+    # Quantized tensors carry a qscheme/scale/zero_point that numpy() cannot
+    # represent; .numpy() raises an opaque "unsupported ScalarType" deep in torch.
+    # Reject up front with an actionable message.
+    if getattr(tensor, 'is_quantized', False):
+        raise RuntimeError(
+            'Torch quantized tensors are not supported; dequantize explicitly '
+            '(e.g. tensor.dequantize()) before returning'
+        )
+
+    # Meta tensors have shape/dtype but NO storage; copying to CPU yields garbage,
+    # so this is never a lossy-but-honest transfer the opt-in could authorize.
+    if getattr(tensor, 'is_meta', False) or (
+        getattr(tensor, 'device', None) is not None and tensor.device.type == 'meta'
+    ):
+        raise RuntimeError(
+            'Torch meta tensors carry no data and cannot be serialized; '
+            'materialize the tensor on a real device before returning'
+        )
+
+    # Complex tensors round-trip to numpy complex arrays, which are not
+    # JSON-serializable and have no codec envelope. Reject explicitly instead of
+    # emitting Python complex tuples that the JS decoder cannot parse.
+    if torch.is_complex(tensor):
+        raise RuntimeError(
+            f'Torch complex tensors are not supported (dtype={tensor.dtype}); '
+            'split into real/imag components explicitly before returning'
+        )
+
     if getattr(tensor, 'device', None) is not None and tensor.device.type != 'cpu':
         if not torch_allow_copy:
             raise RuntimeError(
@@ -622,12 +678,22 @@ def serialize_sklearn_estimator(obj):
         raise RuntimeError('scikit-learn is not available') from exc
 
     params = obj.get_params(deep=False)
-    try:
-        json.dumps(params)
-    except Exception as exc:
-        raise RuntimeError(
-            'scikit-learn estimator params are not JSON-serializable; avoid returning estimators or sanitize params'
-        ) from exc
+
+    # Metadata-only: NEVER pickle/joblib. Every param value must be plain JSON
+    # (no callables, nested estimators, numpy arrays, or other objects). Probe
+    # each value individually so the error names the offending param instead of
+    # failing opaquely on the whole dict. allow_nan=False also rejects NaN/Inf
+    # params here for parity with the response codec.
+    for key, value in params.items():
+        try:
+            json.dumps(value, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f'scikit-learn estimator param {key!r} is not JSON-serializable '
+                f'(got {type(value).__name__}); estimators are serialized as metadata only '
+                '(no pickle/joblib), so every param must be a plain JSON value. '
+                'Sanitize or drop the param before returning'
+            ) from exc
 
     return {
         '__tywrap__': 'sklearn.estimator',
@@ -943,7 +1009,16 @@ def handle_dispose_instance(params, instances):
     return True
 
 
-def build_meta(instances, *, bridge, pid, python_version, codec_fallback, arrow_available_override=None):
+def build_meta(
+    instances,
+    *,
+    bridge,
+    pid,
+    python_version,
+    codec_fallback,
+    arrow_available_override=None,
+    transport_info=None,
+):
     """
     Build the bridge metadata payload.
 
@@ -956,9 +1031,16 @@ def build_meta(instances, *, bridge, pid, python_version, codec_fallback, arrow_
     instead of probing pyarrow. The Pyodide server forces markers to JSON
     unconditionally, so it advertises arrowAvailable=False regardless of whether
     pyarrow happens to be importable in the WASM environment.
+
+    transport_info: optional chunked-transport negotiation block (BridgeInfo
+    .transport). Core stays oblivious to framing policy -- it only echoes what
+    the I/O layer tells it. The subprocess server passes a {'frameProtocol',
+    'supportsChunking', 'maxFrameBytes'} dict when chunking is negotiated; the
+    Pyodide server passes None (single-frame, in-memory). When None the block is
+    omitted entirely (backward compatible: old bridges never emit it).
     """
     arrow = arrow_available() if arrow_available_override is None else arrow_available_override
-    return {
+    meta = {
         'protocol': PROTOCOL,
         'protocolVersion': PROTOCOL_VERSION,
         'bridge': bridge,
@@ -971,6 +1053,9 @@ def build_meta(instances, *, bridge, pid, python_version, codec_fallback, arrow_
         'sklearnAvailable': module_available('sklearn'),
         'instances': len(instances),
     }
+    if transport_info is not None:
+        meta['transport'] = transport_info
+    return meta
 
 
 def dispatch_request(
@@ -986,6 +1071,7 @@ def dispatch_request(
     arrow_available_override=None,
     allowed_modules=None,
     allow_private_attrs=False,
+    transport_info=None,
 ):
     """
     Validate and route a request, returning the fully-serialized response dict
@@ -1042,6 +1128,7 @@ def dispatch_request(
             python_version=python_version,
             codec_fallback=codec_fallback,
             arrow_available_override=arrow_available_override,
+            transport_info=transport_info,
         )
     else:
         raise ProtocolError(f'Unknown method: {method}')

@@ -26,6 +26,9 @@ TypeScript wrapper for Python libraries with full type safety.
 - **Multi-Runtime** - Node.js (subprocess) and browsers (Pyodide)
 - **Rich Data Types** - numpy, pandas, scipy, torch, sklearn, and stdlib types
 - **Efficient Serialization** - Apache Arrow binary format with JSON fallback
+- **Large-Payload Transport** - the Node subprocess bridge chunks results that
+  exceed the JSONL line ceiling and reassembles them, so big payloads aren't
+  limited to a single line
 
 ## Why tywrap?
 
@@ -105,11 +108,18 @@ new code.
 
 By default, NodeBridge inherits only PATH/PYTHON*/TYWRAP\_* from `process.env`
 to keep the subprocess environment minimal. Set `inheritProcessEnv: true` if you
-need the full environment. Large JSONL responses are capped by `maxLineLength`
-(defaults to `TYWRAP_CODEC_MAX_BYTES` when set, otherwise 1MB).
+need the full environment.
 
-You can cap payload sizes with `TYWRAP_CODEC_MAX_BYTES` (responses) and
-`TYWRAP_REQUEST_MAX_BYTES` (requests) to keep JSONL traffic bounded.
+A request or response larger than the JSONL line ceiling (`maxLineLength`) is
+split into `tywrap-frame/1` frames and reassembled — NodeBridge negotiates this
+by default, so large payloads aren't limited to one line. Chunking engages only
+above the frame ceiling, and reassembly is bounded by the codec payload cap, so
+a payload larger than that cap fails loud rather than buffering without limit.
+Raise `codec.maxPayloadBytes` to carry genuinely large results. You can still
+bound JSONL traffic explicitly with `TYWRAP_CODEC_MAX_BYTES` (responses) and
+`TYWRAP_REQUEST_MAX_BYTES` (requests). See the
+[transport framing](https://bbopen.github.io/tywrap/transport-framing) and
+[capability matrix](https://bbopen.github.io/tywrap/transport-capabilities) docs.
 
 ## Development Hot Reload
 

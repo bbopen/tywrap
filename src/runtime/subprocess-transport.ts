@@ -17,8 +17,14 @@ import { spawn, type ChildProcess } from 'child_process';
 import type { Writable } from 'stream';
 import { DisposableBase } from './bounded-context.js';
 import { BridgeDisposedError, BridgeProtocolError, BridgeTimeoutError } from './errors.js';
+import { Reassembler, encodeFrames, utf8ByteLength } from './frame-codec.js';
 import { TimedOutRequestTracker } from './timed-out-request-tracker.js';
-import type { Transport, TransportCapabilities } from './transport.js';
+import {
+  FRAME_PROTOCOL_ID,
+  PROTOCOL_ID,
+  type Transport,
+  type TransportCapabilities,
+} from './transport.js';
 
 // =============================================================================
 // CONSTANTS
@@ -35,6 +41,44 @@ const DEFAULT_WRITE_QUEUE_TIMEOUT_MS = 30_000;
 
 /** Track timed-out/cancelled request IDs long enough to ignore late responses. */
 const TIMED_OUT_REQUEST_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Per-frame envelope headroom (bytes) reserved on top of a frame's data slice
+ * when sizing the frame-aware stdout line ceiling.
+ *
+ * A `tywrap-frame/1` line is `{"__tywrap_frame__":"chunk","frameProtocol":...,
+ * "stream":"response","id":N,"seq":N,"total":N,"totalBytes":N,
+ * "encoding":"utf8-slice","data":"<slice>"}`. The fixed keys plus the largest
+ * plausible integer fields are well under 256 bytes; 1 KiB is a comfortable
+ * upper bound that never under-allocates.
+ */
+const FRAME_ENVELOPE_HEADROOM = 1024;
+
+/**
+ * Worst-case JSON-escaping expansion of a frame's `data` slice. The slice is a
+ * fragment of a JSON response (already-escaped, printable content), so realistic
+ * expansion is `"`->`\"` / `\`->`\\` (2x). Using 2x keeps the frame-aware line
+ * ceiling sound without over-allocating buffer headroom.
+ */
+const FRAME_DATA_ESCAPE_FACTOR = 2;
+
+/** Negotiation env var: `1` enables `tywrap-frame/1` chunked transport. */
+const ENV_CHUNKING = 'TYWRAP_TRANSPORT_CHUNKING';
+/** Negotiation env var: the framing protocol id the bridge must implement. */
+const ENV_FRAME_PROTOCOL = 'TYWRAP_TRANSPORT_FRAME_PROTOCOL';
+/** Negotiation env var: per-frame UTF-8 byte ceiling for the data slice. */
+const ENV_MAX_FRAME_BYTES = 'TYWRAP_TRANSPORT_MAX_FRAME_BYTES';
+
+/** Timeout (ms) for the in-init meta negotiation probe. */
+const NEGOTIATION_PROBE_TIMEOUT_MS = 30_000;
+
+/**
+ * Default cap (UTF-8 bytes) on a single chunked response reassembled in memory.
+ * Mirrors the codec's `DEFAULT_MAX_PAYLOAD_BYTES` (10 MiB) so chunking never
+ * buffers more than the codec would ultimately accept; `NodeBridge` overrides it
+ * with the configured `codec.maxPayloadBytes`.
+ */
+const DEFAULT_MAX_REASSEMBLY_BYTES = 10 * 1024 * 1024;
 
 /** Regex for ANSI escape sequences */
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
@@ -70,6 +114,28 @@ export interface SubprocessTransportOptions {
 
   /** Write queue timeout in milliseconds. Default: 30000ms */
   writeQueueTimeoutMs?: number;
+
+  /**
+   * Enable `tywrap-frame/1` chunked transport negotiation. When `true`, the
+   * transport spawns the bridge with the three `TYWRAP_TRANSPORT_*` env vars and,
+   * during {@link SubprocessTransport.init}, probes the bridge's `meta` for a
+   * `transport.supportsChunking` block. If the bridge advertises chunking,
+   * oversize responses are transparently reassembled from frames; otherwise
+   * behavior is unchanged and an oversize response still fails loud (no silent
+   * single-frame fallback). Default: `false` (no negotiation, legacy behavior).
+   *
+   * Subprocess-only (0.8.0). See docs/transport-framing.md.
+   */
+  enableChunking?: boolean;
+
+  /**
+   * Cap (UTF-8 bytes) on a single chunked RESPONSE reassembled in memory. A
+   * frame stream whose declared or accumulated payload exceeds this fails loud
+   * instead of buffering, so chunking cannot OOM the process before the codec's
+   * payload cap rejects the result. Should track the codec's `maxPayloadBytes`.
+   * Default: 10 MiB (matches the codec default).
+   */
+  maxReassemblyBytes?: number;
 }
 
 /**
@@ -92,6 +158,13 @@ interface QueuedWrite {
   queuedAt: number;
   /** Timeout handle for write queue timeout */
   timeoutHandle?: NodeJS.Timeout;
+  /**
+   * Liveness predicate. If present and `false` at flush time, the write is
+   * SKIPPED (resolved as a no-op) instead of sent — so a request that timed out
+   * or aborted while its write sat in the stdin backpressure queue never reaches
+   * (and so never executes on) Python.
+   */
+  isLive?: () => boolean;
 }
 
 // =============================================================================
@@ -127,6 +200,36 @@ function extractMessageId(json: string): number | null {
   }
 
   return id;
+}
+
+/**
+ * Result of inspecting a stdout line for `tywrap-frame/1` framing.
+ * - `{ kind: 'frame', value }`: the line parsed as JSON carrying a
+ *   `__tywrap_frame__` marker (handed to the reassembler, which validates it).
+ * - `{ kind: 'plain' }`: valid JSON without a framing marker (a normal,
+ *   single-line response).
+ * - `{ kind: 'invalid' }`: not parseable as JSON.
+ */
+type FrameLineProbe = { kind: 'frame'; value: unknown } | { kind: 'plain' } | { kind: 'invalid' };
+
+/**
+ * Classify a stdout line as a frame envelope, a plain response, or invalid JSON.
+ *
+ * A frame envelope is any JSON object carrying a `__tywrap_frame__` key; the
+ * envelope's structural validity (protocol, seq/total ranges, etc.) is enforced
+ * by the {@link Reassembler}, not here — this only routes the line.
+ */
+function probeFrameLine(line: string): FrameLineProbe {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return { kind: 'invalid' };
+  }
+  if (parsed !== null && typeof parsed === 'object' && '__tywrap_frame__' in parsed) {
+    return { kind: 'frame', value: parsed };
+  }
+  return { kind: 'plain' };
 }
 
 // =============================================================================
@@ -165,8 +268,35 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private readonly envOverrides: Record<string, string>;
   private readonly cwd: string | undefined;
   private readonly maxLineLength: number;
+  private readonly maxReassemblyBytes: number;
   private readonly restartAfterRequests: number;
   private readonly writeQueueTimeoutMs: number;
+
+  /** Whether `tywrap-frame/1` negotiation was requested by the caller. */
+  private readonly enableChunking: boolean;
+
+  /**
+   * Whether the bridge advertised chunking during the init meta probe. Only
+   * `true` after a successful negotiation; drives {@link capabilities} and the
+   * frame-aware stdout line ceiling.
+   */
+  private negotiatedChunking = false;
+
+  /**
+   * The per-frame UTF-8 byte ceiling actually agreed with the bridge:
+   * `min(maxLineLength, the bridge's advertised maxFrameBytes)`. Defaults to
+   * `maxLineLength` and is narrowed during negotiation, so REQUEST frames are
+   * never sized larger than the bridge said it will accept (the reference bridge
+   * echoes the requested value, but a custom bridge may advertise a smaller one).
+   */
+  private negotiatedFrameBytes: number;
+
+  /**
+   * Reassembles `tywrap-frame/1` response frames into single logical response
+   * lines. Constructed lazily once chunking is negotiated; per-id discard tracks
+   * timed-out/aborted streams so late frames cannot desync stdout.
+   */
+  private responseReassembler: Reassembler | null = null;
 
   // Process state
   private process: ChildProcess | null = null;
@@ -190,6 +320,17 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private draining = false;
 
   /**
+   * Per-logical-request write mutex (W5). When a request is chunked into
+   * `tywrap-frame/1` frames, all of that request's frames must reach stdin
+   * contiguously — no other request's frame (or single line) may interleave —
+   * or the Python reassembler would see frames from two ids mixed on one stream.
+   * `writeChunkedRequest` chains the whole frame burst onto this tail; the
+   * single-line write path also serializes behind it so a small request issued
+   * concurrently never slips between another request's frames.
+   */
+  private writeMutex: Promise<void> = Promise.resolve();
+
+  /**
    * Create a new SubprocessTransport.
    *
    * @param options - Transport configuration options
@@ -204,6 +345,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.maxLineLength = options.maxLineLength ?? DEFAULT_MAX_LINE_LENGTH;
     this.restartAfterRequests = options.restartAfterRequests ?? 0;
     this.writeQueueTimeoutMs = options.writeQueueTimeoutMs ?? DEFAULT_WRITE_QUEUE_TIMEOUT_MS;
+    this.enableChunking = options.enableChunking ?? false;
+    this.maxReassemblyBytes = options.maxReassemblyBytes ?? DEFAULT_MAX_REASSEMBLY_BYTES;
+    this.negotiatedFrameBytes = this.maxLineLength;
   }
 
   // ===========================================================================
@@ -260,26 +404,38 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     return new Promise<string>((resolve, reject) => {
       // Set up timeout if specified
       let timer: NodeJS.Timeout | undefined;
-      if (timeoutMs > 0) {
-        timer = setTimeout(() => {
-          this.pending.delete(messageId);
-          this.timedOutRequests.mark(messageId);
-          const stderrTail = this.getStderrTail();
-          const baseMsg = `Operation timed out after ${timeoutMs}ms`;
-          const msg = stderrTail ? `${baseMsg}. Recent stderr:\n${stderrTail}` : baseMsg;
-          reject(new BridgeTimeoutError(msg));
-        }, timeoutMs);
-      }
 
-      // Set up abort handler
+      // Defined before the timer so the timeout path can also detach it.
       const abortHandler = (): void => {
         if (timer) {
           clearTimeout(timer);
         }
         this.pending.delete(messageId);
         this.timedOutRequests.mark(messageId);
+        // Same late-frame discard as the timeout path (see below).
+        this.responseReassembler?.discard(messageId);
         reject(new BridgeTimeoutError('Operation aborted'));
       };
+
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          this.pending.delete(messageId);
+          this.timedOutRequests.mark(messageId);
+          // Discard any in-flight chunked response stream for this id so late
+          // frames are dropped rather than desyncing stdout (the single-line
+          // timedOutRequests.consume above is one-shot and insufficient for a
+          // multi-frame stream).
+          this.responseReassembler?.discard(messageId);
+          // Detach the abort listener: on timeout the abort never fires, so
+          // without this it would leak on a long-lived AbortSignal and could
+          // re-enter abortHandler after this promise has already settled.
+          signal?.removeEventListener('abort', abortHandler);
+          const stderrTail = this.getStderrTail();
+          const baseMsg = `Operation timed out after ${timeoutMs}ms`;
+          const msg = stderrTail ? `${baseMsg}. Recent stderr:\n${stderrTail}` : baseMsg;
+          reject(new BridgeTimeoutError(msg));
+        }, timeoutMs);
+      }
 
       if (signal) {
         signal.addEventListener('abort', abortHandler, { once: true });
@@ -302,15 +458,22 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         reject(error);
       };
 
-      // Register pending request
-      this.pending.set(messageId, {
+      // Register pending request. Captured by reference so the write path can
+      // bind liveness to THIS exact entry (not just the id) — see writeRequest.
+      const pendingEntry: PendingRequest = {
         resolve: wrappedResolve,
         reject: wrappedReject,
         timer,
-      });
+      };
+      this.pending.set(messageId, pendingEntry);
 
-      // Write message to stdin
-      this.writeToStdin(`${message}\n`).catch(err => {
+      // Write message to stdin. When chunking is negotiated and the encoded
+      // request exceeds the negotiated per-frame ceiling, it is fragmented into
+      // `tywrap-frame/1` request frames written contiguously under the write
+      // mutex (W5); otherwise it goes out as a single JSONL line. Both paths
+      // serialize through the same mutex so a small request can never slip
+      // between another request's frames.
+      this.writeRequest(message, messageId, signal, pendingEntry).catch(err => {
         this.pending.delete(messageId);
         if (timer) {
           clearTimeout(timer);
@@ -326,17 +489,25 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   /**
    * Static capability descriptor for the subprocess backend.
    *
-   * Subprocess carries Arrow IPC and arbitrary binary (bytes envelopes) over the
-   * JSONL stream. Chunking/streaming are not implemented (0.8.0). `maxFrameBytes`
-   * is the configured JSONL line-length limit — the largest single response line
-   * this transport will accept before raising a protocol error.
+   * Per the {@link Transport.capabilities} contract this is lifecycle-independent
+   * (safe before `init()` / after `dispose()`) and never makes a Python round
+   * trip. Subprocess carries Arrow IPC and arbitrary binary (bytes envelopes)
+   * over the JSONL stream. `supportsChunking` reports the *configured* capability
+   * — `this.enableChunking`, i.e. whether this transport is set up to use the
+   * `tywrap-frame/1` framing path — exactly as `supportsArrow` reports a static
+   * channel capability rather than a runtime fact. Whether the *connected* bridge
+   * actually advertised framing is the negotiated fact, surfaced separately on
+   * `BridgeInfo.transport.supportsChunking`; "will chunking actually happen"
+   * needs both `true`. `supportsStreaming` stays `false` (0.8.0). `maxFrameBytes`
+   * is the configured JSONL line-length limit — the largest single (unchunked)
+   * response line this transport accepts.
    */
   capabilities(): TransportCapabilities {
     return {
       backend: 'subprocess',
       supportsArrow: true,
       supportsBinary: true,
-      supportsChunking: false,
+      supportsChunking: this.enableChunking,
       supportsStreaming: false,
       maxFrameBytes: this.maxLineLength,
     };
@@ -347,10 +518,142 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   // ===========================================================================
 
   /**
-   * Initialize the transport by spawning the Python process.
+   * Initialize the transport by spawning the Python process and, when chunking
+   * is enabled, negotiating `tywrap-frame/1` via a small unchunked `meta` probe.
    */
   protected async doInit(): Promise<void> {
     await this.spawnProcess();
+    if (this.enableChunking) {
+      await this.negotiateChunking();
+    }
+  }
+
+  /**
+   * Probe the freshly-spawned bridge for `tywrap-frame/1` support.
+   *
+   * Sends a small unchunked `meta` request directly over stdin (NOT via the
+   * public {@link send}, which would re-enter init while we are mid-init) and
+   * reads the single-line response. If the bridge reports
+   * `transport.supportsChunking: true`, response reassembly is enabled. If the
+   * bridge does not advertise chunking (old bridge, or it disabled framing), the
+   * transport stays single-frame and an oversize response still fails loud — no
+   * silent fallback. A probe failure leaves chunking disabled but does not fail
+   * init (small calls must keep working); the loud failure is deferred to the
+   * first oversize response.
+   */
+  private async negotiateChunking(): Promise<void> {
+    const probeId = -1;
+    const probeMessage = JSON.stringify({
+      id: probeId,
+      protocol: PROTOCOL_ID,
+      method: 'meta',
+      params: {},
+    });
+
+    let responseLine: string;
+    try {
+      responseLine = await this.sendProbe(probeId, probeMessage, NEGOTIATION_PROBE_TIMEOUT_MS);
+    } catch {
+      // Probe failed (slow/old bridge, transient): leave chunking off. Oversize
+      // responses will fail loud at the line ceiling; small calls keep working.
+      this.negotiatedChunking = false;
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(responseLine);
+    } catch {
+      this.negotiatedChunking = false;
+      return;
+    }
+
+    const supports = this.bridgeAdvertisesChunking(parsed);
+    this.negotiatedChunking = supports;
+    if (supports) {
+      // Honor the bridge's advertised ceiling so request frames are never sized
+      // larger than it will accept. bridgeAdvertisesChunking already validated
+      // maxFrameBytes is a positive integer, so this read is safe.
+      const advertised = (parsed as { result?: { transport?: { maxFrameBytes?: number } } }).result
+        ?.transport?.maxFrameBytes;
+      if (typeof advertised === 'number') {
+        this.negotiatedFrameBytes = Math.min(this.maxLineLength, advertised);
+      }
+      this.responseReassembler = new Reassembler({
+        maxReassemblyBytes: this.maxReassemblyBytes,
+        expectedStream: 'response',
+      });
+    }
+  }
+
+  /**
+   * Whether a parsed `meta` response advertises `tywrap-frame/1` chunking with a
+   * matching frame protocol. Defensive: any missing/mismatched field => `false`.
+   */
+  private bridgeAdvertisesChunking(parsed: unknown): boolean {
+    if (parsed === null || typeof parsed !== 'object') {
+      return false;
+    }
+    const result = (parsed as { result?: unknown }).result;
+    if (result === null || typeof result !== 'object') {
+      return false;
+    }
+    const transport = (result as { transport?: unknown }).transport;
+    if (transport === null || typeof transport !== 'object') {
+      return false;
+    }
+    const t = transport as {
+      frameProtocol?: unknown;
+      supportsChunking?: unknown;
+      maxFrameBytes?: unknown;
+    };
+    // Match the BridgeInfo validator (rpc-client.ts): a valid framing block needs
+    // the matching protocol AND a positive-integer maxFrameBytes. A bridge that
+    // advertises chunking with a bogus frame ceiling is not a contract we honor.
+    return (
+      t.supportsChunking === true &&
+      t.frameProtocol === FRAME_PROTOCOL_ID &&
+      typeof t.maxFrameBytes === 'number' &&
+      Number.isInteger(t.maxFrameBytes) &&
+      t.maxFrameBytes > 0
+    );
+  }
+
+  /**
+   * Send a single in-init probe message over stdin and resolve with its raw
+   * response line. Registers a pending entry keyed by `probeId` exactly like the
+   * normal send path so {@link handleResponseLine} resolves it, but bypasses the
+   * `isReady`/auto-init guard (we are deliberately running during `doInit`).
+   */
+  private sendProbe(probeId: number, message: string, timeoutMs: number): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(probeId);
+        this.timedOutRequests.mark(probeId);
+        reject(new BridgeTimeoutError(`Negotiation probe timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      if (typeof timer.unref === 'function') {
+        timer.unref();
+      }
+
+      this.pending.set(probeId, {
+        resolve: (value: string): void => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error: Error): void => {
+          clearTimeout(timer);
+          reject(error);
+        },
+        timer,
+      });
+
+      this.writeToStdin(`${message}\n`).catch(err => {
+        this.pending.delete(probeId);
+        clearTimeout(timer);
+        reject(this.classifyError(err));
+      });
+    });
   }
 
   /**
@@ -385,6 +688,11 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.stderrBuffer = '';
     this.timedOutRequests.clear();
     this.requestCount = 0;
+    this.responseReassembler = null;
+    this.negotiatedChunking = false;
+    // Reset the per-request write mutex so a disposed transport starts from a
+    // clean (resolved) tail if reused.
+    this.writeMutex = Promise.resolve();
   }
 
   // ===========================================================================
@@ -399,14 +707,42 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     // If env is provided, it should be the complete environment (already filtered by NodeBridge)
     // We only add Python-specific variables on top
     const baseEnv = Object.keys(this.envOverrides).length > 0 ? this.envOverrides : process.env;
+
+    // Advertise `tywrap-frame/1` chunked transport so the bridge fragments
+    // oversize responses. maxFrameBytes is the JSONL line ceiling: the bridge
+    // caps each frame's *data slice* at this many UTF-8 bytes, and the TS reader
+    // (see the frame-aware line ceiling) allows for the JSON envelope + escaping
+    // on top of it. Spread (rather than dynamic index assignment) keeps the
+    // computed keys off ESLint's object-injection sink. See
+    // docs/transport-framing.md.
+    const chunkingEnv: NodeJS.ProcessEnv = this.enableChunking
+      ? {
+          [ENV_CHUNKING]: '1',
+          [ENV_FRAME_PROTOCOL]: FRAME_PROTOCOL_ID,
+          [ENV_MAX_FRAME_BYTES]: String(this.maxLineLength),
+        }
+      : {};
+
     const env: NodeJS.ProcessEnv = {
       ...baseEnv,
+      ...chunkingEnv,
       // Ensure Python uses UTF-8
       PYTHONUTF8: '1',
       PYTHONIOENCODING: 'UTF-8',
       // Disable Python buffering
       PYTHONUNBUFFERED: '1',
     };
+
+    // This transport's enableChunking is authoritative: when chunking is OFF,
+    // strip any inherited TYWRAP_TRANSPORT_* from the parent environment so a
+    // host-level value can't make the bridge negotiate framing the TS side won't
+    // reassemble (or a different frame ceiling). When ON, chunkingEnv above
+    // already set all three to this transport's values.
+    if (!this.enableChunking) {
+      delete env[ENV_CHUNKING];
+      delete env[ENV_FRAME_PROTOCOL];
+      delete env[ENV_MAX_FRAME_BYTES];
+    }
 
     // Spawn process
     this.process = spawn(this.pythonPath, [this.bridgeScript], {
@@ -507,9 +843,20 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.stderrBuffer = '';
     this.requestCount = 0;
     this.needsRestart = false;
+    // Drop any partial reassembly + discard tracking: the new process owns a
+    // fresh stdout stream, so stale per-id state from the dead process must not
+    // leak across the restart boundary.
+    this.responseReassembler = null;
+    this.negotiatedChunking = false;
+    // The new process owns a fresh stdin stream; reset the write mutex so a
+    // pending frame burst against the dead process cannot serialize behind it.
+    this.writeMutex = Promise.resolve();
 
-    // Spawn new process
+    // Spawn new process and re-negotiate framing against the fresh bridge.
     await this.spawnProcess();
+    if (this.enableChunking) {
+      await this.negotiateChunking();
+    }
   }
 
   /**
@@ -526,16 +873,35 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   // ===========================================================================
 
   /**
+   * Effective stdout line ceiling.
+   *
+   * Without chunking it is exactly {@link maxLineLength} (legacy behavior). With
+   * chunking negotiated, a single wire line is a `tywrap-frame/1` envelope whose
+   * `data` slice is capped at `maxLineLength` UTF-8 bytes by the bridge, but the
+   * JSON envelope adds escaping (`"`/`\`) plus fixed keys; the ceiling is widened
+   * to bound that overhead so a legitimate frame line is never rejected while a
+   * runaway/garbage line still is.
+   */
+  private effectiveLineCeiling(): number {
+    if (!this.negotiatedChunking) {
+      return this.maxLineLength;
+    }
+    return this.maxLineLength * FRAME_DATA_ESCAPE_FACTOR + FRAME_ENVELOPE_HEADROOM;
+  }
+
+  /**
    * Handle stdout data from the Python process.
    */
   private handleStdoutData(chunk: Buffer | string): void {
     this.stdoutBuffer += chunk.toString();
 
+    const ceiling = this.effectiveLineCeiling();
+
     // Check for excessive line length without newline
-    if (this.stdoutBuffer.length > this.maxLineLength && !this.stdoutBuffer.includes('\n')) {
+    if (this.stdoutBuffer.length > ceiling && !this.stdoutBuffer.includes('\n')) {
       const snippet = this.stdoutBuffer.slice(0, 500);
       this.stdoutBuffer = '';
-      this.handleProtocolError(`Response line exceeded ${this.maxLineLength} bytes`, snippet);
+      this.handleProtocolError(`Response line exceeded ${ceiling} bytes`, snippet);
       return;
     }
 
@@ -551,9 +917,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       }
 
       // Check line length
-      if (line.length > this.maxLineLength) {
+      if (line.length > ceiling) {
         const snippet = line.slice(0, 500);
-        this.handleProtocolError(`Response line exceeded ${this.maxLineLength} bytes`, snippet);
+        this.handleProtocolError(`Response line exceeded ${ceiling} bytes`, snippet);
         return;
       }
 
@@ -563,8 +929,23 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
   /**
    * Handle a complete response line from stdout.
+   *
+   * When chunking is negotiated, a line may be a `tywrap-frame/1` envelope: it is
+   * routed into the per-id {@link Reassembler}, which returns the reassembled
+   * logical response only once the stream is complete and valid. Single-line
+   * (non-frame) responses keep the original fast path unchanged.
    */
   private handleResponseLine(line: string): void {
+    if (this.negotiatedChunking && this.responseReassembler) {
+      const probe = probeFrameLine(line);
+      if (probe.kind === 'frame') {
+        this.handleResponseFrame(probe.value, line);
+        return;
+      }
+      // probe.kind 'plain'/'invalid' falls through to the legacy single-line
+      // path below, which extracts the id and validates JSON as before.
+    }
+
     // Extract ID to find pending request
     const messageId = extractMessageId(line);
     if (messageId === null) {
@@ -593,6 +974,75 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
     // Resolve with raw response
     pending.resolve(line);
+  }
+
+  /**
+   * Route one `tywrap-frame/1` response frame into the reassembler.
+   *
+   * On completion the reassembled logical line resolves the pending request. The
+   * reassembler validates structure, ordering, byte count, and UTF-8 internally
+   * and throws on any framing violation (malformed/duplicate/byte-mismatch/
+   * unknown-protocol) — those reject the pending id and mark the subprocess for
+   * restart, since stdout can no longer be trusted to be frame-aligned. Frames
+   * for a timed-out/aborted id are silently discarded by the reassembler (it
+   * returns `null` and tracks the discard set) so late multi-frame responses
+   * cannot desync the stream.
+   */
+  private handleResponseFrame(rawFrame: unknown, line: string): void {
+    const reassembler = this.responseReassembler;
+    if (!reassembler) {
+      // Unreachable: only called when negotiatedChunking && reassembler set.
+      this.handleProtocolError('Received frame with no reassembler', line);
+      return;
+    }
+
+    const frameId = (rawFrame as { id?: unknown }).id;
+
+    let reassembled: string | null;
+    try {
+      reassembled = reassembler.accept(rawFrame);
+    } catch (err) {
+      // Framing corruption: stdout is no longer frame-aligned. Reject the
+      // correlated pending request (if any) and force a restart.
+      const message = err instanceof Error ? err.message : String(err);
+      this.rejectFrameId(frameId, `Frame reassembly failed: ${message}`, line);
+      this.markForRestart();
+      return;
+    }
+
+    if (reassembled === null) {
+      // More frames needed, or this frame belonged to a discarded (timed-out)
+      // id and was dropped. Either way: nothing to resolve yet.
+      return;
+    }
+
+    // Stream complete: resolve the correlated pending request with the single
+    // logical response line. extractMessageId is reused so the resolution path
+    // matches the non-chunked case exactly.
+    this.handleResponseLine(reassembled);
+  }
+
+  /**
+   * Reject the pending request correlated to a frame id, if one exists.
+   *
+   * Used when frame reassembly throws. If the id is unknown (e.g. it already
+   * timed out and was dropped from `pending`), the error still surfaces as a
+   * protocol error so the desync is not swallowed silently.
+   */
+  private rejectFrameId(frameId: unknown, details: string, line: string): void {
+    if (typeof frameId === 'number' && Number.isInteger(frameId)) {
+      const pending = this.pending.get(frameId);
+      if (pending) {
+        this.pending.delete(frameId);
+        if (pending.timer) {
+          clearTimeout(pending.timer);
+        }
+        pending.reject(new BridgeProtocolError(this.withStderrTail(details)));
+        return;
+      }
+    }
+    // No correlated pending request: still a protocol-level desync.
+    this.handleProtocolError(details, line);
   }
 
   /**
@@ -710,10 +1160,11 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private createQueuedWrite(
     data: string,
     resolve: () => void,
-    reject: (error: Error) => void
+    reject: (error: Error) => void,
+    isLive?: () => boolean
   ): QueuedWrite {
     const queuedAt = Date.now();
-    const entry: QueuedWrite = { data, resolve, reject, queuedAt };
+    const entry: QueuedWrite = { data, resolve, reject, queuedAt, isLive };
 
     // Set up timeout timer that fires if drain never happens
     entry.timeoutHandle = setTimeout(() => {
@@ -750,7 +1201,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   /**
    * Write data to stdin with backpressure handling.
    */
-  private writeToStdin(data: string): Promise<void> {
+  private writeToStdin(data: string, isLive?: () => boolean): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       if (!this.process?.stdin || this.processExited) {
         reject(new BridgeProtocolError(this.withStderrTail('Process stdin not available')));
@@ -758,8 +1209,16 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       }
 
       if (this.draining || this.writeQueue.length > 0) {
-        // Queue the write with timestamp and timeout timer
-        this.writeQueue.push(this.createQueuedWrite(data, resolve, reject));
+        // Queue the write with timestamp, timeout timer, and liveness predicate
+        // (checked again at flush — see processQueuedWrite).
+        this.writeQueue.push(this.createQueuedWrite(data, resolve, reject, isLive));
+        return;
+      }
+
+      // Skip a write whose request was abandoned (timed out/aborted) before it
+      // reached stdin — never execute an operation the caller gave up on.
+      if (isLive && !isLive()) {
+        resolve();
         return;
       }
 
@@ -782,6 +1241,110 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         reject(new BridgeProtocolError(this.withStderrTail(`Write error: ${errorMessage}`)));
       }
     });
+  }
+
+  /**
+   * Write one logical request to stdin, fragmenting it into `tywrap-frame/1`
+   * request frames when chunking is negotiated and the encoded request exceeds
+   * the per-frame ceiling (W5 — the mirror of W4's response chunking).
+   *
+   * Both the chunked and single-line paths run under {@link writeMutex} so a
+   * logical request's bytes (one line, or a burst of frames) reach stdin
+   * contiguously: a small request issued concurrently can never interleave
+   * between another request's frames, which would desync the Python
+   * reassembler (it correlates frames by id, but the JSONL stream itself must
+   * stay frame-aligned). The mutex tail is advanced regardless of success so a
+   * failed write never wedges every subsequent request.
+   *
+   * @param message - the encoded logical JSON request (no trailing newline)
+   * @param messageId - the request's correlation id (already validated integer)
+   * @param signal - optional abort signal; an abort observed between frames
+   *   stops further frames and rejects this send (the pending entry is rejected
+   *   by the abort handler / the caller's `.catch`).
+   */
+  private writeRequest(
+    message: string,
+    messageId: number,
+    signal?: AbortSignal,
+    pendingEntry?: PendingRequest
+  ): Promise<void> {
+    // The request is "live" only while THIS send's exact pending entry is still
+    // registered (the timeout and abort handlers delete it) and the signal is not
+    // aborted. Binding to the entry IDENTITY — not just the id — closes the
+    // id-reuse hole: if the id is recycled by a later send while this write is
+    // still queued, the stale write sees a different entry and is skipped.
+    // (RpcClient ids are monotonic, but Transport.send is public and does not
+    // enforce id uniqueness.) Gating EVERY write point on this — the run closure,
+    // the direct stdin write, the backpressure-queue flush, and each chunked
+    // frame — prevents an abandoned request from executing on Python, even one
+    // whose write sat queued under backpressure past the cancellation.
+    const isLive = (): boolean =>
+      !signal?.aborted &&
+      (pendingEntry !== undefined
+        ? this.pending.get(messageId) === pendingEntry
+        : this.pending.has(messageId));
+    const run = (): Promise<void> => {
+      if (!isLive()) {
+        return Promise.resolve();
+      }
+      // Only chunk when chunking was negotiated AND the encoded request exceeds
+      // the NEGOTIATED per-frame ceiling (which honors the bridge's advertised
+      // maxFrameBytes). Otherwise: one JSONL line, unchanged.
+      if (this.negotiatedChunking && utf8ByteLength(message) > this.negotiatedFrameBytes) {
+        return this.writeChunkedRequest(message, messageId, signal, isLive);
+      }
+      return this.writeToStdin(`${message}\n`, isLive);
+    };
+
+    // Serialize the whole logical write onto the mutex tail. We chain the next
+    // tail off the settled (caught) result so one failed/aborted write does not
+    // poison the chain for later requests.
+    const result = this.writeMutex.then(run);
+    this.writeMutex = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
+  /**
+   * Fragment a logical request into `tywrap-frame/1` request frames and write
+   * them contiguously (one JSONL line per frame). Runs while holding the write
+   * mutex (see {@link writeRequest}), so no other write interleaves.
+   *
+   * Each frame is awaited in turn so backpressure on stdin is respected. Before
+   * every frame the abort signal and process liveness are re-checked: an abort
+   * mid-burst stops the remaining frames and rejects the send LOUD (the Python
+   * reassembler drops the now-incomplete id when the next request's frames /
+   * timeout arrive, exactly as the response side handles a discarded id).
+   */
+  private async writeChunkedRequest(
+    message: string,
+    messageId: number,
+    signal?: AbortSignal,
+    isLive?: () => boolean
+  ): Promise<void> {
+    const frames = encodeFrames(message, {
+      id: messageId,
+      stream: 'request',
+      maxFrameBytes: this.negotiatedFrameBytes,
+    });
+
+    for (const frame of frames) {
+      // Stop the burst if the caller aborted, the request was abandoned (timed
+      // out -> pending deleted, caught by isLive), or the process died between
+      // frames. A partial request stream is dropped by the Python reassembler.
+      if (signal?.aborted || (isLive && !isLive())) {
+        throw new BridgeTimeoutError('Operation aborted');
+      }
+      if (this.processExited || !this.process) {
+        throw new BridgeProtocolError(this.withStderrTail('Process stdin not available'));
+      }
+      // One frame per JSONL line; await each so stdin backpressure is honored.
+      // isLive gates a frame that ends up queued under backpressure past a late
+      // cancellation, so an abandoned chunked request never completes on Python.
+      await this.writeToStdin(`${JSON.stringify(frame)}\n`, isLive);
+    }
   }
 
   /**
@@ -818,6 +1381,14 @@ export class SubprocessTransport extends DisposableBase implements Transport {
           `Write queue timeout: entry waited ${now - queued.queuedAt}ms (limit: ${this.writeQueueTimeoutMs}ms)`
         )
       );
+      return 'continue';
+    }
+
+    // Skip the write if the request was abandoned (timed out/aborted) while it
+    // sat in the backpressure queue — never execute an operation the caller gave
+    // up on. Resolve as a no-op so the mutex chain stays healthy.
+    if (queued.isLive && !queued.isLive()) {
+      queued.resolve();
       return 'continue';
     }
 
@@ -897,7 +1468,15 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   }
 
   /**
-   * Handle a protocol error by rejecting all pending requests.
+   * Handle a protocol error by rejecting all pending requests and marking the
+   * subprocess for restart.
+   *
+   * Every caller represents genuine stdout-stream corruption (a too-long line, a
+   * response with no `id`, a frame with no reassembler, or a truly unexpected id
+   * — benign late responses from timed-out requests are already filtered upstream
+   * via {@link timedOutRequests}). After such an error stdout can no longer be
+   * trusted to be line/frame-aligned, so the process is marked for restart —
+   * matching the frame-reassembly-corruption path and the framing spec.
    */
   private handleProtocolError(details: string, line?: string): void {
     const snippet = line ? (line.length > 500 ? `${line.slice(0, 500)}...` : line) : undefined;
@@ -910,6 +1489,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
     const error = new BridgeProtocolError(msg);
     this.rejectAllPending(error);
+    this.markForRestart();
   }
 
   /**

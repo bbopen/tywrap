@@ -135,6 +135,89 @@ describeNodeOnly('Scientific Codecs', () => {
 });
 
 /**
+ * #234 envelope hardening — torch device/contiguous opt-in behavior end to end
+ * over the real subprocess bridge. A CPU non-contiguous tensor (`.t()` of a 2D
+ * tensor) is the portable, GPU-free way to exercise the TYWRAP_TORCH_ALLOW_COPY
+ * gate: rejected by default, accepted (with a contiguous copy) when opted in.
+ */
+const TORCH_OK = BASE_OK && hasPythonModule('torch');
+
+describeNodeOnly('Torch opt-in copy (#234)', () => {
+  it.skipIf(!TORCH_OK)(
+    'rejects a non-contiguous tensor by default',
+    async () => {
+      const bridge = new NodeBridge({
+        scriptPath,
+        pythonPath,
+        enableJsonFallback: true,
+        timeoutMs: bridgeTimeoutMs,
+      });
+      try {
+        await expect(
+          bridge.call('builtins', 'eval', [
+            '__import__("torch").tensor([[1.0, 2.0], [3.0, 4.0]]).t()',
+          ])
+        ).rejects.toThrow(/not contiguous/);
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    scientificTimeoutMs
+  );
+
+  it.skipIf(!TORCH_OK)(
+    'accepts a non-contiguous tensor when TYWRAP_TORCH_ALLOW_COPY=1 (opt-in)',
+    async () => {
+      const bridge = new NodeBridge({
+        scriptPath,
+        pythonPath,
+        enableJsonFallback: true,
+        env: { TYWRAP_TORCH_ALLOW_COPY: '1' },
+        timeoutMs: bridgeTimeoutMs,
+      });
+      try {
+        const result = await bridge.call<{
+          data: unknown;
+          shape?: number[];
+          device?: string;
+        }>('builtins', 'eval', ['__import__("torch").tensor([[1.0, 2.0], [3.0, 4.0]]).t()']);
+        // .t() of [[1,2],[3,4]] is [[1,3],[2,4]]; the contiguous copy round-trips.
+        expect(result.shape).toEqual([2, 2]);
+        expect(result.device).toBe('cpu');
+        expect(result.data).toEqual([
+          [1, 3],
+          [2, 4],
+        ]);
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    scientificTimeoutMs
+  );
+
+  it.skipIf(!TORCH_OK)(
+    'still rejects a complex tensor even with TYWRAP_TORCH_ALLOW_COPY=1 (categorical, not opt-in-able)',
+    async () => {
+      const bridge = new NodeBridge({
+        scriptPath,
+        pythonPath,
+        enableJsonFallback: true,
+        env: { TYWRAP_TORCH_ALLOW_COPY: '1' },
+        timeoutMs: bridgeTimeoutMs,
+      });
+      try {
+        await expect(
+          bridge.call('builtins', 'eval', ['__import__("torch").tensor([1+2j, 3+4j])'])
+        ).rejects.toThrow(/[Cc]omplex tensors are not supported/);
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    scientificTimeoutMs
+  );
+});
+
+/**
  * ndarray flatten+reshape tests
  * Tests the Arrow encoding path where multi-dimensional arrays are flattened
  * on Python side and reshaped on JS side.

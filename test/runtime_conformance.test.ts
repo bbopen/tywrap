@@ -39,6 +39,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { isNodejs } from '../src/utils/runtime.js';
 import { resolvePythonExecutable } from '../src/utils/python.js';
 import { BOOTSTRAP_PYTHON } from '../src/runtime/pyodide-transport.js';
+import { SubprocessTransport } from '../src/runtime/subprocess-transport.js';
+import { HttpTransport } from '../src/runtime/http-transport.js';
+import { PyodideTransport } from '../src/runtime/pyodide-transport.js';
+import { PROTOCOL_ID } from '../src/runtime/transport.js';
 
 // ---------------------------------------------------------------------------
 // Availability gates (mirrors the established repo idioms)
@@ -138,6 +142,49 @@ class Widget:
     @functools.cached_property
     def cached_area(self):
         return self.size * self.size + 1
+`;
+
+// #234 hardening fixture: a sklearn estimator whose constructor stores a callable
+// param, so get_params(deep=False) returns a non-JSON value. The bridge must reject
+// it with a clear, param-naming error (metadata-only; never pickle). Written only
+// when sklearn is importable.
+const SKLEARN_HARDENING_MODULE = '_tywrap_sklearn_hardening_fixtures';
+const SKLEARN_HARDENING_PATH = resolve(RUNTIME_DIR, `${SKLEARN_HARDENING_MODULE}.py`);
+const SKLEARN_HARDENING_SOURCE = `
+from sklearn.base import BaseEstimator
+
+
+class CallableParamEstimator(BaseEstimator):
+    def __init__(self, fn=len):
+        self.fn = fn
+
+
+class NestedEstimatorParam(BaseEstimator):
+    def __init__(self, inner=None):
+        self.inner = inner if inner is not None else CallableParamEstimator()
+
+
+def make_callable_param():
+    return CallableParamEstimator()
+
+
+def make_nested_estimator_param():
+    return NestedEstimatorParam()
+`;
+
+// W6 chunking-conformance fixture: returns an exact n-byte ASCII string with a
+// position-sensitive repeating pattern so a dropped/duplicated slice surfaces as
+// a content mismatch, not merely a length mismatch. Used to prove the subprocess
+// backend reassembles a payload that exceeds a small frame ceiling while HTTP and
+// Pyodide carry the same payload single-frame.
+const CHUNKING_FIXTURE_MODULE = '_tywrap_conformance_chunking_fixtures';
+const CHUNKING_FIXTURE_PATH = resolve(RUNTIME_DIR, `${CHUNKING_FIXTURE_MODULE}.py`);
+const CHUNKING_FIXTURE_SOURCE = `
+def big_string(n):
+    """Return an n-byte ASCII string (deterministic, position-sensitive)."""
+    pattern = 'tywrap-0123456789-'
+    reps = (n // len(pattern)) + 1
+    return (pattern * reps)[:n]
 `;
 
 const MODULES = {
@@ -359,6 +406,11 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     // stdlib-only — written unconditionally so the member-dispatch case runs
     // on every backend that has a Python interpreter.
     writeFileSync(MEMBER_FIXTURE_PATH, MEMBER_FIXTURE_SOURCE, 'utf-8');
+    // stdlib-only chunking fixture (W6 cross-backend large-payload conformance).
+    writeFileSync(CHUNKING_FIXTURE_PATH, CHUNKING_FIXTURE_SOURCE, 'utf-8');
+    if (MODULES.sklearn) {
+      writeFileSync(SKLEARN_HARDENING_PATH, SKLEARN_HARDENING_SOURCE, 'utf-8');
+    }
     const baseEnv = { ...process.env } as NodeJS.ProcessEnv;
     const jsonEnv = { ...process.env, TYWRAP_CODEC_FALLBACK: 'json' } as NodeJS.ProcessEnv;
 
@@ -369,7 +421,12 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
 
     if (CORE_OK) {
       writeFileSync(PYODIDE_HARNESS_PATH, PYODIDE_CORE_HARNESS, 'utf-8');
-      coreBackend = new JsonlProcessBackend('pyodide-core', PYTHON, [PYODIDE_HARNESS_PATH], baseEnv);
+      coreBackend = new JsonlProcessBackend(
+        'pyodide-core',
+        PYTHON,
+        [PYODIDE_HARNESS_PATH],
+        baseEnv
+      );
     }
   });
 
@@ -390,6 +447,16 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     }
     try {
       rmSync(MEMBER_FIXTURE_PATH, { force: true });
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(CHUNKING_FIXTURE_PATH, { force: true });
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(SKLEARN_HARDENING_PATH, { force: true });
     } catch {
       // ignore
     }
@@ -631,7 +698,12 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
         // @classmethod via a dotted call() name (cls bound to the class).
         const named = await backend.dispatch({
           method: 'call',
-          params: { module: MEMBER_FIXTURE_MODULE, functionName: 'Widget.named', args: [], kwargs: {} },
+          params: {
+            module: MEMBER_FIXTURE_MODULE,
+            functionName: 'Widget.named',
+            args: [],
+            kwargs: {},
+          },
         });
         expect(named.error, `${name} classmethod error`).toBeUndefined();
         expect(named.result, `${name} classmethod result`).toBe('widget');
@@ -639,7 +711,12 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
         // @staticmethod via a dotted call() name.
         const doubled = await backend.dispatch({
           method: 'call',
-          params: { module: MEMBER_FIXTURE_MODULE, functionName: 'Widget.doubled', args: [21], kwargs: {} },
+          params: {
+            module: MEMBER_FIXTURE_MODULE,
+            functionName: 'Widget.doubled',
+            args: [21],
+            kwargs: {},
+          },
         });
         expect(doubled.error, `${name} staticmethod error`).toBeUndefined();
         expect(doubled.result, `${name} staticmethod result`).toBe(42);
@@ -1021,6 +1098,280 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
   );
 
   // -------------------------------------------------------------------------
+  // #234 envelope hardening — SUPPORTED scipy formats beyond CSR (CSC/COO/empty)
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK || !MODULES.scipy)(
+    'scipy.sparse CSC / COO / empty supported-format parity (json-only)',
+    async () => {
+      for (const { name, backend } of jsonMarkerBackends()) {
+        const b = backend();
+        if (!b) continue;
+
+        // CSC
+        const csc = await b.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("scipy.sparse").sparse.csc_matrix([[1, 0], [0, 2]])'],
+            kwargs: {},
+          },
+        });
+        expect(csc.error, `${name} csc error`).toBeUndefined();
+        const cscEnv = csc.result as Record<string, unknown>;
+        expect(cscEnv.format, `${name} csc format`).toBe('csc');
+        expect(cscEnv.shape, `${name} csc shape`).toEqual([2, 2]);
+        expect(Array.isArray(cscEnv.indptr), `${name} csc indptr`).toBe(true);
+
+        // COO
+        const coo = await b.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("scipy.sparse").sparse.coo_matrix([[1, 0], [0, 2]])'],
+            kwargs: {},
+          },
+        });
+        expect(coo.error, `${name} coo error`).toBeUndefined();
+        const cooEnv = coo.result as Record<string, unknown>;
+        expect(cooEnv.format, `${name} coo format`).toBe('coo');
+        expect(Array.isArray(cooEnv.row), `${name} coo row`).toBe(true);
+        expect(Array.isArray(cooEnv.col), `${name} coo col`).toBe(true);
+
+        // Empty CSR (no stored entries)
+        const empty = await b.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("scipy.sparse").sparse.csr_matrix((3, 3))'],
+            kwargs: {},
+          },
+        });
+        expect(empty.error, `${name} empty csr error`).toBeUndefined();
+        const emptyEnv = empty.result as Record<string, unknown>;
+        expect(emptyEnv.format, `${name} empty format`).toBe('csr');
+        expect(emptyEnv.data, `${name} empty data`).toEqual([]);
+        expect(emptyEnv.shape, `${name} empty shape`).toEqual([3, 3]);
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
+  // #234 envelope hardening — scipy EXPLICIT FAILURES (format / complex dtype)
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK || !MODULES.scipy)(
+    'scipy.sparse rejects unsupported format and complex dtype clearly',
+    async () => {
+      for (const { name, get } of liveBackends()) {
+        const backend = get();
+        if (!backend) continue;
+
+        // DIA format is unsupported -> clear rejection naming the supported set.
+        const dia = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("scipy.sparse").sparse.dia_matrix(__import__("numpy").eye(3))'],
+            kwargs: {},
+          },
+        });
+        expect(dia.error, `${name} dia rejected`).toBeDefined();
+        expect(dia.error?.message, `${name} dia message`).toMatch(
+          /Unsupported scipy sparse format/
+        );
+        expect(dia.error?.message, `${name} dia mentions supported set`).toMatch(/csr\/csc\/coo/);
+
+        // Complex dtype is unsupported -> clear rejection.
+        const complex = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: [
+              '__import__("scipy.sparse").sparse.csr_matrix(' +
+                '__import__("numpy").array([[1+2j, 0], [0, 3+4j]]))',
+            ],
+            kwargs: {},
+          },
+        });
+        expect(complex.error, `${name} complex sparse rejected`).toBeDefined();
+        expect(complex.error?.message, `${name} complex sparse message`).toMatch(
+          /[Cc]omplex .*sparse .*not supported/
+        );
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
+  // #234 envelope hardening — torch EXPLICIT FAILURES + opt-in default rejection
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK || !MODULES.torch)(
+    'torch rejects sparse / quantized / meta / complex tensors clearly',
+    async () => {
+      for (const { name, get } of liveBackends()) {
+        const backend = get();
+        if (!backend) continue;
+
+        // Sparse COO tensor -> reject with a sparse-specific message (NOT a
+        // misleading "not contiguous"), and the message must not be bypassable
+        // by an opt-in (default rejection is what the live backends exercise).
+        const sparse = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: [
+              '__import__("torch").sparse_coo_tensor(' +
+                '__import__("torch").tensor([[0, 1], [1, 0]]), ' +
+                '__import__("torch").tensor([3.0, 4.0]), (2, 2))',
+            ],
+            kwargs: {},
+          },
+        });
+        expect(sparse.error, `${name} sparse tensor rejected`).toBeDefined();
+        expect(sparse.error?.message, `${name} sparse message`).toMatch(
+          /[Ss]parse tensors are not supported/
+        );
+
+        // Quantized tensor -> reject with a dequantize hint (was an opaque
+        // "unsupported ScalarType" deep in torch before hardening).
+        const quant = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: [
+              '__import__("torch").quantize_per_tensor(' +
+                '__import__("torch").tensor([1.0, 2.0]), 0.1, 0, __import__("torch").qint8)',
+            ],
+            kwargs: {},
+          },
+        });
+        expect(quant.error, `${name} quantized rejected`).toBeDefined();
+        expect(quant.error?.message, `${name} quantized message`).toMatch(/quantized/i);
+
+        // Meta tensor -> reject with a materialize hint (NOT the generic non-CPU
+        // message), and it must NOT be presented as opt-in-able.
+        const meta = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("torch").empty(3, device="meta")'],
+            kwargs: {},
+          },
+        });
+        expect(meta.error, `${name} meta rejected`).toBeDefined();
+        expect(meta.error?.message, `${name} meta message`).toMatch(/meta tensors/i);
+        expect(meta.error?.message, `${name} meta not opt-in`).not.toMatch(
+          /TYWRAP_TORCH_ALLOW_COPY/
+        );
+
+        // Complex tensor -> reject (was a SILENT corruption: emitted Python
+        // complex tuples the JS decoder cannot parse).
+        const complex = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("torch").tensor([1+2j, 3+4j])'],
+            kwargs: {},
+          },
+        });
+        expect(complex.error, `${name} complex tensor rejected`).toBeDefined();
+        expect(complex.error?.message, `${name} complex tensor message`).toMatch(
+          /[Cc]omplex tensors are not supported/
+        );
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
+  // #234 envelope hardening — torch non-CPU/non-contiguous default rejection.
+  // A CPU non-contiguous tensor (transpose of a 2D tensor) is the portable way
+  // to exercise the contiguous opt-in gate without needing a GPU.
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK || !MODULES.torch)(
+    'torch rejects a non-contiguous tensor by default (opt-in required)',
+    async () => {
+      for (const { name, get } of liveBackends()) {
+        const backend = get();
+        if (!backend) continue;
+        const nonContig = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            // .t() returns a non-contiguous view of a 2D tensor.
+            args: ['__import__("torch").tensor([[1.0, 2.0], [3.0, 4.0]]).t()'],
+            kwargs: {},
+          },
+        });
+        expect(nonContig.error, `${name} non-contiguous rejected`).toBeDefined();
+        expect(nonContig.error?.message, `${name} non-contiguous message`).toMatch(
+          /not contiguous/
+        );
+        expect(nonContig.error?.message, `${name} non-contiguous opt-in hint`).toMatch(
+          /TYWRAP_TORCH_ALLOW_COPY/
+        );
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
+  // #234 envelope hardening — sklearn rejects non-JSON params (callable/nested),
+  // naming the offending param. Metadata-only: NEVER pickle/joblib.
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK || !MODULES.sklearn)(
+    'sklearn rejects callable / nested-estimator params with a clear, param-naming error',
+    async () => {
+      for (const { name, get } of liveBackends()) {
+        const backend = get();
+        if (!backend) continue;
+
+        const callable = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: SKLEARN_HARDENING_MODULE,
+            functionName: 'make_callable_param',
+            args: [],
+            kwargs: {},
+          },
+        });
+        expect(callable.error, `${name} callable param rejected`).toBeDefined();
+        expect(callable.error?.message, `${name} callable param message`).toMatch(
+          /param 'fn' is not JSON-serializable/
+        );
+        expect(callable.error?.message, `${name} callable mentions metadata-only`).toMatch(
+          /metadata only/
+        );
+
+        const nested = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: SKLEARN_HARDENING_MODULE,
+            functionName: 'make_nested_estimator_param',
+            args: [],
+            kwargs: {},
+          },
+        });
+        expect(nested.error, `${name} nested estimator param rejected`).toBeDefined();
+        expect(nested.error?.message, `${name} nested param message`).toMatch(
+          /param 'inner' is not JSON-serializable/
+        );
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
   // Case 12: Pydantic model serialization
   // -------------------------------------------------------------------------
   it.skipIf(!PYTHON_OK || !MODULES.pydantic)(
@@ -1068,6 +1419,153 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     },
     caseTimeoutMs
   );
+
+  // -------------------------------------------------------------------------
+  // W6: cross-backend chunking conformance.
+  //
+  // Proves the single transport-level invariant that keeps large payloads
+  // correct across every backend: ONLY the subprocess backend splits a logical
+  // message across `tywrap-frame/1` frames; HTTP and Pyodide stay single-frame
+  // (supportsChunking:false) and carry the SAME large payload via their own
+  // buffering — never silently truncating. The capability descriptors are
+  // asserted statically (no Python), then the subprocess chunk path is proven
+  // live against the real bridge.
+  // -------------------------------------------------------------------------
+  describe('cross-backend chunking capability descriptors', () => {
+    it('HTTP and Pyodide always report supportsChunking:false; subprocess reports its configured chunking', () => {
+      // HTTP: no line ceiling, whole body buffered in one shot -> never chunks.
+      const http = new HttpTransport({ baseURL: 'http://127.0.0.1:1' });
+      expect(http.capabilities().supportsChunking).toBe(false);
+      expect(http.capabilities().supportsStreaming).toBe(false);
+      expect(http.capabilities().maxFrameBytes).toBe(Number.POSITIVE_INFINITY);
+
+      // Pyodide: in-memory string passing, no framing -> never chunks.
+      const pyodide = new PyodideTransport();
+      expect(pyodide.capabilities().supportsChunking).toBe(false);
+      expect(pyodide.capabilities().supportsStreaming).toBe(false);
+      expect(pyodide.capabilities().maxFrameBytes).toBe(Number.POSITIVE_INFINITY);
+
+      // Subprocess WITHOUT chunking configured (enableChunking omitted): false.
+      const subNoChunk = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
+      expect(subNoChunk.capabilities().supportsChunking).toBe(false);
+
+      // Subprocess WITH enableChunking: true even pre-init. The capability
+      // descriptor reports the CONFIGURED path and is lifecycle-independent (no
+      // round trip). Whether the connected bridge actually advertised framing is
+      // the negotiated fact on BridgeInfo.transport.supportsChunking — proven live
+      // below.
+      const subChunk = new SubprocessTransport({
+        bridgeScript: '/path/to/bridge.py',
+        maxLineLength: 1024 * 1024,
+        enableChunking: true,
+      });
+      expect(subChunk.capabilities().supportsChunking).toBe(true);
+    });
+  });
+
+  describe('cross-backend large-payload correctness (subprocess chunks; http/pyodide single-frame)', () => {
+    const ONE_MIB = 1024 * 1024;
+    // A payload comfortably above the forced 1 MiB subprocess frame ceiling, but
+    // well under the default codec ceiling so http/pyodide carry it single-frame
+    // without raising any size limit.
+    const LARGE_N = 3 * ONE_MIB;
+
+    it.skipIf(!PYTHON_OK)(
+      'subprocess reassembles a >1 MiB payload from frames (supportsChunking:true)',
+      async () => {
+        // A dedicated chunking-enabled SubprocessTransport (NOT the raw JSONL
+        // driver) because only the real transport carries the frame reassembler;
+        // a raw JSONL reader would mis-parse the per-frame lines (each frame
+        // reuses the RPC id). maxLineLength is forced to 1 MiB so the ~3 MiB
+        // response MUST be framed.
+        const transport = new SubprocessTransport({
+          bridgeScript: REFERENCE_SCRIPT,
+          cwd: RUNTIME_DIR,
+          pythonPath: PYTHON,
+          maxLineLength: ONE_MIB,
+          enableChunking: true,
+        });
+        try {
+          await transport.init();
+          // Configured capability (lifecycle-independent); the actual framing of
+          // the >1 MiB response below is what proves the bridge negotiated it.
+          expect(transport.capabilities().supportsChunking).toBe(true);
+          expect(transport.capabilities().maxFrameBytes).toBe(ONE_MIB);
+
+          const request = JSON.stringify({
+            id: 1,
+            protocol: PROTOCOL_ID,
+            method: 'call',
+            params: {
+              module: CHUNKING_FIXTURE_MODULE,
+              functionName: 'big_string',
+              args: [LARGE_N],
+              kwargs: {},
+            },
+          });
+          const responseLine = await transport.send(request, caseTimeoutMs);
+          const parsed = JSON.parse(responseLine) as { id: number; result: string };
+          expect(parsed.id).toBe(1);
+          // Byte-exact reassembly: length + content head pin the frame ordering.
+          expect(parsed.result.length).toBe(LARGE_N);
+          expect(parsed.result.startsWith('tywrap-0123456789-')).toBe(true);
+          expect(Buffer.byteLength(parsed.result, 'utf-8')).toBe(LARGE_N);
+        } finally {
+          await transport.dispose();
+        }
+      },
+      caseTimeoutMs
+    );
+
+    it.skipIf(!PYTHON_OK)(
+      'http carries the SAME large payload single-frame, correct and untruncated',
+      async () => {
+        // HttpReferenceBackend reads the whole response body in one shot (no line
+        // ceiling), so the identical big_string(LARGE_N) returns intact without
+        // any framing — supportsChunking stays false.
+        if (!httpBackend) return;
+        const resp = await httpBackend.dispatch({
+          method: 'call',
+          params: {
+            module: CHUNKING_FIXTURE_MODULE,
+            functionName: 'big_string',
+            args: [LARGE_N],
+            kwargs: {},
+          },
+        });
+        expect(resp.error, 'http large payload error').toBeUndefined();
+        const result = resp.result as string;
+        expect(typeof result).toBe('string');
+        expect(result.length).toBe(LARGE_N);
+        expect(result.startsWith('tywrap-0123456789-')).toBe(true);
+      },
+      caseTimeoutMs
+    );
+
+    it.skipIf(!PYTHON_OK || !CORE_OK)(
+      'pyodide-core carries the SAME large payload single-frame, correct and untruncated',
+      async () => {
+        // The pyodide-core harness is in-memory string passing with no framing;
+        // the identical big_string(LARGE_N) returns intact single-frame.
+        if (!coreBackend) return;
+        const resp = await coreBackend.dispatch({
+          method: 'call',
+          params: {
+            module: CHUNKING_FIXTURE_MODULE,
+            functionName: 'big_string',
+            args: [LARGE_N],
+            kwargs: {},
+          },
+        });
+        expect(resp.error, 'pyodide-core large payload error').toBeUndefined();
+        const result = resp.result as string;
+        expect(typeof result).toBe('string');
+        expect(result.length).toBe(LARGE_N);
+        expect(result.startsWith('tywrap-0123456789-')).toBe(true);
+      },
+      caseTimeoutMs
+    );
+  });
 
   // -------------------------------------------------------------------------
   // Drift guard: generated bootstrap constant must equal the source .py
