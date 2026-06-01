@@ -40,6 +40,7 @@ import importlib  # noqa: F401  (re-exported for compat / used by handlers via c
 from safe_codec import BridgeCodec, CodecError
 
 import tywrap_bridge_core as core
+from frame_codec import FRAME_PROTOCOL_ID, encode_frames
 
 # Re-export the shared protocol/serialization surface so existing importers of
 # python_bridge keep working after the extraction (codex-flagged: runtime/ ships).
@@ -221,6 +222,72 @@ def get_request_max_bytes():
 REQUEST_MAX_BYTES = get_request_max_bytes()
 
 
+class TransportFrameBytesParseError(CodecConfigError):
+    """Invalid TYWRAP_TRANSPORT_MAX_FRAME_BYTES value."""
+
+    def __init__(self) -> None:
+        super().__init__('TYWRAP_TRANSPORT_MAX_FRAME_BYTES must be a positive integer byte count')
+
+
+def negotiate_chunking():
+    """
+    Resolve the chunked-transport (``tywrap-frame/1``) negotiation from env.
+
+    The subprocess transport spawns this bridge with three env vars
+    (see docs/transport-framing.md):
+
+      * ``TYWRAP_TRANSPORT_CHUNKING=1``       -- enable framing
+      * ``TYWRAP_TRANSPORT_FRAME_PROTOCOL``   -- must equal ``tywrap-frame/1``
+      * ``TYWRAP_TRANSPORT_MAX_FRAME_BYTES``  -- the JS-side JSONL line ceiling
+
+    Returns ``(enabled, max_frame_bytes)``. Chunking is enabled ONLY when all
+    three agree: the flag is truthy, the advertised frame protocol matches the
+    one this bridge implements, and the max-frame size is a positive integer.
+    A mismatched frame protocol (a future framing version this bridge does not
+    speak) leaves chunking disabled -- the bridge then advertises
+    ``supportsChunking: false`` and oversize responses fail LOUD (no silent
+    single-frame fallback), exactly as an old un-negotiated bridge would.
+
+    :raises TransportFrameBytesParseError: if the flag/protocol are set to enable
+        chunking but the max-frame-bytes value is not a positive integer.
+    """
+    flag = os.environ.get('TYWRAP_TRANSPORT_CHUNKING', '').lower() in ('1', 'true', 'yes')
+    if not flag:
+        return False, None
+    frame_protocol = os.environ.get('TYWRAP_TRANSPORT_FRAME_PROTOCOL', '')
+    if frame_protocol != FRAME_PROTOCOL_ID:
+        # A framing protocol this bridge does not implement: stay single-frame.
+        return False, None
+    raw = os.environ.get('TYWRAP_TRANSPORT_MAX_FRAME_BYTES', '')
+    raw = str(raw).strip()
+    try:
+        value = int(raw)
+    except Exception as exc:
+        raise TransportFrameBytesParseError() from exc
+    if value <= 0:
+        raise TransportFrameBytesParseError()
+    return True, value
+
+
+# Why: parse once at startup. CHUNKING_ENABLED gates the chunked write path and
+# the transport block advertised in meta; MAX_FRAME_BYTES is the negotiated
+# per-frame UTF-8 byte ceiling.
+CHUNKING_ENABLED, MAX_FRAME_BYTES = negotiate_chunking()
+
+# The transport negotiation block echoed back in the `meta` response so the JS
+# side learns this bridge can reassemble chunked frames. None => omitted (an old
+# bridge / un-negotiated process is indistinguishable on the wire).
+TRANSPORT_INFO = (
+    {
+        'frameProtocol': FRAME_PROTOCOL_ID,
+        'supportsChunking': True,
+        'maxFrameBytes': MAX_FRAME_BYTES,
+    }
+    if CHUNKING_ENABLED
+    else None
+)
+
+
 def serialize(obj):
     """
     Backward-compatible result serializer (subprocess identity).
@@ -267,6 +334,7 @@ def handle_meta():
         pid=os.getpid(),
         python_version=sys.version.split()[0],
         codec_fallback='json' if FALLBACK_JSON else 'none',
+        transport_info=TRANSPORT_INFO,
     )
 
 
@@ -289,6 +357,7 @@ def dispatch_request(msg):
         torch_allow_copy=TORCH_ALLOW_COPY,
         allowed_modules=ALLOWED_MODULES,
         allow_private_attrs=ALLOW_PRIVATE_ATTRS,
+        transport_info=TRANSPORT_INFO,
     )
     return out['id'], out['result']
 
@@ -324,6 +393,57 @@ def write_payload(payload: str) -> bool:
         return True
     except BrokenPipeError:
         return False
+
+
+def write_response(payload: str, response_id) -> bool:
+    """
+    Write a fully-encoded JSONL response, fragmenting it into ``tywrap-frame/1``
+    frames when chunking is negotiated and the payload exceeds the per-frame
+    ceiling.
+
+    Why: a single response can exceed the JS-side JSONL line ceiling
+    (``maxLineLength``). When the subprocess transport negotiated chunking (the
+    three ``TYWRAP_TRANSPORT_*`` env vars), an oversize response is split into
+    frames, each written as its own JSONL line and flushed one at a time so the
+    OS pipe provides backpressure. The TS reassembler (W3) rebuilds the single
+    logical response before the codec ever sees it. Small responses (or any
+    response when chunking was not negotiated) keep going out as one JSONL line
+    exactly as before. There is NO silent single-frame fallback for an oversize
+    response on an un-negotiated bridge: it is written whole and the JS line
+    ceiling rejects it LOUD, by design.
+
+    Frames require an integer correlation id. A response with a non-integer id
+    (only reachable on a malformed request whose error envelope carries id=None)
+    is never large enough to chunk, so it is always written as a single line.
+
+    Returns False if the parent's stdin/our stdout closed mid-write (BrokenPipe),
+    so the caller can exit the loop cleanly.
+    """
+    if not CHUNKING_ENABLED or MAX_FRAME_BYTES is None:
+        return write_payload(payload)
+
+    payload_bytes = len(payload.encode('utf-8'))
+    if payload_bytes <= MAX_FRAME_BYTES:
+        return write_payload(payload)
+
+    if not isinstance(response_id, int) or isinstance(response_id, bool):
+        # Cannot correlate frames without an integer id; emit as one line. This
+        # only happens for tiny malformed-request error envelopes (id=None),
+        # which never exceed a sane frame ceiling.
+        return write_payload(payload)
+
+    frames = encode_frames(
+        payload,
+        id=response_id,
+        stream='response',
+        max_frame_bytes=MAX_FRAME_BYTES,
+    )
+    for frame in frames:
+        # One frame per JSONL line; flush per frame so the pipe backpressures
+        # and the TS reader can interleave reassembly with the write.
+        if not write_payload(_response_codec.encode(frame)):
+            return False
+    return True
 
 
 def main():
@@ -365,12 +485,17 @@ def main():
 
         try:
             payload = encode_response(out)
-            if not write_payload(payload):
+            # Correlate frames by the response id when chunking; out always
+            # carries the request id (or None for a malformed-request envelope).
+            response_id = out.get('id') if isinstance(out, dict) else None
+            if not write_response(payload, response_id):
                 return
         except Exception as e:  # noqa: BLE001
             # Why: fallback error keeps responses well-formed even if serialization fails.
             err_out = build_error_payload(mid, e, include_traceback=False)
             try:
+                # Error envelopes are tiny; write as a single line regardless of
+                # chunking so a serialization failure never recurses into framing.
                 if not write_payload(json.dumps(err_out)):
                     return
             except Exception:
