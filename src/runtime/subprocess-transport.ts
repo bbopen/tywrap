@@ -446,12 +446,14 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         reject(error);
       };
 
-      // Register pending request
-      this.pending.set(messageId, {
+      // Register pending request. Captured by reference so the write path can
+      // bind liveness to THIS exact entry (not just the id) — see writeRequest.
+      const pendingEntry: PendingRequest = {
         resolve: wrappedResolve,
         reject: wrappedReject,
         timer,
-      });
+      };
+      this.pending.set(messageId, pendingEntry);
 
       // Write message to stdin. When chunking is negotiated and the encoded
       // request exceeds the negotiated per-frame ceiling, it is fragmented into
@@ -459,7 +461,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       // mutex (W5); otherwise it goes out as a single JSONL line. Both paths
       // serialize through the same mutex so a small request can never slip
       // between another request's frames.
-      this.writeRequest(message, messageId, signal).catch(err => {
+      this.writeRequest(message, messageId, signal, pendingEntry).catch(err => {
         this.pending.delete(messageId);
         if (timer) {
           clearTimeout(timer);
@@ -1229,14 +1231,27 @@ export class SubprocessTransport extends DisposableBase implements Transport {
    *   stops further frames and rejects this send (the pending entry is rejected
    *   by the abort handler / the caller's `.catch`).
    */
-  private writeRequest(message: string, messageId: number, signal?: AbortSignal): Promise<void> {
-    // The request is "live" only while its pending entry exists (the timeout and
-    // abort handlers delete it) and the signal is not aborted. Gating EVERY write
-    // point on this — the run closure, the direct stdin write, the backpressure
-    // queue flush, and each chunked frame — prevents an abandoned request from
-    // executing on Python, even one whose write sat queued under backpressure
-    // past the cancellation.
-    const isLive = (): boolean => !signal?.aborted && this.pending.has(messageId);
+  private writeRequest(
+    message: string,
+    messageId: number,
+    signal?: AbortSignal,
+    pendingEntry?: PendingRequest
+  ): Promise<void> {
+    // The request is "live" only while THIS send's exact pending entry is still
+    // registered (the timeout and abort handlers delete it) and the signal is not
+    // aborted. Binding to the entry IDENTITY — not just the id — closes the
+    // id-reuse hole: if the id is recycled by a later send while this write is
+    // still queued, the stale write sees a different entry and is skipped.
+    // (RpcClient ids are monotonic, but Transport.send is public and does not
+    // enforce id uniqueness.) Gating EVERY write point on this — the run closure,
+    // the direct stdin write, the backpressure-queue flush, and each chunked
+    // frame — prevents an abandoned request from executing on Python, even one
+    // whose write sat queued under backpressure past the cancellation.
+    const isLive = (): boolean =>
+      !signal?.aborted &&
+      (pendingEntry !== undefined
+        ? this.pending.get(messageId) === pendingEntry
+        : this.pending.has(messageId));
     const run = (): Promise<void> => {
       if (!isLive()) {
         return Promise.resolve();

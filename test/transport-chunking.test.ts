@@ -480,6 +480,45 @@ describe('chunking-core hardening', () => {
     expect(live).toBe('continue');
   });
 
+  it('skips a stale write whose id was recycled by a newer pending entry (identity-bound)', async () => {
+    const writes: string[] = [];
+    const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
+    const internals = transport as unknown as {
+      _state: string;
+      processExited: boolean;
+      process: unknown;
+      negotiatedChunking: boolean;
+      pending: Map<number, unknown>;
+      writeRequest: (m: string, id: number, s: AbortSignal | undefined, entry: unknown) => Promise<void>;
+    };
+    internals._state = 'ready';
+    internals.processExited = false;
+    internals.process = {
+      stdin: {
+        write: (c: string): boolean => {
+          writes.push(c);
+          return true;
+        },
+      },
+    };
+    internals.negotiatedChunking = false;
+
+    const entryA = { resolve: (): void => {}, reject: (): void => {} };
+    const entryB = { resolve: (): void => {}, reject: (): void => {} };
+
+    // id 7 now maps to a DIFFERENT (newer) entry than the one this write belongs
+    // to (id recycled after the original timed out) -> the stale write is skipped,
+    // never executed and never mis-correlated to the newer request.
+    internals.pending.set(7, entryB);
+    await internals.writeRequest('{"id":7}', 7, undefined, entryA);
+    expect(writes.length).toBe(0);
+
+    // Same id, matching entry -> the live write happens.
+    internals.pending.set(7, entryA);
+    await internals.writeRequest('{"id":7}', 7, undefined, entryA);
+    expect(writes.length).toBe(1);
+  });
+
   it('negotiation rejects a transport block with an invalid maxFrameBytes', () => {
     const transport = new SubprocessTransport({
       bridgeScript: '/path/to/bridge.py',
