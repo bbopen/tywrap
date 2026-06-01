@@ -13,7 +13,7 @@ import {
   BridgeProtocolError,
   BridgeTimeoutError,
 } from './errors.js';
-import type { Transport } from './transport.js';
+import type { Transport, TransportCapabilities } from './transport.js';
 
 // =============================================================================
 // OPTIONS
@@ -109,6 +109,26 @@ export class HttpTransport implements Transport {
    */
   get isReady(): boolean {
     return !this._isDisposed;
+  }
+
+  /**
+   * Static capability descriptor for the HTTP backend.
+   *
+   * The Python server can return Arrow IPC and arbitrary binary (bytes
+   * envelopes) in the HTTP response body. Chunking/streaming are not implemented
+   * (0.8.0). HTTP imposes no transport-level frame ceiling — the whole body is
+   * read in one shot — so `maxFrameBytes` is `Number.POSITIVE_INFINITY` (a higher
+   * layer, e.g. the codec payload limit, may still cap the size).
+   */
+  capabilities(): TransportCapabilities {
+    return {
+      backend: 'http',
+      supportsArrow: true,
+      supportsBinary: true,
+      supportsChunking: false,
+      supportsStreaming: false,
+      maxFrameBytes: Number.POSITIVE_INFINITY,
+    };
   }
 
   // ===========================================================================

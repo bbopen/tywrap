@@ -10,7 +10,7 @@
 
 import { DisposableBase } from './bounded-context.js';
 import { BridgeDisposedError, BridgeExecutionError } from './errors.js';
-import type { Transport } from './transport.js';
+import type { Transport, TransportCapabilities } from './transport.js';
 import { TransportPool, type TransportLease } from './transport-pool.js';
 
 // =============================================================================
@@ -179,6 +179,18 @@ export class PooledTransport extends DisposableBase implements Transport {
     return this.pool.withWorker(async worker => {
       return worker.transport.send(message, timeoutMs, signal);
     });
+  }
+
+  /**
+   * Static capability descriptor for the pool.
+   *
+   * A pool's wire behavior is exactly that of the workers it distributes across,
+   * so this delegates to a freshly-constructed worker transport from the same
+   * factory. Construction is side-effect-free (no process is spawned until
+   * `init()`/`send()`), so this is safe to call at any lifecycle point.
+   */
+  capabilities(): TransportCapabilities {
+    return this.poolOptions.createTransport().capabilities();
   }
 
   // ===========================================================================

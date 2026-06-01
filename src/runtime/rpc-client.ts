@@ -27,6 +27,7 @@ import {
   PROTOCOL_ID,
   TYWRAP_PROTOCOL_VERSION,
   type Transport,
+  type TransportCapabilities,
   type ProtocolMessage,
 } from './transport.js';
 
@@ -517,5 +518,21 @@ export class RpcClient extends DisposableBase {
 
     this.bridgeInfoCache = info;
     return info;
+  }
+
+  /**
+   * Report the underlying transport's static capability descriptor.
+   *
+   * This returns the transport-level flags (Arrow/binary carriage, framing,
+   * chunking/streaming, max frame size) WITHOUT any network round-trip — the
+   * descriptor is authoritative for what the wire channel can do. It is
+   * deliberately distinct from {@link getBridgeInfo}, which reports the *Python
+   * environment* (which optional libraries are importable). Callers that need
+   * both — "can this transport carry Arrow AND does this Python have pyarrow?" —
+   * should consult both: the transport descriptor for the channel, the bridge
+   * info for library availability.
+   */
+  capabilities(): TransportCapabilities {
+    return this.transport.capabilities();
   }
 }

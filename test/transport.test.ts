@@ -21,6 +21,8 @@ import {
 import { SubprocessTransport, type SubprocessTransportOptions } from '../src/runtime/subprocess-transport.js';
 import { HttpTransport, type HttpTransportOptions } from '../src/runtime/http-transport.js';
 import { PyodideTransport, type PyodideTransportOptions } from '../src/runtime/pyodide-transport.js';
+import { PooledTransport } from '../src/runtime/pooled-transport.js';
+import { RpcClient } from '../src/runtime/rpc-client.js';
 import {
   BridgeDisposedError,
   BridgeProtocolError,
@@ -58,6 +60,14 @@ function createMockTransport(): Transport {
     send: async () => '{}',
     dispose: async () => {},
     isReady: true,
+    capabilities: () => ({
+      backend: 'subprocess',
+      supportsArrow: true,
+      supportsBinary: true,
+      supportsChunking: false,
+      supportsStreaming: false,
+      maxFrameBytes: Number.POSITIVE_INFINITY,
+    }),
   };
 }
 
@@ -105,6 +115,14 @@ describe('Transport Interface', () => {
         init: () => Promise.resolve(),
         send: () => Promise.resolve(''),
         dispose: () => Promise.resolve(),
+        capabilities: () => ({
+          backend: 'http' as const,
+          supportsArrow: true,
+          supportsBinary: true,
+          supportsChunking: false,
+          supportsStreaming: false,
+          maxFrameBytes: Number.POSITIVE_INFINITY,
+        }),
         isReady: false,
       };
       expect(isTransport(validTransport)).toBe(true);
@@ -156,6 +174,24 @@ describe('Transport Interface', () => {
         init: () => Promise.resolve(),
         send: () => Promise.resolve(''),
         dispose: () => Promise.resolve(),
+        capabilities: () => ({
+          backend: 'subprocess' as const,
+          supportsArrow: true,
+          supportsBinary: true,
+          supportsChunking: false,
+          supportsStreaming: false,
+          maxFrameBytes: Number.POSITIVE_INFINITY,
+        }),
+      };
+      expect(isTransport(incomplete)).toBe(false);
+    });
+
+    it('returns false for objects missing capabilities method', () => {
+      const incomplete = {
+        init: () => Promise.resolve(),
+        send: () => Promise.resolve(''),
+        dispose: () => Promise.resolve(),
+        isReady: true,
       };
       expect(isTransport(incomplete)).toBe(false);
     });
@@ -1389,6 +1425,102 @@ describe('Cross-Transport Interface Compliance', () => {
         await transport.dispose();
         expect(transport.isReady).toBe(false);
       });
+
+      it('has a capabilities() method returning a stable descriptor before and after dispose', async () => {
+        const transport = create();
+        expect(typeof transport.capabilities).toBe('function');
+        const before = transport.capabilities();
+        await transport.dispose();
+        const after = transport.capabilities();
+        // Capabilities are static, not lifecycle-dependent.
+        expect(after).toEqual(before);
+        // Chunking/streaming are not implemented on any backend yet (0.8.0).
+        expect(before.supportsChunking).toBe(false);
+        expect(before.supportsStreaming).toBe(false);
+      });
+    });
+  });
+});
+
+// =============================================================================
+// TRANSPORT CAPABILITIES DESCRIPTORS
+// =============================================================================
+
+describe('TransportCapabilities descriptors', () => {
+  it('SubprocessTransport reports the subprocess capability matrix', () => {
+    const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
+    // maxFrameBytes is the JSONL line-length limit (default 100MB).
+    expect(transport.capabilities()).toEqual({
+      backend: 'subprocess',
+      supportsArrow: true,
+      supportsBinary: true,
+      supportsChunking: false,
+      supportsStreaming: false,
+      maxFrameBytes: 100 * 1024 * 1024,
+    });
+  });
+
+  it('SubprocessTransport.maxFrameBytes honors a custom maxLineLength', () => {
+    const transport = new SubprocessTransport({
+      bridgeScript: '/path/to/bridge.py',
+      maxLineLength: 1024 * 1024,
+    });
+    expect(transport.capabilities().maxFrameBytes).toBe(1024 * 1024);
+  });
+
+  it('HttpTransport reports the http capability matrix', () => {
+    const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
+    expect(transport.capabilities()).toEqual({
+      backend: 'http',
+      supportsArrow: true,
+      supportsBinary: true,
+      supportsChunking: false,
+      supportsStreaming: false,
+      maxFrameBytes: Number.POSITIVE_INFINITY,
+    });
+  });
+
+  it('PyodideTransport reports the pyodide capability matrix (JSON-only, no Arrow)', () => {
+    const transport = new PyodideTransport();
+    expect(transport.capabilities()).toEqual({
+      backend: 'pyodide',
+      supportsArrow: false,
+      supportsBinary: true,
+      supportsChunking: false,
+      supportsStreaming: false,
+      maxFrameBytes: Number.POSITIVE_INFINITY,
+    });
+  });
+
+  it('PooledTransport reports its worker backend (subprocess) capabilities', () => {
+    const transport = new PooledTransport({
+      createTransport: () => new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' }),
+    });
+    expect(transport.capabilities()).toEqual({
+      backend: 'subprocess',
+      supportsArrow: true,
+      supportsBinary: true,
+      supportsChunking: false,
+      supportsStreaming: false,
+      maxFrameBytes: 100 * 1024 * 1024,
+    });
+  });
+
+  it('RpcClient.capabilities() delegates to the held transport descriptor', () => {
+    const subprocess = new RpcClient({
+      transport: new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' }),
+    });
+    expect(subprocess.capabilities()).toEqual(subprocess.transport.capabilities());
+    expect(subprocess.capabilities().backend).toBe('subprocess');
+
+    const pyodide = new RpcClient({ transport: new PyodideTransport() });
+    expect(pyodide.capabilities()).toEqual({
+      backend: 'pyodide',
+      supportsArrow: false,
+      supportsBinary: true,
+      supportsChunking: false,
+      supportsStreaming: false,
+      maxFrameBytes: Number.POSITIVE_INFINITY,
     });
   });
 });
