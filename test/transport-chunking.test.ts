@@ -141,7 +141,9 @@ describe('SubprocessTransport chunked responses (tywrap-frame/1)', () => {
       enableChunking: true,
       // Raise the logical codec ceiling so Python does not reject the 20 MiB
       // response BEFORE it ever gets framed (this is the response-size guard,
-      // distinct from the per-frame ceiling).
+      // distinct from the per-frame ceiling). The TS reassembly cap must rise
+      // in lockstep, else reassembly fails loud at the default 10 MiB bound.
+      maxReassemblyBytes: TWENTY_MIB * 2,
       env: {
         ...process.env,
         TYWRAP_CODEC_MAX_BYTES: String(TWENTY_MIB * 2),
@@ -160,6 +162,31 @@ describe('SubprocessTransport chunked responses (tywrap-frame/1)', () => {
     expect(parsed.result.startsWith('tywrap-0123456789-')).toBe(true);
     expect(Buffer.byteLength(parsed.result, 'utf-8')).toBe(TWENTY_MIB);
   }, 90_000);
+
+  it('fails loud (no OOM-buffering) when a chunked response exceeds the default reassembly cap', async () => {
+    if (!hasPython) {
+      return;
+    }
+    // DEFAULT maxReassemblyBytes (10 MiB) — omitted on purpose. Python's response
+    // cap is raised so it PRODUCES a ~12 MiB framed response, but the TS side must
+    // refuse to reassemble past its cap and fail loud on the first frame's
+    // declared totalBytes (codex round-2 fix I), instead of buffering to OOM.
+    const TWELVE_MIB = 12 * ONE_MIB;
+    transport = new SubprocessTransport({
+      bridgeScript: REFERENCE_SCRIPT,
+      cwd: RUNTIME_DIR,
+      maxLineLength: ONE_MIB,
+      enableChunking: true,
+      env: {
+        ...process.env,
+        TYWRAP_CODEC_MAX_BYTES: String(TWENTY_MIB * 2),
+      } as Record<string, string>,
+    });
+    await transport.init();
+    await expect(transport.send(bigStringRequest(1, TWELVE_MIB), 60_000)).rejects.toThrow(
+      /max reassembly/
+    );
+  }, 60_000);
 
   it('still handles small single-line responses while chunking is negotiated', async () => {
     if (!hasPython) {
@@ -366,6 +393,43 @@ describe('chunking-core hardening', () => {
     // A non-frame line with no id is genuine stdout desync -> reject + restart.
     internals.handleResponseLine('{"result":"no id here"}');
     expect((transport as unknown as { needsRestart: boolean }).needsRestart).toBe(true);
+  });
+
+  it('skips a queued write when the request is no longer pending (timed out / aborted)', async () => {
+    const writes: string[] = [];
+    const transport = new SubprocessTransport({
+      bridgeScript: '/path/to/bridge.py',
+      enableChunking: true,
+    });
+    const internals = transport as unknown as {
+      _state: string;
+      processExited: boolean;
+      process: unknown;
+      negotiatedChunking: boolean;
+      pending: Map<number, unknown>;
+      writeRequest: (message: string, id: number, signal?: AbortSignal) => Promise<void>;
+    };
+    internals._state = 'ready';
+    internals.processExited = false;
+    internals.process = {
+      stdin: {
+        write: (chunk: string): boolean => {
+          writes.push(chunk);
+          return true;
+        },
+      },
+    };
+    internals.negotiatedChunking = false;
+
+    // Live request (present in pending) -> the write happens.
+    internals.pending.set(1, {});
+    await internals.writeRequest('{"id":1}', 1);
+    expect(writes.length).toBe(1);
+
+    // Dead request (absent from pending == already timed out/aborted) -> the
+    // queued write is skipped so an abandoned call never executes on Python.
+    await internals.writeRequest('{"id":2}', 2);
+    expect(writes.length).toBe(1);
   });
 
   it('negotiation rejects a transport block with an invalid maxFrameBytes', () => {

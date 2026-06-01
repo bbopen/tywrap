@@ -240,12 +240,21 @@ class Reassembler:
     reused. This prevents late multi-frame responses from desyncing the stream.
     """
 
-    def __init__(self) -> None:
-        # id -> {'total', 'totalBytes', 'slices': {seq: data}}
+    def __init__(
+        self,
+        max_reassembly_bytes: Optional[int] = None,
+        expected_stream: Optional[str] = None,
+    ) -> None:
+        # id -> {'total', 'totalBytes', 'bytesSoFar', 'slices': {seq: data}}
         self._streams: Dict[int, Dict[str, Any]] = {}
         # Insertion-ordered set-as-dict so the oldest marker can be FIFO-evicted
         # once the discard set exceeds MAX_DISCARDED_IDS.
         self._discarded: Dict[int, None] = {}
+        # Fail loud past this many UTF-8 bytes per stream (declared OR
+        # accumulated) so a huge payload cannot be buffered to OOM; None = no cap.
+        self._max_reassembly_bytes = max_reassembly_bytes
+        # If set, every frame must carry this stream direction (defense-in-depth).
+        self._expected_stream = expected_stream
 
     def accept(self, raw_frame: Any) -> Optional[str]:
         """Feed one frame.
@@ -262,6 +271,14 @@ class Reassembler:
         total = frame['total']
         total_bytes = frame['totalBytes']
         data = frame['data']
+        stream = frame['stream']
+
+        if self._expected_stream is not None and stream != self._expected_stream:
+            raise FrameError(
+                f"frame: unexpected stream '{stream}' for id {frame_id} "
+                f"(this reassembler handles '{self._expected_stream}')",
+                code='FRAME_WRONG_STREAM',
+            )
 
         # Late-frame discard: drop frames for a timed-out id; forget the id once
         # its declared final frame has been seen so the stream stays aligned and
@@ -279,7 +296,21 @@ class Reassembler:
                     f'(>= {MAX_CONCURRENT_STREAMS}); refusing to buffer id {frame_id}',
                     code='FRAME_TOO_MANY_STREAMS',
                 )
-            state = {'total': total, 'totalBytes': total_bytes, 'slices': {}}
+            if (
+                self._max_reassembly_bytes is not None
+                and total_bytes > self._max_reassembly_bytes
+            ):
+                raise FrameError(
+                    f'frame: declared payload {total_bytes} bytes exceeds max '
+                    f'reassembly {self._max_reassembly_bytes} bytes for id {frame_id}',
+                    code='FRAME_PAYLOAD_TOO_LARGE',
+                )
+            state = {
+                'total': total,
+                'totalBytes': total_bytes,
+                'bytesSoFar': 0,
+                'slices': {},
+            }
             self._streams[frame_id] = state
         else:
             if state['total'] != total:
@@ -305,6 +336,21 @@ class Reassembler:
                 code='FRAME_DUPLICATE_SEQ',
             )
         slices[seq] = data
+
+        # Running memory bound (mirrors the declared-size check above): a peer
+        # that under-declares totalBytes then overshoots is caught before the
+        # full payload is buffered.
+        state['bytesSoFar'] += utf8_byte_length(data)
+        if (
+            self._max_reassembly_bytes is not None
+            and state['bytesSoFar'] > self._max_reassembly_bytes
+        ):
+            del self._streams[frame_id]
+            raise FrameError(
+                f'frame: accumulated payload exceeds max reassembly '
+                f'{self._max_reassembly_bytes} bytes for id {frame_id}',
+                code='FRAME_PAYLOAD_TOO_LARGE',
+            )
 
         if len(slices) < total:
             return None

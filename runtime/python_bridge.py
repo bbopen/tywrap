@@ -448,8 +448,14 @@ def write_response(payload: str, response_id) -> bool:
 
 # Reassembles `tywrap-frame/1` REQUEST frames (W5) back into a single logical
 # request line. Created only when chunking is negotiated; None means no request
-# framing is expected and every line is a normal single-line request.
-_request_reassembler = Reassembler() if CHUNKING_ENABLED else None
+# framing is expected and every line is a normal single-line request. Restricted
+# to the 'request' stream. No reassembly-bytes cap here: the request size is
+# already bounded by the TS codec's maxPayloadBytes on the sending side, and
+# TYWRAP_REQUEST_MAX_BYTES is enforced on the complete payload after reassembly
+# (process_request_line), preserving the W5 post-reassembly semantics.
+_request_reassembler = (
+    Reassembler(expected_stream='request') if CHUNKING_ENABLED else None
+)
 
 
 def _try_parse_frame_line(line):

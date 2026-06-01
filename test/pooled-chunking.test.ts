@@ -126,6 +126,10 @@ function chunkingWorkerFactory(
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
       enableChunking: true,
+      // Generous reassembly cap so the 20 MiB lease tests reassemble; the
+      // default 10 MiB bound (which correctly rejects oversize) is exercised
+      // separately in test/transport-chunking.test.ts.
+      maxReassemblyBytes: TWENTY_MIB * 4,
       env: { ...process.env, ...extraEnv } as Record<string, string>,
     });
 }

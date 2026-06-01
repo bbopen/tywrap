@@ -2,9 +2,10 @@
  * W7 (#233) — data-plane PERF GATES + large-payload validation.
  *
  * Unlike test/data-plane-benchmarks.test.ts (measure-first, NO gating), this
- * suite ASSERTS budgets. It is gated behind TYWRAP_PERF_BUDGETS=1 and is the
- * file the dedicated `data-plane-perf` CI job runs (serial, --expose-gc, no
- * coverage, pinned Node/Python).
+ * suite ASSERTS budgets. It is gated behind a DEDICATED flag (TYWRAP_DATA_PLANE_PERF=1),
+ * NOT the broad TYWRAP_PERF_BUDGETS, so it runs ONLY in the dedicated
+ * `data-plane-perf` CI job (serial, --expose-gc, no coverage, pinned Node/Python)
+ * and never inside the generic matrix test jobs (which set TYWRAP_PERF_BUDGETS).
  *
  * Methodology (plan "#233 perf-gate methodology"):
  *  1. CORRECTNESS AT SCALE FIRST — chunked 20 MiB + 80 MiB responses and a
@@ -59,7 +60,11 @@ import { isNodejs } from '../src/utils/runtime.js';
 // GATING + KNOBS
 // =============================================================================
 
-const shouldRun = isNodejs() && process.env.TYWRAP_PERF_BUDGETS === '1';
+// Dedicated flag, not TYWRAP_PERF_BUDGETS: the generic matrix test jobs set
+// TYWRAP_PERF_BUDGETS=1 for the other perf-budget suites, so gating on it here
+// would run this heavy chunked-payload suite across the whole matrix and defeat
+// the isolated pinned job. Only the data-plane-perf job sets TYWRAP_DATA_PLANE_PERF.
+const shouldRun = isNodejs() && process.env.TYWRAP_DATA_PLANE_PERF === '1';
 const describePerf = shouldRun ? describe : describe.skip;
 
 const ONE_MIB = 1024 * 1024;
@@ -243,6 +248,10 @@ function chunkedTransport(): SubprocessTransport {
     cwd: RUNTIME_DIR,
     maxLineLength: ONE_MIB,
     enableChunking: true,
+    // Raise the reassembly cap to match the raised Python response cap — these
+    // tests deliberately move 20-80 MiB, so the default 10 MiB bound would
+    // (correctly) reject them. Symmetric config: both caps move together.
+    maxReassemblyBytes: EIGHTY_MIB * 4,
     env: {
       ...process.env,
       TYWRAP_CODEC_MAX_BYTES: String(EIGHTY_MIB * 4),

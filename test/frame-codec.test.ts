@@ -448,3 +448,41 @@ describe('Reassembler resource bounds', () => {
     expect(r.discardedCount).toBe(4096);
   });
 });
+
+// =============================================================================
+// REASSEMBLER PAYLOAD + STREAM BOUNDS (codex round-2 review fix)
+// =============================================================================
+
+describe('Reassembler payload + stream bounds', () => {
+  it('rejects a stream whose DECLARED totalBytes exceeds maxReassemblyBytes (fail loud, early)', () => {
+    const r = new Reassembler({ maxReassemblyBytes: 100 });
+    expect(() =>
+      r.accept(validFrame({ id: 1, seq: 0, total: 1, data: 'x', totalBytes: 101 }))
+    ).toThrow(/exceeds max reassembly/);
+    // Refused before buffering.
+    expect(r.pendingCount).toBe(0);
+  });
+
+  it('rejects when ACCUMULATED bytes exceed maxReassemblyBytes mid-stream', () => {
+    const r = new Reassembler({ maxReassemblyBytes: 10 });
+    // Declares totalBytes:8 (under cap) but overshoots across frames.
+    expect(
+      r.accept(validFrame({ id: 2, seq: 0, total: 3, data: 'aaaaaa', totalBytes: 8 }))
+    ).toBeNull();
+    expect(() =>
+      r.accept(validFrame({ id: 2, seq: 1, total: 3, data: 'bbbbbb', totalBytes: 8 }))
+    ).toThrow(/accumulated payload exceeds max reassembly/);
+  });
+
+  it('enforces the expected stream direction', () => {
+    const ok = new Reassembler({ expectedStream: 'response' });
+    expect(
+      ok.accept(validFrame({ id: 3, seq: 0, total: 1, data: 'hi', totalBytes: 2, stream: 'response' }))
+    ).toBe('hi');
+
+    const wrong = new Reassembler({ expectedStream: 'response' });
+    expect(() =>
+      wrong.accept(validFrame({ id: 4, seq: 0, total: 1, data: 'hi', totalBytes: 2, stream: 'request' }))
+    ).toThrow(/unexpected stream/);
+  });
+});

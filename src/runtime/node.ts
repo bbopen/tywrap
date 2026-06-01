@@ -384,6 +384,9 @@ export class NodeBridge extends BasePythonBridge {
           env: processEnv,
           cwd: resolvedOptions.cwd,
           enableChunking: resolvedOptions.enableChunking,
+          // Bound chunked-response reassembly to the codec's logical payload cap
+          // so a huge response fails loud early instead of buffering to OOM.
+          maxReassemblyBytes: resolvedOptions.codec?.maxPayloadBytes,
         }),
       maxWorkers: resolvedOptions.maxProcesses,
       minWorkers: resolvedOptions.minProcesses,

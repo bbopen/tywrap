@@ -144,6 +144,27 @@ longer be trusted to be frame-aligned). There is no silent single-frame fallback
 a payload that requires chunking against a bridge that cannot chunk fails
 explicitly.
 
+### Resource bounds
+
+Chunking removes the per-line stdout ceiling, so the reassembler enforces its own
+bounds — a buggy or oversized peer cannot grow memory without limit:
+
+- **Per-stream byte cap.** The response reassembler is constructed with
+  `maxReassemblyBytes` (default 10 MiB, matching the codec's `maxPayloadBytes`;
+  `NodeBridge` sets it from the configured `codec.maxPayloadBytes`). A stream
+  whose **declared** `totalBytes` — or **accumulated** bytes — exceeds the cap
+  fails loud (`FRAME_PAYLOAD_TOO_LARGE`) on the first offending frame rather than
+  buffering the whole payload. To carry a payload larger than 10 MiB you raise
+  **both** the codec cap and this reassembly cap; they move together. (Requests
+  are already bounded by the codec's `encodeRequest` cap on the sending side, so
+  the Python request reassembler relies on the post-reassembly
+  `TYWRAP_REQUEST_MAX_BYTES` check.)
+- **Concurrent streams** are capped (`FRAME_TOO_MANY_STREAMS`) and the timed-out
+  id discard set is FIFO-bounded, so neither grows without limit over a
+  long-lived process.
+- **Stream direction** is enforced: the response reassembler rejects `request`
+  frames and vice-versa.
+
 ## Negotiation handshake
 
 The subprocess spawns the bridge with three env vars:

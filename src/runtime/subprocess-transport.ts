@@ -72,6 +72,14 @@ const ENV_MAX_FRAME_BYTES = 'TYWRAP_TRANSPORT_MAX_FRAME_BYTES';
 /** Timeout (ms) for the in-init meta negotiation probe. */
 const NEGOTIATION_PROBE_TIMEOUT_MS = 30_000;
 
+/**
+ * Default cap (UTF-8 bytes) on a single chunked response reassembled in memory.
+ * Mirrors the codec's `DEFAULT_MAX_PAYLOAD_BYTES` (10 MiB) so chunking never
+ * buffers more than the codec would ultimately accept; `NodeBridge` overrides it
+ * with the configured `codec.maxPayloadBytes`.
+ */
+const DEFAULT_MAX_REASSEMBLY_BYTES = 10 * 1024 * 1024;
+
 /** Regex for ANSI escape sequences */
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
 
@@ -119,6 +127,15 @@ export interface SubprocessTransportOptions {
    * Subprocess-only (0.8.0). See docs/transport-framing.md.
    */
   enableChunking?: boolean;
+
+  /**
+   * Cap (UTF-8 bytes) on a single chunked RESPONSE reassembled in memory. A
+   * frame stream whose declared or accumulated payload exceeds this fails loud
+   * instead of buffering, so chunking cannot OOM the process before the codec's
+   * payload cap rejects the result. Should track the codec's `maxPayloadBytes`.
+   * Default: 10 MiB (matches the codec default).
+   */
+  maxReassemblyBytes?: number;
 }
 
 /**
@@ -247,6 +264,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private readonly envOverrides: Record<string, string>;
   private readonly cwd: string | undefined;
   private readonly maxLineLength: number;
+  private readonly maxReassemblyBytes: number;
   private readonly restartAfterRequests: number;
   private readonly writeQueueTimeoutMs: number;
 
@@ -315,6 +333,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.restartAfterRequests = options.restartAfterRequests ?? 0;
     this.writeQueueTimeoutMs = options.writeQueueTimeoutMs ?? DEFAULT_WRITE_QUEUE_TIMEOUT_MS;
     this.enableChunking = options.enableChunking ?? false;
+    this.maxReassemblyBytes = options.maxReassemblyBytes ?? DEFAULT_MAX_REASSEMBLY_BYTES;
   }
 
   // ===========================================================================
@@ -531,7 +550,10 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     const supports = this.bridgeAdvertisesChunking(parsed);
     this.negotiatedChunking = supports;
     if (supports) {
-      this.responseReassembler = new Reassembler();
+      this.responseReassembler = new Reassembler({
+        maxReassemblyBytes: this.maxReassemblyBytes,
+        expectedStream: 'response',
+      });
     }
   }
 
@@ -1193,6 +1215,13 @@ export class SubprocessTransport extends DisposableBase implements Transport {
    */
   private writeRequest(message: string, messageId: number, signal?: AbortSignal): Promise<void> {
     const run = (): Promise<void> => {
+      // Skip the write if the request is no longer live: a call queued behind a
+      // chunked burst may have timed out or aborted while waiting, and executing
+      // it now would run an operation the caller abandoned. The timeout/abort
+      // handlers delete the pending entry, so its absence is the liveness signal.
+      if (signal?.aborted || !this.pending.has(messageId)) {
+        return Promise.resolve();
+      }
       // Only chunk when chunking was negotiated AND the encoded request exceeds
       // the negotiated per-frame ceiling. Otherwise: one JSONL line, unchanged.
       if (this.negotiatedChunking && utf8ByteLength(message) > this.maxLineLength) {

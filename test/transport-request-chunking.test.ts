@@ -126,7 +126,9 @@ describe('SubprocessTransport chunked requests (tywrap-frame/1)', () => {
       enableChunking: true,
       // Raise the logical codec ceiling so the ~20 MiB echo RESPONSE is not
       // rejected before framing (this is the response-size guard). The request
-      // side has no byte limit here (TYWRAP_REQUEST_MAX_BYTES unset).
+      // side has no byte limit here (TYWRAP_REQUEST_MAX_BYTES unset). The TS
+      // reassembly cap must rise too so the echoed 20 MiB response reassembles.
+      maxReassemblyBytes: TWENTY_MIB * 2,
       env: {
         ...process.env,
         TYWRAP_CODEC_MAX_BYTES: String(TWENTY_MIB * 2),

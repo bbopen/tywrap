@@ -155,6 +155,8 @@ export function encodeFrames(logicalJson: string, opts: EncodeFramesOptions): Ch
 interface StreamState {
   total: number;
   totalBytes: number;
+  /** Running UTF-8 byte count of slices received so far (memory bound). */
+  bytesSoFar: number;
   /** seq -> frame data slice. */
   readonly slices: Map<number, string>;
 }
@@ -271,6 +273,22 @@ const MAX_DISCARDED_IDS = 4096;
 export class Reassembler {
   private readonly streams = new Map<number, StreamState>();
   private readonly discarded = new Set<number>();
+  private readonly maxReassemblyBytes: number;
+  private readonly expectedStream: FrameStream | undefined;
+
+  /**
+   * @param options.maxReassemblyBytes Reject (fail loud) any stream whose
+   *   declared OR accumulated payload exceeds this many UTF-8 bytes, so a huge
+   *   response cannot be buffered into memory before a higher layer's size cap
+   *   would reject it anyway. Default: no limit (`Infinity`).
+   * @param options.expectedStream If set, every frame must carry this `stream`
+   *   direction; a frame for the other direction is rejected. The response and
+   *   request reassemblers are distinct instances, so this is defense-in-depth.
+   */
+  constructor(options: { maxReassemblyBytes?: number; expectedStream?: FrameStream } = {}) {
+    this.maxReassemblyBytes = options.maxReassemblyBytes ?? Number.POSITIVE_INFINITY;
+    this.expectedStream = options.expectedStream;
+  }
 
   /**
    * Feed one frame. Returns the fully reassembled logical string when this
@@ -278,12 +296,20 @@ export class Reassembler {
    * needed (or the frame was dropped because its id is timed out).
    *
    * @throws BridgeProtocolError on any framing violation (malformed frame,
+   *   wrong stream direction, declared/accumulated payload over the cap,
    *   duplicate `seq`, inconsistent `total`/`totalBytes`, byte-count mismatch,
    *   invalid UTF-8, or unknown `frameProtocol`).
    */
   accept(rawFrame: unknown): string | null {
     const frame = parseChunkFrame(rawFrame);
-    const { id, seq, total, totalBytes, data } = frame;
+    const { id, seq, total, totalBytes, data, stream } = frame;
+
+    if (this.expectedStream !== undefined && stream !== this.expectedStream) {
+      throw new BridgeProtocolError(
+        `frame: unexpected stream '${stream}' for id ${id} (this reassembler handles '${this.expectedStream}')`,
+        { code: 'FRAME_WRONG_STREAM' }
+      );
+    }
 
     // Late-frame discard: drop frames for a timed-out id; forget the id once its
     // declared final frame has been seen so the stream stays aligned and the id
@@ -303,7 +329,15 @@ export class Reassembler {
           { code: 'FRAME_TOO_MANY_STREAMS' }
         );
       }
-      state = { total, totalBytes, slices: new Map<number, string>() };
+      // Reject early: a declared payload past the cap can never be accepted by
+      // the higher-layer size guard, so refuse to buffer it instead of OOMing.
+      if (totalBytes > this.maxReassemblyBytes) {
+        throw new BridgeProtocolError(
+          `frame: declared payload ${totalBytes} bytes exceeds max reassembly ${this.maxReassemblyBytes} bytes for id ${id}`,
+          { code: 'FRAME_PAYLOAD_TOO_LARGE' }
+        );
+      }
+      state = { total, totalBytes, bytesSoFar: 0, slices: new Map<number, string>() };
       this.streams.set(id, state);
     } else {
       if (state.total !== total) {
@@ -329,6 +363,18 @@ export class Reassembler {
       });
     }
     state.slices.set(seq, data);
+
+    // Running memory bound: a peer that under-declares totalBytes then overshoots
+    // is caught here (and the exact-count check at completion catches the rest)
+    // before the full payload is buffered.
+    state.bytesSoFar += utf8ByteLength(data);
+    if (state.bytesSoFar > this.maxReassemblyBytes) {
+      this.streams.delete(id);
+      throw new BridgeProtocolError(
+        `frame: accumulated payload exceeds max reassembly ${this.maxReassemblyBytes} bytes for id ${id}`,
+        { code: 'FRAME_PAYLOAD_TOO_LARGE' }
+      );
+    }
 
     if (state.slices.size < total) {
       return null;
