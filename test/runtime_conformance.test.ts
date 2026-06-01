@@ -140,6 +140,34 @@ class Widget:
         return self.size * self.size + 1
 `;
 
+// #234 hardening fixture: a sklearn estimator whose constructor stores a callable
+// param, so get_params(deep=False) returns a non-JSON value. The bridge must reject
+// it with a clear, param-naming error (metadata-only; never pickle). Written only
+// when sklearn is importable.
+const SKLEARN_HARDENING_MODULE = '_tywrap_sklearn_hardening_fixtures';
+const SKLEARN_HARDENING_PATH = resolve(RUNTIME_DIR, `${SKLEARN_HARDENING_MODULE}.py`);
+const SKLEARN_HARDENING_SOURCE = `
+from sklearn.base import BaseEstimator
+
+
+class CallableParamEstimator(BaseEstimator):
+    def __init__(self, fn=len):
+        self.fn = fn
+
+
+class NestedEstimatorParam(BaseEstimator):
+    def __init__(self, inner=None):
+        self.inner = inner if inner is not None else CallableParamEstimator()
+
+
+def make_callable_param():
+    return CallableParamEstimator()
+
+
+def make_nested_estimator_param():
+    return NestedEstimatorParam()
+`;
+
 const MODULES = {
   numpy: PYTHON_OK ? hasModule(PYTHON, 'numpy') : false,
   pandas: PYTHON_OK ? hasModule(PYTHON, 'pandas') : false,
@@ -359,6 +387,9 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     // stdlib-only — written unconditionally so the member-dispatch case runs
     // on every backend that has a Python interpreter.
     writeFileSync(MEMBER_FIXTURE_PATH, MEMBER_FIXTURE_SOURCE, 'utf-8');
+    if (MODULES.sklearn) {
+      writeFileSync(SKLEARN_HARDENING_PATH, SKLEARN_HARDENING_SOURCE, 'utf-8');
+    }
     const baseEnv = { ...process.env } as NodeJS.ProcessEnv;
     const jsonEnv = { ...process.env, TYWRAP_CODEC_FALLBACK: 'json' } as NodeJS.ProcessEnv;
 
@@ -390,6 +421,11 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     }
     try {
       rmSync(MEMBER_FIXTURE_PATH, { force: true });
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(SKLEARN_HARDENING_PATH, { force: true });
     } catch {
       // ignore
     }
@@ -1015,6 +1051,278 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
         expect(env.className, `${name} sklearn className`).toBe('LinearRegression');
         expect(env.module, `${name} sklearn module`).toContain('sklearn');
         expect(typeof env.params, `${name} sklearn params`).toBe('object');
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
+  // #234 envelope hardening — SUPPORTED scipy formats beyond CSR (CSC/COO/empty)
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK || !MODULES.scipy)(
+    'scipy.sparse CSC / COO / empty supported-format parity (json-only)',
+    async () => {
+      for (const { name, backend } of jsonMarkerBackends()) {
+        const b = backend();
+        if (!b) continue;
+
+        // CSC
+        const csc = await b.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("scipy.sparse").sparse.csc_matrix([[1, 0], [0, 2]])'],
+            kwargs: {},
+          },
+        });
+        expect(csc.error, `${name} csc error`).toBeUndefined();
+        const cscEnv = csc.result as Record<string, unknown>;
+        expect(cscEnv.format, `${name} csc format`).toBe('csc');
+        expect(cscEnv.shape, `${name} csc shape`).toEqual([2, 2]);
+        expect(Array.isArray(cscEnv.indptr), `${name} csc indptr`).toBe(true);
+
+        // COO
+        const coo = await b.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("scipy.sparse").sparse.coo_matrix([[1, 0], [0, 2]])'],
+            kwargs: {},
+          },
+        });
+        expect(coo.error, `${name} coo error`).toBeUndefined();
+        const cooEnv = coo.result as Record<string, unknown>;
+        expect(cooEnv.format, `${name} coo format`).toBe('coo');
+        expect(Array.isArray(cooEnv.row), `${name} coo row`).toBe(true);
+        expect(Array.isArray(cooEnv.col), `${name} coo col`).toBe(true);
+
+        // Empty CSR (no stored entries)
+        const empty = await b.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("scipy.sparse").sparse.csr_matrix((3, 3))'],
+            kwargs: {},
+          },
+        });
+        expect(empty.error, `${name} empty csr error`).toBeUndefined();
+        const emptyEnv = empty.result as Record<string, unknown>;
+        expect(emptyEnv.format, `${name} empty format`).toBe('csr');
+        expect(emptyEnv.data, `${name} empty data`).toEqual([]);
+        expect(emptyEnv.shape, `${name} empty shape`).toEqual([3, 3]);
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
+  // #234 envelope hardening — scipy EXPLICIT FAILURES (format / complex dtype)
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK || !MODULES.scipy)(
+    'scipy.sparse rejects unsupported format and complex dtype clearly',
+    async () => {
+      for (const { name, get } of liveBackends()) {
+        const backend = get();
+        if (!backend) continue;
+
+        // DIA format is unsupported -> clear rejection naming the supported set.
+        const dia = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("scipy.sparse").sparse.dia_matrix(__import__("numpy").eye(3))'],
+            kwargs: {},
+          },
+        });
+        expect(dia.error, `${name} dia rejected`).toBeDefined();
+        expect(dia.error?.message, `${name} dia message`).toMatch(/Unsupported scipy sparse format/);
+        expect(dia.error?.message, `${name} dia mentions supported set`).toMatch(/csr\/csc\/coo/);
+
+        // Complex dtype is unsupported -> clear rejection.
+        const complex = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: [
+              '__import__("scipy.sparse").sparse.csr_matrix(' +
+                '__import__("numpy").array([[1+2j, 0], [0, 3+4j]]))',
+            ],
+            kwargs: {},
+          },
+        });
+        expect(complex.error, `${name} complex sparse rejected`).toBeDefined();
+        expect(complex.error?.message, `${name} complex sparse message`).toMatch(
+          /[Cc]omplex .*sparse .*not supported/
+        );
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
+  // #234 envelope hardening — torch EXPLICIT FAILURES + opt-in default rejection
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK || !MODULES.torch)(
+    'torch rejects sparse / quantized / meta / complex tensors clearly',
+    async () => {
+      for (const { name, get } of liveBackends()) {
+        const backend = get();
+        if (!backend) continue;
+
+        // Sparse COO tensor -> reject with a sparse-specific message (NOT a
+        // misleading "not contiguous"), and the message must not be bypassable
+        // by an opt-in (default rejection is what the live backends exercise).
+        const sparse = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: [
+              '__import__("torch").sparse_coo_tensor(' +
+                '__import__("torch").tensor([[0, 1], [1, 0]]), ' +
+                '__import__("torch").tensor([3.0, 4.0]), (2, 2))',
+            ],
+            kwargs: {},
+          },
+        });
+        expect(sparse.error, `${name} sparse tensor rejected`).toBeDefined();
+        expect(sparse.error?.message, `${name} sparse message`).toMatch(
+          /[Ss]parse tensors are not supported/
+        );
+
+        // Quantized tensor -> reject with a dequantize hint (was an opaque
+        // "unsupported ScalarType" deep in torch before hardening).
+        const quant = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: [
+              '__import__("torch").quantize_per_tensor(' +
+                '__import__("torch").tensor([1.0, 2.0]), 0.1, 0, __import__("torch").qint8)',
+            ],
+            kwargs: {},
+          },
+        });
+        expect(quant.error, `${name} quantized rejected`).toBeDefined();
+        expect(quant.error?.message, `${name} quantized message`).toMatch(/quantized/i);
+
+        // Meta tensor -> reject with a materialize hint (NOT the generic non-CPU
+        // message), and it must NOT be presented as opt-in-able.
+        const meta = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("torch").empty(3, device="meta")'],
+            kwargs: {},
+          },
+        });
+        expect(meta.error, `${name} meta rejected`).toBeDefined();
+        expect(meta.error?.message, `${name} meta message`).toMatch(/meta tensors/i);
+        expect(meta.error?.message, `${name} meta not opt-in`).not.toMatch(
+          /TYWRAP_TORCH_ALLOW_COPY/
+        );
+
+        // Complex tensor -> reject (was a SILENT corruption: emitted Python
+        // complex tuples the JS decoder cannot parse).
+        const complex = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            args: ['__import__("torch").tensor([1+2j, 3+4j])'],
+            kwargs: {},
+          },
+        });
+        expect(complex.error, `${name} complex tensor rejected`).toBeDefined();
+        expect(complex.error?.message, `${name} complex tensor message`).toMatch(
+          /[Cc]omplex tensors are not supported/
+        );
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
+  // #234 envelope hardening — torch non-CPU/non-contiguous default rejection.
+  // A CPU non-contiguous tensor (transpose of a 2D tensor) is the portable way
+  // to exercise the contiguous opt-in gate without needing a GPU.
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK || !MODULES.torch)(
+    'torch rejects a non-contiguous tensor by default (opt-in required)',
+    async () => {
+      for (const { name, get } of liveBackends()) {
+        const backend = get();
+        if (!backend) continue;
+        const nonContig = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: 'builtins',
+            functionName: 'eval',
+            // .t() returns a non-contiguous view of a 2D tensor.
+            args: ['__import__("torch").tensor([[1.0, 2.0], [3.0, 4.0]]).t()'],
+            kwargs: {},
+          },
+        });
+        expect(nonContig.error, `${name} non-contiguous rejected`).toBeDefined();
+        expect(nonContig.error?.message, `${name} non-contiguous message`).toMatch(
+          /not contiguous/
+        );
+        expect(nonContig.error?.message, `${name} non-contiguous opt-in hint`).toMatch(
+          /TYWRAP_TORCH_ALLOW_COPY/
+        );
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
+  // #234 envelope hardening — sklearn rejects non-JSON params (callable/nested),
+  // naming the offending param. Metadata-only: NEVER pickle/joblib.
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK || !MODULES.sklearn)(
+    'sklearn rejects callable / nested-estimator params with a clear, param-naming error',
+    async () => {
+      for (const { name, get } of liveBackends()) {
+        const backend = get();
+        if (!backend) continue;
+
+        const callable = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: SKLEARN_HARDENING_MODULE,
+            functionName: 'make_callable_param',
+            args: [],
+            kwargs: {},
+          },
+        });
+        expect(callable.error, `${name} callable param rejected`).toBeDefined();
+        expect(callable.error?.message, `${name} callable param message`).toMatch(
+          /param 'fn' is not JSON-serializable/
+        );
+        expect(callable.error?.message, `${name} callable mentions metadata-only`).toMatch(
+          /metadata only/
+        );
+
+        const nested = await backend.dispatch({
+          method: 'call',
+          params: {
+            module: SKLEARN_HARDENING_MODULE,
+            functionName: 'make_nested_estimator_param',
+            args: [],
+            kwargs: {},
+          },
+        });
+        expect(nested.error, `${name} nested estimator param rejected`).toBeDefined();
+        expect(nested.error?.message, `${name} nested param message`).toMatch(
+          /param 'inner' is not JSON-serializable/
+        );
       }
     },
     caseTimeoutMs

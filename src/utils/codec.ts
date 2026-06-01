@@ -508,6 +508,31 @@ const decodeNdarrayEnvelope: EnvelopeHandler = (value, decodeArrow) => {
   throw new Error(`Invalid ndarray envelope: unsupported encoding ${String(encoding)}`);
 };
 
+/**
+ * Assert an array holds only integer indices within [0, bound). Used to re-validate
+ * scipy.sparse index arrays on the JS side so a corrupt/oversized index can never
+ * silently address out of the declared shape.
+ *
+ * Why: the JS decoder never reconstructs a Python object, but it IS the boundary a
+ * downstream consumer trusts — validating index ranges here turns a corrupt payload
+ * into a clear, early failure instead of a confusing downstream error.
+ */
+function assertIndexArrayInRange(arr: readonly unknown[], bound: number, label: string): void {
+  for (let i = 0; i < arr.length; i += 1) {
+    const idx = arr[i];
+    if (typeof idx !== 'number' || !Number.isInteger(idx)) {
+      throw new Error(
+        `Invalid scipy.sparse envelope: ${label}[${i}] must be an integer, got ${String(idx)}`
+      );
+    }
+    if (idx < 0 || idx >= bound) {
+      throw new Error(
+        `Invalid scipy.sparse envelope: ${label}[${i}]=${idx} is out of range [0, ${bound})`
+      );
+    }
+  }
+}
+
 const decodeScipySparseEnvelope: EnvelopeHandler = value => {
   const encoding = value.encoding;
   if (encoding !== 'json') {
@@ -526,6 +551,8 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
   ) {
     throw new Error('Invalid scipy.sparse envelope: shape must be a 2-item number[]');
   }
+  const rows = shape[0];
+  const cols = shape[1];
   const data = value.data;
   if (!Array.isArray(data)) {
     throw new Error('Invalid scipy.sparse envelope: data must be an array');
@@ -539,6 +566,16 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
     if (!Array.isArray(row) || !Array.isArray(col)) {
       throw new Error('Invalid scipy.sparse envelope: coo requires row and col arrays');
     }
+    // COO: one (row, col, value) triple per stored entry, so all three arrays
+    // share a length; row/col index into [0, rows)/[0, cols) respectively.
+    if (row.length !== data.length || col.length !== data.length) {
+      throw new Error(
+        `Invalid scipy.sparse envelope: coo row/col/data lengths must match ` +
+          `(data=${data.length}, row=${row.length}, col=${col.length})`
+      );
+    }
+    assertIndexArrayInRange(row, rows, 'row');
+    assertIndexArrayInRange(col, cols, 'col');
     return {
       format,
       shape,
@@ -554,6 +591,25 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
   if (!Array.isArray(indices) || !Array.isArray(indptr)) {
     throw new Error('Invalid scipy.sparse envelope: csr/csc requires indices and indptr arrays');
   }
+  // CSR/CSC: one column-index (CSR) or row-index (CSC) per stored value, so
+  // indices and data share a length. indptr partitions indices into one segment
+  // per major axis (rows for CSR, cols for CSC), so indptr has majorAxis + 1
+  // entries; the inner indices address the minor axis.
+  if (indices.length !== data.length) {
+    throw new Error(
+      `Invalid scipy.sparse envelope: ${format} indices/data lengths must match ` +
+        `(data=${data.length}, indices=${indices.length})`
+    );
+  }
+  const majorAxis = format === 'csr' ? rows : cols;
+  const minorAxis = format === 'csr' ? cols : rows;
+  if (indptr.length !== majorAxis + 1) {
+    throw new Error(
+      `Invalid scipy.sparse envelope: ${format} indptr length must be ${majorAxis + 1} ` +
+        `(${format === 'csr' ? 'rows' : 'cols'}+1), got ${indptr.length}`
+    );
+  }
+  assertIndexArrayInRange(indices, minorAxis, 'indices');
   return {
     format,
     shape,
@@ -563,6 +619,11 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
     dtype,
   } satisfies SparseMatrix;
 };
+
+/** Product of a shape's dimensions (the element count). [] (scalar) -> 1. */
+function shapeProduct(shape: readonly number[]): number {
+  return shape.reduce((acc, dim) => acc * dim, 1);
+}
 
 const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
   value: { [k: string]: unknown },
@@ -580,19 +641,95 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
   if (!isObject(nested) || (nested as { __tywrap__?: unknown }).__tywrap__ !== 'ndarray') {
     throw new Error('Invalid torch.tensor envelope: value must be an ndarray envelope');
   }
-  const decoded = recurse(nested);
   const shapeValue = value.shape;
   const shape = isNumberArray(shapeValue) ? shapeValue : undefined;
+  // The tensor shape must be a non-negative-integer dimension list. A negative or
+  // non-integer dim is a corrupt envelope, not a valid tensor.
+  if (shape) {
+    for (let i = 0; i < shape.length; i += 1) {
+      const dim = shape[i] as number;
+      if (!Number.isInteger(dim) || dim < 0) {
+        throw new Error(
+          `Invalid torch.tensor envelope: shape[${i}]=${dim} must be a non-negative integer`
+        );
+      }
+    }
+  }
+  // Cross-check the tensor shape's element count against the nested ndarray's
+  // declared shape (metadata only — no decode needed). A mismatch means the two
+  // shapes disagree about how many elements the payload holds.
+  const nestedShapeValue = (nested as { shape?: unknown }).shape;
+  const nestedShape = isNumberArray(nestedShapeValue) ? nestedShapeValue : undefined;
+  if (shape && nestedShape && shapeProduct(shape) !== shapeProduct(nestedShape)) {
+    throw new Error(
+      `Invalid torch.tensor envelope: shape ${JSON.stringify(shape)} ` +
+        `(product ${shapeProduct(shape)}) disagrees with nested ndarray shape ` +
+        `${JSON.stringify(nestedShape)} (product ${shapeProduct(nestedShape)})`
+    );
+  }
   const dtypeValue = value.dtype;
   const dtype = typeof dtypeValue === 'string' ? dtypeValue : undefined;
   const deviceValue = value.device;
+  if (deviceValue !== undefined && (typeof deviceValue !== 'string' || deviceValue.length === 0)) {
+    throw new Error(
+      'Invalid torch.tensor envelope: device must be a non-empty string when provided'
+    );
+  }
   const device = typeof deviceValue === 'string' ? deviceValue : undefined;
 
+  const decoded = recurse(nested);
   if (isPromiseLike(decoded)) {
     return decoded.then(data => ({ data, shape, dtype, device })) as Promise<T | unknown>;
   }
   return { data: decoded, shape, dtype, device } satisfies TorchTensor;
 };
+
+/**
+ * Recursively assert a value is plain JSON (null | boolean | number | string |
+ * JSON array | plain object of JSON). Rejects functions, symbols, bigints, class
+ * instances, and any non-finite number — the things a metadata-only sklearn
+ * envelope must never carry. This validates; it never reconstructs.
+ */
+function assertPlainJson(value: unknown, path: string): void {
+  if (value === null) {
+    return;
+  }
+  const t = typeof value;
+  if (t === 'string' || t === 'boolean') {
+    return;
+  }
+  if (t === 'number') {
+    if (!Number.isFinite(value as number)) {
+      throw new Error(
+        `Invalid sklearn.estimator envelope: ${path} must be a finite JSON number, got ${String(value)}`
+      );
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => assertPlainJson(item, `${path}[${i}]`));
+    return;
+  }
+  if (t === 'object') {
+    // Reject exotic objects (class instances, Map/Set, etc.): a JSON object is a
+    // plain object whose prototype is Object.prototype or null.
+    const proto = Object.getPrototypeOf(value as object);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new Error(
+        `Invalid sklearn.estimator envelope: ${path} must be a plain JSON object, ` +
+          `got ${(value as object).constructor?.name ?? 'object'}`
+      );
+    }
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      assertPlainJson(v, `${path}.${k}`);
+    }
+    return;
+  }
+  // function | symbol | bigint | undefined
+  throw new Error(
+    `Invalid sklearn.estimator envelope: ${path} is not JSON-serializable (type ${t})`
+  );
+}
 
 const decodeSklearnEstimatorEnvelope: EnvelopeHandler = value => {
   const encoding = value.encoding;
@@ -606,6 +743,16 @@ const decodeSklearnEstimatorEnvelope: EnvelopeHandler = value => {
     throw new Error(
       'Invalid sklearn.estimator envelope: expected className/module strings + params object'
     );
+  }
+  // params must be a PLAIN JSON object end to end — metadata-only estimators never
+  // carry callables, class instances, or nested non-JSON values. Validate (do not
+  // reconstruct) so a corrupt envelope fails clearly instead of leaking a function
+  // or exotic object to a downstream consumer.
+  if (Object.getPrototypeOf(params) !== Object.prototype && Object.getPrototypeOf(params) !== null) {
+    throw new Error('Invalid sklearn.estimator envelope: params must be a plain JSON object');
+  }
+  for (const [k, v] of Object.entries(params)) {
+    assertPlainJson(v, `params.${k}`);
   }
   const versionValue = value.version;
   if (versionValue !== undefined && typeof versionValue !== 'string') {
