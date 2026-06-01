@@ -593,7 +593,10 @@ describePerf('data-plane perf: Arrow + 100k-decode regression budget', () => {
         const baseline = await medianMs(fn, opts);
         const subject = await medianMs(fn, opts);
         const ratio = subject / baseline;
-        report(label, `baseline ${baseline.toFixed(4)} ms, repeat ${subject.toFixed(4)} ms, ratio ${ratio.toFixed(2)}x`);
+        report(
+          label,
+          `baseline ${baseline.toFixed(4)} ms, repeat ${subject.toFixed(4)} ms, ratio ${ratio.toFixed(2)}x`
+        );
         expect(baseline).toBeGreaterThan(0);
         expect(ratio).toBeLessThanOrEqual(ARROW_BENCH_MAX_RATIO);
       }
@@ -625,7 +628,10 @@ describePerf('data-plane perf: Arrow + 100k-decode regression budget', () => {
       const baseline = median(Array.from({ length: 5 }, sample));
       const subject = median(Array.from({ length: 5 }, sample));
       const ratio = subject / baseline;
-      report('5MB size-check decode', `baseline ${baseline.toFixed(3)} ms, repeat ${subject.toFixed(3)} ms, ratio ${ratio.toFixed(2)}x`);
+      report(
+        '5MB size-check decode',
+        `baseline ${baseline.toFixed(3)} ms, repeat ${subject.toFixed(3)} ms, ratio ${ratio.toFixed(2)}x`
+      );
       expect(baseline).toBeGreaterThan(0);
       expect(ratio).toBeLessThanOrEqual(ARROW_BENCH_MAX_RATIO);
     },

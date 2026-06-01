@@ -368,7 +368,14 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           encoding: 'json',
           className: 'Pipeline',
           module: 'sklearn.pipeline',
-          params: { steps: [['a', 1], ['b', 2]], memory: null, options: { verbose: false } },
+          params: {
+            steps: [
+              ['a', 1],
+              ['b', 2],
+            ],
+            memory: null,
+            options: { verbose: false },
+          },
         })
       ).toMatchObject({ className: 'Pipeline' });
     });

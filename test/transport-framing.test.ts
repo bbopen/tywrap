@@ -88,9 +88,7 @@ describe('tywrap-frame/1 framing constants', () => {
 
   it('FRAME_PROTOCOL_VERSION is derived from the trailing number', () => {
     expect(FRAME_PROTOCOL_VERSION).toBe(1);
-    expect(FRAME_PROTOCOL_VERSION).toBe(
-      Number.parseInt(FRAME_PROTOCOL_ID.split('/')[1] ?? '', 10)
-    );
+    expect(FRAME_PROTOCOL_VERSION).toBe(Number.parseInt(FRAME_PROTOCOL_ID.split('/')[1] ?? '', 10));
   });
 
   it('ChunkFrame envelope shape type-checks against the spec', () => {

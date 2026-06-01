@@ -226,7 +226,10 @@ interface ChunkingInternals {
  * and whose negotiation result is forced on, so frame routing can be driven
  * deterministically through handleResponseLine.
  */
-function forcedChunkingTransport(): { transport: SubprocessTransport; internals: ChunkingInternals } {
+function forcedChunkingTransport(): {
+  transport: SubprocessTransport;
+  internals: ChunkingInternals;
+} {
   const transport = new SubprocessTransport({
     bridgeScript: '/path/to/bridge.py',
     maxLineLength: ONE_MIB,
@@ -249,7 +252,8 @@ describe('SubprocessTransport late-frame-after-timeout discard', () => {
     // Inject a real Reassembler (the production class) so discard() semantics are
     // exercised, not a stub. We import it indirectly by encoding+feeding frames.
     const { Reassembler } = await import('../src/runtime/frame-codec.js');
-    internals.responseReassembler = new Reassembler() as unknown as ChunkingInternals['responseReassembler'];
+    internals.responseReassembler =
+      new Reassembler() as unknown as ChunkingInternals['responseReassembler'];
 
     // Build a 3-frame response for id=42 against a tiny frame ceiling.
     const logical = JSON.stringify({ id: 42, protocol: PROTOCOL_ID, result: 'A'.repeat(30) });
@@ -277,9 +281,11 @@ describe('SubprocessTransport late-frame-after-timeout discard', () => {
     const frames43 = encodeFrames(logical43, { id: 43, stream: 'response', maxFrameBytes: 12 });
     const captured: string[] = [];
     // Register a pending request for id=43 so completion has somewhere to resolve.
-    (transport as unknown as {
-      pending: Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>;
-    }).pending.set(43, {
+    (
+      transport as unknown as {
+        pending: Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>;
+      }
+    ).pending.set(43, {
       resolve: (v: string) => captured.push(v),
       reject: (e: Error) => {
         throw e;
@@ -304,9 +310,11 @@ describe('SubprocessTransport late-frame-after-timeout discard', () => {
       new Reassembler() as unknown as ChunkingInternals['responseReassembler'];
 
     const restartInternals = transport as unknown as { needsRestart: boolean };
-    const pendingMap = (transport as unknown as {
-      pending: Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>;
-    }).pending;
+    const pendingMap = (
+      transport as unknown as {
+        pending: Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>;
+      }
+    ).pending;
 
     let rejected: Error | null = null;
     pendingMap.set(55, {
@@ -463,7 +471,13 @@ describe('chunking-core hardening', () => {
     // Dead entry (isLive false) -> skipped + resolved, never written.
     let deadResolved = false;
     const dead = internals.processQueuedWrite(
-      { data: '{"id":9}\n', resolve: () => (deadResolved = true), reject: () => {}, queuedAt: at, isLive: () => false },
+      {
+        data: '{"id":9}\n',
+        resolve: () => (deadResolved = true),
+        reject: () => {},
+        queuedAt: at,
+        isLive: () => false,
+      },
       stdin,
       at
     );
@@ -473,7 +487,13 @@ describe('chunking-core hardening', () => {
 
     // Live entry -> written normally.
     const live = internals.processQueuedWrite(
-      { data: '{"id":10}\n', resolve: () => {}, reject: () => {}, queuedAt: at, isLive: () => true },
+      {
+        data: '{"id":10}\n',
+        resolve: () => {},
+        reject: () => {},
+        queuedAt: at,
+        isLive: () => true,
+      },
       stdin,
       at
     );
@@ -490,7 +510,12 @@ describe('chunking-core hardening', () => {
       process: unknown;
       negotiatedChunking: boolean;
       pending: Map<number, unknown>;
-      writeRequest: (m: string, id: number, s: AbortSignal | undefined, entry: unknown) => Promise<void>;
+      writeRequest: (
+        m: string,
+        id: number,
+        s: AbortSignal | undefined,
+        entry: unknown
+      ) => Promise<void>;
     };
     internals._state = 'ready';
     internals.processExited = false;
@@ -543,7 +568,11 @@ describe('chunking-core hardening', () => {
     expect(
       advertises({
         result: {
-          transport: { frameProtocol: 'tywrap-frame/2', supportsChunking: true, maxFrameBytes: 4096 },
+          transport: {
+            frameProtocol: 'tywrap-frame/2',
+            supportsChunking: true,
+            maxFrameBytes: 4096,
+          },
         },
       })
     ).toBe(false);

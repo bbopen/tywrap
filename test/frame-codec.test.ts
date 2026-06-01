@@ -102,10 +102,10 @@ describe('encodeFrames + Reassembler round-trip', () => {
     const logical = JSON.stringify({ id: 1, result: 'x'.repeat(5000) });
     const frames = encodeFrames(logical, RESPONSE_OPTS(256));
     expect(frames.length).toBeGreaterThan(1);
-    expect(frames.every((f) => utf8ByteLength(f.data) <= 256)).toBe(true);
+    expect(frames.every(f => utf8ByteLength(f.data) <= 256)).toBe(true);
     // total + totalBytes are repeated identically on every frame.
-    expect(new Set(frames.map((f) => f.total))).toEqual(new Set([frames.length]));
-    expect(new Set(frames.map((f) => f.totalBytes))).toEqual(new Set([utf8ByteLength(logical)]));
+    expect(new Set(frames.map(f => f.total))).toEqual(new Set([frames.length]));
+    expect(new Set(frames.map(f => f.totalBytes))).toEqual(new Set([utf8ByteLength(logical)]));
     expect(roundTrip(logical, 256)).toBe(logical);
   });
 
@@ -127,7 +127,9 @@ describe('encodeFrames + Reassembler round-trip', () => {
       expect(utf8ByteLength(f.data)).toBeLessThanOrEqual(5);
       // ...and every frame's data is itself valid UTF-16 / decodes cleanly
       // (no lone surrogate from a split astral codepoint).
-      expect(() => new TextDecoder('utf-8', { fatal: true }).decode(new TextEncoder().encode(f.data))).not.toThrow();
+      expect(() =>
+        new TextDecoder('utf-8', { fatal: true }).decode(new TextEncoder().encode(f.data))
+      ).not.toThrow();
     }
     expect(roundTrip(logical, 5)).toBe(logical);
   });
@@ -136,12 +138,14 @@ describe('encodeFrames + Reassembler round-trip', () => {
     const logical = '\u{1f600}\u{1f601}\u{1f602}';
     const frames = encodeFrames(logical, RESPONSE_OPTS(4));
     expect(frames).toHaveLength(3);
-    expect(frames.map((f) => f.data)).toEqual(['\u{1f600}', '\u{1f601}', '\u{1f602}']);
+    expect(frames.map(f => f.data)).toEqual(['\u{1f600}', '\u{1f601}', '\u{1f602}']);
     expect(roundTrip(logical, 4)).toBe(logical);
   });
 
   it('handles a large multi-frame payload (smoke)', () => {
-    const logical = JSON.stringify({ rows: Array.from({ length: 2000 }, (_, i) => ({ i, v: '中'.repeat(3) })) });
+    const logical = JSON.stringify({
+      rows: Array.from({ length: 2000 }, (_, i) => ({ i, v: '中'.repeat(3) })),
+    });
     expect(roundTrip(logical, 1000)).toBe(logical);
   });
 
@@ -172,7 +176,7 @@ describe('encodeFrames input validation', () => {
 
   it('stamps stream and id onto every frame', () => {
     const frames = encodeFrames('abcdef', { id: 99, stream: 'request', maxFrameBytes: 4 });
-    expect(frames.every((f) => f.id === 99 && f.stream === 'request')).toBe(true);
+    expect(frames.every(f => f.id === 99 && f.stream === 'request')).toBe(true);
   });
 });
 
@@ -216,9 +220,7 @@ describe('parseChunkFrame rejects malformed frames', () => {
   });
 
   it('rejects non-string data', () => {
-    expect(() =>
-      parseChunkFrame(validFrame({ data: 123 as unknown as string }))
-    ).toThrow(/data/);
+    expect(() => parseChunkFrame(validFrame({ data: 123 as unknown as string }))).toThrow(/data/);
   });
 
   it('rejects seq >= total', () => {
@@ -373,8 +375,8 @@ describe('cross-language parity vectors', () => {
   it('ASCII split at 4 bytes -> 3 frames with exact data slices', () => {
     const logical = 'helloworld!!'; // 12 ASCII bytes
     const frames = encodeFrames(logical, { id: 1, stream: 'response', maxFrameBytes: 4 });
-    expect(frames.map((f) => f.data)).toEqual(['hell', 'owor', 'ld!!']);
-    expect(frames.map((f) => f.seq)).toEqual([0, 1, 2]);
+    expect(frames.map(f => f.data)).toEqual(['hell', 'owor', 'ld!!']);
+    expect(frames.map(f => f.seq)).toEqual([0, 1, 2]);
     expect(frames[0]?.total).toBe(3);
     expect(frames[0]?.totalBytes).toBe(12);
   });
@@ -384,7 +386,7 @@ describe('cross-language parity vectors', () => {
     // own frame (a second char would be 6 bytes > 4).
     const logical = '中中中';
     const frames = encodeFrames(logical, { id: 2, stream: 'response', maxFrameBytes: 4 });
-    expect(frames.map((f) => f.data)).toEqual(['中', '中', '中']);
+    expect(frames.map(f => f.data)).toEqual(['中', '中', '中']);
     expect(frames[0]?.totalBytes).toBe(9);
     expect(frames[0]?.total).toBe(3);
   });
@@ -477,12 +479,16 @@ describe('Reassembler payload + stream bounds', () => {
   it('enforces the expected stream direction', () => {
     const ok = new Reassembler({ expectedStream: 'response' });
     expect(
-      ok.accept(validFrame({ id: 3, seq: 0, total: 1, data: 'hi', totalBytes: 2, stream: 'response' }))
+      ok.accept(
+        validFrame({ id: 3, seq: 0, total: 1, data: 'hi', totalBytes: 2, stream: 'response' })
+      )
     ).toBe('hi');
 
     const wrong = new Reassembler({ expectedStream: 'response' });
     expect(() =>
-      wrong.accept(validFrame({ id: 4, seq: 0, total: 1, data: 'hi', totalBytes: 2, stream: 'request' }))
+      wrong.accept(
+        validFrame({ id: 4, seq: 0, total: 1, data: 'hi', totalBytes: 2, stream: 'request' })
+      )
     ).toThrow(/unexpected stream/);
   });
 });

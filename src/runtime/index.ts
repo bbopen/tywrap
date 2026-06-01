@@ -20,12 +20,7 @@ export type {
   ProtocolMessage,
   ProtocolResponse,
 } from './transport.js';
-export {
-  PROTOCOL_ID,
-  isTransport,
-  isProtocolMessage,
-  isProtocolResponse,
-} from './transport.js';
+export { PROTOCOL_ID, isTransport, isProtocolMessage, isProtocolResponse } from './transport.js';
 
 let runtimeBridge: RuntimeExecution | null = null;
 

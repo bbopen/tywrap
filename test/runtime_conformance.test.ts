@@ -421,7 +421,12 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
 
     if (CORE_OK) {
       writeFileSync(PYODIDE_HARNESS_PATH, PYODIDE_CORE_HARNESS, 'utf-8');
-      coreBackend = new JsonlProcessBackend('pyodide-core', PYTHON, [PYODIDE_HARNESS_PATH], baseEnv);
+      coreBackend = new JsonlProcessBackend(
+        'pyodide-core',
+        PYTHON,
+        [PYODIDE_HARNESS_PATH],
+        baseEnv
+      );
     }
   });
 
@@ -693,7 +698,12 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
         // @classmethod via a dotted call() name (cls bound to the class).
         const named = await backend.dispatch({
           method: 'call',
-          params: { module: MEMBER_FIXTURE_MODULE, functionName: 'Widget.named', args: [], kwargs: {} },
+          params: {
+            module: MEMBER_FIXTURE_MODULE,
+            functionName: 'Widget.named',
+            args: [],
+            kwargs: {},
+          },
         });
         expect(named.error, `${name} classmethod error`).toBeUndefined();
         expect(named.result, `${name} classmethod result`).toBe('widget');
@@ -701,7 +711,12 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
         // @staticmethod via a dotted call() name.
         const doubled = await backend.dispatch({
           method: 'call',
-          params: { module: MEMBER_FIXTURE_MODULE, functionName: 'Widget.doubled', args: [21], kwargs: {} },
+          params: {
+            module: MEMBER_FIXTURE_MODULE,
+            functionName: 'Widget.doubled',
+            args: [21],
+            kwargs: {},
+          },
         });
         expect(doubled.error, `${name} staticmethod error`).toBeUndefined();
         expect(doubled.result, `${name} staticmethod result`).toBe(42);
@@ -1165,7 +1180,9 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
           },
         });
         expect(dia.error, `${name} dia rejected`).toBeDefined();
-        expect(dia.error?.message, `${name} dia message`).toMatch(/Unsupported scipy sparse format/);
+        expect(dia.error?.message, `${name} dia message`).toMatch(
+          /Unsupported scipy sparse format/
+        );
         expect(dia.error?.message, `${name} dia mentions supported set`).toMatch(/csr\/csc\/coo/);
 
         // Complex dtype is unsupported -> clear rejection.

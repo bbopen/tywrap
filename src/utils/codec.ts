@@ -748,7 +748,10 @@ const decodeSklearnEstimatorEnvelope: EnvelopeHandler = value => {
   // carry callables, class instances, or nested non-JSON values. Validate (do not
   // reconstruct) so a corrupt envelope fails clearly instead of leaking a function
   // or exotic object to a downstream consumer.
-  if (Object.getPrototypeOf(params) !== Object.prototype && Object.getPrototypeOf(params) !== null) {
+  if (
+    Object.getPrototypeOf(params) !== Object.prototype &&
+    Object.getPrototypeOf(params) !== null
+  ) {
     throw new Error('Invalid sklearn.estimator envelope: params must be a plain JSON object');
   }
   for (const [k, v] of Object.entries(params)) {

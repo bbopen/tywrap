@@ -23,11 +23,7 @@
  */
 
 import { BridgeProtocolError } from './errors.js';
-import {
-  FRAME_PROTOCOL_ID,
-  type ChunkFrame,
-  type ChunkFrameEncoding,
-} from './transport.js';
+import { FRAME_PROTOCOL_ID, type ChunkFrame, type ChunkFrameEncoding } from './transport.js';
 
 // =============================================================================
 // OPTIONS

@@ -55,3 +55,6 @@ node_modules/.vite/
 # VitePress
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+
+# fx session baseline (local, regenerated per session)
+.fx-baseline.ndjson

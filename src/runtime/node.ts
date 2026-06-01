@@ -672,7 +672,11 @@ function createWorkerReadyCallback(
 
     // Readiness probe (mirrors getBridgeInfo's meta request, per-worker).
     try {
-      await rpc.sendOn(worker.transport, { method: 'meta', params: {} }, { timeoutMs: readyTimeoutMs });
+      await rpc.sendOn(
+        worker.transport,
+        { method: 'meta', params: {} },
+        { timeoutMs: readyTimeoutMs }
+      );
     } catch (error) {
       throw wrapWarmupError('Worker warmup check', error);
     }

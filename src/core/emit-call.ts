@@ -132,13 +132,7 @@ export function emitCallPrelude(desc: CallDescriptor, helpers: CallEmitHelpers):
  * keywords and enforce required keyword-only arguments.
  */
 export function emitArgGuards(desc: CallDescriptor): string[] {
-  const {
-    hasKwArgs,
-    positionalOnlyNames,
-    requiredKwOnlyNames,
-    indent: i,
-    errorLabel,
-  } = desc;
+  const { hasKwArgs, positionalOnlyNames, requiredKwOnlyNames, indent: i, errorLabel } = desc;
   const i2 = `${i}  `;
   const i3 = `${i2}  `;
 

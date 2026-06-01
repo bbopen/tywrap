@@ -441,15 +441,7 @@ async function fetchPythonIr(
   try {
     const primary = await execAndParseIr(
       pythonPath,
-      [
-        '-m',
-        'tywrap_ir',
-        '--module',
-        moduleName,
-        '--ir-version',
-        TYWRAP_IR_VERSION,
-        '--no-pretty',
-      ],
+      ['-m', 'tywrap_ir', '--module', moduleName, '--ir-version', TYWRAP_IR_VERSION, '--no-pretty'],
       execOptions,
       'tywrap_ir output'
     );

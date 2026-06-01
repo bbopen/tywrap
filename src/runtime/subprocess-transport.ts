@@ -210,10 +210,7 @@ function extractMessageId(json: string): number | null {
  *   single-line response).
  * - `{ kind: 'invalid' }`: not parseable as JSON.
  */
-type FrameLineProbe =
-  | { kind: 'frame'; value: unknown }
-  | { kind: 'plain' }
-  | { kind: 'invalid' };
+type FrameLineProbe = { kind: 'frame'; value: unknown } | { kind: 'plain' } | { kind: 'invalid' };
 
 /**
  * Classify a stdout line as a frame envelope, a plain response, or invalid JSON.

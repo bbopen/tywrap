@@ -189,7 +189,11 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
   if (rawTransport !== undefined) {
     if (!rawTransport || typeof rawTransport !== 'object' || Array.isArray(rawTransport)) {
       const kind =
-        rawTransport === null ? 'null' : Array.isArray(rawTransport) ? 'array' : typeof rawTransport;
+        rawTransport === null
+          ? 'null'
+          : Array.isArray(rawTransport)
+            ? 'array'
+            : typeof rawTransport;
       throw new BridgeProtocolError(
         `Invalid bridge info payload: transport expected object, got ${kind}`
       );
@@ -212,7 +216,11 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
       );
     }
     const maxFrameBytes = t.maxFrameBytes;
-    if (typeof maxFrameBytes !== 'number' || !Number.isInteger(maxFrameBytes) || maxFrameBytes <= 0) {
+    if (
+      typeof maxFrameBytes !== 'number' ||
+      !Number.isInteger(maxFrameBytes) ||
+      maxFrameBytes <= 0
+    ) {
       throw new BridgeProtocolError(
         `Invalid bridge info payload: transport.maxFrameBytes expected positive integer, got ${formatValue(maxFrameBytes)}`
       );

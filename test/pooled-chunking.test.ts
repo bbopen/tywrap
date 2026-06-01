@@ -118,9 +118,7 @@ function bigStringRequest(id: number, n: number): string {
 }
 
 /** Build a chunking-enabled SubprocessTransport worker factory for the pool. */
-function chunkingWorkerFactory(
-  extraEnv: Record<string, string> = {}
-): () => SubprocessTransport {
+function chunkingWorkerFactory(extraEnv: Record<string, string> = {}): () => SubprocessTransport {
   return () =>
     new SubprocessTransport({
       bridgeScript: REFERENCE_SCRIPT,
@@ -390,8 +388,6 @@ describe('PooledTransport old-bridge behavior (no chunking)', () => {
     expect((JSON.parse(smallLine) as { result: string }).result).toBe('ok');
 
     // An oversize response must fail LOUD (line ceiling), not hang or truncate.
-    await expect(pool.send(bigStringRequest(2, 4 * ONE_MIB), 30_000)).rejects.toThrow(
-      /exceeded/
-    );
+    await expect(pool.send(bigStringRequest(2, 4 * ONE_MIB), 30_000)).rejects.toThrow(/exceeded/);
   }, 60_000);
 });

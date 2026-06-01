@@ -18,9 +18,15 @@ import {
   type ProtocolMessage,
   type ProtocolResponse,
 } from '../src/runtime/transport.js';
-import { SubprocessTransport, type SubprocessTransportOptions } from '../src/runtime/subprocess-transport.js';
+import {
+  SubprocessTransport,
+  type SubprocessTransportOptions,
+} from '../src/runtime/subprocess-transport.js';
 import { HttpTransport, type HttpTransportOptions } from '../src/runtime/http-transport.js';
-import { PyodideTransport, type PyodideTransportOptions } from '../src/runtime/pyodide-transport.js';
+import {
+  PyodideTransport,
+  type PyodideTransportOptions,
+} from '../src/runtime/pyodide-transport.js';
 import { PooledTransport } from '../src/runtime/pooled-transport.js';
 import { RpcClient } from '../src/runtime/rpc-client.js';
 import {
@@ -1380,7 +1386,6 @@ describe('PyodideTransport', () => {
       );
     });
   });
-
 });
 
 // =============================================================================
@@ -1389,8 +1394,14 @@ describe('PyodideTransport', () => {
 
 describe('Cross-Transport Interface Compliance', () => {
   const transports: { name: string; create: () => Transport }[] = [
-    { name: 'SubprocessTransport', create: () => new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' }) },
-    { name: 'HttpTransport', create: () => new HttpTransport({ baseURL: 'http://localhost:8000' }) },
+    {
+      name: 'SubprocessTransport',
+      create: () => new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' }),
+    },
+    {
+      name: 'HttpTransport',
+      create: () => new HttpTransport({ baseURL: 'http://localhost:8000' }),
+    },
     { name: 'PyodideTransport', create: () => new PyodideTransport() },
   ];
 

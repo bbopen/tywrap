@@ -89,7 +89,11 @@ async function timeAsync(
   return { totalMs, perOpMs: totalMs / iterations };
 }
 
-function report(label: string, stats: { totalMs: number; perOpMs: number }, iterations: number): void {
+function report(
+  label: string,
+  stats: { totalMs: number; perOpMs: number },
+  iterations: number
+): void {
   console.log(
     `[data-plane-bench] ${label}: ${stats.perOpMs.toFixed(4)} ms/op ` +
       `(${iterations} ops, ${stats.totalMs.toFixed(1)} ms total)`
@@ -307,9 +311,7 @@ describeBench('Data-plane baseline benchmarks (measure-first, no gating)', () =>
         let sent = 0;
         while (sent < totalCalls) {
           const size = Math.min(batch, totalCalls - sent);
-          await Promise.all(
-            Array.from({ length: size }, () => transport.send(message, 5_000))
-          );
+          await Promise.all(Array.from({ length: size }, () => transport.send(message, 5_000)));
           sent += size;
         }
         const totalMs = performance.now() - start;
