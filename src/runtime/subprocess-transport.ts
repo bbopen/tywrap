@@ -17,7 +17,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import type { Writable } from 'stream';
 import { DisposableBase } from './bounded-context.js';
 import { BridgeDisposedError, BridgeProtocolError, BridgeTimeoutError } from './errors.js';
-import { Reassembler } from './frame-codec.js';
+import { Reassembler, encodeFrames, utf8ByteLength } from './frame-codec.js';
 import { TimedOutRequestTracker } from './timed-out-request-tracker.js';
 import {
   FRAME_PROTOCOL_ID,
@@ -289,6 +289,17 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private draining = false;
 
   /**
+   * Per-logical-request write mutex (W5). When a request is chunked into
+   * `tywrap-frame/1` frames, all of that request's frames must reach stdin
+   * contiguously — no other request's frame (or single line) may interleave —
+   * or the Python reassembler would see frames from two ids mixed on one stream.
+   * `writeChunkedRequest` chains the whole frame burst onto this tail; the
+   * single-line write path also serializes behind it so a small request issued
+   * concurrently never slips between another request's frames.
+   */
+  private writeMutex: Promise<void> = Promise.resolve();
+
+  /**
    * Create a new SubprocessTransport.
    *
    * @param options - Transport configuration options
@@ -416,8 +427,13 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         timer,
       });
 
-      // Write message to stdin
-      this.writeToStdin(`${message}\n`).catch(err => {
+      // Write message to stdin. When chunking is negotiated and the encoded
+      // request exceeds the negotiated per-frame ceiling, it is fragmented into
+      // `tywrap-frame/1` request frames written contiguously under the write
+      // mutex (W5); otherwise it goes out as a single JSONL line. Both paths
+      // serialize through the same mutex so a small request can never slip
+      // between another request's frames.
+      this.writeRequest(message, messageId, signal).catch(err => {
         this.pending.delete(messageId);
         if (timer) {
           clearTimeout(timer);
@@ -605,6 +621,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.requestCount = 0;
     this.responseReassembler = null;
     this.negotiatedChunking = false;
+    // Reset the per-request write mutex so a disposed transport starts from a
+    // clean (resolved) tail if reused.
+    this.writeMutex = Promise.resolve();
   }
 
   // ===========================================================================
@@ -749,6 +768,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     // leak across the restart boundary.
     this.responseReassembler = null;
     this.negotiatedChunking = false;
+    // The new process owns a fresh stdin stream; reset the write mutex so a
+    // pending frame burst against the dead process cannot serialize behind it.
+    this.writeMutex = Promise.resolve();
 
     // Spawn new process and re-negotiate framing against the fresh bridge.
     await this.spawnProcess();
@@ -1130,6 +1152,81 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         reject(new BridgeProtocolError(this.withStderrTail(`Write error: ${errorMessage}`)));
       }
     });
+  }
+
+  /**
+   * Write one logical request to stdin, fragmenting it into `tywrap-frame/1`
+   * request frames when chunking is negotiated and the encoded request exceeds
+   * the per-frame ceiling (W5 — the mirror of W4's response chunking).
+   *
+   * Both the chunked and single-line paths run under {@link writeMutex} so a
+   * logical request's bytes (one line, or a burst of frames) reach stdin
+   * contiguously: a small request issued concurrently can never interleave
+   * between another request's frames, which would desync the Python
+   * reassembler (it correlates frames by id, but the JSONL stream itself must
+   * stay frame-aligned). The mutex tail is advanced regardless of success so a
+   * failed write never wedges every subsequent request.
+   *
+   * @param message - the encoded logical JSON request (no trailing newline)
+   * @param messageId - the request's correlation id (already validated integer)
+   * @param signal - optional abort signal; an abort observed between frames
+   *   stops further frames and rejects this send (the pending entry is rejected
+   *   by the abort handler / the caller's `.catch`).
+   */
+  private writeRequest(message: string, messageId: number, signal?: AbortSignal): Promise<void> {
+    const run = (): Promise<void> => {
+      // Only chunk when chunking was negotiated AND the encoded request exceeds
+      // the negotiated per-frame ceiling. Otherwise: one JSONL line, unchanged.
+      if (this.negotiatedChunking && utf8ByteLength(message) > this.maxLineLength) {
+        return this.writeChunkedRequest(message, messageId, signal);
+      }
+      return this.writeToStdin(`${message}\n`);
+    };
+
+    // Serialize the whole logical write onto the mutex tail. We chain the next
+    // tail off the settled (caught) result so one failed/aborted write does not
+    // poison the chain for later requests.
+    const result = this.writeMutex.then(run);
+    this.writeMutex = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
+  /**
+   * Fragment a logical request into `tywrap-frame/1` request frames and write
+   * them contiguously (one JSONL line per frame). Runs while holding the write
+   * mutex (see {@link writeRequest}), so no other write interleaves.
+   *
+   * Each frame is awaited in turn so backpressure on stdin is respected. Before
+   * every frame the abort signal and process liveness are re-checked: an abort
+   * mid-burst stops the remaining frames and rejects the send LOUD (the Python
+   * reassembler drops the now-incomplete id when the next request's frames /
+   * timeout arrive, exactly as the response side handles a discarded id).
+   */
+  private async writeChunkedRequest(
+    message: string,
+    messageId: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const frames = encodeFrames(message, {
+      id: messageId,
+      stream: 'request',
+      maxFrameBytes: this.maxLineLength,
+    });
+
+    for (const frame of frames) {
+      // Stop the burst if the caller aborted or the process died between frames.
+      if (signal?.aborted) {
+        throw new BridgeTimeoutError('Operation aborted');
+      }
+      if (this.processExited || !this.process) {
+        throw new BridgeProtocolError(this.withStderrTail('Process stdin not available'));
+      }
+      // One frame per JSONL line; await each so stdin backpressure is honored.
+      await this.writeToStdin(`${JSON.stringify(frame)}\n`);
+    }
   }
 
   /**

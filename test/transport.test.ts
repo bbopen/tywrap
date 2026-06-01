@@ -570,6 +570,9 @@ describe('SubprocessTransport', () => {
       const message = JSON.stringify(createValidMessage({ id: messageId }));
       const pending = transport.send(message, 1000);
 
+      // The write is scheduled on the per-request write mutex (W5), so it lands
+      // on a microtask rather than synchronously; flush before asserting.
+      await new Promise(resolve => setTimeout(resolve, 0));
       expect(writes).toHaveLength(1);
 
       internals.handleStdinDrain();
@@ -608,6 +611,11 @@ describe('SubprocessTransport', () => {
         1000
       );
 
+      // Writes are scheduled on the per-request write mutex (W5): the first send
+      // writes on a microtask (returns false -> draining), the second chains
+      // behind it and is queued because the stream is now draining. Flush the
+      // mutex chain before asserting the single in-flight write.
+      await new Promise(resolve => setTimeout(resolve, 0));
       expect(writes).toHaveLength(1);
 
       // First drain flushes the queued second message. Its write() still returns false,

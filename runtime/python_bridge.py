@@ -40,7 +40,7 @@ import importlib  # noqa: F401  (re-exported for compat / used by handlers via c
 from safe_codec import BridgeCodec, CodecError
 
 import tywrap_bridge_core as core
-from frame_codec import FRAME_PROTOCOL_ID, encode_frames
+from frame_codec import FRAME_PROTOCOL_ID, FrameError, Reassembler, encode_frames
 
 # Re-export the shared protocol/serialization surface so existing importers of
 # python_bridge keep working after the extraction (codex-flagged: runtime/ ships).
@@ -446,60 +446,128 @@ def write_response(payload: str, response_id) -> bool:
     return True
 
 
+# Reassembles `tywrap-frame/1` REQUEST frames (W5) back into a single logical
+# request line. Created only when chunking is negotiated; None means no request
+# framing is expected and every line is a normal single-line request.
+_request_reassembler = Reassembler() if CHUNKING_ENABLED else None
+
+
+def _try_parse_frame_line(line):
+    """
+    Return a frame dict if ``line`` is a ``tywrap-frame/1`` envelope, else None.
+
+    Why: a request frame is a JSON object carrying ``__tywrap_frame__``. We only
+    treat a line as a frame when chunking was negotiated AND it parses as such an
+    object; anything else (including invalid JSON) falls through to the normal
+    single-line request path, which reports the JSON error exactly as before.
+    Structural validity (protocol, seq/total ranges, etc.) is enforced by the
+    Reassembler, not here.
+    """
+    try:
+        parsed = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, dict) and '__tywrap_frame__' in parsed:
+        return parsed
+    return None
+
+
+def process_request_line(line):
+    """
+    Process one complete logical request line and write its response.
+
+    ``line`` is the full logical JSON request: either a single line read from
+    stdin, or the payload reassembled from ``tywrap-frame/1`` request frames.
+    TYWRAP_REQUEST_MAX_BYTES is enforced on this complete payload (so for a
+    chunked request the limit applies to the REASSEMBLED size, not per frame).
+
+    Returns True to keep the loop running, or False if the parent's stdin / our
+    stdout closed mid-write (BrokenPipe), so main() can exit cleanly.
+    """
+    mid = None
+    out = None
+    try:
+        if REQUEST_MAX_BYTES is not None:
+            payload_bytes = len(line.encode('utf-8'))
+            if payload_bytes > REQUEST_MAX_BYTES:
+                raise RequestTooLargeError(payload_bytes, REQUEST_MAX_BYTES)
+        msg = json.loads(line)
+        if isinstance(msg, dict):
+            req_id = msg.get('id')
+            if isinstance(req_id, int):
+                # Why: preserve request ids even when handlers raise.
+                mid = req_id
+        try:
+            mid, result = dispatch_request(msg)
+            out = {'id': mid, 'protocol': PROTOCOL, 'result': result}
+        except ProtocolError as e:
+            emit_protocol_diagnostic(str(e))
+            out = build_error_payload(mid, e, include_traceback=False)
+        except Exception as e:  # noqa: BLE001
+            # Why: ensure any handler error becomes a protocol-compliant response.
+            out = build_error_payload(mid, e, include_traceback=True)
+    except RequestTooLargeError as e:
+        emit_protocol_diagnostic(str(e))
+        out = build_error_payload(mid, e, include_traceback=False)
+    except json.JSONDecodeError as e:
+        emit_protocol_diagnostic(f'Invalid JSON: {e}')
+        out = build_error_payload(mid, e, include_traceback=False)
+    except Exception as e:  # noqa: BLE001
+        # Why: catch malformed input without breaking the JSONL protocol.
+        out = build_error_payload(mid, e, include_traceback=False)
+
+    try:
+        payload = encode_response(out)
+        # Correlate frames by the response id when chunking; out always
+        # carries the request id (or None for a malformed-request envelope).
+        response_id = out.get('id') if isinstance(out, dict) else None
+        if not write_response(payload, response_id):
+            return False
+    except Exception as e:  # noqa: BLE001
+        # Why: fallback error keeps responses well-formed even if serialization fails.
+        err_out = build_error_payload(mid, e, include_traceback=False)
+        try:
+            # Error envelopes are tiny; write as a single line regardless of
+            # chunking so a serialization failure never recurses into framing.
+            if not write_payload(json.dumps(err_out)):
+                return False
+        except Exception:
+            return False
+    return True
+
+
 def main():
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
-        mid = None
-        out = None
-        try:
-            if REQUEST_MAX_BYTES is not None:
-                payload_bytes = len(line.encode('utf-8'))
-                if payload_bytes > REQUEST_MAX_BYTES:
-                    raise RequestTooLargeError(payload_bytes, REQUEST_MAX_BYTES)
-            msg = json.loads(line)
-            if isinstance(msg, dict):
-                req_id = msg.get('id')
-                if isinstance(req_id, int):
-                    # Why: preserve request ids even when handlers raise.
-                    mid = req_id
-            try:
-                mid, result = dispatch_request(msg)
-                out = {'id': mid, 'protocol': PROTOCOL, 'result': result}
-            except ProtocolError as e:
-                emit_protocol_diagnostic(str(e))
-                out = build_error_payload(mid, e, include_traceback=False)
-            except Exception as e:  # noqa: BLE001
-                # Why: ensure any handler error becomes a protocol-compliant response.
-                out = build_error_payload(mid, e, include_traceback=True)
-        except RequestTooLargeError as e:
-            emit_protocol_diagnostic(str(e))
-            out = build_error_payload(mid, e, include_traceback=False)
-        except json.JSONDecodeError as e:
-            emit_protocol_diagnostic(f'Invalid JSON: {e}')
-            out = build_error_payload(mid, e, include_traceback=False)
-        except Exception as e:  # noqa: BLE001
-            # Why: catch malformed input without breaking the JSONL protocol.
-            out = build_error_payload(mid, e, include_traceback=False)
 
-        try:
-            payload = encode_response(out)
-            # Correlate frames by the response id when chunking; out always
-            # carries the request id (or None for a malformed-request envelope).
-            response_id = out.get('id') if isinstance(out, dict) else None
-            if not write_response(payload, response_id):
-                return
-        except Exception as e:  # noqa: BLE001
-            # Why: fallback error keeps responses well-formed even if serialization fails.
-            err_out = build_error_payload(mid, e, include_traceback=False)
-            try:
-                # Error envelopes are tiny; write as a single line regardless of
-                # chunking so a serialization failure never recurses into framing.
-                if not write_payload(json.dumps(err_out)):
+        # W5: when chunking is negotiated, a line may be a `tywrap-frame/1`
+        # REQUEST frame. Reassemble per id; only the completed logical request is
+        # handed to process_request_line (which then enforces the request-size
+        # guard on the reassembled payload). Non-frame lines are normal requests.
+        if _request_reassembler is not None:
+            frame = _try_parse_frame_line(line)
+            if frame is not None:
+                try:
+                    reassembled = _request_reassembler.accept(frame)
+                except FrameError as exc:
+                    # A framing-protocol violation desyncs the request stream and
+                    # there is no correlatable response to write (the id may be
+                    # malformed). Fail LOUD on stderr and stop the loop so the
+                    # transport restarts the bridge rather than silently
+                    # mis-parsing subsequent frames.
+                    emit_protocol_diagnostic(f'Request frame error: {exc}')
                     return
-            except Exception:
-                return
+                if reassembled is None:
+                    # More frames needed for this id; await the rest.
+                    continue
+                if not process_request_line(reassembled):
+                    return
+                continue
+
+        if not process_request_line(line):
+            return
 
 
 if __name__ == '__main__':
