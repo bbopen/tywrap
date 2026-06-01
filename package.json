@@ -149,7 +149,13 @@
     "vitest": "^4.0.16"
   },
   "peerDependencies": {
+    "apache-arrow": ">=14.0.0",
     "pyodide": ">=0.28.0"
+  },
+  "peerDependenciesMeta": {
+    "apache-arrow": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=20.0.0",

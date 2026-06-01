@@ -11,6 +11,7 @@ import {
   registerArrowDecoder,
   clearArrowDecoder,
   hasArrowDecoder,
+  _setLazyArrowLoaderForTesting,
   type ValueEnvelope,
   type DecodedValue,
   type ArrowTable,
@@ -96,6 +97,66 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     it('should initially have no Arrow decoder', () => {
       clearArrowDecoder();
       expect(hasArrowDecoder()).toBe(false);
+    });
+
+    it('lazily auto-registers a decoder on first Arrow decode', async () => {
+      // No decoder registered up front; supply apache-arrow via the lazy loader seam.
+      clearArrowDecoder();
+      expect(hasArrowDecoder()).toBe(false);
+
+      const mockTable = { numRows: 1, numCols: 1 } as ArrowTable;
+      const tableFromIPC = vi.fn().mockReturnValue(mockTable);
+      _setLazyArrowLoaderForTesting(() => ({ tableFromIPC }));
+
+      const envelope: ValueEnvelope = {
+        __tywrap__: 'dataframe',
+        codecVersion: 1,
+        encoding: 'arrow',
+        b64: btoa('arrow ipc bytes'),
+      };
+
+      const result = await decodeValueAsync(envelope);
+
+      expect(tableFromIPC).toHaveBeenCalledTimes(1);
+      expect(result).toBe(mockTable);
+      // The lazy registration is cached for subsequent decodes.
+      expect(hasArrowDecoder()).toBe(true);
+    });
+
+    it('imports apache-arrow at most once across concurrent decodes', async () => {
+      clearArrowDecoder();
+      const tableFromIPC = vi.fn().mockReturnValue({ numRows: 0, numCols: 0 } as ArrowTable);
+      const loader = vi.fn(() => ({ tableFromIPC }));
+      _setLazyArrowLoaderForTesting(loader);
+
+      const envelope: ValueEnvelope = {
+        __tywrap__: 'dataframe',
+        codecVersion: 1,
+        encoding: 'arrow',
+        b64: btoa('arrow ipc bytes'),
+      };
+
+      await Promise.all([
+        decodeValueAsync(envelope),
+        decodeValueAsync(envelope),
+        decodeValueAsync(envelope),
+      ]);
+
+      expect(loader).toHaveBeenCalledTimes(1);
+    });
+
+    it('sync decodeValue throws an actionable error when no decoder is registered', () => {
+      clearArrowDecoder();
+      const envelope: ValueEnvelope = {
+        __tywrap__: 'dataframe',
+        codecVersion: 1,
+        encoding: 'arrow',
+        b64: btoa('arrow ipc bytes'),
+      };
+
+      expect(() => decodeValue(envelope)).toThrow(/no Arrow decoder is available/);
+      expect(() => decodeValue(envelope)).toThrow(/npm install apache-arrow/);
+      expect(() => decodeValue(envelope)).toThrow(/TYWRAP_CODEC_FALLBACK=json/);
     });
 
     it('should use registered decoder for Arrow data', async () => {
@@ -505,7 +566,11 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       });
     });
 
-    it('should fail when Arrow decoder is not registered (nested)', async () => {
+    it('should fail with an actionable error when apache-arrow is absent (nested)', async () => {
+      // Simulate apache-arrow being unavailable so the lazy auto-register path fails.
+      _setLazyArrowLoaderForTesting(() => {
+        throw new Error('Cannot find module apache-arrow');
+      });
       const envelope: ValueEnvelope = {
         __tywrap__: 'torch.tensor',
         codecVersion: 1,
@@ -521,7 +586,9 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         device: 'cpu',
       };
 
-      await expect(decodeValueAsync(envelope)).rejects.toThrow('Arrow decoder not registered');
+      await expect(decodeValueAsync(envelope)).rejects.toThrow(/no Arrow decoder is available/);
+      await expect(decodeValueAsync(envelope)).rejects.toThrow(/npm install apache-arrow/);
+      await expect(decodeValueAsync(envelope)).rejects.toThrow(/TYWRAP_CODEC_FALLBACK=json/);
     });
 
     it('should surface Arrow decode errors from nested ndarray', async () => {

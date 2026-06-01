@@ -16,7 +16,9 @@ This is a forward-looking plan for adding codecs beyond numpy/pandas. The focus 
 
 ## DX Defaults (Decisions)
 
-- Arrow is the default for ndarray/dataframe/series. The JS runtime should auto-register an Arrow decoder when `apache-arrow` is installed so users do not have to wire it manually.
+- Arrow is the default for ndarray/dataframe/series. The JS runtime auto-registers an Arrow decoder when `apache-arrow` is importable, so users do not have to wire it manually. Node/Bun/Deno and HTTP bridges register eagerly during `init()`; in addition, the codec lazily imports `apache-arrow` on the first Arrow-encoded response (cached for the process) so callers that bypass `init()` still work.
+- `apache-arrow` is an **optional** dependency: it is not in tywrap's runtime `dependencies` (declared as an optional peer). Installing tywrap never pulls it in or fails without it.
+- No silent lossy fallback: if an Arrow-encoded payload arrives and `apache-arrow` is unavailable, decoding fails with an actionable error telling you to `npm install apache-arrow` or set `TYWRAP_CODEC_FALLBACK=json` on the Python side. tywrap never quietly downgrades Arrow data to JSON.
 - JSON fallback is opt-in only (via `TYWRAP_CODEC_FALLBACK=json`) and remains explicitly lossy for dtype/NA fidelity.
 - GPU handling stays explicit: no implicit `.cpu()` or contiguous copies. Opt-in copy/transfer remains available, and GPU-native transport is a follow-up track (DLPack/Arrow CUDA).
 - Large payloads should not be forced through single-line JSONL forever; add an artifact/chunked transport to keep responses reliable without silent truncation.
