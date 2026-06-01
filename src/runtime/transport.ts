@@ -26,6 +26,28 @@ export const PROTOCOL_ID = 'tywrap/1';
  */
 export const TYWRAP_PROTOCOL_VERSION = Number.parseInt(PROTOCOL_ID.split('/')[1] ?? '', 10);
 
+/**
+ * Framing protocol identifier for chunked large-payload transport.
+ *
+ * This is DISTINCT from {@link PROTOCOL_ID}: the logical RPC stays `tywrap/1`,
+ * while `tywrap-frame/1` describes a separate layer (below {@link Transport.send})
+ * that fragments one logical message across multiple wire frames and reassembles
+ * it. An old bridge rejects any non-`tywrap/1` request, so the logical protocol
+ * must NOT be bumped to negotiate chunking — a separate framing protocol,
+ * advertised through a `tywrap/1` `meta` extension, is used instead.
+ *
+ * Subprocess-only for 0.8.0 (it is the only backend with a real frame ceiling —
+ * the JSONL line-length limit). See docs/transport-framing.md.
+ */
+export const FRAME_PROTOCOL_ID = 'tywrap-frame/1';
+
+/**
+ * Numeric framing-protocol version. Derived from the trailing number of
+ * {@link FRAME_PROTOCOL_ID} so the two cannot drift — bump FRAME_PROTOCOL_ID
+ * alone and this follows (same pattern as {@link TYWRAP_PROTOCOL_VERSION}).
+ */
+export const FRAME_PROTOCOL_VERSION = Number.parseInt(FRAME_PROTOCOL_ID.split('/')[1] ?? '', 10);
+
 // =============================================================================
 // PROTOCOL TYPES
 // =============================================================================
@@ -100,6 +122,78 @@ export interface ProtocolResponse {
     /** Optional Python traceback for debugging */
     traceback?: string;
   };
+}
+
+// =============================================================================
+// CHUNK FRAMING (tywrap-frame/1)
+// =============================================================================
+
+/**
+ * Per-frame encoding for a {@link ChunkFrame}'s `data` field.
+ *
+ * - `utf8-slice` (the chosen default for 0.8.0): `data` is a raw substring of the
+ *   complete logical JSON message, split on UTF-8 codepoint boundaries. Because
+ *   the logical payload is already valid-UTF-8 JSON, the slices reassemble by
+ *   simple concatenation — no inflation, no extra decode. See
+ *   docs/transport-framing.md for the rationale (decision #6).
+ * - `utf8-base64`: `data` is a base64-encoded chunk of the UTF-8 bytes, safe for
+ *   arbitrary byte splits but ~33% larger on the wire with a memory-amplification
+ *   cost. Reserved as an alternative; not emitted by tywrap in 0.8.0.
+ */
+export type ChunkFrameEncoding = 'utf8-base64' | 'utf8-slice';
+
+/**
+ * A single wire frame of the `tywrap-frame/1` framing protocol.
+ *
+ * A frame envelope is DISTINCT from the logical {@link ProtocolMessage} /
+ * {@link ProtocolResponse}: it carries a slice of the bytes of ONE complete
+ * logical JSON message (a request or a response), fragmented because the payload
+ * exceeds the transport's frame ceiling. The framing layer reassembles all
+ * frames for a given {@link ChunkFrame.id} back into the single logical message
+ * before the JSON/codec path ever sees it.
+ *
+ * Correlation reuses the existing RPC `id`. `seq` is zero-based; `total` and
+ * `totalBytes` are repeated on every frame so the receiver can validate the
+ * stream is complete (no missing/duplicate `seq`, exact frame count, exact
+ * reassembled byte length) before decoding.
+ *
+ * @see docs/transport-framing.md
+ */
+export interface ChunkFrame {
+  /**
+   * Frame-envelope discriminator.
+   * - `'chunk'`: a normal data-carrying frame.
+   * - `'error'`: a framing-layer error (e.g. the sender could not continue the
+   *   stream); carries no further data frames for this `id`.
+   */
+  __tywrap_frame__: 'chunk' | 'error';
+
+  /** Framing protocol identifier (must equal {@link FRAME_PROTOCOL_ID}). */
+  frameProtocol: string;
+
+  /** Which logical stream this frame belongs to. */
+  stream: 'request' | 'response';
+
+  /** RPC correlation id, shared with the logical {@link ProtocolMessage.id}. */
+  id: number;
+
+  /** Zero-based sequence index of this frame within its stream. */
+  seq: number;
+
+  /** Total number of frames in this stream (repeated on every frame). */
+  total: number;
+
+  /**
+   * Total byte length of the complete reassembled logical message (repeated on
+   * every frame). Used to validate the reassembled payload exactly.
+   */
+  totalBytes: number;
+
+  /** Per-frame payload encoding (see {@link ChunkFrameEncoding}). */
+  encoding: ChunkFrameEncoding;
+
+  /** This frame's slice of the logical message, encoded per {@link encoding}. */
+  data: string;
 }
 
 // =============================================================================

@@ -413,6 +413,25 @@ export interface TypeMappingConfig {
 /** Known bridge backends. Each speaks the identical "tywrap/1" protocol. */
 export type BridgeBackend = 'python-subprocess' | 'pyodide' | 'http';
 
+/**
+ * Optional chunked-transport negotiation block in {@link BridgeInfo}.
+ *
+ * Reported by a bridge that understands the `tywrap-frame/1` framing protocol
+ * (subprocess only, 0.8.0). It lets the JS side learn, via the `meta` probe,
+ * whether the bridge can reassemble chunked frames and the maximum single-frame
+ * size it will accept. Absent on old bridges (and on HTTP/Pyodide, which stay
+ * single-frame in 0.8.0) — absence means "no chunking", which is backward
+ * compatible. See docs/transport-framing.md.
+ */
+export interface BridgeTransportInfo {
+  /** Framing protocol the bridge speaks (e.g. `'tywrap-frame/1'`). */
+  frameProtocol: string;
+  /** Whether the bridge can fragment/reassemble chunked frames. */
+  supportsChunking: boolean;
+  /** Maximum size, in bytes, of a single wire frame the bridge will accept. */
+  maxFrameBytes: number;
+}
+
 export interface BridgeInfo {
   protocol: string;
   protocolVersion: number;
@@ -426,6 +445,12 @@ export interface BridgeInfo {
   torchAvailable: boolean;
   sklearnAvailable: boolean;
   instances: number;
+  /**
+   * Optional chunked-transport negotiation block. Present only when the bridge
+   * advertises `tywrap-frame/1` framing; absent on old bridges and on
+   * HTTP/Pyodide (single-frame in 0.8.0). See {@link BridgeTransportInfo}.
+   */
+  transport?: BridgeTransportInfo;
 }
 
 // Analysis and generation results
