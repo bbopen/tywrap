@@ -432,6 +432,54 @@ describe('chunking-core hardening', () => {
     expect(writes.length).toBe(1);
   });
 
+  it('skips a write abandoned while QUEUED under backpressure (drain path)', () => {
+    // The round-3 path: a write can pass the run-closure liveness check, get
+    // queued in the stdin backpressure queue (draining), then be abandoned before
+    // it flushes. processQueuedWrite must re-check liveness at flush time.
+    const writes: string[] = [];
+    const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
+    const internals = transport as unknown as {
+      processQueuedWrite: (
+        queued: {
+          data: string;
+          resolve: () => void;
+          reject: (e: Error) => void;
+          queuedAt: number;
+          isLive?: () => boolean;
+        },
+        stdin: { write: (d: string) => boolean },
+        now: number
+      ) => string;
+    };
+    const stdin = {
+      write: (d: string): boolean => {
+        writes.push(d);
+        return true;
+      },
+    };
+    const at = 1_000_000; // fixed timestamp (well under the write-queue timeout)
+
+    // Dead entry (isLive false) -> skipped + resolved, never written.
+    let deadResolved = false;
+    const dead = internals.processQueuedWrite(
+      { data: '{"id":9}\n', resolve: () => (deadResolved = true), reject: () => {}, queuedAt: at, isLive: () => false },
+      stdin,
+      at
+    );
+    expect(writes.length).toBe(0);
+    expect(deadResolved).toBe(true);
+    expect(dead).toBe('continue');
+
+    // Live entry -> written normally.
+    const live = internals.processQueuedWrite(
+      { data: '{"id":10}\n', resolve: () => {}, reject: () => {}, queuedAt: at, isLive: () => true },
+      stdin,
+      at
+    );
+    expect(writes).toEqual(['{"id":10}\n']);
+    expect(live).toBe('continue');
+  });
+
   it('negotiation rejects a transport block with an invalid maxFrameBytes', () => {
     const transport = new SubprocessTransport({
       bridgeScript: '/path/to/bridge.py',

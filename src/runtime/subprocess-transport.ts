@@ -158,6 +158,13 @@ interface QueuedWrite {
   queuedAt: number;
   /** Timeout handle for write queue timeout */
   timeoutHandle?: NodeJS.Timeout;
+  /**
+   * Liveness predicate. If present and `false` at flush time, the write is
+   * SKIPPED (resolved as a no-op) instead of sent — so a request that timed out
+   * or aborted while its write sat in the stdin backpressure queue never reaches
+   * (and so never executes on) Python.
+   */
+  isLive?: () => boolean;
 }
 
 // =============================================================================
@@ -1120,10 +1127,11 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private createQueuedWrite(
     data: string,
     resolve: () => void,
-    reject: (error: Error) => void
+    reject: (error: Error) => void,
+    isLive?: () => boolean
   ): QueuedWrite {
     const queuedAt = Date.now();
-    const entry: QueuedWrite = { data, resolve, reject, queuedAt };
+    const entry: QueuedWrite = { data, resolve, reject, queuedAt, isLive };
 
     // Set up timeout timer that fires if drain never happens
     entry.timeoutHandle = setTimeout(() => {
@@ -1160,7 +1168,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   /**
    * Write data to stdin with backpressure handling.
    */
-  private writeToStdin(data: string): Promise<void> {
+  private writeToStdin(data: string, isLive?: () => boolean): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       if (!this.process?.stdin || this.processExited) {
         reject(new BridgeProtocolError(this.withStderrTail('Process stdin not available')));
@@ -1168,8 +1176,16 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       }
 
       if (this.draining || this.writeQueue.length > 0) {
-        // Queue the write with timestamp and timeout timer
-        this.writeQueue.push(this.createQueuedWrite(data, resolve, reject));
+        // Queue the write with timestamp, timeout timer, and liveness predicate
+        // (checked again at flush — see processQueuedWrite).
+        this.writeQueue.push(this.createQueuedWrite(data, resolve, reject, isLive));
+        return;
+      }
+
+      // Skip a write whose request was abandoned (timed out/aborted) before it
+      // reached stdin — never execute an operation the caller gave up on.
+      if (isLive && !isLive()) {
+        resolve();
         return;
       }
 
@@ -1214,20 +1230,23 @@ export class SubprocessTransport extends DisposableBase implements Transport {
    *   by the abort handler / the caller's `.catch`).
    */
   private writeRequest(message: string, messageId: number, signal?: AbortSignal): Promise<void> {
+    // The request is "live" only while its pending entry exists (the timeout and
+    // abort handlers delete it) and the signal is not aborted. Gating EVERY write
+    // point on this — the run closure, the direct stdin write, the backpressure
+    // queue flush, and each chunked frame — prevents an abandoned request from
+    // executing on Python, even one whose write sat queued under backpressure
+    // past the cancellation.
+    const isLive = (): boolean => !signal?.aborted && this.pending.has(messageId);
     const run = (): Promise<void> => {
-      // Skip the write if the request is no longer live: a call queued behind a
-      // chunked burst may have timed out or aborted while waiting, and executing
-      // it now would run an operation the caller abandoned. The timeout/abort
-      // handlers delete the pending entry, so its absence is the liveness signal.
-      if (signal?.aborted || !this.pending.has(messageId)) {
+      if (!isLive()) {
         return Promise.resolve();
       }
       // Only chunk when chunking was negotiated AND the encoded request exceeds
       // the negotiated per-frame ceiling. Otherwise: one JSONL line, unchanged.
       if (this.negotiatedChunking && utf8ByteLength(message) > this.maxLineLength) {
-        return this.writeChunkedRequest(message, messageId, signal);
+        return this.writeChunkedRequest(message, messageId, signal, isLive);
       }
-      return this.writeToStdin(`${message}\n`);
+      return this.writeToStdin(`${message}\n`, isLive);
     };
 
     // Serialize the whole logical write onto the mutex tail. We chain the next
@@ -1255,7 +1274,8 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private async writeChunkedRequest(
     message: string,
     messageId: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    isLive?: () => boolean
   ): Promise<void> {
     const frames = encodeFrames(message, {
       id: messageId,
@@ -1264,15 +1284,19 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     });
 
     for (const frame of frames) {
-      // Stop the burst if the caller aborted or the process died between frames.
-      if (signal?.aborted) {
+      // Stop the burst if the caller aborted, the request was abandoned (timed
+      // out -> pending deleted, caught by isLive), or the process died between
+      // frames. A partial request stream is dropped by the Python reassembler.
+      if (signal?.aborted || (isLive && !isLive())) {
         throw new BridgeTimeoutError('Operation aborted');
       }
       if (this.processExited || !this.process) {
         throw new BridgeProtocolError(this.withStderrTail('Process stdin not available'));
       }
       // One frame per JSONL line; await each so stdin backpressure is honored.
-      await this.writeToStdin(`${JSON.stringify(frame)}\n`);
+      // isLive gates a frame that ends up queued under backpressure past a late
+      // cancellation, so an abandoned chunked request never completes on Python.
+      await this.writeToStdin(`${JSON.stringify(frame)}\n`, isLive);
     }
   }
 
@@ -1310,6 +1334,14 @@ export class SubprocessTransport extends DisposableBase implements Transport {
           `Write queue timeout: entry waited ${now - queued.queuedAt}ms (limit: ${this.writeQueueTimeoutMs}ms)`
         )
       );
+      return 'continue';
+    }
+
+    // Skip the write if the request was abandoned (timed out/aborted) while it
+    // sat in the backpressure queue — never execute an operation the caller gave
+    // up on. Resolve as a no-op so the mutex chain stays healthy.
+    if (queued.isLive && !queued.isLive()) {
+      queued.resolve();
       return 'continue';
     }
 
