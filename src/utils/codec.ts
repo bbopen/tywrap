@@ -208,6 +208,12 @@ export async function autoRegisterArrowDecoder(
   }
   try {
     const arrowModule = await loader();
+    // Another path may have registered a decoder while the import was in flight
+    // (e.g. an explicit registerArrowDecoder() during concurrent startup/reload).
+    // Don't clobber it — the explicit registration wins.
+    if (hasArrowDecoder()) {
+      return true;
+    }
     registerArrowDecoderFromModule(arrowModule as { tableFromIPC?: unknown });
     return true;
   } catch {
