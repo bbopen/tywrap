@@ -362,7 +362,8 @@ tywrap.
 `startNodeWatchSession(...)` watches local package directories as directory
 trees, refreshes those trees when nested directories change, and keeps the last
 known good wrappers and bridge live if a reload produces structured generation
-failures.
+failures. See [Watch & Reload](https://bbopen.github.io/tywrap/guide/dev-reload.md) for the reload lifecycle events
+and the full failure / recovery contract.
 
 ### Build Integration
 
@@ -1146,6 +1147,9 @@ The watch session manages directory trees internally for local package roots and
 directory-valued `extraWatchPaths`, ignores Python cache directories, and keeps
 the last known good wrappers plus bridge live if a reload returns structured
 generation failures.
+
+See [Watch & Reload](https://bbopen.github.io/tywrap/guide/dev-reload.md) for the reload lifecycle events and the
+full failure / recovery contract.
 
 ## Basic Setup
 
@@ -2089,6 +2093,137 @@ See the [environment variables reference](https://bbopen.github.io/tywrap/refere
 
 ---
 
+<!-- Source: docs/guide/dev-reload.md -->
+# Watch & Reload (Failure / Recovery Contract)
+
+`tywrap/dev` provides development-time wrapper regeneration plus runtime bridge
+replacement. It does **not** provide application-level hot module reloading — it
+keeps your generated wrappers and the active Python bridge in sync with your
+Python sources while your process stays up.
+
+This page documents the reload **lifecycle** and, in particular, the
+**failure / recovery contract**: what happens when a reload fails, and what stays
+live so your app keeps working.
+
+> Reload is configured in code through `tywrap/dev`, never in `tywrap.config.*`.
+> The legacy `development` block and `pythonModules.<module>.watch` fields were
+> removed in 0.4.0; using them now raises an explicit migration error.
+
+## The two entry points
+
+| Helper | Use it for |
+| --- | --- |
+| `startNodeWatchSession(...)` | Node-only. Watches your config file and local Python sources, regenerates wrappers, and swaps the active bridge in place. |
+| `createBridgeReloader(...)` | Cross-runtime manual primitive (e.g. Pyodide). You call `reload()` yourself; there is no filesystem watcher. |
+
+```typescript
+import { startNodeWatchSession } from 'tywrap/dev';
+import { NodeBridge } from 'tywrap/node';
+
+const session = await startNodeWatchSession({
+  configFile: './tywrap.config.ts',
+  createBridge: async config =>
+    new NodeBridge({
+      pythonPath: config.runtime.node?.pythonPath ?? 'python3',
+      timeoutMs: config.runtime.node?.timeout ?? 30000,
+    }),
+});
+
+// Force a rebuild now (resolves to `true` on success, `false` on failure):
+const ok = await session.reloadNow();
+
+// Stop watching and dispose the active bridge:
+await session.close();
+```
+
+`createBridge` receives the **freshly resolved config for that reload cycle**, so
+config edits (e.g. a changed `timeout`) are picked up on the next reload. By
+default the newly created bridge is published to the global runtime registry, so
+existing generated wrappers transparently route through the swapped bridge — no
+imports change and the process never restarts.
+
+## Reload lifecycle events
+
+Pass an `onEvent` callback to observe the session. Events are emitted in this
+order for a successful cycle:
+
+| Event | Meaning |
+| --- | --- |
+| `watchPaths` | The set of paths the session is currently watching (config file, resolved Python package trees, and `extraWatchPaths`). Re-emitted whenever the watched set changes. |
+| `change` | A watched path changed (`manual: false`) — a reload has been scheduled. |
+| `reload-start` | A reload cycle began (`manual: true` for `reloadNow()` / initial startup). |
+| `reload-success` | Regeneration and bridge swap completed. Carries `written` (relative paths of the generated files now on disk) and `warnings`. |
+| `reload-error` | The reload failed. Carries the underlying `error: Error`. |
+
+A reload performs these steps atomically with respect to the live state:
+
+1. **Generate** the next wrapper set into a temporary staging directory.
+2. **Promote** the staged files into the real output directory (writing new
+   files, removing managed files that no longer exist).
+3. **Warm and activate** the next bridge, then dispose the previous one.
+4. **Commit** the refreshed watcher set and emit `reload-success`.
+
+`reloadNow()` and filesystem changes are serialized: an in-flight reload
+finishes before the next one starts, and rapid edits are debounced
+(`debounceMs`, default `100`).
+
+## Failure / recovery contract
+
+If **any** step of a reload throws, the session does **not** tear down. The
+last-known-good state stays live:
+
+- The **previously generated wrappers remain on disk unchanged.** Staging happens
+  in a temp directory; the real output directory is only touched once generation
+  succeeds. If promotion itself fails partway, the previous file contents are
+  restored.
+- The **previously active bridge stays active** in the runtime registry and is
+  **not disposed.** A bridge that was warmed for the failed reload is disposed
+  instead, so you never leak the half-prepared one.
+- A structured `reload-error` event is emitted with the underlying `Error`, and
+  the failing call (`reloadNow()` or the debounced auto-reload) resolves to
+  `false`. The session keeps watching and will attempt the next reload normally.
+
+Two distinct failure sources surface the same way:
+
+| Source | What the `error` looks like |
+| --- | --- |
+| **Generation failure** (a watched module's IR can't be produced — e.g. a syntax error). This is the `GenerateFailure` path. | `error.message` begins with `Generation failed for N module(s):` followed by per-module detail. |
+| **Bridge construction failure** (your `createBridge` throws). | The error your factory threw, propagated verbatim. |
+
+```typescript
+const session = await startNodeWatchSession({
+  configFile: './tywrap.config.ts',
+  createBridge,
+  onEvent: event => {
+    if (event.type === 'reload-error') {
+      // Last-good wrappers + bridge are still live here.
+      console.error('[tywrap] reload failed, keeping last-good state:', event.error.message);
+    }
+    if (event.type === 'reload-success') {
+      console.log('[tywrap] reloaded:', event.written.join(', '));
+    }
+  },
+});
+```
+
+> **Startup is the exception.** There is no last-known-good state on the very
+> first reload, so if the *initial* `startNodeWatchSession(...)` setup fails, the
+> promise rejects (watchers are closed and any partial bridge disposed). After a
+> successful start, every subsequent failure is recoverable as described above.
+
+## Other notes
+
+- Watched Python package trees are watched per-directory; new nested directories
+  are picked up automatically and `__pycache__` / `.pytest_cache` /
+  `.mypy_cache` / `.ruff_cache` churn is ignored.
+- Writes into the output directory and `.tywrap/{cache,reports}` are ignored so
+  generation does not retrigger itself.
+- For Pyodide use `createBridgeReloader(...)` and drive `reload()` from your own
+  trigger. For the HTTP runtime, reload by restarting/redeploying the remote
+  server — that is external to tywrap.
+
+---
+
 <!-- Source: docs/reference/cli.md -->
 # CLI Reference
 
@@ -2518,6 +2653,112 @@ export async function summarize(
   values: Array<number>,
   mode: 'min' | 'max'
 ): Promise<number | null>;
+```
+
+---
+
+<!-- Source: docs/transport-capabilities.md -->
+# Transport capability matrix
+
+Every tywrap transport exposes a static, transport-level capability descriptor
+via `Transport.capabilities()`. The same descriptor is surfaced by
+`RpcClient.capabilities()` (it delegates to the held transport). It tells callers
+what the wire channel can carry and how it frames messages **without** a network
+round-trip.
+
+This descriptor is deliberately separate from the bridge `meta` report
+(`BridgeInfo`, fetched via `RpcClient.getBridgeInfo()`):
+
+- The **transport descriptor** is authoritative for transport-level flags — what
+  bytes the channel moves and how it frames them. It does not depend on lifecycle
+  state, so it is safe to read before `init()` and after `dispose()`.
+- The **`BridgeInfo` meta report** is authoritative for the *Python environment* —
+  which optional libraries (`arrowAvailable`, `scipyAvailable`, `torchAvailable`,
+  `sklearnAvailable`) happen to be importable in the running interpreter.
+
+When you need both questions answered — "can this transport carry Arrow **and**
+does this Python have pyarrow?" — consult both: the transport descriptor for the
+channel, `BridgeInfo` for library availability.
+
+## `TransportCapabilities`
+
+```typescript
+interface TransportCapabilities {
+  backend: 'subprocess' | 'http' | 'pyodide';
+  supportsArrow: boolean;
+  supportsBinary: boolean;
+  supportsChunking: boolean;
+  supportsStreaming: boolean;
+  maxFrameBytes: number;
+}
+```
+
+## Matrix
+
+| Backend (transport)            | `backend`     | `supportsArrow` | `supportsBinary` | `supportsChunking` | `supportsStreaming` | `maxFrameBytes`                  |
+| ------------------------------ | ------------- | --------------- | ---------------- | ------------------ | ------------------- | -------------------------------- |
+| `SubprocessTransport` (Node)   | `subprocess`  | `true`          | `true`           | `false`            | `false`             | JSONL line limit (default 100 MB) |
+| `HttpTransport`                | `http`        | `true`          | `true`           | `false`            | `false`             | `Number.POSITIVE_INFINITY`       |
+| `PyodideTransport` (WASM)      | `pyodide`     | `false`         | `true`           | `false`            | `false`             | `Number.POSITIVE_INFINITY`       |
+
+`PooledTransport` (the multi-process Node path) reports the capabilities of the
+worker transport it distributes across — in practice `SubprocessTransport`, so it
+mirrors the subprocess row.
+
+## Notes per flag
+
+### `supportsArrow`
+
+Whether the transport can carry Arrow-encoded payloads (binary IPC frames) on the
+wire.
+
+- **subprocess / http**: `true`. The channel can move Arrow bytes. Whether Arrow is
+  actually *used* for a given response still depends on the Python side
+  (`BridgeInfo.arrowAvailable`) and the `TYWRAP_CODEC_FALLBACK` setting — those are
+  runtime/codec concerns, not transport-level ones.
+- **pyodide**: `false`. pyarrow is unavailable in WASM, so the Pyodide bootstrap
+  forces JSON markers (`force_json_markers=True`) and reports
+  `arrowAvailable: false`. The channel is JSON-only.
+
+### `supportsBinary`
+
+Whether the transport can carry arbitrary binary data (e.g. Python `bytes`).
+`true` on all current backends — binary rides through base64 `bytes` envelopes.
+
+### `supportsChunking` and `supportsStreaming`
+
+`false` on every backend today. No backend splits a logical message across
+multiple frames (`supportsChunking`) or streams incremental results for a single
+request (`supportsStreaming`). Both are planned for **0.8.0**.
+
+### `maxFrameBytes`
+
+Maximum size, in bytes, of a single wire frame the transport itself will accept.
+`Number.POSITIVE_INFINITY` means the transport imposes no frame ceiling of its own
+(a higher layer — e.g. the codec's payload limit, default 10 MB — may still cap
+the size).
+
+- **subprocess**: the JSONL line-length limit (`maxLineLength`, default
+  `100 * 1024 * 1024` = 100 MB). A response line larger than this raises a protocol
+  error.
+- **http**: `Number.POSITIVE_INFINITY`. The whole response body is read in one shot;
+  the transport imposes no frame limit.
+- **pyodide**: `Number.POSITIVE_INFINITY`. Calls are in-memory string passing with no
+  framing.
+
+## Example
+
+```typescript
+import { RpcClient } from 'tywrap/runtime';
+
+// rpc holds a transport (e.g. via NodeBridge / PyodideBridge / HttpBridge).
+const caps = rpc.capabilities();
+if (caps.supportsArrow) {
+  // The channel can carry Arrow; pair with getBridgeInfo() to confirm pyarrow
+  // is actually importable on the Python side before relying on Arrow encoding.
+  const info = await rpc.getBridgeInfo();
+  const useArrow = info.arrowAvailable;
+}
 ```
 
 ---

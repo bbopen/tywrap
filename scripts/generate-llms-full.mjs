@@ -11,15 +11,22 @@ const orderedDocs = [
   'docs/guide/runtimes/deno.md',
   'docs/guide/runtimes/browser.md',
   'docs/guide/runtimes/http.md',
+  'docs/guide/dev-reload.md',
   'docs/reference/cli.md',
   'docs/reference/env-vars.md',
   'docs/reference/type-mapping.md',
+  'docs/transport-capabilities.md',
   'docs/reference/api/index.md',
   'docs/examples/index.md',
   'docs/troubleshooting/index.md',
 ];
 
-const excludedDocs = new Set(['docs/codec-roadmap.md', 'docs/release.md']);
+// Internal / forward-looking docs kept out of the agent-facing llms-full bundle.
+const excludedDocs = new Set([
+  'docs/codec-roadmap.md',
+  'docs/perf-baselines.md',
+  'docs/release.md',
+]);
 
 async function collectDocs(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
