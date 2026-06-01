@@ -110,6 +110,20 @@ export function encodeFrames(logicalJson: string, opts: EncodeFramesOptions): Ch
       { code: 'FRAME_BAD_MAX_BYTES' }
     );
   }
+  // Validate the protocol fields locally too (parseChunkFrame enforces them on
+  // the decode side, but catching misuse at the encoder fails fast and keeps the
+  // two sides symmetric with the Python encoder).
+  if (stream !== 'request' && stream !== 'response') {
+    throw new BridgeProtocolError(
+      `encodeFrames: stream must be 'request' or 'response' (got ${String(stream)})`,
+      { code: 'FRAME_BAD_STREAM' }
+    );
+  }
+  if (!Number.isInteger(id)) {
+    throw new BridgeProtocolError(`encodeFrames: id must be an integer (got ${String(id)})`, {
+      code: 'FRAME_BAD_ID',
+    });
+  }
 
   const totalBytes = utf8ByteLength(logicalJson);
   const encoding: ChunkFrameEncoding = 'utf8-slice';

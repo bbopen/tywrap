@@ -286,6 +286,15 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private negotiatedChunking = false;
 
   /**
+   * The per-frame UTF-8 byte ceiling actually agreed with the bridge:
+   * `min(maxLineLength, the bridge's advertised maxFrameBytes)`. Defaults to
+   * `maxLineLength` and is narrowed during negotiation, so REQUEST frames are
+   * never sized larger than the bridge said it will accept (the reference bridge
+   * echoes the requested value, but a custom bridge may advertise a smaller one).
+   */
+  private negotiatedFrameBytes: number;
+
+  /**
    * Reassembles `tywrap-frame/1` response frames into single logical response
    * lines. Constructed lazily once chunking is negotiated; per-id discard tracks
    * timed-out/aborted streams so late frames cannot desync stdout.
@@ -341,6 +350,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.writeQueueTimeoutMs = options.writeQueueTimeoutMs ?? DEFAULT_WRITE_QUEUE_TIMEOUT_MS;
     this.enableChunking = options.enableChunking ?? false;
     this.maxReassemblyBytes = options.maxReassemblyBytes ?? DEFAULT_MAX_REASSEMBLY_BYTES;
+    this.negotiatedFrameBytes = this.maxLineLength;
   }
 
   // ===========================================================================
@@ -559,6 +569,14 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     const supports = this.bridgeAdvertisesChunking(parsed);
     this.negotiatedChunking = supports;
     if (supports) {
+      // Honor the bridge's advertised ceiling so request frames are never sized
+      // larger than it will accept. bridgeAdvertisesChunking already validated
+      // maxFrameBytes is a positive integer, so this read is safe.
+      const advertised = (parsed as { result?: { transport?: { maxFrameBytes?: number } } }).result
+        ?.transport?.maxFrameBytes;
+      if (typeof advertised === 'number') {
+        this.negotiatedFrameBytes = Math.min(this.maxLineLength, advertised);
+      }
       this.responseReassembler = new Reassembler({
         maxReassemblyBytes: this.maxReassemblyBytes,
         expectedStream: 'response',
@@ -1257,8 +1275,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         return Promise.resolve();
       }
       // Only chunk when chunking was negotiated AND the encoded request exceeds
-      // the negotiated per-frame ceiling. Otherwise: one JSONL line, unchanged.
-      if (this.negotiatedChunking && utf8ByteLength(message) > this.maxLineLength) {
+      // the NEGOTIATED per-frame ceiling (which honors the bridge's advertised
+      // maxFrameBytes). Otherwise: one JSONL line, unchanged.
+      if (this.negotiatedChunking && utf8ByteLength(message) > this.negotiatedFrameBytes) {
         return this.writeChunkedRequest(message, messageId, signal, isLive);
       }
       return this.writeToStdin(`${message}\n`, isLive);
@@ -1295,7 +1314,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     const frames = encodeFrames(message, {
       id: messageId,
       stream: 'request',
-      maxFrameBytes: this.maxLineLength,
+      maxFrameBytes: this.negotiatedFrameBytes,
     });
 
     for (const frame of frames) {

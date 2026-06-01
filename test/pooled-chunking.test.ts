@@ -40,6 +40,7 @@ import { SubprocessTransport } from '../src/runtime/subprocess-transport.js';
 import type { TransportLease } from '../src/runtime/transport-pool.js';
 import { PROTOCOL_ID } from '../src/runtime/transport.js';
 import { utf8ByteLength } from '../src/runtime/frame-codec.js';
+import { getDefaultPythonPath } from '../src/utils/python.js';
 
 // =============================================================================
 // SETUP
@@ -71,7 +72,7 @@ const TWENTY_MIB = 20 * 1024 * 1024;
 
 function pythonAvailable(): Promise<boolean> {
   return new Promise(res => {
-    const proc = spawn('python3', ['--version']);
+    const proc = spawn(getDefaultPythonPath(), ['--version']);
     proc.on('error', () => res(false));
     proc.on('exit', code => res(code === 0));
   });

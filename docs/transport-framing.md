@@ -213,7 +213,7 @@ identities validate:
   validator. (Today the Python subprocess server reports `python-subprocess`,
   the Pyodide bootstrap reports `pyodide`; HTTP uses the subprocess server and so
   reports `python-subprocess`. Honest per-backend HTTP reporting is a possible
-  followup, but accepting the union now is safe and backward compatible.)
+  follow-up, but accepting the union now is safe and backward compatible.)
 - `pid` accepts a positive integer **or** `null`. Subprocess reports a real OS
   pid; in-WASM Pyodide (and HTTP) have no local process and report `null`.
 

@@ -29,6 +29,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { SubprocessTransport } from '../src/runtime/subprocess-transport.js';
 import { PROTOCOL_ID, FRAME_PROTOCOL_ID } from '../src/runtime/transport.js';
 import { encodeFrames } from '../src/runtime/frame-codec.js';
+import { getDefaultPythonPath } from '../src/utils/python.js';
 
 // =============================================================================
 // SETUP
@@ -57,7 +58,7 @@ const TWENTY_MIB = 20 * 1024 * 1024;
 
 function pythonAvailable(): Promise<boolean> {
   return new Promise(res => {
-    const proc = spawn('python3', ['--version']);
+    const proc = spawn(getDefaultPythonPath(), ['--version']);
     proc.on('error', () => res(false));
     proc.on('exit', code => res(code === 0));
   });

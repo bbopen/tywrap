@@ -474,3 +474,46 @@ class TestReassemblerResourceBounds:
         for frame_id in range(5000):
             r.discard(frame_id)
         assert r.discarded_count == 4096
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# REASSEMBLER PAYLOAD + STREAM BOUNDS (mirror of the TS suite)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestReassemblerPayloadAndStreamBounds:
+    """Exercise max_reassembly_bytes + expected_stream — mirror of
+    src/runtime/frame-codec.ts 'Reassembler payload + stream bounds'."""
+
+    def test_rejects_declared_total_bytes_over_cap(self) -> None:
+        r = Reassembler(max_reassembly_bytes=100)
+        with pytest.raises(FrameError) as exc:
+            r.accept(valid_frame(id=1, seq=0, total=1, data='x', totalBytes=101))
+        assert exc.value.code == 'FRAME_PAYLOAD_TOO_LARGE'
+        # Refused before buffering.
+        assert r.pending_count == 0
+
+    def test_rejects_accumulated_bytes_over_cap(self) -> None:
+        r = Reassembler(max_reassembly_bytes=10)
+        # Declares totalBytes=8 (under cap) but overshoots across frames.
+        assert (
+            r.accept(valid_frame(id=2, seq=0, total=3, data='aaaaaa', totalBytes=8)) is None
+        )
+        with pytest.raises(FrameError) as exc:
+            r.accept(valid_frame(id=2, seq=1, total=3, data='bbbbbb', totalBytes=8))
+        assert exc.value.code == 'FRAME_PAYLOAD_TOO_LARGE'
+
+    def test_enforces_expected_stream(self) -> None:
+        ok = Reassembler(expected_stream='response')
+        assert (
+            ok.accept(
+                valid_frame(id=3, seq=0, total=1, data='hi', totalBytes=2, stream='response')
+            )
+            == 'hi'
+        )
+        wrong = Reassembler(expected_stream='response')
+        with pytest.raises(FrameError) as exc:
+            wrong.accept(
+                valid_frame(id=4, seq=0, total=1, data='hi', totalBytes=2, stream='request')
+            )
+        assert exc.value.code == 'FRAME_WRONG_STREAM'
