@@ -2,37 +2,38 @@
 
 ## tywrap (npm)
 
-1. Ensure the working tree is clean and `main` is up to date.
+Releases publish from `main` via the [`release.yml`](../.github/workflows/release.yml)
+workflow. There is one path: bump the version on a branch, merge to `main`, and the
+workflow tags, releases, and publishes.
 
-2. Check the release-please branch or PR for the next npm release. Verify:
-   - `package.json`
-   - `package-lock.json`
-   - `src/index.ts`
-   - `CHANGELOG.md`
+1. On a release branch, bump the version and update the changelog:
+   - `package.json` — the new `version`
+   - `CHANGELOG.md` — add a `## [X.Y.Z](…compare/vPREV...vX.Y.Z) (DATE)` section
+     (the workflow extracts the GitHub release notes from this exact header)
+   - `src/version.ts` — regenerate with `npm run build:version` (single-sourced
+     from `package.json`)
+   - `package-lock.json` — refresh if dependencies changed
 
-3. Run the release gate in CI-style mode:
+2. Run the release gate:
    ```sh
    CI=1 npm run check:all
    ```
 
-4. Merge the reviewed release branch or PR to `main`. The [`release.yml`](../.github/workflows/release.yml)
-   workflow has two paths:
-   - normal path: `release-please` opens or updates the release PR, then creates the npm tag and release after that PR is merged
-   - fallback path: if `main` already contains an unreleased `package.json` version with a matching `CHANGELOG.md` section, the workflow tags and publishes that version directly from `main`
+3. Open a PR, get CI green, and merge to `main`. On that push `release.yml`
+   detects that `main` carries an unreleased `package.json` version with a
+   matching `CHANGELOG.md` section and no existing tag, then tags `vX.Y.Z`,
+   creates the GitHub release from that changelog section, and publishes to npm.
 
-5. npm publishing uses npm trusted publishing from GitHub Actions. Keep the npm
-   package connected to this repository as a trusted publisher, and do not add a
-   publish token to the workflow for the normal release path. The release job
-   validates the tagged package on Node 22, then switches to Node 24 for the
-   final `npm publish --provenance` step so npm uses an OIDC-capable CLI.
+4. npm publishing uses npm trusted publishing (OIDC) from GitHub Actions — keep
+   the package connected to this repository as a trusted publisher, and do not
+   add a publish token to the workflow. The publish job validates on Node 22,
+   then switches to Node 24 for the final `npm publish --provenance` step so npm
+   uses an OIDC-capable CLI.
 
-6. For the normal `release-please` path, keep the repository Actions setting
-   `Allow GitHub Actions to create and approve pull requests` enabled.
+5. To (re)publish an already-tagged version without changing `main`, run the
+   `Release` workflow manually with `publish_tag=vX.Y.Z`.
 
-7. To publish an existing release tag without opening a new release PR, run the
-   `Release Please` workflow manually with `publish_tag=vX.Y.Z`.
-
-8. If GitHub Actions release automation is unavailable, use the manual fallback:
+6. If GitHub Actions release automation is unavailable, use the manual fallback:
    ```sh
    node scripts/release.mjs <version> --commit --tag
    git push && git push --tags
