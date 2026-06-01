@@ -404,6 +404,19 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     return new Promise<string>((resolve, reject) => {
       // Set up timeout if specified
       let timer: NodeJS.Timeout | undefined;
+
+      // Defined before the timer so the timeout path can also detach it.
+      const abortHandler = (): void => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        this.pending.delete(messageId);
+        this.timedOutRequests.mark(messageId);
+        // Same late-frame discard as the timeout path (see below).
+        this.responseReassembler?.discard(messageId);
+        reject(new BridgeTimeoutError('Operation aborted'));
+      };
+
       if (timeoutMs > 0) {
         timer = setTimeout(() => {
           this.pending.delete(messageId);
@@ -413,24 +426,16 @@ export class SubprocessTransport extends DisposableBase implements Transport {
           // timedOutRequests.consume above is one-shot and insufficient for a
           // multi-frame stream).
           this.responseReassembler?.discard(messageId);
+          // Detach the abort listener: on timeout the abort never fires, so
+          // without this it would leak on a long-lived AbortSignal and could
+          // re-enter abortHandler after this promise has already settled.
+          signal?.removeEventListener('abort', abortHandler);
           const stderrTail = this.getStderrTail();
           const baseMsg = `Operation timed out after ${timeoutMs}ms`;
           const msg = stderrTail ? `${baseMsg}. Recent stderr:\n${stderrTail}` : baseMsg;
           reject(new BridgeTimeoutError(msg));
         }, timeoutMs);
       }
-
-      // Set up abort handler
-      const abortHandler = (): void => {
-        if (timer) {
-          clearTimeout(timer);
-        }
-        this.pending.delete(messageId);
-        this.timedOutRequests.mark(messageId);
-        // Same late-frame discard as the timeout path (see above).
-        this.responseReassembler?.discard(messageId);
-        reject(new BridgeTimeoutError('Operation aborted'));
-      };
 
       if (signal) {
         signal.addEventListener('abort', abortHandler, { once: true });
@@ -727,6 +732,17 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       // Disable Python buffering
       PYTHONUNBUFFERED: '1',
     };
+
+    // This transport's enableChunking is authoritative: when chunking is OFF,
+    // strip any inherited TYWRAP_TRANSPORT_* from the parent environment so a
+    // host-level value can't make the bridge negotiate framing the TS side won't
+    // reassemble (or a different frame ceiling). When ON, chunkingEnv above
+    // already set all three to this transport's values.
+    if (!this.enableChunking) {
+      delete env[ENV_CHUNKING];
+      delete env[ENV_FRAME_PROTOCOL];
+      delete env[ENV_MAX_FRAME_BYTES];
+    }
 
     // Spawn process
     this.process = spawn(this.pythonPath, [this.bridgeScript], {

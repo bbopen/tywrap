@@ -507,7 +507,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
           indices: [0, 1],
           indptr: [0, 1, 2],
         })
-      ).rejects.toThrow('shape must be a 2-item number[]');
+      ).rejects.toThrow('shape must be a 2-item non-negative integer[]');
     });
   });
 

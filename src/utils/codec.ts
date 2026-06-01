@@ -547,9 +547,13 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
     !Array.isArray(shape) ||
     shape.length !== 2 ||
     typeof shape[0] !== 'number' ||
-    typeof shape[1] !== 'number'
+    !Number.isInteger(shape[0]) ||
+    shape[0] < 0 ||
+    typeof shape[1] !== 'number' ||
+    !Number.isInteger(shape[1]) ||
+    shape[1] < 0
   ) {
-    throw new Error('Invalid scipy.sparse envelope: shape must be a 2-item number[]');
+    throw new Error('Invalid scipy.sparse envelope: shape must be a 2-item non-negative integer[]');
   }
   const rows = shape[0];
   const cols = shape[1];
@@ -607,6 +611,33 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
     throw new Error(
       `Invalid scipy.sparse envelope: ${format} indptr length must be ${majorAxis + 1} ` +
         `(${format === 'csr' ? 'rows' : 'cols'}+1), got ${indptr.length}`
+    );
+  }
+  // indptr must be a valid CSR/CSC pointer array: integers that start at 0, end
+  // at data.length, and never decrease — otherwise a structurally impossible
+  // matrix (e.g. [0, 99, 1]) would slip through the length check above.
+  for (let i = 0; i < indptr.length; i += 1) {
+    const ptr = indptr[i];
+    if (typeof ptr !== 'number' || !Number.isInteger(ptr)) {
+      throw new Error(
+        `Invalid scipy.sparse envelope: indptr[${i}] must be an integer, got ${String(ptr)}`
+      );
+    }
+    if (ptr < 0 || ptr > data.length) {
+      throw new Error(
+        `Invalid scipy.sparse envelope: indptr[${i}]=${ptr} is out of range [0, ${data.length}]`
+      );
+    }
+    if (i > 0 && ptr < (indptr[i - 1] as number)) {
+      throw new Error('Invalid scipy.sparse envelope: indptr must be non-decreasing');
+    }
+  }
+  if (indptr[0] !== 0) {
+    throw new Error('Invalid scipy.sparse envelope: indptr must start at 0');
+  }
+  if (indptr[indptr.length - 1] !== data.length) {
+    throw new Error(
+      `Invalid scipy.sparse envelope: indptr must end at data.length (${data.length})`
     );
   }
   assertIndexArrayInRange(indices, minorAxis, 'indices');

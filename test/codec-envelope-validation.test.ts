@@ -129,6 +129,44 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
       ).toThrow(/indptr length must be 3 \(rows\+1\)/);
     });
 
+    it('rejects CSR indptr with structurally invalid contents', () => {
+      const make = (indptr: number[]): ValueEnvelope => ({
+        __tywrap__: 'scipy.sparse',
+        codecVersion: 1,
+        encoding: 'json',
+        format: 'csr',
+        shape: [2, 2],
+        data: [1, 2],
+        indices: [0, 1],
+        indptr,
+      });
+      // pointer out of [0, data.length]
+      expect(() => decodeValue(make([0, 99, 2]))).toThrow(/out of range/);
+      // must start at 0
+      expect(() => decodeValue(make([1, 1, 2]))).toThrow(/must start at 0/);
+      // must be non-decreasing
+      expect(() => decodeValue(make([0, 2, 1]))).toThrow(/non-decreasing/);
+      // must end at data.length
+      expect(() => decodeValue(make([0, 1, 1]))).toThrow(/must end at data\.length/);
+      // must be integers
+      expect(() => decodeValue(make([0, 1.5, 2]))).toThrow(/must be an integer/);
+    });
+
+    it('rejects negative or fractional sparse dimensions', () => {
+      const make = (shape: number[]): ValueEnvelope => ({
+        __tywrap__: 'scipy.sparse',
+        codecVersion: 1,
+        encoding: 'json',
+        format: 'csr',
+        shape,
+        data: [],
+        indices: [],
+        indptr: [0],
+      });
+      expect(() => decodeValue(make([-1, 2]))).toThrow(/non-negative integer/);
+      expect(() => decodeValue(make([1.5, 2]))).toThrow(/non-negative integer/);
+    });
+
     it('rejects CSC indptr of the wrong length (must be cols+1)', () => {
       expect(() =>
         decodeValue({
@@ -225,7 +263,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           indices: [0],
           indptr: [0, 1],
         })
-      ).toThrow(/shape must be a 2-item number\[\]/);
+      ).toThrow(/shape must be a 2-item non-negative integer\[\]/);
     });
   });
 
