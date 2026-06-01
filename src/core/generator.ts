@@ -560,6 +560,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
       this.getTypeParameters(cls.typeParameters),
       [
         ...cls.properties.map(property => property.type),
+        ...(cls.accessors ?? []).map(accessor => accessor.type),
         ...cls.methods.flatMap(method => [
           method.returnType,
           ...method.parameters.map(p => p.type),
@@ -604,6 +605,15 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
             `${this.escapeIdentifier(p.name)}: ${this.typeToTsFromPython(p.type, classGenericContext, 'value')};`
         )
         .join(' ');
+      // @property / cached_property members are bridge-accessed getters; mirror
+      // the concrete class's `get name(): Promise<T>` as readonly Promise props
+      // so protocol typings include them too (IR 0.3.0).
+      const accessors = (cls.accessors ?? [])
+        .map(
+          a =>
+            `readonly ${this.escapeIdentifier(a.name)}: Promise<${this.typeToTsFromPython(a.type, classGenericContext, 'return')}>;`
+        )
+        .join(' ');
       const methods = cls.methods
         .filter(m => m.name !== '__init__')
         .map(m => {
@@ -628,7 +638,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
           return `${this.escapeIdentifier(m.name)}: ${methodTypeParamDecl}(${paramsDecl}) => ${returnType};`;
         })
         .join(' ');
-      return wrapAlias(`{ ${props} ${methods} }`);
+      return wrapAlias(`{ ${props} ${accessors} ${methods} }`);
     }
 
     if (cls.kind === 'dataclass' || cls.kind === 'pydantic') {
@@ -643,6 +653,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
       return wrapAlias(`{ ${props} }`);
     }
 
+    const moduleId = moduleName ?? '__main__';
     const sortedMethods = [...cls.methods].sort((a, b) => a.name.localeCompare(b.name));
     const methodBodies: string[] = [];
     const methodDeclarations: string[] = [];
@@ -650,6 +661,12 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
     sortedMethods
       .filter(method => method.name !== '__init__')
       .forEach(method => {
+        // @classmethod and @staticmethod become `static` members invoked through
+        // the class (`Class.method`), not the instance handle. Instance methods
+        // (the default, or an absent methodKind) keep the existing emission so
+        // their output stays byte-identical.
+        const isStatic = method.methodKind === 'class' || method.methodKind === 'static';
+        const staticPrefix = isStatic ? 'static ' : '';
         const fparams = method.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
         const methodOwnGenericContext = this.buildGenericRenderContext(
           this.getTypeParameters(method.typeParameters),
@@ -737,11 +754,11 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
             }
             rest.push(`kwargs: ${kwargsType}`);
             overloads.push(
-              `  ${mname}${methodTypeParamDecl}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`
+              `  ${staticPrefix}${mname}${methodTypeParamDecl}(${[...head, ...rest].join(', ')}): Promise<${returnType}>;`
             );
             if (varArgsParam && needsVarArgsArray) {
               overloads.push(
-                `  ${mname}${methodTypeParamDecl}(${[...head, `kwargs: ${kwargsType}`].join(', ')}): Promise<${returnType}>;`
+                `  ${staticPrefix}${mname}${methodTypeParamDecl}(${[...head, `kwargs: ${kwargsType}`].join(', ')}): Promise<${returnType}>;`
               );
             }
           }
@@ -767,13 +784,18 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
         const guardLines = emitArgGuards(callDescriptor);
         const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
 
-        methodBodies.push(`${overloadDecl}  async ${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}> {
-${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '${method.name}', __args${
-          needsKwargsParam ? ', __kwargs' : ''
-        });
+        const callExpr = isStatic
+          ? `getRuntimeBridge().call('${moduleId}', '${cls.name}.${method.name}', __args${
+              needsKwargsParam ? ', __kwargs' : ''
+            })`
+          : `getRuntimeBridge().callMethod(this.__handle, '${method.name}', __args${
+              needsKwargsParam ? ', __kwargs' : ''
+            })`;
+        methodBodies.push(`${overloadDecl}  ${staticPrefix}async ${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}> {
+${callPrelude}${guards}    return ${callExpr};
   }`);
         methodDeclarations.push(
-          `${overloadDecl}${overloads.length > 0 ? '' : `  ${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}>;\n`}`
+          `${overloadDecl}${overloads.length > 0 ? '' : `  ${staticPrefix}${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}>;\n`}`
         );
       });
 
@@ -898,7 +920,24 @@ ${callPrelude}${guards}    return getRuntimeBridge().callMethod(this.__handle, '
       };
     })();
 
-    const moduleId = moduleName ?? '__main__';
+    // @property / functools.cached_property → TS getters returning Promise<T>.
+    // Reading the attribute fires the getter on the Python side; the bridge
+    // resolves it via callMethod with no args. Sorted for stable output.
+    const accessorBodies: string[] = [];
+    const accessorDeclarations: string[] = [];
+    const sortedAccessors = [...(cls.accessors ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+    sortedAccessors.forEach(accessor => {
+      const aname = this.escapeIdentifier(accessor.name);
+      const accessorType = this.typeToTsFromPython(accessor.type, classGenericContext, 'return');
+      const jsdocAcc = this.generateJsDoc(accessor.docstring);
+      accessorBodies.push(
+        `${jsdocAcc}  get ${aname}(): Promise<${accessorType}> { return getRuntimeBridge().callMethod(this.__handle, '${accessor.name}', []); }`
+      );
+      accessorDeclarations.push(`${jsdocAcc}  get ${aname}(): Promise<${accessorType}>;\n`);
+    });
+    const accessorsImpl = accessorBodies.length > 0 ? `${accessorBodies.join('\n')}\n` : '';
+    const accessorsDecl = accessorDeclarations.length > 0 ? `${accessorDeclarations.join('')}` : '';
+
     const methodsSection = methodBodies.length > 0 ? `\n${methodBodies.join('\n')}\n` : '\n';
     const declarationMethodsSection =
       methodDeclarations.length > 0 ? `\n${methodDeclarations.join('')}\n` : '\n';
@@ -913,14 +952,14 @@ ${ctorSpec.callPrelude}${ctorGuards}    const handle = await getRuntimeBridge().
     });
     return ${newClassExpr};
   }
-  static fromHandle${classTypeParamDecl}(handle: string): ${classSelfType} { return ${newClassExpr}; }${methodsSection}  async disposeHandle(): Promise<void> { await getRuntimeBridge().disposeInstance(this.__handle); }
+  static fromHandle${classTypeParamDecl}(handle: string): ${classSelfType} { return ${newClassExpr}; }${methodsSection}${accessorsImpl}  async disposeHandle(): Promise<void> { await getRuntimeBridge().disposeInstance(this.__handle); }
 }
 `;
 
     const declaration = `${jsdoc}export class ${cname}${classTypeParamDecl} {
   private readonly __handle: string;
   private constructor(handle: string);
-${ctorSpec.declaration}  static fromHandle${classTypeParamDecl}(handle: string): ${classSelfType};${declarationMethodsSection}  disposeHandle(): Promise<void>;
+${ctorSpec.declaration}  static fromHandle${classTypeParamDecl}(handle: string): ${classSelfType};${declarationMethodsSection}${accessorsDecl}  disposeHandle(): Promise<void>;
 }
 `;
 

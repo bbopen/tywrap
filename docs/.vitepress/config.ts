@@ -27,6 +27,7 @@ export default defineConfig({
         items: [
           { text: 'Getting Started', link: '/guide/getting-started' },
           { text: 'Configuration', link: '/guide/configuration' },
+          { text: 'Watch & Reload', link: '/guide/dev-reload' },
           {
             text: 'Runtime Bridges',
             collapsed: false,

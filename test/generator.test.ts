@@ -783,6 +783,29 @@ describe('CodeGenerator', () => {
     expect(code.typescript).not.toContain('NoInitOrReplaceInit');
   });
 
+  it('includes @property accessors in protocol alias typings', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'HasArea',
+        bases: ['Protocol'],
+        methods: [],
+        properties: [],
+        accessors: [
+          { name: 'area', type: { kind: 'primitive', name: 'int' }, readOnly: true },
+        ],
+        docstring: undefined,
+        decorators: [],
+        kind: 'protocol',
+      } as any,
+      'protocol_module'
+    );
+
+    expect(code.typescript).toContain('export type HasArea =');
+    // Bridge-accessed @property → readonly Promise member, mirroring the
+    // concrete class's `get area(): Promise<number>`.
+    expect(code.typescript).toContain('readonly area: Promise<number>;');
+  });
+
   it('emits generic classes and type aliases with safe fallbacks', () => {
     const typeP = { name: 'P', kind: 'paramspec' } as const;
     const typeT = { name: 'T', kind: 'typevar', variance: 'invariant' } as const;
@@ -1212,5 +1235,178 @@ describe('CodeGenerator', () => {
     expect(code.typescript).toContain('export class Calculator');
     expect(code.typescript).toContain('async add(');
     expect(code.typescript).toContain('getRuntimeBridge().callMethod');
+  });
+
+  it('emits @classmethod and @staticmethod as static members invoked through the class', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Pet',
+        bases: [],
+        methods: [
+          {
+            name: 'create_dog',
+            signature: {
+              parameters: [],
+              returnType: { kind: 'custom', name: 'Pet' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            methodKind: 'class',
+            returnType: { kind: 'custom', name: 'Pet' },
+            parameters: [
+              {
+                name: 'cls',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'name',
+                type: { kind: 'primitive', name: 'str' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+          {
+            name: 'is_valid_name',
+            signature: {
+              parameters: [],
+              returnType: { kind: 'primitive', name: 'bool' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            methodKind: 'static',
+            returnType: { kind: 'primitive', name: 'bool' },
+            parameters: [
+              {
+                name: 'name',
+                type: { kind: 'primitive', name: 'str' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+        ],
+        properties: [],
+        docstring: undefined,
+        decorators: [],
+      } as any,
+      'pets'
+    );
+
+    // classmethod: static member, `cls` stripped, invoked through the class.
+    // The TS member name is escaped (camelCased) while the dotted RPC target
+    // (Class.method) keeps the raw Python names.
+    expect(code.typescript).toContain('static async createDog(name: string): Promise<Pet>');
+    expect(code.typescript).toContain(
+      "getRuntimeBridge().call('pets', 'Pet.create_dog', __args)"
+    );
+    // staticmethod: static member, no implicit first param, class-routed call.
+    expect(code.typescript).toContain('static async isValidName(name: string): Promise<boolean>');
+    expect(code.typescript).toContain(
+      "getRuntimeBridge().call('pets', 'Pet.is_valid_name', __args)"
+    );
+    // Must NOT route static/class members through the instance handle.
+    expect(code.typescript).not.toContain('callMethod');
+    // Declaration mirrors the static members.
+    expect(code.declaration).toContain('static isValidName(name: string): Promise<boolean>;');
+  });
+
+  it('emits @property / cached_property accessors as readonly getters', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Pet',
+        bases: [],
+        methods: [],
+        properties: [],
+        accessors: [
+          {
+            name: 'pet_name',
+            type: { kind: 'primitive', name: 'str' },
+            docstring: "Get pet's name.",
+            readOnly: true,
+            isCached: false,
+          },
+          {
+            name: 'expensive',
+            type: { kind: 'collection', name: 'list', itemTypes: [{ kind: 'primitive', name: 'int' }] },
+            docstring: undefined,
+            readOnly: true,
+            isCached: true,
+          },
+        ],
+        docstring: undefined,
+        decorators: [],
+      } as any,
+      'pets'
+    );
+
+    // TS member name is escaped (camelCased) while the RPC attribute name stays raw.
+    expect(code.typescript).toContain('get petName(): Promise<string>');
+    expect(code.typescript).toContain(
+      "getRuntimeBridge().callMethod(this.__handle, 'pet_name', [])"
+    );
+    expect(code.typescript).toContain('get expensive(): Promise<number[]>');
+    expect(code.declaration).toContain('get petName(): Promise<string>;');
+  });
+
+  it('keeps instance-only class output unchanged when methodKind/accessors are present-but-default', () => {
+    const base = {
+      name: 'Widget',
+      bases: [],
+      methods: [
+        {
+          name: 'tick',
+          signature: {
+            parameters: [],
+            returnType: { kind: 'primitive', name: 'None' },
+            isAsync: false,
+            isGenerator: false,
+          },
+          docstring: undefined,
+          decorators: [],
+          isAsync: false,
+          isGenerator: false,
+          returnType: { kind: 'primitive', name: 'None' },
+          parameters: [
+            {
+              name: 'self',
+              type: { kind: 'primitive', name: 'None' },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+          ],
+        },
+      ],
+      properties: [],
+      docstring: undefined,
+      decorators: [],
+    };
+    const withoutKind = gen.generateClassWrapper({ ...base } as any, 'm');
+    const withInstanceKind = gen.generateClassWrapper(
+      {
+        ...base,
+        methods: base.methods.map(m => ({ ...m, methodKind: 'instance' })),
+        accessors: [],
+      } as any,
+      'm'
+    );
+    // An explicit 'instance' methodKind and empty accessors must be byte-identical
+    // to the legacy (undefined) shape.
+    expect(withInstanceKind.typescript).toBe(withoutKind.typescript);
+    expect(withInstanceKind.declaration).toBe(withoutKind.declaration);
   });
 });

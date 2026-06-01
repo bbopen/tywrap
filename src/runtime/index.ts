@@ -15,6 +15,7 @@ export { BridgeCodec, type CodecOptions } from './bridge-codec.js';
 // Transport contract — abstract I/O channel interface and guards
 export type {
   Transport,
+  TransportCapabilities,
   TransportOptions,
   ProtocolMessage,
   ProtocolResponse,

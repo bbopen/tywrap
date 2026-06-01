@@ -13,6 +13,16 @@ export interface PythonModule {
   exports: string[];
 }
 
+/**
+ * How a callable is bound on its owning class.
+ *
+ * Mirrors `IRFunction.method_kind` from the Python IR (tywrap_ir 0.3.0):
+ * `'instance'` (default, keeps `self`), `'class'` (keeps `cls`), or
+ * `'static'` (no implicit first parameter). Module-level functions retain the
+ * `'instance'` default; it is only meaningful for class members.
+ */
+export type PythonMethodKind = 'instance' | 'class' | 'static';
+
 export interface PythonFunction {
   name: string;
   signature: FunctionSignature;
@@ -23,6 +33,28 @@ export interface PythonFunction {
   typeParameters?: PythonGenericParameter[];
   returnType: PythonType;
   parameters: Parameter[];
+  /**
+   * Binding of this callable on its owning class. Defaults to `'instance'`.
+   * @see PythonMethodKind
+   */
+  methodKind?: PythonMethodKind;
+}
+
+/**
+ * A `@property` or `functools.cached_property` exposed on a class.
+ *
+ * Mirrors `IRAccessor` from the Python IR (tywrap_ir 0.3.0). Distinct from
+ * {@link PythonClass.properties} (which model TypedDict/NamedTuple/dataclass
+ * data shapes): accessors are computed attributes backed by a getter.
+ */
+export interface PythonAccessor {
+  name: string;
+  type: PythonType;
+  docstring?: string;
+  /** True when there is no setter. `undefined` when undeterminable. */
+  readOnly?: boolean;
+  /** True for `functools.cached_property`. */
+  isCached: boolean;
 }
 
 export interface PythonClass {
@@ -30,6 +62,11 @@ export interface PythonClass {
   bases: string[];
   methods: PythonFunction[];
   properties: Property[];
+  /**
+   * `@property` / `functools.cached_property` accessors, emitted as TS getters.
+   * @see PythonAccessor
+   */
+  accessors?: PythonAccessor[];
   docstring?: string;
   decorators: string[];
   kind?: 'class' | 'protocol' | 'typed_dict' | 'namedtuple' | 'dataclass' | 'pydantic';

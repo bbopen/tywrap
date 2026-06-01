@@ -10,7 +10,7 @@
 
 import { DisposableBase } from './bounded-context.js';
 import { BridgeDisposedError, BridgeExecutionError } from './errors.js';
-import type { Transport } from './transport.js';
+import type { Transport, TransportCapabilities } from './transport.js';
 import { TransportPool, type TransportLease } from './transport-pool.js';
 
 // =============================================================================
@@ -21,7 +21,13 @@ import { TransportPool, type TransportLease } from './transport-pool.js';
  * Options for creating a PooledTransport.
  */
 export interface PooledTransportOptions {
-  /** Factory function to create transports for each worker */
+  /**
+   * Factory function to create transports for each worker.
+   *
+   * Construction MUST be side-effect-free — spawn processes/open connections in
+   * `init()`/`send()`, never in the constructor. The pool may build a probe
+   * instance solely to read its {@link Transport.capabilities} descriptor.
+   */
   createTransport: () => Transport;
 
   /** Maximum number of workers in the pool. Default: 1 */
@@ -91,6 +97,8 @@ export class PooledTransport extends DisposableBase implements Transport {
     onReplacementWorkerReady?: (worker: TransportLease) => Promise<void>;
   };
   private pool?: TransportPool;
+  /** Memoized capability descriptor — built at most once (see {@link capabilities}). */
+  private cachedCapabilities?: TransportCapabilities;
 
   /**
    * Create a new PooledTransport.
@@ -179,6 +187,21 @@ export class PooledTransport extends DisposableBase implements Transport {
     return this.pool.withWorker(async worker => {
       return worker.transport.send(message, timeoutMs, signal);
     });
+  }
+
+  /**
+   * Static capability descriptor for the pool.
+   *
+   * A pool's wire behavior is exactly that of the workers it distributes across,
+   * so this reads the descriptor from one probe transport built by the same
+   * factory. `createTransport` MUST be construction-side-effect-free — the
+   * built-in transports spawn nothing until `init()`/`send()`. The result is
+   * memoized so at most one probe is ever built regardless of call count, and
+   * this stays safe to call at any lifecycle point.
+   */
+  capabilities(): TransportCapabilities {
+    this.cachedCapabilities ??= this.poolOptions.createTransport().capabilities();
+    return this.cachedCapabilities;
   }
 
   // ===========================================================================

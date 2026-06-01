@@ -1,6 +1,6 @@
 {
   "name": "tywrap",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Generate type-safe TypeScript wrappers for any Python library — Node.js, Deno, Bun, and browsers via Pyodide.",
   "type": "module",
   "main": "dist/index.js",
@@ -149,7 +149,13 @@
     "vitest": "^4.0.16"
   },
   "peerDependencies": {
+    "apache-arrow": ">=14.0.0",
     "pyodide": ">=0.28.0"
+  },
+  "peerDependenciesMeta": {
+    "apache-arrow": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=20.0.0",

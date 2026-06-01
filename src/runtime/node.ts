@@ -13,14 +13,13 @@ import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-import type { PythonRuntime, BridgeInfo } from '../types/index.js';
 import { autoRegisterArrowDecoder } from '../utils/codec.js';
 import { getDefaultPythonPath } from '../utils/python.js';
 import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
 import { globalCache } from '../utils/cache.js';
 
-import { DisposableBase } from './bounded-context.js';
-import { RpcClient, type GetBridgeInfoOptions } from './rpc-client.js';
+import { BasePythonBridge } from './base-bridge.js';
+import { RpcClient } from './rpc-client.js';
 import { BridgeCodecError, BridgeExecutionError, BridgeProtocolError } from './errors.js';
 import { SubprocessTransport } from './subprocess-transport.js';
 import { PooledTransport } from './pooled-transport.js';
@@ -305,7 +304,7 @@ function normalizeWarmupCommands(commands: NodeBridgeOptions['warmupCommands']):
  * await pooledBridge.init();
  * ```
  */
-export class NodeBridge extends DisposableBase implements PythonRuntime {
+export class NodeBridge extends BasePythonBridge {
   private readonly resolvedOptions: ResolvedOptions;
   private readonly pooledTransport: PooledTransport;
   private readonly rpc: RpcClient;
@@ -433,16 +432,26 @@ export class NodeBridge extends DisposableBase implements PythonRuntime {
   }
 
   // ===========================================================================
-  // RPC METHODS (delegate to the held RpcClient)
+  // RPC DELEGATION (the held RpcClient)
   // ===========================================================================
+
+  /**
+   * Expose the held RpcClient to BasePythonBridge's shared delegating methods
+   * (instantiate/callMethod/disposeInstance/getBridgeInfo). call() is
+   * overridden below to layer caching on top.
+   */
+  protected getRpcClient(): RpcClient {
+    return this.rpc;
+  }
 
   /**
    * Call a Python function, with optional result caching.
    *
-   * Cache lookup stays FIRST so cache hits return without forcing init,
-   * preserving the pre-composition behavior.
+   * Overrides BasePythonBridge.call() to layer the cache lookup/writeback on
+   * top of the shared delegation. Cache lookup stays FIRST so cache hits return
+   * without forcing init, preserving the pre-composition behavior.
    */
-  async call<T = unknown>(
+  override async call<T = unknown>(
     module: string,
     functionName: string,
     args: unknown[],
@@ -477,50 +486,6 @@ export class NodeBridge extends DisposableBase implements PythonRuntime {
     // No caching - direct call
     await this.ensureReady();
     return this.rpc.call<T>(module, functionName, args, kwargs);
-  }
-
-  async instantiate<T = unknown>(
-    module: string,
-    className: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    await this.ensureReady();
-    return this.rpc.instantiate<T>(module, className, args, kwargs);
-  }
-
-  async callMethod<T = unknown>(
-    handle: string,
-    methodName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    await this.ensureReady();
-    return this.rpc.callMethod<T>(handle, methodName, args, kwargs);
-  }
-
-  async disposeInstance(handle: string): Promise<void> {
-    await this.ensureReady();
-    return this.rpc.disposeInstance(handle);
-  }
-
-  /**
-   * Fetch bridge diagnostics and feature availability.
-   */
-  async getBridgeInfo(options?: GetBridgeInfoOptions): Promise<BridgeInfo> {
-    await this.ensureReady();
-    return this.rpc.getBridgeInfo(options);
-  }
-
-  /**
-   * Ensure the facade is initialized before delegating an RPC. Replicates the
-   * auto-init that BoundedContext.execute() gave for free, so the facade's
-   * own doInit pre-work (script check, Arrow decoder) runs before any RPC.
-   */
-  private async ensureReady(): Promise<void> {
-    if (!this.isReady) {
-      await this.init();
-    }
   }
 
   // ===========================================================================

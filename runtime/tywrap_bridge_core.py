@@ -43,8 +43,10 @@ derived from TYWRAP_CODEC_FALLBACK=json so that "Node in json-fallback mode" and
 import base64
 import datetime as dt
 import decimal
+import functools
 import importlib
 import importlib.util
+import inspect
 import json
 import math
 import traceback
@@ -181,6 +183,41 @@ def get_allowed_attr(obj, attr_name, *, allow_private_attrs):
     if not allow_private_attrs and attr_name.startswith('_'):
         raise AttributeNotAllowedError(attr_name)
     return getattr(obj, attr_name)
+
+
+def resolve_allowed_attr_path(root, dotted_name, *, allow_private_attrs):
+    """
+    Resolve a possibly-dotted attribute path from root, applying the
+    private/dunder getattr guard to EVERY segment.
+
+    A single segment (the common case, e.g. a module-level function) behaves
+    exactly like get_allowed_attr. Dotted names exist because @classmethod and
+    @staticmethod are invoked through their owning class: the generated wrapper
+    emits call(module, 'Class.method', ...), so the bridge must walk
+    module -> Class -> method. Guarding each segment means 'Class._secret' or
+    '_Hidden.method' are rejected exactly as a direct private getattr would be —
+    the dotted path opens no access the single-getattr path did not already.
+    """
+    obj = root
+    for segment in dotted_name.split('.'):
+        obj = get_allowed_attr(obj, segment, allow_private_attrs=allow_private_attrs)
+    return obj
+
+
+def is_accessor_attr(obj, attr_name):
+    """
+    True when attr_name resolves to a @property or functools.cached_property on
+    obj's type — i.e. it is read by attribute access, not called.
+
+    Inspects type(obj)'s MRO via getattr_static (which never triggers the
+    descriptor protocol), NOT the instance dict. That matters for
+    cached_property: after the first read it stores its value in the instance
+    __dict__, so an instance-level static lookup would return the cached value
+    rather than the descriptor and misclassify it as a method on the next read.
+    Reading from the type keeps the classification stable across repeated reads.
+    """
+    descriptor = inspect.getattr_static(type(obj), attr_name, None)
+    return isinstance(descriptor, (property, functools.cached_property))
 
 
 class CodecError(Exception):
@@ -852,7 +889,10 @@ def handle_call(params, *, force_json_markers, torch_allow_copy, allowed_modules
     args = deserialize(coerce_list(params.get('args'), 'args'))
     kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'))
     mod = import_allowed_module(module_name, allowed_modules)
-    func = get_allowed_attr(mod, function_name, allow_private_attrs=allow_private_attrs)
+    # function_name may be dotted ('Class.method') for @classmethod/@staticmethod
+    # calls, which the generated wrapper routes through call() rather than an
+    # instance handle. resolve_allowed_attr_path guards each segment.
+    func = resolve_allowed_attr_path(mod, function_name, allow_private_attrs=allow_private_attrs)
     res = func(*args, **kwargs)
     return serialize(res, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy)
 
@@ -878,8 +918,20 @@ def handle_call_method(params, instances, *, force_json_markers, torch_allow_cop
     if handle_id not in instances:
         raise InstanceHandleError(f'Unknown instance handle: {handle_id}')
     obj = instances[handle_id]
-    func = get_allowed_attr(obj, method_name, allow_private_attrs=allow_private_attrs)
-    res = func(*args, **kwargs)
+    # A @property / functools.cached_property is read, not called: the generated
+    # `get prop()` accessor emits callMethod(handle, name, []). Classify before
+    # touching the value (so cached_property is detected on its first read) and
+    # return the attribute directly; everything else is a bound method to call.
+    if is_accessor_attr(obj, method_name):
+        # An accessor is read, never called: a generated `get prop()` always
+        # sends empty args. Reject a malformed request that supplies any so it
+        # fails loudly instead of silently dropping the arguments.
+        if args or kwargs:
+            raise ProtocolError(f'Accessor {method_name!r} does not accept arguments')
+        res = get_allowed_attr(obj, method_name, allow_private_attrs=allow_private_attrs)
+    else:
+        func = get_allowed_attr(obj, method_name, allow_private_attrs=allow_private_attrs)
+        res = func(*args, **kwargs)
     return serialize(res, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy)
 
 

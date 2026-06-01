@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.7.0](https://github.com/bbopen/tywrap/compare/v0.6.1...v0.7.0) (2026-06-01)
+
+The foundation half of the scientific data plane. It lands the measurement, capability, and Arrow-ergonomics groundwork the large-payload transport work (0.8.0) builds on, and captures Python class members the IR used to drop. The wire protocol is unchanged, so a 0.6.x bridge and a 0.7.0 client still talk.
+
+### Breaking changes
+
+**The IR schema is now `0.3.0` and captures more class members.** `tywrap-ir` reads `@classmethod`, `@property`, and `functools.cached_property` (via `inspect.classify_class_attrs`) and labels `@staticmethod` correctly. Generated wrappers gain `static` members for class/static methods and `readonly` getters for properties, so **generated output changes for any class that uses those decorators** — classes without them are byte-identical. Regenerate your wrappers after upgrading. The TS↔Python IR-version check enforces the bump.
+
+### Features
+
+- Arrow decoding is frictionless: the runtime auto-registers an `apache-arrow` decoder when the package is present, with no manual wiring. JSON fallback stays opt-in (`TYWRAP_CODEC_FALLBACK=json`), and a missing `apache-arrow` fails with a clear, actionable error instead of silent lossy output. ([#232](https://github.com/bbopen/tywrap/issues/232))
+- Each backend reports a `TransportCapabilities` descriptor (`backend`, `supportsArrow`, `supportsBinary`, `supportsChunking`, `supportsStreaming`, `maxFrameBytes`), surfaced on the bridge via `capabilities()`, with a documented capability matrix. ([#235](https://github.com/bbopen/tywrap/issues/235))
+- `tywrap/dev` gains a watch/reload end-to-end smoke and documented reload failure/recovery behavior. ([#228](https://github.com/bbopen/tywrap/issues/228))
+
+### Internal
+
+- Measure-first data-plane benchmarks (Arrow round-trip, 100k-row decode, size-guard overhead, pool throughput) land as baselines for 0.8.0's perf gates — no gating yet.
+- `generate()` and `fetchPythonIr()` are decomposed (cognitive complexity 91→16), and a shared `BasePythonBridge` removes the duplicated RPC delegation across the three bridges.
+- The bridge dispatches `@classmethod`/`@staticmethod` through a dotted `call('Class.method')` and reads `@property`/`cached_property` through `call_method`, with the private-attribute guard re-applied per dotted segment.
+
 ## [0.6.1](https://github.com/bbopen/tywrap/compare/v0.6.0...v0.6.1) (2026-05-31)
 
 A maintenance release. Nothing you call changes — no API, behavior, or wire-protocol changes.

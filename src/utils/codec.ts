@@ -111,6 +111,24 @@ export type DecodedValue =
 
 let arrowTableFrom: ((bytes: Uint8Array) => ArrowTable | Uint8Array) | undefined;
 
+// Why: lazy auto-registration (on first Arrow decode) imports apache-arrow at most
+// once per process. We cache the in-flight/settled attempt so concurrent decodes
+// share a single dynamic import, and a missing module is not re-probed on every call.
+let lazyRegistration: Promise<boolean> | undefined;
+
+// Why: the lazy decode path imports apache-arrow through the default Node loader, which
+// is hard to simulate-as-absent in a test env where the dependency IS installed. This
+// internal seam lets the unit suite exercise the "apache-arrow missing" clear-failure
+// branch deterministically. It is intentionally NOT re-exported from the package root
+// (see test/api_surface.test.ts) and is reset by clearArrowDecoder().
+let lazyArrowLoaderOverride: ArrowModuleLoader | undefined;
+
+/** @internal Test-only: override the loader used by lazy auto-registration. */
+export const _setLazyArrowLoaderForTesting = (loader: ArrowModuleLoader | undefined): void => {
+  lazyArrowLoaderOverride = loader;
+  lazyRegistration = undefined;
+};
+
 export function registerArrowDecoder(
   decoder: (bytes: Uint8Array) => ArrowTable | Uint8Array
 ): void {
@@ -119,6 +137,10 @@ export function registerArrowDecoder(
 
 export function clearArrowDecoder(): void {
   arrowTableFrom = undefined;
+  // Why: reset the cached import attempt so tests (and reload helpers) can exercise
+  // the auto-registration path again from a clean slate.
+  lazyRegistration = undefined;
+  lazyArrowLoaderOverride = undefined;
 }
 
 /**
@@ -186,6 +208,12 @@ export async function autoRegisterArrowDecoder(
   }
   try {
     const arrowModule = await loader();
+    // Another path may have registered a decoder while the import was in flight
+    // (e.g. an explicit registerArrowDecoder() during concurrent startup/reload).
+    // Don't clobber it — the explicit registration wins.
+    if (hasArrowDecoder()) {
+      return true;
+    }
     registerArrowDecoderFromModule(arrowModule as { tableFromIPC?: unknown });
     return true;
   } catch {
@@ -214,17 +242,46 @@ function fromBase64(b64: string): Uint8Array {
   throw new Error('Base64 decoding is not available in this runtime');
 }
 
+// Why: a single, actionable message for both decode paths so users always know the two
+// supported remedies — install the optional dependency, or opt into the lossy JSON fallback.
+const ARROW_MISSING_MESSAGE =
+  'Received an Arrow-encoded payload but no Arrow decoder is available. ' +
+  'Install the optional dependency with `npm install apache-arrow`, or set ' +
+  'TYWRAP_CODEC_FALLBACK=json on the Python side to receive JSON instead ' +
+  '(lossy for dtype/NA fidelity). tywrap never silently downgrades Arrow payloads.';
+
 function requireArrowDecoder(): (bytes: Uint8Array) => ArrowTable | Uint8Array {
   if (!arrowTableFrom) {
-    throw new Error(
-      'Arrow decoder not registered. Call registerArrowDecoder(...) or set TYWRAP_CODEC_FALLBACK=json in Python.'
-    );
+    throw new Error(ARROW_MISSING_MESSAGE);
+  }
+  return arrowTableFrom;
+}
+
+/**
+ * Ensure an Arrow decoder is registered, lazily importing apache-arrow on first use.
+ *
+ * Why: keep apache-arrow optional and zero-config. The first Arrow-encoded payload
+ * triggers a single best-effort dynamic import; if it succeeds the decoder is cached
+ * for the rest of the process. If apache-arrow is absent we throw a clear, actionable
+ * error rather than silently producing wrong data.
+ */
+async function ensureArrowDecoder(): Promise<(bytes: Uint8Array) => ArrowTable | Uint8Array> {
+  if (arrowTableFrom) {
+    return arrowTableFrom;
+  }
+  // Reuse a single import attempt across concurrent decodes.
+  lazyRegistration ??= autoRegisterArrowDecoder(
+    lazyArrowLoaderOverride ? { loader: lazyArrowLoaderOverride } : {}
+  );
+  await lazyRegistration;
+  if (!arrowTableFrom) {
+    throw new Error(ARROW_MISSING_MESSAGE);
   }
   return arrowTableFrom;
 }
 
 async function tryDecodeArrowTable(bytes: Uint8Array): Promise<ArrowTable | Uint8Array> {
-  const decoder = requireArrowDecoder();
+  const decoder = await ensureArrowDecoder();
   try {
     return decoder(bytes);
   } catch (err) {

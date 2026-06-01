@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { NodeBridge } from 'tywrap/node';
 import { setRuntimeBridge } from 'tywrap/runtime';
-import { autoRegisterArrowDecoder, clearArrowDecoder } from 'tywrap';
 
 import {
   driftReport,
@@ -44,20 +43,6 @@ function resolveCodecMode(argv: readonly string[]): CodecMode {
     return 'arrow';
   }
   return 'arrow';
-}
-
-/**
- * Register an Arrow decoder for this Node process.
- *
- * Why: `apache-arrow` is an optional dependency and tywrap should run without it in JSON mode.
- */
-async function enableArrowDecoder(): Promise<void> {
-  const registered = await autoRegisterArrowDecoder();
-  if (!registered) {
-    throw new Error(
-      "Arrow mode requires the optional dependency 'apache-arrow'. Install it with `npm install apache-arrow`."
-    );
-  }
 }
 
 /**
@@ -123,10 +108,11 @@ async function main(): Promise<void> {
   });
   setRuntimeBridge(bridge);
 
-  if (codec === 'arrow') {
-    // Enable Arrow decoder - will fail at decode time if pyarrow is not installed
-    await enableArrowDecoder();
-  }
+  // Why: in Arrow mode no manual decoder wiring is needed. NodeBridge.doInit()
+  // does a best-effort eager probe via autoRegisterArrowDecoder() at startup
+  // (a missing apache-arrow is swallowed there, so init never crashes); if an
+  // Arrow payload is still decoded while apache-arrow is unavailable, the decode
+  // throws a clear, actionable error (install it, or run in JSON mode).
 
   const profileConfig: ProfileConfig = {
     topK: 5,
@@ -180,9 +166,6 @@ async function main(): Promise<void> {
       }
     }
     await bridge.dispose();
-    // Why: registerArrowDecoder is global process state; clear it so other examples/tests don't
-    // inherit Arrow decoding unexpectedly.
-    clearArrowDecoder();
   }
 }
 

@@ -103,6 +103,66 @@ export interface ProtocolResponse {
 }
 
 // =============================================================================
+// TRANSPORT CAPABILITIES
+// =============================================================================
+
+/**
+ * Static, transport-level capability descriptor.
+ *
+ * Each backend exposes one of these via {@link Transport.capabilities} so callers
+ * can reason about what the wire channel can carry WITHOUT round-tripping to
+ * Python. These flags describe the transport itself (what bytes it can move and
+ * how it frames them) — they are deliberately separate from the bridge's runtime
+ * `meta` report ({@link BridgeInfo}), which describes the *Python environment*
+ * (which optional libraries happen to be importable). The transport descriptor is
+ * authoritative for transport-level flags; the meta report is authoritative for
+ * library availability.
+ *
+ * Honest for TODAY's behavior: `supportsChunking` and `supportsStreaming` are
+ * `false` on every backend — both are planned for 0.8.0 and no backend implements
+ * them yet. See docs/transport-capabilities.md for the full matrix.
+ */
+export interface TransportCapabilities {
+  /** Which backend this transport drives. */
+  readonly backend: 'subprocess' | 'http' | 'pyodide';
+
+  /**
+   * Whether the transport can carry Arrow-encoded payloads (binary IPC frames)
+   * on the wire. Pyodide is JSON-only (pyarrow is unavailable in WASM), so it is
+   * `false` there; subprocess and HTTP can move Arrow bytes.
+   */
+  readonly supportsArrow: boolean;
+
+  /**
+   * Whether the transport can carry arbitrary binary data (e.g. Python `bytes`).
+   * All current backends carry binary via base64 envelopes, so this is `true`
+   * everywhere.
+   */
+  readonly supportsBinary: boolean;
+
+  /**
+   * Whether the transport splits a single logical message across multiple wire
+   * frames. Not implemented on any backend yet (planned for 0.8.0) — always
+   * `false`.
+   */
+  readonly supportsChunking: boolean;
+
+  /**
+   * Whether the transport can stream incremental results for a single request.
+   * Not implemented on any backend yet (planned for 0.8.0) — always `false`.
+   */
+  readonly supportsStreaming: boolean;
+
+  /**
+   * Maximum size, in bytes, of a single wire frame the transport will accept.
+   * `Number.POSITIVE_INFINITY` means the transport imposes no frame ceiling of
+   * its own (a higher layer — e.g. the codec's payload limit — may still cap the
+   * size). For the subprocess backend this is the JSONL line-length limit.
+   */
+  readonly maxFrameBytes: number;
+}
+
+// =============================================================================
 // TRANSPORT INTERFACE
 // =============================================================================
 
@@ -177,6 +237,16 @@ export interface Transport extends Disposable {
    * Returns `false` in all other states.
    */
   readonly isReady: boolean;
+
+  /**
+   * Static, transport-level capability descriptor.
+   *
+   * Returns what this transport can carry and how it frames messages, with
+   * honest values for the transport's current behavior (see
+   * {@link TransportCapabilities}). It does NOT depend on lifecycle state — it is
+   * safe to call before `init()` and after `dispose()`.
+   */
+  capabilities(): TransportCapabilities;
 }
 
 // =============================================================================
@@ -228,6 +298,7 @@ export function isTransport(value: unknown): value is Transport {
     typeof (value as Transport).init === 'function' &&
     typeof (value as Transport).send === 'function' &&
     typeof (value as Transport).dispose === 'function' &&
+    typeof (value as Transport).capabilities === 'function' &&
     'isReady' in value
   );
 }

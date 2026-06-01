@@ -18,7 +18,7 @@ import type { Writable } from 'stream';
 import { DisposableBase } from './bounded-context.js';
 import { BridgeDisposedError, BridgeProtocolError, BridgeTimeoutError } from './errors.js';
 import { TimedOutRequestTracker } from './timed-out-request-tracker.js';
-import type { Transport } from './transport.js';
+import type { Transport, TransportCapabilities } from './transport.js';
 
 // =============================================================================
 // CONSTANTS
@@ -321,6 +321,25 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
       this.requestCount++;
     });
+  }
+
+  /**
+   * Static capability descriptor for the subprocess backend.
+   *
+   * Subprocess carries Arrow IPC and arbitrary binary (bytes envelopes) over the
+   * JSONL stream. Chunking/streaming are not implemented (0.8.0). `maxFrameBytes`
+   * is the configured JSONL line-length limit — the largest single response line
+   * this transport will accept before raising a protocol error.
+   */
+  capabilities(): TransportCapabilities {
+    return {
+      backend: 'subprocess',
+      supportsArrow: true,
+      supportsBinary: true,
+      supportsChunking: false,
+      supportsStreaming: false,
+      maxFrameBytes: this.maxLineLength,
+    };
   }
 
   // ===========================================================================

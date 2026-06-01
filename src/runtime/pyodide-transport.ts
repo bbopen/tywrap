@@ -20,6 +20,7 @@ import { PYODIDE_BRIDGE_CORE_SOURCE } from './pyodide-bootstrap-core.generated.j
 import {
   PROTOCOL_ID,
   type Transport,
+  type TransportCapabilities,
   type ProtocolMessage,
   type ProtocolResponse,
 } from './transport.js';
@@ -339,6 +340,27 @@ export class PyodideTransport extends DisposableBase implements Transport {
       },
       { timeoutMs, signal }
     );
+  }
+
+  /**
+   * Static capability descriptor for the Pyodide backend.
+   *
+   * The in-WASM server is JSON-only — pyarrow is unavailable in WASM, so the
+   * bootstrap forces JSON markers and reports `arrowAvailable: false`; hence
+   * `supportsArrow: false`. Binary still rides through base64 bytes envelopes.
+   * Chunking/streaming are not implemented (0.8.0). Calls are in-memory string
+   * passing with no framing, so there is no transport-level frame ceiling
+   * (`maxFrameBytes: Number.POSITIVE_INFINITY`).
+   */
+  capabilities(): TransportCapabilities {
+    return {
+      backend: 'pyodide',
+      supportsArrow: false,
+      supportsBinary: true,
+      supportsChunking: false,
+      supportsStreaming: false,
+      maxFrameBytes: Number.POSITIVE_INFINITY,
+    };
   }
 
   // ===========================================================================
