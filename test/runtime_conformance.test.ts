@@ -106,6 +106,40 @@ def make_model():
     return _Model(userName='ada', count=3)
 `;
 
+// A stdlib-only fixture (no third-party deps) exercising every class-member
+// category the IR 0.3.0 generator now emits: @classmethod and @staticmethod
+// (invoked via call() with a dotted 'Widget.method' name) and @property /
+// functools.cached_property (read via call_method with no args). Guards the
+// W3c bridge-dispatch support across every backend.
+const MEMBER_FIXTURE_MODULE = '_tywrap_member_fixtures';
+const MEMBER_FIXTURE_PATH = resolve(RUNTIME_DIR, `${MEMBER_FIXTURE_MODULE}.py`);
+const MEMBER_FIXTURE_SOURCE = `
+import functools
+
+
+class Widget:
+    label = 'widget'
+
+    def __init__(self, size):
+        self.size = size
+
+    @classmethod
+    def named(cls):
+        return cls.label
+
+    @staticmethod
+    def doubled(n):
+        return n * 2
+
+    @property
+    def area(self):
+        return self.size * self.size
+
+    @functools.cached_property
+    def cached_area(self):
+        return self.size * self.size + 1
+`;
+
 const MODULES = {
   numpy: PYTHON_OK ? hasModule(PYTHON, 'numpy') : false,
   pandas: PYTHON_OK ? hasModule(PYTHON, 'pandas') : false,
@@ -322,6 +356,9 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     if (MODULES.pydantic) {
       writeFileSync(PYDANTIC_FIXTURE_PATH, PYDANTIC_FIXTURE_SOURCE, 'utf-8');
     }
+    // stdlib-only — written unconditionally so the member-dispatch case runs
+    // on every backend that has a Python interpreter.
+    writeFileSync(MEMBER_FIXTURE_PATH, MEMBER_FIXTURE_SOURCE, 'utf-8');
     const baseEnv = { ...process.env } as NodeJS.ProcessEnv;
     const jsonEnv = { ...process.env, TYWRAP_CODEC_FALLBACK: 'json' } as NodeJS.ProcessEnv;
 
@@ -348,6 +385,11 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
     }
     try {
       rmSync(PYODIDE_HARNESS_PATH, { force: true });
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(MEMBER_FIXTURE_PATH, { force: true });
     } catch {
       // ignore
     }
@@ -570,6 +612,66 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
           (after.result as Record<string, unknown>).instances,
           `${name} instances back to baseline`
         ).toBe(beforeCount);
+      }
+    },
+    caseTimeoutMs
+  );
+
+  // -------------------------------------------------------------------------
+  // classmethod/staticmethod (dotted call) + property/cached_property
+  // (accessor read) dispatch parity — the IR 0.3.0 member surface.
+  // -------------------------------------------------------------------------
+  it.skipIf(!PYTHON_OK)(
+    'classmethod/staticmethod and property/cached_property dispatch parity',
+    async () => {
+      for (const { name, get } of liveBackends()) {
+        const backend = get();
+        if (!backend) continue;
+
+        // @classmethod via a dotted call() name (cls bound to the class).
+        const named = await backend.dispatch({
+          method: 'call',
+          params: { module: MEMBER_FIXTURE_MODULE, functionName: 'Widget.named', args: [], kwargs: {} },
+        });
+        expect(named.error, `${name} classmethod error`).toBeUndefined();
+        expect(named.result, `${name} classmethod result`).toBe('widget');
+
+        // @staticmethod via a dotted call() name.
+        const doubled = await backend.dispatch({
+          method: 'call',
+          params: { module: MEMBER_FIXTURE_MODULE, functionName: 'Widget.doubled', args: [21], kwargs: {} },
+        });
+        expect(doubled.error, `${name} staticmethod error`).toBeUndefined();
+        expect(doubled.result, `${name} staticmethod result`).toBe(42);
+
+        const inst = await backend.dispatch({
+          method: 'instantiate',
+          params: { module: MEMBER_FIXTURE_MODULE, className: 'Widget', args: [5], kwargs: {} },
+        });
+        expect(inst.error, `${name} member instantiate error`).toBeUndefined();
+        const handle = inst.result as string;
+
+        // @property: read via call_method with no args — the bridge must return
+        // the value, not try to call it.
+        const area = await backend.dispatch({
+          method: 'call_method',
+          params: { handle, methodName: 'area', args: [], kwargs: {} },
+        });
+        expect(area.error, `${name} property error`).toBeUndefined();
+        expect(area.result, `${name} property result`).toBe(25);
+
+        // @cached_property: same shape; classification must survive the cached
+        // second read.
+        for (const attempt of [1, 2]) {
+          const cached = await backend.dispatch({
+            method: 'call_method',
+            params: { handle, methodName: 'cached_area', args: [], kwargs: {} },
+          });
+          expect(cached.error, `${name} cached_property error (read ${attempt})`).toBeUndefined();
+          expect(cached.result, `${name} cached_property result (read ${attempt})`).toBe(26);
+        }
+
+        await backend.dispatch({ method: 'dispose_instance', params: { handle } });
       }
     },
     caseTimeoutMs
