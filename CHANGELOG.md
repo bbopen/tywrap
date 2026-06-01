@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.0](https://github.com/bbopen/tywrap/compare/v0.7.0...v0.8.0) (2026-06-01)
+
+The large-payload transport release — the second half of the scientific data plane. A result that exceeds a single JSONL line no longer has to fit on one line: the subprocess bridge splits it into frames and reassembles it byte-for-byte. The wire protocol is unchanged (`tywrap/1`); framing is a separate, additive `tywrap-frame/1` protocol negotiated at startup, so a 0.7.x bridge and a 0.8.0 client still talk, and an oversize payload sent to a bridge that cannot chunk fails loudly instead of silently truncating.
+
+### Features
+
+- **Chunked transport for large payloads (`tywrap-frame/1`, [#231](https://github.com/bbopen/tywrap/issues/231)).** When a request or response exceeds the JSONL line ceiling, the subprocess bridge fragments it into frames and reassembles them. It is negotiated through the `meta` handshake (no protocol-version bump), subprocess-only (HTTP and Pyodide stay single-frame), and slices on UTF-8 codepoint boundaries — no base64 inflation. `NodeBridge` enables chunking by default; it engages only above the frame ceiling, so typical small-payload traffic is unchanged, and raising `codec.maxPayloadBytes` is what carries genuinely large results. Reassembly is bounded — declared and accumulated bytes (default 10 MiB, tracking the codec cap), concurrent streams, and the timed-out-id set — so an oversized or buggy payload fails loud rather than exhausting memory.
+- **Scientific envelopes fail clearly ([#234](https://github.com/bbopen/tywrap/issues/234)).** SciPy, Torch, and Sklearn envelopes now reject unsupported cases explicitly — complex/sparse/quantized/meta tensors, non-CPU or non-contiguous tensors without `TYWRAP_TORCH_ALLOW_COPY`, and non-JSON-safe sklearn params — with matching JS-side re-validation. Lossy and device-transfer paths stay opt-in; nothing silently degrades.
+
+### Internal
+
+- Expanded scientific-codec validation and a dedicated `data-plane-perf` CI job that gates the chunked large-payload paths with same-run-relative perf budgets seeded from the 0.7.0 baselines. ([#233](https://github.com/bbopen/tywrap/issues/233))
+- `TransportCapabilities.supportsChunking` now reports the **configured** capability (static, like `supportsArrow`); whether the connected bridge actually negotiated framing is a separate runtime fact on `BridgeInfo.transport.supportsChunking`.
+- Request cancellation is identity-exact: a timed-out or aborted request is skipped at every write point — including the stdin backpressure queue and mid-burst frames — bound to the exact pending entry, so an abandoned call never executes on the Python side.
+
 ## [0.7.0](https://github.com/bbopen/tywrap/compare/v0.6.1...v0.7.0) (2026-06-01)
 
 The foundation half of the scientific data plane. It lands the measurement, capability, and Arrow-ergonomics groundwork the large-payload transport work (0.8.0) builds on, and captures Python class members the IR used to drop. The wire protocol is unchanged, so a 0.6.x bridge and a 0.7.0 client still talk.
