@@ -54,6 +54,9 @@ directory-valued `extraWatchPaths`, ignores Python cache directories, and keeps
 the last known good wrappers plus bridge live if a reload returns structured
 generation failures.
 
+See [Watch & Reload](../dev-reload.md) for the reload lifecycle events and the
+full failure / recovery contract.
+
 ## Basic Setup
 
 ### Installation

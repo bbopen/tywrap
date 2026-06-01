@@ -303,7 +303,8 @@ tywrap.
 `startNodeWatchSession(...)` watches local package directories as directory
 trees, refreshes those trees when nested directories change, and keeps the last
 known good wrappers and bridge live if a reload produces structured generation
-failures.
+failures. See [Watch & Reload](./dev-reload.md) for the reload lifecycle events
+and the full failure / recovery contract.
 
 ### Build Integration
 
