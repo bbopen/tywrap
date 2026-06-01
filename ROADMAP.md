@@ -8,6 +8,32 @@ The detailed technical appendix for the scientific data plane lives in
 
 ## Recently Shipped
 
+### v0.8.0: large-payload transport
+
+`v0.8.0` is the second half of the scientific data plane (#237). When a request
+or response exceeds the single-line JSONL ceiling, the subprocess bridge now
+splits it into `tywrap-frame/1` frames and reassembles it byte-for-byte. Framing
+is negotiated at startup and additive, so the wire protocol stays `tywrap/1`, a
+0.7.x bridge and a 0.8.0 client still talk, and an oversize payload to a bridge
+that cannot chunk fails loud. `NodeBridge` enables chunking by default — it
+engages only above the frame ceiling, so small-payload traffic is unchanged, and
+raising `codec.maxPayloadBytes` is what carries genuinely large results — with
+reassembly bounded so a huge payload can't exhaust memory. SciPy/Torch/Sklearn
+envelopes now reject unsupported cases explicitly (#234), and a dedicated
+`data-plane-perf` CI job gates the chunked paths against the 0.7.0 baselines
+(#233). This completes #237.
+
+### v0.7.0: the scientific data plane — foundation
+
+`v0.7.0` is the foundation half of the data plane: measure-first benchmarks that
+seed 0.8.0's perf gates, frictionless Arrow auto-registration (#232), a
+`TransportCapabilities` descriptor plus a capability matrix across Node, Pyodide,
+and HTTP (#235), and capture of the Python member categories the IR used to drop
+— `@classmethod`, `@property`, `cached_property` via `inspect.classify_class_attrs`
+— which bumped the IR schema to `0.3.0` (the one breaking change; regenerate
+wrappers). It also added a `tywrap/dev` watch/reload smoke (#228) and folded in
+the complexity cleanup deferred from 0.6.1. The wire protocol was unchanged.
+
 ### v0.6.1: maintenance (complexity and dedup)
 
 `v0.6.1` is internal-only — no API, behavior, or wire-protocol changes. It
@@ -65,49 +91,17 @@ entrypoint, Node watch sessions that regenerate wrappers and swap the active
 bridge, and structured generation failures that keep the last known good output
 and bridge live.
 
-## Now (0.7.0): the scientific data plane — foundation
+## Now
 
-The scientific data plane (tracked under #237) makes large numpy/pandas/Arrow
-payloads reliable and first-class. It is large, and the roadmap's own rule is
-*measure first: benchmarks land before any perf gate*. The headline chunked
-transport (#231) is still undesigned. So the theme ships in two releases.
-
-`0.7.0` is the foundation half — everything buildable today with no
-wire-protocol design pass:
-
-- measure first: Arrow round-trip, large-payload decode, size-check overhead,
-  and pool-throughput benchmarks land against current behavior so 0.8.0's perf
-  gates have real baselines
-- make Arrow registration frictionless — the JS runtime auto-registers an Arrow
-  decoder when `apache-arrow` is present (#232)
-- a `TransportCapabilities` descriptor on each backend, reconciled with the
-  bridge `meta` report, plus a documented capability matrix across Node,
-  Pyodide, and HTTP (#235) — the contract #231 chunking keys off
-- capture the dropped Python member categories in `tywrap-ir` (`@classmethod`,
-  `@property`, `cached_property` via `inspect.classify_class_attrs`), bump the IR
-  schema, and regenerate goldens — the one breaking change
-- stabilize the `tywrap/dev` examples with a watch/reload end-to-end smoke (#228)
-- fold in the complexity cleanup deferred from 0.6.1 (decompose `generate` and
-  `fetchPythonIr`; collapse the cross-bridge `call`/`instantiate` boilerplate)
+The scientific data plane (#237) is complete as of `v0.8.0`. The next release
+theme is not yet locked; candidates are drawn from **Later** below.
 
 See [docs/codec-roadmap.md](./docs/codec-roadmap.md) for the deeper technical
-plan behind this release theme.
-
-## Next (0.8.0): large-payload transport
-
-The design-then-build half, built on 0.7.0's baselines and capability
-descriptor:
-
-- design and add a versioned artifact or chunked transport path so large
-  payloads no longer depend on single-line JSONL (#231)
-- expand scientific codec validation and set performance gates from the 0.7.0
-  baselines (#233)
-- harden SciPy, Torch, and Sklearn envelope behavior so supported cases are
-  explicit and unsupported cases fail clearly (#234)
+appendix behind the data-plane work.
 
 ## Later
 
-These items are intentionally not part of `0.7.0` or `0.8.0`:
+These items are intentionally not part of the scientific data plane (`0.7.0`/`0.8.0`):
 
 - GPU-native transport such as DLPack or Arrow CUDA
 - HTTP server lifecycle management owned by Tywrap

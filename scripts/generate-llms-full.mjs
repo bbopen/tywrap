@@ -16,6 +16,7 @@ const orderedDocs = [
   'docs/reference/env-vars.md',
   'docs/reference/type-mapping.md',
   'docs/transport-capabilities.md',
+  'docs/transport-framing.md',
   'docs/reference/api/index.md',
   'docs/examples/index.md',
   'docs/troubleshooting/index.md',
