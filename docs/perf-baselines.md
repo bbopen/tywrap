@@ -72,3 +72,38 @@ illustrate run-to-run variance.
 
 These numbers are stable run-to-run on this machine (single-digit-percent
 spread), which is what matters for using them as a regression tripwire.
+
+## Perf gates (0.8.0, #233)
+
+0.8.0 layers actual **perf gates** on top of the measure-first harness above.
+They live in [`test/data-plane-perf.test.ts`](../test/data-plane-perf.test.ts)
+(also gated behind `TYWRAP_PERF_BUDGETS=1`) and assert budgets, where the
+measure-first benchmarks only print. The suite first proves correctness at
+scale (chunked 20 MiB + 80 MiB responses and a 20 MiB request echo, all forced
+through `tywrap-frame/1` frames against a 1 MiB ceiling), then checks budgets:
+
+| Gate | Budget |
+|------|--------|
+| Chunked 20 MiB response median vs same-run high-ceiling single frame | calibrated overhead ratio (inherent fragmentation cost, not the doc numbers) |
+| `PooledTransport` small-call throughput (4 workers) | >= 70% of a same-run single-worker baseline |
+| Arrow ndarray/DataFrame + 100k-row decode | <= 2.0x of a same-run warm baseline |
+| Retained heap after an 80 MiB chunked response | <= `payload * 4 + fixed` (no quadratic growth) |
+
+> **CI baselines are stored and compared SEPARATELY from this local doc.** The
+> Apple-Silicon numbers in the table above are indicative only and are **not**
+> used as CI thresholds. Every gate in `test/data-plane-perf.test.ts` is
+> **same-run relative**: it measures a baseline in the same process on the same
+> runner (median of 5, after warmup) and compares the subject against *that*,
+> never against a hardcoded absolute. This keeps the gates portable across the
+> Apple-Silicon dev machine and the pinned Linux CI runner without re-tuning.
+
+The gates run in a dedicated `data-plane-perf` CI job (pinned Node 22 / Python
+3.11, `TYWRAP_PERF_BUDGETS=1`, `NODE_OPTIONS=--expose-gc`, serial Vitest, no
+coverage so instrumentation does not skew timings). That job is part of the
+`required` gate; release publishing additionally re-runs the full suite with
+`TYWRAP_PERF_BUDGETS=1`, so the data-plane gates also fence the npm publish.
+
+```bash
+TYWRAP_PERF_BUDGETS=1 NODE_OPTIONS=--expose-gc npx vitest run \
+  test/data-plane-perf.test.ts --reporter=verbose
+```

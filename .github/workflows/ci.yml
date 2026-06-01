@@ -281,6 +281,43 @@ jobs:
           npm run typecheck
           npm run build
 
+  data-plane-perf:
+    # #233 — gate the 0.8.0 large-payload / chunked-transport data plane.
+    # Dedicated job: pinned Node + Python, TYWRAP_PERF_BUDGETS=1,
+    # NODE_OPTIONS=--expose-gc, serial Vitest, NO coverage (instrumentation
+    # skews timings). Budgets are SAME-RUN RELATIVE inside the suite — the
+    # Apple-Silicon numbers in docs/perf-baselines.md are NOT used as CI truth.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          # Pinned: perf comparisons need a stable runtime, not a moving matrix.
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          # Pinned: the chunked-transport suite spawns runtime/python_bridge.py.
+          python-version: '3.11'
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: Build
+        run: npm run build
+      - name: Run data-plane perf gates (correctness-at-scale + budgets)
+        env:
+          NODE_OPTIONS: --expose-gc
+          TYWRAP_PERF_BUDGETS: '1'
+        # Serial, no coverage. Covers the W7 gate plus the W4/W5 chunked
+        # large-payload integration suites so release gating includes them.
+        run: >-
+          npx vitest run --no-file-parallelism
+          test/data-plane-perf.test.ts
+          test/transport-chunking.test.ts
+          test/transport-request-chunking.test.ts
+
   required:
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-latest
@@ -293,6 +330,7 @@ jobs:
       - os
       - bun
       - node25-smoke
+      - data-plane-perf
     steps:
       - name: Check required jobs
         run: |
@@ -305,4 +343,5 @@ jobs:
           if [ "${{ needs.os.result }}" != "success" ]; then echo "::error::os: ${{ needs.os.result }}"; fail=1; fi
           if [ "${{ needs.bun.result }}" != "success" ]; then echo "::error::bun: ${{ needs.bun.result }}"; fail=1; fi
           if [ "${{ needs.node25-smoke.result }}" != "success" ]; then echo "::error::node25-smoke: ${{ needs.node25-smoke.result }}"; fail=1; fi
+          if [ "${{ needs.data-plane-perf.result }}" != "success" ]; then echo "::error::data-plane-perf: ${{ needs.data-plane-perf.result }}"; fail=1; fi
           if [ "$fail" -ne 0 ]; then exit 1; fi
