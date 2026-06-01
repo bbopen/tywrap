@@ -578,6 +578,9 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
     keywordOnly: p.kind === 'KEYWORD_ONLY',
   });
 
+  const mapMethodKind = (value: unknown): PythonFunction['methodKind'] =>
+    value === 'class' || value === 'static' ? value : 'instance';
+
   const mapFunc = (
     f: Record<string, unknown>,
     inheritedTypeParameters: readonly PythonGenericParameter[] = []
@@ -607,6 +610,7 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
             mapParam((v ?? {}) as Record<string, unknown>, annotationTypeParameters)
           )
         : [],
+      methodKind: mapMethodKind(f.method_kind),
     };
   };
 
@@ -630,6 +634,18 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
               setter: false,
               getter: true,
               optional: Boolean(p.default),
+            };
+          })
+        : [],
+      accessors: Array.isArray(c.accessors)
+        ? (c.accessors as unknown[]).map(v => {
+            const a = (v ?? {}) as Record<string, unknown>;
+            return {
+              name: String(a.name ?? ''),
+              type: parseType(a.returns, classTypeParameters),
+              docstring: (a.docstring as string | undefined) ?? undefined,
+              readOnly: typeof a.read_only === 'boolean' ? a.read_only : undefined,
+              isCached: Boolean(a.is_cached),
             };
           })
         : [],
