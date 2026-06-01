@@ -135,17 +135,19 @@ function chunkingWorkerFactory(
 // =============================================================================
 
 describe('PooledTransport chunking capability descriptor', () => {
-  it('reports supportsChunking:false from the static un-initialized probe (honest)', () => {
+  it('reports the configured supportsChunking:true from the static probe', () => {
     const pool = new PooledTransport({
       createTransport: chunkingWorkerFactory(),
       maxWorkers: 2,
     });
-    // A static descriptor reads an un-init probe: no negotiation has happened, so
-    // chunking is honestly false. The per-lease truth (true) only appears after a
-    // worker's own init() negotiates — asserted in the live test below.
+    // The static descriptor reads an un-init probe built by the same factory, so
+    // it reflects the CONFIGURED capability (enableChunking:true) — lifecycle-
+    // independent, no round trip. Whether the connected bridge actually advertised
+    // framing is the negotiated fact (BridgeInfo.transport.supportsChunking),
+    // proven per-worker in the live test below.
     const caps = pool.capabilities();
     expect(caps.backend).toBe('subprocess');
-    expect(caps.supportsChunking).toBe(false);
+    expect(caps.supportsChunking).toBe(true);
     expect(caps.supportsStreaming).toBe(false);
     expect(caps.maxFrameBytes).toBe(ONE_MIB);
   });
@@ -172,7 +174,7 @@ describe('PooledTransport chunking capability descriptor', () => {
     expect(built).toBe(1);
     expect(second).toBe(first);
     expect(third).toBe(first);
-    expect(first.supportsChunking).toBe(false);
+    expect(first.supportsChunking).toBe(true);
   });
 });
 
@@ -190,16 +192,17 @@ describe('PooledTransport chunked exchanges through a lease (live)', () => {
     }
   });
 
-  it('negotiates chunking on each leased worker (post-init supportsChunking:true)', async () => {
+  it('negotiates chunking on each leased worker (post-init, via the meta transport block)', async () => {
     if (!hasPython) {
       return;
     }
     // onWorkerReady receives each freshly-created worker's lease AFTER its
-    // transport.init() (where negotiation runs), so it is the public hook that
-    // observes the per-lease truth the static pool descriptor cannot show. With
-    // minWorkers:2 both workers are spawned during init() and each must have
-    // negotiated chunking independently.
-    const perWorkerChunking: boolean[] = [];
+    // transport.init() (where negotiation runs). The negotiated fact is NOT the
+    // capability descriptor (which is the lifecycle-independent CONFIGURED value);
+    // it is the bridge's meta `transport.supportsChunking` block. With minWorkers:2
+    // both workers are spawned during init() and each must have negotiated framing
+    // with its own bridge independently.
+    const perWorkerNegotiated: boolean[] = [];
     const perWorkerMaxFrame: number[] = [];
     pool = new PooledTransport({
       createTransport: chunkingWorkerFactory(),
@@ -207,16 +210,24 @@ describe('PooledTransport chunked exchanges through a lease (live)', () => {
       minWorkers: 2,
       maxConcurrentPerWorker: 1,
       onWorkerReady: async (worker: TransportLease) => {
-        const caps = worker.transport.capabilities();
-        perWorkerChunking.push(caps.supportsChunking);
-        perWorkerMaxFrame.push(caps.maxFrameBytes);
+        // Configured (static) frame ceiling — fine to read from capabilities().
+        perWorkerMaxFrame.push(worker.transport.capabilities().maxFrameBytes);
+        // Negotiated (runtime) fact — read from the meta transport block.
+        const metaLine = await worker.transport.send(
+          JSON.stringify({ id: -101, protocol: PROTOCOL_ID, method: 'meta', params: {} }),
+          15_000
+        );
+        const meta = JSON.parse(metaLine) as {
+          result?: { transport?: { supportsChunking?: boolean } };
+        };
+        perWorkerNegotiated.push(meta.result?.transport?.supportsChunking === true);
       },
     });
     await pool.init();
     expect(pool.workerCount).toBe(2);
 
-    // Both leased workers negotiated chunking independently.
-    expect(perWorkerChunking).toEqual([true, true]);
+    // Both leased workers negotiated chunking with their bridges independently.
+    expect(perWorkerNegotiated).toEqual([true, true]);
     expect(perWorkerMaxFrame).toEqual([ONE_MIB, ONE_MIB]);
 
     // And a chunked exchange still completes correctly through a lease afterward.
@@ -304,7 +315,8 @@ describe('PooledTransport chunked exchanges through a lease (live)', () => {
       // happens). A raw meta probe on the leased worker confirms the post-init
       // transport block is present, proving warmup composes with negotiation.
       onWorkerReady: async (worker: TransportLease) => {
-        // capabilities() now reflects the negotiated state on this leased worker.
+        // Configured (static) capability — true because the factory set
+        // enableChunking. The negotiated proof is the meta transport block below.
         expect(worker.transport.capabilities().supportsChunking).toBe(true);
         const metaLine = await worker.transport.send(
           JSON.stringify({ id: -100, protocol: PROTOCOL_ID, method: 'meta', params: {} }),

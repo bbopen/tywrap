@@ -449,20 +449,25 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   /**
    * Static capability descriptor for the subprocess backend.
    *
-   * Subprocess carries Arrow IPC and arbitrary binary (bytes envelopes) over the
-   * JSONL stream. `supportsChunking` reflects the live `tywrap-frame/1`
-   * negotiation: it is `false` until {@link init} probes the bridge and the
-   * bridge advertises chunking (honest — an un-negotiated transport, an old
-   * bridge, or `enableChunking: false` all keep it `false`). `supportsStreaming`
-   * stays `false` (0.8.0). `maxFrameBytes` is the configured JSONL line-length
-   * limit — the largest single (unchunked) response line this transport accepts.
+   * Per the {@link Transport.capabilities} contract this is lifecycle-independent
+   * (safe before `init()` / after `dispose()`) and never makes a Python round
+   * trip. Subprocess carries Arrow IPC and arbitrary binary (bytes envelopes)
+   * over the JSONL stream. `supportsChunking` reports the *configured* capability
+   * — `this.enableChunking`, i.e. whether this transport is set up to use the
+   * `tywrap-frame/1` framing path — exactly as `supportsArrow` reports a static
+   * channel capability rather than a runtime fact. Whether the *connected* bridge
+   * actually advertised framing is the negotiated fact, surfaced separately on
+   * `BridgeInfo.transport.supportsChunking`; "will chunking actually happen"
+   * needs both `true`. `supportsStreaming` stays `false` (0.8.0). `maxFrameBytes`
+   * is the configured JSONL line-length limit — the largest single (unchunked)
+   * response line this transport accepts.
    */
   capabilities(): TransportCapabilities {
     return {
       backend: 'subprocess',
       supportsArrow: true,
       supportsBinary: true,
-      supportsChunking: this.negotiatedChunking,
+      supportsChunking: this.enableChunking,
       supportsStreaming: false,
       maxFrameBytes: this.maxLineLength,
     };

@@ -233,7 +233,8 @@ response-read + reassembly. On timeout or abort:
 ## See also
 
 - [Transport capability matrix](./transport-capabilities.md) — which backends
-  chunk, and how `PooledTransport` reports chunking honestly.
+  chunk, the configured vs negotiated layers, and how `PooledTransport` reports
+  the configured chunking capability.
 - [Environment variables](./reference/env-vars.md) — the `TYWRAP_TRANSPORT_*`
   negotiation env vars and the `TYWRAP_*_MAX_BYTES` size guards (enforced
   post-reassembly).

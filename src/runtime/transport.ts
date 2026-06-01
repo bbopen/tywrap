@@ -212,9 +212,13 @@ export interface ChunkFrame {
  * authoritative for transport-level flags; the meta report is authoritative for
  * library availability.
  *
- * Honest for TODAY's behavior: `supportsChunking` and `supportsStreaming` are
- * `false` on every backend — both are planned for 0.8.0 and no backend implements
- * them yet. See docs/transport-capabilities.md for the full matrix.
+ * Honest for TODAY's behavior: as of 0.8.0 `supportsChunking` is implemented for
+ * the subprocess backend and reports the *configured* `tywrap-frame/1` path
+ * (`enableChunking`) — static and lifecycle-independent, like `supportsArrow`;
+ * the per-bridge negotiated fact lives on {@link BridgeInfo}'s `transport` block.
+ * HTTP and Pyodide stay `false`. `supportsStreaming` is `false` on every backend
+ * (not implemented in 0.8.0). See docs/transport-capabilities.md for the full
+ * matrix.
  */
 export interface TransportCapabilities {
   /** Which backend this transport drives. */

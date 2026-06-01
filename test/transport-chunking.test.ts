@@ -5,8 +5,10 @@
  *  - end-to-end: force a ~1 MiB frame ceiling, raise the logical codec max, have
  *    the real Python bridge return a ~20 MiB payload, and assert the TS side
  *    reassembles it byte-for-byte through SubprocessTransport.send.
- *  - negotiation: capabilities().supportsChunking flips true only after the meta
- *    probe sees the bridge's transport block.
+ *  - negotiation: capabilities().supportsChunking reports the CONFIGURED path
+ *    (enableChunking, lifecycle-independent per the Transport contract); whether
+ *    the connected bridge advertised framing is the negotiated fact on the meta
+ *    `transport` block / BridgeInfo.transport.supportsChunking.
  *  - late-frame-after-timeout discard: once an id times out, subsequent frames
  *    for that id are dropped cleanly without desyncing stdout or rejecting the
  *    next request.
@@ -100,7 +102,7 @@ describe('SubprocessTransport chunked responses (tywrap-frame/1)', () => {
     }
   });
 
-  it('negotiates chunking from the bridge meta probe', async () => {
+  it('reports configured chunking and negotiates the bridge transport block', async () => {
     if (!hasPython) {
       return;
     }
@@ -111,8 +113,21 @@ describe('SubprocessTransport chunked responses (tywrap-frame/1)', () => {
       enableChunking: true,
     });
     await transport.init();
+    // Configured (static) capability: true because enableChunking:true, not
+    // because of any round trip — the descriptor is lifecycle-independent.
     expect(transport.capabilities().supportsChunking).toBe(true);
     expect(transport.capabilities().maxFrameBytes).toBe(ONE_MIB);
+
+    // Negotiated (runtime) fact lives on the meta transport block: the spawned
+    // bridge actually advertised tywrap-frame/1.
+    const metaLine = await transport.send(
+      JSON.stringify({ id: -1, protocol: PROTOCOL_ID, method: 'meta', params: {} }),
+      15_000
+    );
+    const meta = JSON.parse(metaLine) as {
+      result?: { transport?: { supportsChunking?: boolean } };
+    };
+    expect(meta.result?.transport?.supportsChunking).toBe(true);
   });
 
   it('reassembles a ~20 MiB response from 1 MiB frames end-to-end', async () => {

@@ -1415,7 +1415,7 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
   // live against the real bridge.
   // -------------------------------------------------------------------------
   describe('cross-backend chunking capability descriptors', () => {
-    it('HTTP and Pyodide always report supportsChunking:false; subprocess only after negotiation', () => {
+    it('HTTP and Pyodide always report supportsChunking:false; subprocess reports its configured chunking', () => {
       // HTTP: no line ceiling, whole body buffered in one shot -> never chunks.
       const http = new HttpTransport({ baseURL: 'http://127.0.0.1:1' });
       expect(http.capabilities().supportsChunking).toBe(false);
@@ -1428,20 +1428,21 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
       expect(pyodide.capabilities().supportsStreaming).toBe(false);
       expect(pyodide.capabilities().maxFrameBytes).toBe(Number.POSITIVE_INFINITY);
 
-      // Subprocess WITHOUT negotiation (enableChunking omitted): also false. The
-      // un-init descriptor is honest — chunking only flips true after init()
-      // negotiates with a bridge that advertises the transport block.
+      // Subprocess WITHOUT chunking configured (enableChunking omitted): false.
       const subNoChunk = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
       expect(subNoChunk.capabilities().supportsChunking).toBe(false);
 
-      // Subprocess WITH enableChunking but pre-init: still false (no negotiation
-      // has happened yet). The live test below proves it flips true post-init.
+      // Subprocess WITH enableChunking: true even pre-init. The capability
+      // descriptor reports the CONFIGURED path and is lifecycle-independent (no
+      // round trip). Whether the connected bridge actually advertised framing is
+      // the negotiated fact on BridgeInfo.transport.supportsChunking — proven live
+      // below.
       const subChunk = new SubprocessTransport({
         bridgeScript: '/path/to/bridge.py',
         maxLineLength: 1024 * 1024,
         enableChunking: true,
       });
-      expect(subChunk.capabilities().supportsChunking).toBe(false);
+      expect(subChunk.capabilities().supportsChunking).toBe(true);
     });
   });
 
@@ -1469,7 +1470,8 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
         });
         try {
           await transport.init();
-          // Live negotiation flips chunking on against the real bridge.
+          // Configured capability (lifecycle-independent); the actual framing of
+          // the >1 MiB response below is what proves the bridge negotiated it.
           expect(transport.capabilities().supportsChunking).toBe(true);
           expect(transport.capabilities().maxFrameBytes).toBe(ONE_MIB);
 
