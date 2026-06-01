@@ -350,5 +350,50 @@ describe('SubprocessTransport without chunking (old-bridge behavior)', () => {
     await expect(transport.send(bigStringRequest(1, 4 * ONE_MIB), 30_000)).rejects.toThrow(
       /exceeded/
     );
+    // A too-long line is unrecoverable stdout desync: the subprocess is marked
+    // for restart (codex review bug 4).
+    expect((transport as unknown as { needsRestart: boolean }).needsRestart).toBe(true);
   }, 30_000);
+});
+
+// =============================================================================
+// CHUNKING-CORE HARDENING (codex adversarial review fixes)
+// =============================================================================
+
+describe('chunking-core hardening', () => {
+  it('marks the subprocess for restart on a protocol error (missing id)', () => {
+    const { transport, internals } = forcedChunkingTransport();
+    // A non-frame line with no id is genuine stdout desync -> reject + restart.
+    internals.handleResponseLine('{"result":"no id here"}');
+    expect((transport as unknown as { needsRestart: boolean }).needsRestart).toBe(true);
+  });
+
+  it('negotiation rejects a transport block with an invalid maxFrameBytes', () => {
+    const transport = new SubprocessTransport({
+      bridgeScript: '/path/to/bridge.py',
+      enableChunking: true,
+    });
+    const advertises = (
+      transport as unknown as { bridgeAdvertisesChunking: (parsed: unknown) => boolean }
+    ).bridgeAdvertisesChunking.bind(transport);
+
+    const block = (maxFrameBytes: unknown): unknown => ({
+      result: {
+        transport: { frameProtocol: FRAME_PROTOCOL_ID, supportsChunking: true, maxFrameBytes },
+      },
+    });
+    expect(advertises(block(1024 * 1024))).toBe(true);
+    expect(advertises(block(0))).toBe(false);
+    expect(advertises(block(-1))).toBe(false);
+    expect(advertises(block(1.5))).toBe(false);
+    expect(advertises(block(undefined))).toBe(false);
+    // A mismatched frame protocol is rejected regardless of the rest.
+    expect(
+      advertises({
+        result: {
+          transport: { frameProtocol: 'tywrap-frame/2', supportsChunking: true, maxFrameBytes: 4096 },
+        },
+      })
+    ).toBe(false);
+  });
 });

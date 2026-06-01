@@ -422,3 +422,29 @@ describe('cross-language parity vectors', () => {
     });
   });
 });
+
+// =============================================================================
+// REASSEMBLER RESOURCE BOUNDS (codex adversarial review fix)
+// =============================================================================
+
+describe('Reassembler resource bounds', () => {
+  it('caps concurrent reassembly streams and fails loud past the limit', () => {
+    const r = new Reassembler();
+    // 1024 distinct ids, each an incomplete (total:2) stream -> all held pending.
+    for (let id = 0; id < 1024; id += 1) {
+      expect(r.accept(validFrame({ id, seq: 0, total: 2, data: 'x', totalBytes: 2 }))).toBeNull();
+    }
+    expect(r.pendingCount).toBe(1024);
+    expect(() =>
+      r.accept(validFrame({ id: 999_999, seq: 0, total: 2, data: 'x', totalBytes: 2 }))
+    ).toThrow(/too many concurrent reassembly streams/);
+  });
+
+  it('FIFO-bounds the discard set under repeated timeouts', () => {
+    const r = new Reassembler();
+    for (let id = 0; id < 5000; id += 1) {
+      r.discard(id);
+    }
+    expect(r.discardedCount).toBe(4096);
+  });
+});

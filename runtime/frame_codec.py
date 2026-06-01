@@ -212,6 +212,15 @@ def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+# Defensive bounds on per-id reassembly state — mirror of src/runtime/frame-codec.ts.
+# The peer is the local Python bridge, but a buggy/corrupt bridge must not grow
+# memory without limit: cap concurrent mid-reassembly ids (fail loud past the cap)
+# and FIFO-bound the timed-out-id discard set so a long-lived process whose
+# timed-out streams never see their final frame does not leak markers forever.
+MAX_CONCURRENT_STREAMS = 1024
+MAX_DISCARDED_IDS = 4096
+
+
 class Reassembler:
     """Accumulate ``tywrap-frame/1`` frames by ``id`` and reconstruct the string.
 
@@ -234,7 +243,9 @@ class Reassembler:
     def __init__(self) -> None:
         # id -> {'total', 'totalBytes', 'slices': {seq: data}}
         self._streams: Dict[int, Dict[str, Any]] = {}
-        self._discarded: set[int] = set()
+        # Insertion-ordered set-as-dict so the oldest marker can be FIFO-evicted
+        # once the discard set exceeds MAX_DISCARDED_IDS.
+        self._discarded: Dict[int, None] = {}
 
     def accept(self, raw_frame: Any) -> Optional[str]:
         """Feed one frame.
@@ -257,11 +268,17 @@ class Reassembler:
         # the id can be reused.
         if frame_id in self._discarded:
             if seq == total - 1:
-                self._discarded.discard(frame_id)
+                self._discarded.pop(frame_id, None)
             return None
 
         state = self._streams.get(frame_id)
         if state is None:
+            if len(self._streams) >= MAX_CONCURRENT_STREAMS:
+                raise FrameError(
+                    f'frame: too many concurrent reassembly streams '
+                    f'(>= {MAX_CONCURRENT_STREAMS}); refusing to buffer id {frame_id}',
+                    code='FRAME_TOO_MANY_STREAMS',
+                )
             state = {'total': total, 'totalBytes': total_bytes, 'slices': {}}
             self._streams[frame_id] = state
         else:
@@ -336,7 +353,12 @@ class Reassembler:
         for this id until its declared final frame arrives. Idempotent.
         """
         self._streams.pop(frame_id, None)
-        self._discarded.add(frame_id)
+        self._discarded[frame_id] = None
+        # Bound the discard set (FIFO): a timed-out id whose declared final frame
+        # never arrives would otherwise linger forever.
+        if len(self._discarded) > MAX_DISCARDED_IDS:
+            oldest = next(iter(self._discarded))
+            self._discarded.pop(oldest, None)
 
     def is_pending(self, frame_id: int) -> bool:
         """Whether any frame for ``frame_id`` is still being accumulated."""
@@ -346,3 +368,11 @@ class Reassembler:
     def pending_count(self) -> int:
         """Number of ids currently mid-reassembly (for diagnostics/tests)."""
         return len(self._streams)
+
+    @property
+    def discarded_count(self) -> int:
+        """Number of timed-out ids whose late frames are still being dropped.
+
+        FIFO-bounded by ``MAX_DISCARDED_IDS`` (for diagnostics/tests).
+        """
+        return len(self._discarded)

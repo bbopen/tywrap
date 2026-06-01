@@ -446,3 +446,31 @@ class TestCrossLanguageParity:
             wire = json.loads(json.dumps(f))
             out = r.accept(wire)
         assert out == '中文data'
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# REASSEMBLER RESOURCE BOUNDS (codex adversarial review fix)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestReassemblerResourceBounds:
+    """Resource bounds — mirror of src/runtime/frame-codec.ts."""
+
+    def test_caps_concurrent_streams(self) -> None:
+        r = Reassembler()
+        # 1024 distinct ids, each an incomplete (total=2) stream -> held pending.
+        for frame_id in range(1024):
+            assert (
+                r.accept(valid_frame(id=frame_id, seq=0, total=2, data='x', totalBytes=2))
+                is None
+            )
+        assert r.pending_count == 1024
+        with pytest.raises(FrameError) as exc:
+            r.accept(valid_frame(id=999999, seq=0, total=2, data='x', totalBytes=2))
+        assert exc.value.code == 'FRAME_TOO_MANY_STREAMS'
+
+    def test_fifo_bounds_discard_set(self) -> None:
+        r = Reassembler()
+        for frame_id in range(5000):
+            r.discard(frame_id)
+        assert r.discarded_count == 4096

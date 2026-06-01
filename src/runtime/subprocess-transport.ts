@@ -551,8 +551,21 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     if (transport === null || typeof transport !== 'object') {
       return false;
     }
-    const t = transport as { frameProtocol?: unknown; supportsChunking?: unknown };
-    return t.supportsChunking === true && t.frameProtocol === FRAME_PROTOCOL_ID;
+    const t = transport as {
+      frameProtocol?: unknown;
+      supportsChunking?: unknown;
+      maxFrameBytes?: unknown;
+    };
+    // Match the BridgeInfo validator (rpc-client.ts): a valid framing block needs
+    // the matching protocol AND a positive-integer maxFrameBytes. A bridge that
+    // advertises chunking with a bogus frame ceiling is not a contract we honor.
+    return (
+      t.supportsChunking === true &&
+      t.frameProtocol === FRAME_PROTOCOL_ID &&
+      typeof t.maxFrameBytes === 'number' &&
+      Number.isInteger(t.maxFrameBytes) &&
+      t.maxFrameBytes > 0
+    );
   }
 
   /**
@@ -1347,7 +1360,15 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   }
 
   /**
-   * Handle a protocol error by rejecting all pending requests.
+   * Handle a protocol error by rejecting all pending requests and marking the
+   * subprocess for restart.
+   *
+   * Every caller represents genuine stdout-stream corruption (a too-long line, a
+   * response with no `id`, a frame with no reassembler, or a truly unexpected id
+   * — benign late responses from timed-out requests are already filtered upstream
+   * via {@link timedOutRequests}). After such an error stdout can no longer be
+   * trusted to be line/frame-aligned, so the process is marked for restart —
+   * matching the frame-reassembly-corruption path and the framing spec.
    */
   private handleProtocolError(details: string, line?: string): void {
     const snippet = line ? (line.length > 500 ? `${line.slice(0, 500)}...` : line) : undefined;
@@ -1360,6 +1381,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
     const error = new BridgeProtocolError(msg);
     this.rejectAllPending(error);
+    this.markForRestart();
   }
 
   /**

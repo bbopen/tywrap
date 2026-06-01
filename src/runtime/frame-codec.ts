@@ -257,6 +257,17 @@ export function parseChunkFrame(value: unknown): ChunkFrame {
  * frame arrives, at which point the id is forgotten so the slot can be reused.
  * This prevents late multi-frame responses from desyncing the stream.
  */
+/**
+ * Defensive bounds on per-id reassembly state. The peer is the local Python
+ * bridge, but a buggy or corrupt bridge must not grow memory without limit:
+ * cap how many distinct ids may be mid-reassembly at once (fail loud past the
+ * cap), and FIFO-bound the timed-out-id discard set so a long-lived process
+ * that times out many chunked requests whose final frames never arrive (e.g.
+ * the bridge died mid-stream) does not leak markers forever.
+ */
+const MAX_CONCURRENT_STREAMS = 1024;
+const MAX_DISCARDED_IDS = 4096;
+
 export class Reassembler {
   private readonly streams = new Map<number, StreamState>();
   private readonly discarded = new Set<number>();
@@ -286,6 +297,12 @@ export class Reassembler {
 
     let state = this.streams.get(id);
     if (state === undefined) {
+      if (this.streams.size >= MAX_CONCURRENT_STREAMS) {
+        throw new BridgeProtocolError(
+          `frame: too many concurrent reassembly streams (>= ${MAX_CONCURRENT_STREAMS}); refusing to buffer id ${id}`,
+          { code: 'FRAME_TOO_MANY_STREAMS' }
+        );
+      }
       state = { total, totalBytes, slices: new Map<number, string>() };
       this.streams.set(id, state);
     } else {
@@ -365,6 +382,15 @@ export class Reassembler {
   discard(id: number): void {
     this.streams.delete(id);
     this.discarded.add(id);
+    // Bound the discard set (FIFO): a timed-out id whose declared final frame
+    // never arrives would otherwise linger forever. Set iteration order is
+    // insertion order, so the first key is the oldest marker.
+    if (this.discarded.size > MAX_DISCARDED_IDS) {
+      const oldest = this.discarded.values().next().value;
+      if (oldest !== undefined) {
+        this.discarded.delete(oldest);
+      }
+    }
   }
 
   /** Whether any frame for `id` is still being accumulated (not yet complete). */
@@ -375,5 +401,13 @@ export class Reassembler {
   /** Number of ids currently mid-reassembly (for diagnostics/tests). */
   get pendingCount(): number {
     return this.streams.size;
+  }
+
+  /**
+   * Number of timed-out ids whose late frames are still being dropped
+   * (FIFO-bounded by `MAX_DISCARDED_IDS`; for diagnostics/tests).
+   */
+  get discardedCount(): number {
+    return this.discarded.size;
   }
 }
