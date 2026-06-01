@@ -40,13 +40,18 @@ const describeBench = shouldRun ? describe : describe.skip;
 // Benchmarks iterate; the default 5s local testTimeout is too tight for them.
 const BENCH_TIMEOUT_MS = 60_000;
 
+// Iteration/size knobs must be positive integers — 0, negatives, and fractions
+// would divide-by-zero in the per-op math or feed nonsensical sizes, so clamp.
 const readEnvNumber = (name: string, fallback: number): number => {
   const raw = process.env[name];
   if (raw === undefined) {
     return fallback;
   }
   const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+  return Math.floor(parsed);
 };
 
 const runGc = (): void => {

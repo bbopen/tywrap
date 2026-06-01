@@ -783,6 +783,29 @@ describe('CodeGenerator', () => {
     expect(code.typescript).not.toContain('NoInitOrReplaceInit');
   });
 
+  it('includes @property accessors in protocol alias typings', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'HasArea',
+        bases: ['Protocol'],
+        methods: [],
+        properties: [],
+        accessors: [
+          { name: 'area', type: { kind: 'primitive', name: 'int' }, readOnly: true },
+        ],
+        docstring: undefined,
+        decorators: [],
+        kind: 'protocol',
+      } as any,
+      'protocol_module'
+    );
+
+    expect(code.typescript).toContain('export type HasArea =');
+    // Bridge-accessed @property → readonly Promise member, mirroring the
+    // concrete class's `get area(): Promise<number>`.
+    expect(code.typescript).toContain('readonly area: Promise<number>;');
+  });
+
   it('emits generic classes and type aliases with safe fallbacks', () => {
     const typeP = { name: 'P', kind: 'paramspec' } as const;
     const typeT = { name: 'T', kind: 'typevar', variance: 'invariant' } as const;

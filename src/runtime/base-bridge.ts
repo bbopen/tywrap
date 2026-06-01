@@ -20,6 +20,7 @@ import type { PythonRuntime, BridgeInfo } from '../types/index.js';
 
 import { DisposableBase } from './bounded-context.js';
 import type { RpcClient, GetBridgeInfoOptions } from './rpc-client.js';
+import type { TransportCapabilities } from './transport.js';
 
 /**
  * Shared base for the bridge facades. Implements the PythonRuntime RPC
@@ -80,6 +81,16 @@ export abstract class BasePythonBridge extends DisposableBase implements PythonR
   async getBridgeInfo(options?: GetBridgeInfoOptions): Promise<BridgeInfo> {
     await this.ensureReady();
     return this.getRpcClient().getBridgeInfo(options);
+  }
+
+  /**
+   * Describe this backend's transport-level capabilities (Arrow/binary/chunking/
+   * streaming support, max frame size). The descriptor is static and does NOT
+   * depend on lifecycle state, so this intentionally does not `ensureReady()` —
+   * callers can query it before connecting to decide how to use the bridge.
+   */
+  capabilities(): TransportCapabilities {
+    return this.getRpcClient().capabilities();
   }
 
   /**

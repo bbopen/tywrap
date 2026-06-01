@@ -108,9 +108,11 @@ async function main(): Promise<void> {
   });
   setRuntimeBridge(bridge);
 
-  // Why: in Arrow mode the runtime auto-registers an apache-arrow decoder on the first
-  // Arrow-encoded response. No manual wiring is needed; if apache-arrow is missing the
-  // decode throws a clear, actionable error (install it, or run in JSON mode).
+  // Why: in Arrow mode no manual decoder wiring is needed. NodeBridge.doInit()
+  // does a best-effort eager probe via autoRegisterArrowDecoder() at startup
+  // (a missing apache-arrow is swallowed there, so init never crashes); if an
+  // Arrow payload is still decoded while apache-arrow is unavailable, the decode
+  // throws a clear, actionable error (install it, or run in JSON mode).
 
   const profileConfig: ProfileConfig = {
     topK: 5,

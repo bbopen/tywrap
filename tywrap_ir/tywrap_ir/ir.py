@@ -10,7 +10,6 @@ import platform
 import sys
 import types
 import typing
-import warnings as _warnings
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, get_type_hints
 
@@ -510,26 +509,28 @@ def _extract_function(
     )
 
 
-# Guard so the 3.10 degradation warning is emitted at most once per process.
-_overload_warning_emitted = False
+# Collects the once-per-process 3.10 overload-degradation notice so
+# extract_module_ir() can surface it through the structured IR ``warnings``
+# channel instead of a stderr RuntimeWarning.
+_pending_overload_warnings: List[str] = []
+_overload_warning_recorded = False
 
 
 def _extract_overloads(obj: Any) -> List[IROverload]:
     """Capture @typing.overload signatures for ``obj`` (Python 3.11+).
 
     On interpreters without ``typing.get_overloads`` (3.10 and earlier) this
-    degrades to an empty list and emits a single warning rather than crashing.
+    degrades to an empty list and records a single structured IR warning
+    (drained by :func:`extract_module_ir`) rather than crashing.
     """
     get_overloads = getattr(typing, "get_overloads", None)
     if get_overloads is None:
-        global _overload_warning_emitted
-        if not _overload_warning_emitted:
-            _overload_warning_emitted = True
-            _warnings.warn(
+        global _overload_warning_recorded
+        if not _overload_warning_recorded:
+            _overload_warning_recorded = True
+            _pending_overload_warnings.append(
                 "typing.get_overloads is unavailable (Python < 3.11); "
-                "@overload signatures will not be captured in the IR.",
-                RuntimeWarning,
-                stacklevel=2,
+                "@overload signatures will not be captured in the IR."
             )
         return []
 
@@ -910,6 +911,12 @@ def extract_module_ir(
             cls_ir = _extract_class(value, module_name, include_private)
             if cls_ir is not None:
                 classes.append(cls_ir)
+
+    # Surface the deferred 3.10 overload-degradation notice (if any) through the
+    # structured warnings channel rather than stderr.
+    if _pending_overload_warnings:
+        warnings.extend(_pending_overload_warnings)
+        _pending_overload_warnings.clear()
 
     ir = IRModule(
         ir_version=ir_version,

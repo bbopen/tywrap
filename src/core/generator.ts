@@ -605,6 +605,15 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
             `${this.escapeIdentifier(p.name)}: ${this.typeToTsFromPython(p.type, classGenericContext, 'value')};`
         )
         .join(' ');
+      // @property / cached_property members are bridge-accessed getters; mirror
+      // the concrete class's `get name(): Promise<T>` as readonly Promise props
+      // so protocol typings include them too (IR 0.3.0).
+      const accessors = (cls.accessors ?? [])
+        .map(
+          a =>
+            `readonly ${this.escapeIdentifier(a.name)}: Promise<${this.typeToTsFromPython(a.type, classGenericContext, 'return')}>;`
+        )
+        .join(' ');
       const methods = cls.methods
         .filter(m => m.name !== '__init__')
         .map(m => {
@@ -629,7 +638,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
           return `${this.escapeIdentifier(m.name)}: ${methodTypeParamDecl}(${paramsDecl}) => ${returnType};`;
         })
         .join(' ');
-      return wrapAlias(`{ ${props} ${methods} }`);
+      return wrapAlias(`{ ${props} ${accessors} ${methods} }`);
     }
 
     if (cls.kind === 'dataclass' || cls.kind === 'pydantic') {

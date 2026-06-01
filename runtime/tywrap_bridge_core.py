@@ -923,6 +923,11 @@ def handle_call_method(params, instances, *, force_json_markers, torch_allow_cop
     # touching the value (so cached_property is detected on its first read) and
     # return the attribute directly; everything else is a bound method to call.
     if is_accessor_attr(obj, method_name):
+        # An accessor is read, never called: a generated `get prop()` always
+        # sends empty args. Reject a malformed request that supplies any so it
+        # fails loudly instead of silently dropping the arguments.
+        if args or kwargs:
+            raise ProtocolError(f'Accessor {method_name!r} does not accept arguments')
         res = get_allowed_attr(obj, method_name, allow_private_attrs=allow_private_attrs)
     else:
         func = get_allowed_attr(obj, method_name, allow_private_attrs=allow_private_attrs)

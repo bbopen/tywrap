@@ -671,6 +671,14 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
           expect(cached.result, `${name} cached_property result (read ${attempt})`).toBe(26);
         }
 
+        // An accessor read that supplies arguments is a malformed request and
+        // must fail loudly rather than silently dropping the args.
+        const accessorWithArgs = await backend.dispatch({
+          method: 'call_method',
+          params: { handle, methodName: 'area', args: [1], kwargs: {} },
+        });
+        expect(accessorWithArgs.error, `${name} accessor-with-args rejected`).toBeDefined();
+
         await backend.dispatch({ method: 'dispose_instance', params: { handle } });
       }
     },
