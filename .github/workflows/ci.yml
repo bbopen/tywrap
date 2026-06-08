@@ -71,7 +71,7 @@ jobs:
         run: ${{ (matrix.node-version == 22 && matrix.python-version == '3.11') && 'npm run test:coverage' || 'npm test' }}
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         if: matrix.node-version == 22 && matrix.python-version == '3.11'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
