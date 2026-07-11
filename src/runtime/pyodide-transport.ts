@@ -110,7 +110,6 @@ __tywrap_core = __tywrap_types.ModuleType(${JSON.stringify(PYODIDE_CORE_MODULE_N
 __tywrap_sys.modules[${JSON.stringify(PYODIDE_CORE_MODULE_NAME)}] = __tywrap_core
 exec(compile(__tywrap_core_source, '<tywrap_bridge_core>', 'exec'), __tywrap_core.__dict__)
 
-__tywrap_instances = {}
 __tywrap_protocol = __tywrap_core.PROTOCOL
 
 
@@ -132,7 +131,6 @@ def __tywrap_dispatch(message_json):
         try:
             out = core.dispatch_request(
                 msg,
-                __tywrap_instances,
                 bridge='pyodide',
                 pid=None,
                 force_json_markers=True,
