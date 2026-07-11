@@ -158,7 +158,7 @@ const bridge = new NodeBridge({
 | `queueTimeoutMs`          | `number`                                 | `30000`         | Queue timeout when the pool is saturated |
 | `minProcesses`            | `number`                                 | `1`             | Minimum worker count                     |
 | `maxProcesses`            | `number`                                 | `1`             | Maximum worker count                     |
-| `maxConcurrentPerProcess` | `number`                                 | `10`            | Concurrent requests per worker           |
+| `maxConcurrentPerProcess` | `number`                                 | `1`             | Concurrent requests per serial Python worker |
 | `inheritProcessEnv`       | `boolean`                                | `false`         | Pass the full parent environment through |
 | `env`                     | `Record<string, string \| undefined>`    | `{}`            | Extra subprocess env vars                |
 | `codec`                   | `CodecOptions`                           | —               | Codec validation and byte handling       |

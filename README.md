@@ -100,7 +100,9 @@ const bridge = new NodeBridge({
 
 NodeBridge is the public Node runtime bridge. It runs in single-process mode by
 default and also supports pooled execution through `minProcesses`,
-`maxProcesses`, and `maxConcurrentPerProcess`.
+`maxProcesses`, and `maxConcurrentPerProcess`. Python workers process requests
+serially, so `maxConcurrentPerProcess` defaults to `1` and lets the pool use
+another process for concurrent calls when `maxProcesses` permits it.
 
 `OptimizedNodeBridge` is now only a deprecated compatibility alias for older
 deep imports. It is not part of the package exports and should not be used in

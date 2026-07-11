@@ -39,7 +39,7 @@ interface PooledTransportOptions {
   /** Timeout for waiting in queue (ms). Default: 30000 */
   queueTimeoutMs?: number;
 
-  /** Maximum concurrent requests per worker. Default: 10 */
+  /** Maximum concurrent requests per worker. Default: 1 */
   maxConcurrentPerWorker?: number;
 
   /**
@@ -117,7 +117,7 @@ export class PooledTransport extends DisposableBase implements Transport {
       maxWorkers: options.maxWorkers ?? 1,
       minWorkers: options.minWorkers ?? 0,
       queueTimeoutMs: options.queueTimeoutMs ?? 30000,
-      maxConcurrentPerWorker: options.maxConcurrentPerWorker ?? 10,
+      maxConcurrentPerWorker: options.maxConcurrentPerWorker ?? 1,
       onWorkerReady: options.onWorkerReady,
       onReplacementWorkerReady: options.onReplacementWorkerReady,
     };

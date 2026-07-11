@@ -39,7 +39,12 @@ export interface NodeBridgeOptions {
   /** Maximum number of Python processes to spawn. Default: 1 (single-process mode) */
   maxProcesses?: number;
 
-  /** Maximum concurrent requests per process. Default: 10 */
+  /**
+   * Maximum concurrent requests per process. Default: 1.
+   *
+   * Python bridge workers process JSONL requests serially, so the default lets
+   * the pool use another process for concurrent calls when one is available.
+   */
   maxConcurrentPerProcess?: number;
 
   /** Path to Python executable. Auto-detected if not specified. */
@@ -337,7 +342,7 @@ export class NodeBridge extends BasePythonBridge {
     const resolvedOptions: ResolvedOptions = {
       minProcesses,
       maxProcesses,
-      maxConcurrentPerProcess: options.maxConcurrentPerProcess ?? 10,
+      maxConcurrentPerProcess: options.maxConcurrentPerProcess ?? 1,
       pythonPath: options.pythonPath ?? venv?.pythonPath ?? getDefaultPythonPath(),
       scriptPath: resolvedScriptPath,
       virtualEnv,
