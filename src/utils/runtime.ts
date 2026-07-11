@@ -184,52 +184,6 @@ export function hasCapability(capability: keyof RuntimeCapabilities): boolean {
 }
 
 /**
- * Get the best runtime strategy for Python execution
- */
-export function getBestPythonRuntime(): 'node' | 'pyodide' | 'http' {
-  const runtime = detectRuntime();
-
-  if (runtime.name === 'browser') {
-    return 'pyodide';
-  }
-
-  if (runtime.capabilities.subprocess) {
-    return 'node'; // Works for Node.js, Deno, and Bun
-  }
-
-  // Fallback to HTTP bridge
-  return 'http';
-}
-
-type PathModule = typeof import('node:path');
-
-// Cache for lazy-loaded path module
-let pathModule: PathModule | null = null;
-
-/**
- * Lazy load Node.js path module on demand
- */
-async function loadPathModule(): Promise<PathModule | null> {
-  if (pathModule) {
-    return pathModule;
-  }
-
-  const runtime = detectRuntime();
-  if (runtime.name === 'node') {
-    try {
-      pathModule = await import('node:path');
-      return pathModule;
-    } catch {
-      // Fallback for older Node.js versions
-      pathModule = await import('path');
-      return pathModule;
-    }
-  }
-
-  return null;
-}
-
-/**
  * Apply a single path segment to the accumulated normalized segments,
  * resolving '..' and dropping '.'/empty segments in place.
  */
@@ -284,30 +238,6 @@ export const pathUtils = {
   },
 
   /**
-   * Join paths asynchronously with enhanced Node.js support
-   */
-  async joinAsync(...segments: string[]): Promise<string> {
-    const runtime = detectRuntime();
-
-    // For Node.js, use the real path module when available
-    if (runtime.name === 'node') {
-      const pathMod = await loadPathModule();
-      if (pathMod?.posix) {
-        return pathMod.posix.join(...segments);
-      }
-    }
-
-    // Fallback implementation with normalization
-    const joined = segments
-      .filter(Boolean)
-      .join('/')
-      .replace(/\/+/g, '/') // Replace multiple slashes with single slash
-      .replace(/\\/g, '/'); // Normalize backslashes to forward slashes
-
-    return normalizePath(joined);
-  },
-
-  /**
    * Resolve absolute path in a cross-runtime way (synchronous)
    */
   resolve(path: string): string {
@@ -327,27 +257,6 @@ export const pathUtils = {
     }
 
     // Fallback: normalize and return as-is for relative paths
-    return normalizePath(path);
-  },
-
-  /**
-   * Resolve absolute path in a cross-runtime way (asynchronous)
-   */
-  async resolveAsync(path: string): Promise<string> {
-    const runtime = detectRuntime();
-
-    if (runtime.name === 'node') {
-      const pathMod = await loadPathModule();
-      if (pathMod) {
-        return pathMod.resolve(path);
-      }
-    }
-
-    if (runtime.name === 'browser') {
-      return new URL(path, location.href).href;
-    }
-
-    // Fallback: normalize and return as-is
     return normalizePath(path);
   },
 };
@@ -643,28 +552,6 @@ export function isWindows(): boolean {
 }
 
 /**
- * Check if running on macOS
- */
-export function isMacOS(): boolean {
-  if (typeof process !== 'undefined' && process.platform) {
-    return process.platform === 'darwin';
-  }
-  const deno = (globalThis as unknown as { Deno?: { build?: { os?: string } } }).Deno;
-  return deno?.build?.os === 'darwin';
-}
-
-/**
- * Check if running on Linux
- */
-export function isLinux(): boolean {
-  if (typeof process !== 'undefined' && process.platform) {
-    return process.platform === 'linux';
-  }
-  const deno = (globalThis as unknown as { Deno?: { build?: { os?: string } } }).Deno;
-  return deno?.build?.os === 'linux';
-}
-
-/**
  * Check if a path is absolute
  */
 export function isAbsolutePath(path: string): boolean {
@@ -674,13 +561,6 @@ export function isAbsolutePath(path: string): boolean {
   }
   // Windows absolute paths (e.g., C:\, D:/)
   return /^[A-Za-z]:[\\/]/.test(path);
-}
-
-/**
- * Get the path separator for the current platform
- */
-export function getPathSeparator(): string {
-  return isWindows() ? '\\' : '/';
 }
 
 /**

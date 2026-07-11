@@ -34,7 +34,7 @@ function recordUnknown(name: string): void {
 /**
  * Main tywrap function
  */
-export interface TywrapInstance {
+interface TywrapInstance {
   mapper: TypeMapper;
   generator: CodeGenerator;
   options: Partial<TywrapOptions>;
