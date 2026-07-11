@@ -3,12 +3,11 @@
  *
  * The three bridge facades (NodeBridge/HttpBridge/PyodideBridge) all extend
  * DisposableBase (lifecycle/resources) and implement PythonRuntime by HOLDING
- * an RpcClient. The PythonRuntime delegation was byte-identical across all
+ * an RpcClient. The PythonRuntime delegation is byte-identical across all
  * three: each method does `await this.ensureReady()` then forwards to the held
  * RpcClient. This base collapses that duplication onto a single
  * `getRpcClient()` accessor while leaving each facade free to own its own
- * RpcClient field (for constructor wiring, resource tracking, and — in
- * NodeBridge's case — a caching override of call()).
+ * RpcClient field for constructor wiring and resource tracking.
  *
  * It carries no transport/codec/lifecycle specifics: doInit/doDispose remain
  * abstract on DisposableBase and stay per-facade.

@@ -160,7 +160,6 @@ const bridge = new NodeBridge({
 | `maxProcesses`            | `number`                                 | `1`             | Maximum worker count                     |
 | `maxConcurrentPerProcess` | `number`                                 | `10`            | Concurrent requests per worker           |
 | `inheritProcessEnv`       | `boolean`                                | `false`         | Pass the full parent environment through |
-| `enableCache`             | `boolean`                                | `false`         | Cache pure function results              |
 | `env`                     | `Record<string, string \| undefined>`    | `{}`            | Extra subprocess env vars                |
 | `codec`                   | `CodecOptions`                           | —               | Codec validation and byte handling       |
 | `warmupCommands`          | `Array<{ module, functionName, args? }>` | `[]`            | Commands to run when each worker starts  |

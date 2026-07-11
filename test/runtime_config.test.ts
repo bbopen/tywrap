@@ -491,19 +491,6 @@ describe('Runtime Configuration', () => {
       });
     });
 
-    it('should configure caching options', () => {
-      const cacheConfig = {
-        enableCache: true,
-        maxCacheSize: 1024 * 1024, // 1MB
-        cacheTTL: 300000, // 5 minutes
-        cacheStrategy: 'lru',
-      };
-
-      expect(cacheConfig.enableCache).toBe(true);
-      expect(cacheConfig.maxCacheSize).toBe(1048576);
-      expect(cacheConfig.cacheStrategy).toBe('lru');
-    });
-
     it('should configure memory limits', () => {
       const memoryConfig = {
         maxHeapSize: 512 * 1024 * 1024, // 512MB
