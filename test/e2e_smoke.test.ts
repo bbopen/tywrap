@@ -125,9 +125,6 @@ describeNodeOnly('E2E Smoke - CLI generate + runtime bridge', () => {
 
       setRuntimeBridge({
         call: bridge.call.bind(bridge),
-        instantiate: bridge.instantiate.bind(bridge),
-        callMethod: bridge.callMethod.bind(bridge),
-        disposeInstance: bridge.disposeInstance.bind(bridge),
         dispose: bridge.dispose.bind(bridge),
       });
 

@@ -44,7 +44,7 @@ import {
  * - Error: { id: string, error: { type, message, traceback? } }
  *
  * The BridgeCodec decodes this and returns the full parsed object.
- * BridgeProtocol's call/instantiate/callMethod methods return the full
+ * BridgeProtocol's call method returns the full
  * response object as decoded by BridgeCodec (not just the result field).
  */
 class MockTransport implements Transport {
@@ -502,62 +502,6 @@ describe('BridgeProtocol', () => {
 
       const parsed = JSON.parse(transport.lastMessage!);
       expect(parsed.params.kwargs).toEqual({ key: 'value' });
-    });
-
-    it('instantiate() sends correct message type', async () => {
-      transport.setDynamicResponse(() => 'handle-123');
-
-      const result = await protocol.instantiate<string>('mymodule', 'MyClass', [1, 'arg']);
-
-      expect(result).toBe('handle-123');
-
-      const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.method).toBe('instantiate');
-      expect(parsed.params.module).toBe('mymodule');
-      expect(parsed.params.className).toBe('MyClass');
-      expect(parsed.params.args).toEqual([1, 'arg']);
-    });
-
-    it('instantiate() supports kwargs', async () => {
-      transport.setDynamicResponse(() => 'handle-456');
-
-      await protocol.instantiate('mod', 'Class', [], { init: true });
-
-      const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.params.kwargs).toEqual({ init: true });
-    });
-
-    it('callMethod() sends correct message type', async () => {
-      transport.setDynamicResponse(() => 'method result');
-
-      const result = await protocol.callMethod<string>('handle-123', 'myMethod', ['arg1']);
-
-      expect(result).toBe('method result');
-
-      const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.method).toBe('call_method');
-      expect(parsed.params.handle).toBe('handle-123');
-      expect(parsed.params.methodName).toBe('myMethod');
-      expect(parsed.params.args).toEqual(['arg1']);
-    });
-
-    it('callMethod() supports kwargs', async () => {
-      transport.setDynamicResponse(() => null);
-
-      await protocol.callMethod('handle', 'method', [], { option: 123 });
-
-      const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.params.kwargs).toEqual({ option: 123 });
-    });
-
-    it('disposeInstance() sends correct message type', async () => {
-      transport.setDynamicResponse(() => null);
-
-      await protocol.disposeInstance('handle-789');
-
-      const parsed = JSON.parse(transport.lastMessage!);
-      expect(parsed.method).toBe('dispose_instance');
-      expect(parsed.params.handle).toBe('handle-789');
     });
   });
 });

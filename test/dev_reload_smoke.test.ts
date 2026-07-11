@@ -47,16 +47,6 @@ class LabeledBridge implements RuntimeExecution {
     return this.label as T;
   }
 
-  async instantiate<T = unknown>(): Promise<T> {
-    return `${this.label}-handle` as T;
-  }
-
-  async callMethod<T = unknown>(): Promise<T> {
-    return this.label as T;
-  }
-
-  async disposeInstance(): Promise<void> {}
-
   async dispose(): Promise<void> {
     this.disposed = true;
   }

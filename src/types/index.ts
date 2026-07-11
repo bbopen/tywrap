@@ -499,7 +499,7 @@ export interface GenerationMetadata {
   optimizations: string[];
 }
 
-// PythonRuntime — the four cross-boundary RPC methods generated wrappers call.
+// PythonRuntime — the call-only cross-boundary RPC method generated wrappers call.
 // This is the contract that, after the composition rework, is implemented ONLY
 // by the bridge facades (NodeBridge/HttpBridge/PyodideBridge); the facades
 // satisfy it by delegating to an owned RpcClient. It deliberately carries NO
@@ -513,25 +513,9 @@ export interface PythonRuntime {
     args: unknown[],
     kwargs?: Record<string, unknown>
   ): Promise<T>;
-
-  instantiate<T = unknown>(
-    module: string,
-    className: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T>;
-
-  callMethod<T = unknown>(
-    handle: string,
-    methodName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T>;
-
-  disposeInstance(handle: string): Promise<void>;
 }
 
-// Runtime bridge interface — the four RPC methods plus lifecycle dispose().
+// Runtime bridge interface — the call RPC method plus lifecycle dispose().
 // Kept as PythonRuntime + dispose() so getRuntimeBridge() and every existing
 // `RuntimeExecution` reference (registry, dev.ts) compile with zero churn. The
 // RuntimeExecution -> PythonRuntime symbol rename is deferred to the T9 pass.

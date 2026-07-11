@@ -14,9 +14,6 @@ describe('Runtime bridge registry', () => {
   it('returns the configured bridge', () => {
     const bridge = {
       call: async () => 42,
-      instantiate: async () => 'handle',
-      callMethod: async () => 1,
-      disposeInstance: async () => {},
       dispose: async () => {},
     };
 

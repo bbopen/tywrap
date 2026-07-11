@@ -454,7 +454,7 @@ export class NodeBridge extends BasePythonBridge {
 
   /**
    * Expose the held RpcClient to BasePythonBridge's shared delegating methods
-   * (call/instantiate/callMethod/disposeInstance/getBridgeInfo).
+   * (call/getBridgeInfo).
    */
   protected getRpcClient(): RpcClient {
     return this.rpc;
