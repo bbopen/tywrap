@@ -42,29 +42,40 @@ src/
   index.ts            # Public API re-exports
   tywrap.ts           # tywrap() factory and generate()
   cli.ts              # CLI entry point (tywrap init / generate)
+  dev.ts              # Development helpers
   config/             # Config loading and validation
   core/               # Code generation pipeline
+    annotation-parser.ts  # Type annotation parser
+    emit-call.ts      #   Wrapper call emission
     generator.ts      #   TypeScript wrapper generator
     mapper.ts         #   Python → TypeScript type mapper
-    analyzer.ts       #   Module analysis orchestrator
-    discovery.ts      #   Python module discovery
-    validation.ts     #   Config and IR validation
-    annotation-parser.ts  # Type annotation parser
   runtime/            # Runtime bridges (see test/runtime_*.test.ts)
+    base-bridge.ts    #   Shared bridge lifecycle
+    bounded-context.ts #  Disposable bounded-context base
+    bridge-codec.ts   #   Arrow/JSON codec with size limits
+    disposable.ts     #   Disposable primitives
+    frame-codec.ts    #   Transport frame encoding
+    http-transport.ts #   HTTP transport implementation
+    index.ts          #   Runtime subpath exports
     node.ts           #   NodeBridge — subprocess (Node, Bun, Deno)
     pyodide.ts        #   PyodideBridge — browser WebAssembly
     http.ts           #   HttpBridge — remote Python server
-    base.ts           #   Abstract base bridge
-    bridge-core.ts    #   Shared bridge logic
-    bridge-codec.ts   #   Arrow/JSON codec with size limits
     errors.ts         #   BridgeError, BridgeTimeoutError, etc.
-    process-io.ts     #   Subprocess I/O management
+    pooled-transport.ts # Multi-process transport adapter
+    pyodide-bootstrap-core.generated.ts # Generated Pyodide bridge core
+    pyodide-transport.ts # Pyodide transport implementation
+    rpc-client.ts     #   Bridge RPC client
+    subprocess-transport.ts # Subprocess transport implementation
+    timed-out-request-tracker.ts # Late-response tracker
+    transport-pool.ts #   Transport worker pool
     transport.ts      #   Transport abstraction layer
+    validators.ts     #   Runtime payload validation
   types/              # TypeScript type definitions
   utils/              # Shared utilities
     codec.ts          #   Arrow/JSON encode/decode
     runtime.ts        #   detectRuntime(), isBun(), isDeno()
-    cache.ts          #   IR and module caching
+    cache.ts          #   Artifact caching
+    ir-cache.ts       #   IR cache-key hashing
     python.ts         #   Python path/env resolution
     logger.ts         #   Structured logging
 tywrap_ir/            # Python package: AST analysis → typed IR

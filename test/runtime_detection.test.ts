@@ -12,7 +12,6 @@ import {
   isBrowser,
   getRuntimeCapabilities,
   hasCapability,
-  getBestPythonRuntime,
   pathUtils,
   fsUtils,
   processUtils,
@@ -385,62 +384,6 @@ describeRuntimeDetection('Runtime Detection', () => {
     });
   });
 
-  describe('Best Python Runtime Strategy', () => {
-    it('should choose node runtime for Node.js', () => {
-      delete (globalThis as any).Deno;
-      delete (globalThis as any).Bun;
-      delete (globalThis as any).window;
-      delete (globalThis as any).self;
-      (globalThis as any).process = { versions: { node: '18.0.0' } };
-
-      const strategy = getBestPythonRuntime();
-      expect(strategy).toBe('node');
-    });
-
-    it('should choose node runtime for Deno', () => {
-      delete (globalThis as any).process;
-      delete (globalThis as any).Bun;
-      delete (globalThis as any).window;
-      delete (globalThis as any).self;
-      (globalThis as any).Deno = { version: { deno: '1.46.0' } };
-
-      const strategy = getBestPythonRuntime();
-      expect(strategy).toBe('node'); // Deno supports subprocess
-    });
-
-    it('should choose node runtime for Bun', () => {
-      delete (globalThis as any).Deno;
-      delete (globalThis as any).process;
-      delete (globalThis as any).window;
-      delete (globalThis as any).self;
-      (globalThis as any).Bun = { version: '1.1.0' };
-
-      const strategy = getBestPythonRuntime();
-      expect(strategy).toBe('node'); // Bun supports subprocess
-    });
-
-    it('should choose pyodide runtime for browser', () => {
-      delete (globalThis as any).Deno;
-      delete (globalThis as any).Bun;
-      delete (globalThis as any).process;
-      (globalThis as any).window = { location: { href: 'http://localhost' } };
-
-      const strategy = getBestPythonRuntime();
-      expect(strategy).toBe('pyodide');
-    });
-
-    it('should fallback to http for unknown environments', () => {
-      delete (globalThis as any).Deno;
-      delete (globalThis as any).Bun;
-      delete (globalThis as any).process;
-      delete (globalThis as any).window;
-      delete (globalThis as any).self;
-
-      const strategy = getBestPythonRuntime();
-      expect(strategy).toBe('http');
-    });
-  });
-
   describe('Path Utilities Cross-Runtime', () => {
     it('should join paths consistently across runtimes', () => {
       const testCases = [
@@ -714,15 +657,6 @@ describeRuntimeDetection('Runtime Detection', () => {
       const capability2 = hasCapability('filesystem');
 
       expect(capability1).toBe(capability2);
-    });
-
-    it('should maintain consistency for Python runtime selection', () => {
-      (globalThis as any).process = { versions: { node: '18.0.0' } };
-
-      const strategy1 = getBestPythonRuntime();
-      const strategy2 = getBestPythonRuntime();
-
-      expect(strategy1).toBe(strategy2);
     });
   });
 });

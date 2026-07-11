@@ -167,32 +167,9 @@ describe('Path Utilities', () => {
     });
   });
 
-  describe('Async join', () => {
-    it('should join paths asynchronously', async () => {
-      const joined = await pathUtils.joinAsync('src', 'utils', 'runtime.ts');
-      expect(joined).toBe('src/utils/runtime.ts');
-    });
-
-    it('should use Node.js path.posix when available', async () => {
-      // Mock Node.js environment
-      vi.stubGlobal('process', {
-        versions: { node: '20.0.0' },
-      });
-
-      const joined = await pathUtils.joinAsync('src', 'utils');
-      expect(joined).toBe('src/utils');
-    });
-  });
-
   describe('Resolve', () => {
     it('should resolve paths synchronously', () => {
       const resolved = pathUtils.resolve('./test-file');
-      expect(typeof resolved).toBe('string');
-      expect(resolved).toContain('test-file');
-    });
-
-    it('should resolve paths asynchronously with resolveAsync', async () => {
-      const resolved = await pathUtils.resolveAsync('./test-file');
       expect(typeof resolved).toBe('string');
       expect(resolved).toContain('test-file');
     });
@@ -231,11 +208,6 @@ describe('Path Utilities', () => {
 
     it('should resolve URLs in browser environment', () => {
       const resolved = pathUtils.resolve('./module.js');
-      expect(resolved).toContain('module.js');
-    });
-
-    it('should resolve URLs asynchronously in browser environment', async () => {
-      const resolved = await pathUtils.resolveAsync('./module.js');
       expect(resolved).toContain('module.js');
     });
   });

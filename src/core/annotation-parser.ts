@@ -1,6 +1,6 @@
 import type { PythonGenericParameter, PythonType } from '../types/index.js';
 
-export interface AnnotationParserOptions {
+interface AnnotationParserOptions {
   onUnknownTypeName?: (name: string) => void;
   knownTypeVarNames?: Iterable<string>;
   typeParameters?: readonly PythonGenericParameter[];

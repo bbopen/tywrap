@@ -12,7 +12,7 @@ import { getComponentLogger } from './logger.js';
 
 const log = getComponentLogger('Cache');
 
-export interface CacheEntry<T = unknown> {
+interface CacheEntry<T = unknown> {
   key: string;
   data: T;
   timestamp: number;
@@ -27,7 +27,7 @@ export interface CacheEntry<T = unknown> {
   };
 }
 
-export interface CacheStats {
+interface CacheStats {
   totalEntries: number;
   totalSize: number;
   hitRate: number;
@@ -36,7 +36,7 @@ export interface CacheStats {
   memoryUsage: number;
 }
 
-export interface CacheConfig {
+interface CacheConfig {
   baseDir: string;
   maxSize: number; // Maximum cache size in bytes
   maxAge: number; // Maximum age in milliseconds

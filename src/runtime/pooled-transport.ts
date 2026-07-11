@@ -20,7 +20,7 @@ import { TransportPool, type TransportLease } from './transport-pool.js';
 /**
  * Options for creating a PooledTransport.
  */
-export interface PooledTransportOptions {
+interface PooledTransportOptions {
   /**
    * Factory function to create transports for each worker.
    *

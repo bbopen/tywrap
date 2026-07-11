@@ -32,9 +32,9 @@ import type {
   TypePreset,
 } from '../types/index.js';
 
-export type MappingContext = 'value' | 'return';
+type MappingContext = 'value' | 'return';
 
-export interface TypeMapperOptions {
+interface TypeMapperOptions {
   presets?: readonly TypePreset[];
 }
 

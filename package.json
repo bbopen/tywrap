@@ -1,7 +1,7 @@
 {
   "name": "tywrap",
   "version": "0.8.0",
-  "description": "Generate type-safe TypeScript wrappers for any Python library — Node.js, Deno, Bun, and browsers via Pyodide.",
+  "description": "Generate type-safe TypeScript wrappers for any Python library \u2014 Node.js, Deno, Bun, and browsers via Pyodide.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -121,8 +121,6 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@babel/parser": "^7.29.3",
-    "@babel/types": "^7.25.6",
     "typescript": "^6.0.3",
     "yargs": "^18.0.0"
   },

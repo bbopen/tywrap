@@ -1,4 +1,4 @@
-export interface TimedOutRequestTrackerOptions {
+interface TimedOutRequestTrackerOptions {
   ttlMs: number;
   maxSize?: number;
 }

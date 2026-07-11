@@ -1,6 +1,6 @@
 import { hashUtils } from './runtime.js';
 
-export interface IrCacheKeyObject {
+interface IrCacheKeyObject {
   module: string;
   moduleVersion: string | null;
   irVersion: string;
