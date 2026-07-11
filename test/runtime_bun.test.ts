@@ -5,14 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { rm, mkdir } from 'node:fs/promises';
-import {
-  isBun,
-  detectRuntime,
-  processUtils,
-  fsUtils,
-  pathUtils,
-  clearRuntimeCache,
-} from '../src/utils/runtime.js';
+import { isBun, detectRuntime, processUtils, fsUtils, pathUtils } from '../src/utils/runtime.js';
 
 // Skip all tests if not running in Bun environment
 const describeBunOnly = isBun() ? describe : describe.skip;
@@ -28,14 +21,12 @@ describeBunOnly('Bun Runtime Support', () => {
 
   describe('Runtime Detection', () => {
     it('should detect Bun runtime correctly', () => {
-      clearRuntimeCache();
       const runtime = detectRuntime();
       expect(runtime.name).toBe('bun');
       expect(runtime.version).toBe(Bun.version);
     });
 
     it('should report correct capabilities for Bun', () => {
-      clearRuntimeCache();
       const runtime = detectRuntime();
       expect(runtime.capabilities).toEqual({
         filesystem: true,
@@ -55,11 +46,9 @@ describeBunOnly('Bun Runtime Support', () => {
       const originalBun = (globalThis as any).Bun;
       try {
         delete (globalThis as any).Bun;
-        clearRuntimeCache();
         expect(isBun()).toBe(false);
       } finally {
         (globalThis as any).Bun = originalBun;
-        clearRuntimeCache();
       }
     });
   });
