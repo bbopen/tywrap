@@ -140,7 +140,7 @@ const info = await bridge.getBridgeInfo({ refresh: true });
 | `queueTimeoutMs`          | `30000`         | Wait time when the worker pool is saturated     |
 | `minProcesses`            | `1`             | Minimum worker count                            |
 | `maxProcesses`            | `1`             | Maximum worker count                            |
-| `maxConcurrentPerProcess` | `10`            | Concurrent requests per worker                  |
+| `maxConcurrentPerProcess` | `1`             | Concurrent requests per serial Python worker    |
 | `inheritProcessEnv`       | `false`         | Pass full parent env through                    |
 | `env`                     | `{}`            | Extra subprocess env vars                       |
 | `codec`                   | —               | `CodecOptions` for validation and byte handling |

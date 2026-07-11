@@ -28,7 +28,7 @@ export interface CodecOptions {
   /** Max payload size in bytes. Default: 10MB */
   maxPayloadBytes?: number;
   /** How to handle bytes/bytearray. Default: 'base64' */
-  bytesHandling?: 'base64' | 'reject' | 'passthrough';
+  bytesHandling?: 'base64' | 'reject';
 }
 
 /**
@@ -88,11 +88,13 @@ function buildPath(basePath: string, key: string | number): string {
 }
 
 /**
- * Recursively check for non-string keys in objects and Maps.
+ * Recursively validate request values that JSON.stringify cannot represent
+ * without data loss, and optionally check object keys.
  * Throws BridgeCodecError with path indication if found.
  */
-function assertStringKeys(
+function assertRequestValues(
   value: unknown,
+  rejectNonStringKeys: boolean,
   path: string = '',
   visited: WeakSet<object> = new WeakSet<object>()
 ): void {
@@ -104,29 +106,28 @@ function assertStringKeys(
   }
   visited.add(value);
 
-  // Check Map instances for non-string keys
+  // JSON.stringify serializes every Map as {}, including Maps with string keys.
   if (value instanceof Map) {
-    for (const key of value.keys()) {
-      if (typeof key !== 'string') {
-        const keyDesc = typeof key === 'symbol' ? key.toString() : String(key);
-        const location = path ? ` at ${path}` : '';
-        throw new BridgeCodecError(
-          `Non-string key found in Map${location}: ${keyDesc} (${typeof key})`,
-          { codecPhase: 'encode' }
-        );
-      }
-    }
-    // Recurse into Map values
-    for (const [key, val] of value.entries()) {
-      assertStringKeys(val, buildPath(path, key), visited);
-    }
-    return;
+    const location = path ? ` at ${path}` : '';
+    throw new BridgeCodecError(
+      `Cannot encode request: Map found${location}; convert it to a plain object before sending`,
+      { codecPhase: 'encode' }
+    );
+  }
+
+  // JSON.stringify serializes every Set as {}.
+  if (value instanceof Set) {
+    const location = path ? ` at ${path}` : '';
+    throw new BridgeCodecError(
+      `Cannot encode request: Set found${location}; convert it to an array before sending`,
+      { codecPhase: 'encode' }
+    );
   }
 
   // Check arrays
   if (Array.isArray(value)) {
     for (const [index, item] of value.entries()) {
-      assertStringKeys(item, buildPath(path, index), visited);
+      assertRequestValues(item, rejectNonStringKeys, buildPath(path, index), visited);
     }
     return;
   }
@@ -134,19 +135,21 @@ function assertStringKeys(
   // Check plain objects for symbol keys
   if (isPlainObject(value)) {
     // Symbol keys are not enumerated by Object.keys, use getOwnPropertySymbols
-    const symbolKeys = Object.getOwnPropertySymbols(value);
-    const firstSymbol = symbolKeys[0];
-    if (firstSymbol !== undefined) {
-      const symbolDesc = firstSymbol.toString();
-      const location = path ? ` at ${path}` : '';
-      throw new BridgeCodecError(`Symbol key found in object${location}: ${symbolDesc}`, {
-        codecPhase: 'encode',
-      });
+    if (rejectNonStringKeys) {
+      const symbolKeys = Object.getOwnPropertySymbols(value);
+      const firstSymbol = symbolKeys[0];
+      if (firstSymbol !== undefined) {
+        const symbolDesc = firstSymbol.toString();
+        const location = path ? ` at ${path}` : '';
+        throw new BridgeCodecError(`Symbol key found in object${location}: ${symbolDesc}`, {
+          codecPhase: 'encode',
+        });
+      }
     }
 
     // Recurse into object values
     for (const [key, item] of Object.entries(value)) {
-      assertStringKeys(item, buildPath(path, key), visited);
+      assertRequestValues(item, rejectNonStringKeys, buildPath(path, key), visited);
     }
   }
 }
@@ -318,7 +321,7 @@ export class BridgeCodec {
   private readonly rejectSpecialFloats: boolean;
   private readonly rejectNonStringKeys: boolean;
   private readonly maxPayloadBytes: number;
-  private readonly bytesHandling: 'base64' | 'reject' | 'passthrough';
+  private readonly bytesHandling: 'base64' | 'reject';
   private readonly reviveValueBound: (key: string, value: unknown) => unknown;
   private static readonly base64Pattern =
     /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
@@ -515,10 +518,8 @@ export class BridgeCodec {
       );
     }
 
-    // Validate string keys if enabled
-    if (this.rejectNonStringKeys) {
-      assertStringKeys(message);
-    }
+    // Reject values JSON.stringify would silently mangle, and validate object keys.
+    assertRequestValues(message, this.rejectNonStringKeys);
 
     // Serialize to JSON with error handling
     let payload: string;
@@ -537,9 +538,6 @@ export class BridgeCodec {
               const b64 = this.toBase64(bytes);
               return { __tywrap_bytes__: true, b64 };
             }
-            case 'passthrough':
-            default:
-              return value;
           }
         }
         return value;

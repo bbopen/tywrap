@@ -939,6 +939,24 @@ def get_bad():
     );
 
     it.skipIf(!PYTHON_OK)(
+      'uses both workers for two concurrent calls when maxProcesses is 2 by default',
+      async () => {
+        bridge = new NodeBridge({ scriptPath, maxProcesses: 2, timeoutMs: defaultTimeoutMs });
+        try {
+          const processIds = await Promise.all([
+            bridge.call<number>('os', 'getpid', []),
+            bridge.call<number>('os', 'getpid', []),
+          ]);
+
+          expect(new Set(processIds)).toHaveLength(2);
+        } finally {
+          await bridge.dispose();
+        }
+      },
+      testTimeout
+    );
+
+    it.skipIf(!PYTHON_OK)(
       'should handle process crashes gracefully',
       async () => {
         bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });

@@ -138,39 +138,45 @@ describe('encodeRequest - Non-String Key Rejection', () => {
     codec = new BridgeCodec({ rejectNonStringKeys: true });
   });
 
-  it('rejects Map with number keys', () => {
+  it('rejects Map with number keys before JSON.stringify can silently encode it as an object', () => {
     const map = new Map<number, string>([
       [1, 'one'],
       [2, 'two'],
     ]);
     expect(() => codec.encodeRequest({ data: map })).toThrow(BridgeCodecError);
-    expect(() => codec.encodeRequest({ data: map })).toThrow(/Non-string key.*Map/);
-    expect(() => codec.encodeRequest({ data: map })).toThrow(/1.*number/);
+    expect(() => codec.encodeRequest({ data: map })).toThrow(/Map found at data/);
+    expect(() => codec.encodeRequest({ data: map })).toThrow(/plain object/);
   });
 
   it('rejects Map with object keys', () => {
     const objKey = { id: 1 };
     const map = new Map<object, string>([[objKey, 'value']]);
     expect(() => codec.encodeRequest({ data: map })).toThrow(BridgeCodecError);
-    expect(() => codec.encodeRequest({ data: map })).toThrow(/Non-string key.*Map/);
-    expect(() => codec.encodeRequest({ data: map })).toThrow(/object/);
+    expect(() => codec.encodeRequest({ data: map })).toThrow(/Map found at data/);
   });
 
   it('rejects Map with symbol keys', () => {
     const sym = Symbol('test');
     const map = new Map<symbol, string>([[sym, 'value']]);
     expect(() => codec.encodeRequest({ data: map })).toThrow(BridgeCodecError);
-    expect(() => codec.encodeRequest({ data: map })).toThrow(/symbol/);
+    expect(() => codec.encodeRequest({ data: map })).toThrow(/Map found at data/);
   });
 
-  it('passes Map with string keys', () => {
+  it('rejects Map with string keys before JSON.stringify can silently encode it as an object', () => {
     const map = new Map<string, number>([
       ['a', 1],
       ['b', 2],
     ]);
-    // Note: JSON.stringify doesn't serialize Maps to objects by default
-    // It will serialize to {} or needs a replacer, so we just verify validation passes
-    expect(() => codec.encodeRequest({ data: map })).not.toThrow();
+    expect(() => codec.encodeRequest({ data: map })).toThrow(BridgeCodecError);
+    expect(() => codec.encodeRequest({ data: map })).toThrow(/Map found at data/);
+    expect(() => codec.encodeRequest({ data: map })).toThrow(/plain object/);
+  });
+
+  it('rejects Set values before JSON.stringify can silently encode them as an object', () => {
+    const values = new Set([1, 2, 3]);
+    expect(() => codec.encodeRequest({ data: values })).toThrow(BridgeCodecError);
+    expect(() => codec.encodeRequest({ data: values })).toThrow(/Set found at data/);
+    expect(() => codec.encodeRequest({ data: values })).toThrow(/array/);
   });
 
   it('passes plain objects with string keys', () => {
@@ -198,11 +204,11 @@ describe('encodeRequest - Non-String Key Rejection', () => {
     expect(() => codec.encodeRequest(data)).toThrow(BridgeCodecError);
   });
 
-  it('can be disabled via rejectNonStringKeys: false', () => {
+  it('still rejects Maps when rejectNonStringKeys is disabled', () => {
     const permissiveCodec = new BridgeCodec({ rejectNonStringKeys: false });
     const map = new Map<number, string>([[1, 'one']]);
-    // Validation should pass (though JSON.stringify still won't serialize Map properly)
-    expect(() => permissiveCodec.encodeRequest({ data: map })).not.toThrow();
+    expect(() => permissiveCodec.encodeRequest({ data: map })).toThrow(BridgeCodecError);
+    expect(() => permissiveCodec.encodeRequest({ data: map })).toThrow(/plain object/);
   });
 });
 
@@ -304,8 +310,8 @@ describe('encodeRequest - Serialization Errors', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('encodeRequest - Bytes Handling', () => {
-  it('encodes Uint8Array to base64 with marker (default)', () => {
-    const codec = new BridgeCodec({ bytesHandling: 'base64' });
+  it('keeps Uint8Array base64 encoding unchanged by default', () => {
+    const codec = new BridgeCodec();
     const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
     const payload = codec.encodeRequest({ data: bytes });
     const parsed = JSON.parse(payload);
@@ -328,16 +334,6 @@ describe('encodeRequest - Bytes Handling', () => {
     expect(() => codec.encodeRequest({ data: bytes })).toThrow(BridgeCodecError);
     expect(() => codec.encodeRequest({ data: bytes })).toThrow(/binary data found/);
     expect(() => codec.encodeRequest({ data: bytes })).toThrow(/bytesHandling: reject/);
-  });
-
-  it('passes through binary data when bytesHandling is passthrough', () => {
-    const codec = new BridgeCodec({ bytesHandling: 'passthrough' });
-    const bytes = new Uint8Array([1, 2, 3]);
-    // passthrough means we don't transform, but JSON.stringify will still fail
-    // to serialize Uint8Array properly (it becomes an object with indices)
-    const payload = codec.encodeRequest({ data: bytes });
-    const parsed = JSON.parse(payload);
-    expect(parsed.data).toEqual({ '0': 1, '1': 2, '2': 3 });
   });
 });
 
