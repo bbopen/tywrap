@@ -29,14 +29,30 @@ interface GenericRenderParam {
 
 interface GenericRenderContext {
   currentModule?: string;
+  localDeclaredNames: Set<string>;
   declaration: string;
   typeArguments: string;
   emittedNames: Set<string>;
   emittedParamSpecs: Set<string>;
 }
 
+export interface CodeGeneratorOptions {
+  /** Reports a generated annotation that cannot be represented by emitted declarations. */
+  onTypeDegrade?: (typeName: string) => void;
+}
+
 export class CodeGenerator {
   private readonly mapper: TypeMapper;
+  private readonly onTypeDegrade?: (typeName: string) => void;
+  private readonly builtinGenericNames = new Set([
+    'Array',
+    'AsyncIterator',
+    'Generator',
+    'Iterable',
+    'Iterator',
+    'Promise',
+    'Record',
+  ]);
   private readonly reservedTsIdentifiers = new Set([
     'default',
     'delete',
@@ -66,8 +82,9 @@ export class CodeGenerator {
     'false',
   ]);
 
-  constructor(mapper: TypeMapper = new TypeMapper()) {
+  constructor(mapper: TypeMapper = new TypeMapper(), options: CodeGeneratorOptions = {}) {
     this.mapper = mapper;
+    this.onTypeDegrade = options.onTypeDegrade;
   }
 
   /**
@@ -140,7 +157,8 @@ export class CodeGenerator {
   private buildGenericRenderContext(
     typeParameters: readonly PythonGenericParameter[],
     types: readonly PythonType[],
-    currentModule?: string
+    currentModule?: string,
+    localDeclaredNames: Set<string> = new Set()
   ): GenericRenderContext {
     const callableParamSpecs = new Set<string>();
     types.forEach(type => this.collectCallableParamSpecs(type, callableParamSpecs));
@@ -170,6 +188,7 @@ export class CodeGenerator {
 
     return {
       currentModule,
+      localDeclaredNames,
       declaration:
         emitted.length > 0 ? `<${emitted.map(param => param.declaration).join(', ')}>` : '',
       typeArguments: emitted.length > 0 ? `<${emitted.map(param => param.name).join(', ')}>` : '',
@@ -184,6 +203,7 @@ export class CodeGenerator {
   ): GenericRenderContext {
     return {
       currentModule: inner.currentModule ?? outer.currentModule,
+      localDeclaredNames: inner.localDeclaredNames,
       declaration: inner.declaration,
       typeArguments: inner.typeArguments,
       emittedNames: new Set([...outer.emittedNames, ...inner.emittedNames]),
@@ -308,7 +328,27 @@ export class CodeGenerator {
     ctx: GenericRenderContext,
     mappingContext: 'value' | 'return'
   ): string {
-    return this.typeToTs(this.mapper.mapPythonType(this.sanitizeType(type, ctx), mappingContext));
+    return this.typeToTs(
+      this.mapper.mapPythonType(this.sanitizeType(type, ctx), mappingContext),
+      ctx,
+      mappingContext
+    );
+  }
+
+  private isLocalTypeIdentity(
+    type: { name: string; module?: string },
+    ctx: GenericRenderContext
+  ): boolean {
+    if (!ctx.localDeclaredNames.has(type.name)) {
+      return false;
+    }
+    return type.module === undefined || type.module === ctx.currentModule;
+  }
+
+  private degradeType(type: { name: string; module?: string }): string {
+    const identity = type.module ? `${type.module}.${type.name}` : type.name;
+    this.onTypeDegrade?.(identity);
+    return 'unknown';
   }
 
   private renderLooksLikeKwargsExpr(
@@ -360,7 +400,8 @@ export class CodeGenerator {
   generateFunctionWrapper(
     func: PythonFunction,
     moduleName?: string,
-    annotatedJSDoc = false
+    annotatedJSDoc = false,
+    localDeclaredNames: Set<string> = new Set()
   ): GeneratedCode {
     const jsdoc = this.generateJsDoc(
       func.docstring,
@@ -379,7 +420,8 @@ export class CodeGenerator {
     const genericContext = this.buildGenericRenderContext(
       this.getTypeParameters(func.typeParameters),
       [func.returnType, ...filteredParams.map(param => param.type)],
-      moduleName
+      moduleName,
+      localDeclaredNames
     );
     const typeParamDecl = genericContext.declaration;
 
@@ -553,8 +595,11 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
   generateClassWrapper(
     cls: PythonClass,
     moduleName?: string,
-    _annotatedJSDoc = false
+    _annotatedJSDoc = false,
+    localDeclaredNames: Set<string> = new Set()
   ): GeneratedCode {
+    const moduleDeclaredNames = new Set(localDeclaredNames);
+    moduleDeclaredNames.add(cls.name);
     const jsdoc = this.generateJsDoc(cls.docstring);
     const classGenericContext = this.buildGenericRenderContext(
       this.getTypeParameters(cls.typeParameters),
@@ -566,7 +611,8 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
           ...method.parameters.map(p => p.type),
         ]),
       ],
-      moduleName
+      moduleName,
+      moduleDeclaredNames
     );
     const classTypeParamDecl = classGenericContext.declaration;
     const cname = this.escapeIdentifier(cls.name);
@@ -617,7 +663,8 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
           const methodOwnGenericContext = this.buildGenericRenderContext(
             this.getTypeParameters(m.typeParameters),
             [m.returnType, ...fparams.map(param => param.type)],
-            moduleName
+            moduleName,
+            moduleDeclaredNames
           );
           const methodGenericContext = this.mergeGenericRenderContexts(
             classGenericContext,
@@ -668,7 +715,8 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
         const methodOwnGenericContext = this.buildGenericRenderContext(
           this.getTypeParameters(method.typeParameters),
           [method.returnType, ...fparams.map(param => param.type)],
-          moduleName
+          moduleName,
+          moduleDeclaredNames
         );
         const methodGenericContext = this.mergeGenericRenderContexts(
           classGenericContext,
@@ -816,11 +864,16 @@ ${migrationNote}${declarationMethodsSection}
     return this.wrap(ts, declaration, [cls.name]);
   }
 
-  generateTypeAlias(alias: PythonTypeAlias, moduleName?: string): GeneratedCode {
+  generateTypeAlias(
+    alias: PythonTypeAlias,
+    moduleName?: string,
+    localDeclaredNames: Set<string> = new Set()
+  ): GeneratedCode {
     const genericContext = this.buildGenericRenderContext(
       this.getTypeParameters(alias.typeParameters),
       [alias.type],
-      moduleName
+      moduleName,
+      localDeclaredNames
     );
     const aliasName = this.escapeIdentifier(alias.name, { preserveCase: true });
     const body = this.typeToTsFromPython(alias.type, genericContext, 'value');
@@ -854,15 +907,19 @@ ${migrationNote}${declarationMethodsSection}
   }
 
   generateModuleDefinition(module: PythonModule, annotatedJSDoc = false): GeneratedCode {
+    const localDeclaredNames = new Set([
+      ...module.classes.map(cls => cls.name),
+      ...(module.typeAliases ?? []).map(alias => alias.name),
+    ]);
     const functionResults = [...module.functions]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map(f => this.generateFunctionWrapper(f, module.name, annotatedJSDoc));
+      .map(f => this.generateFunctionWrapper(f, module.name, annotatedJSDoc, localDeclaredNames));
     const classResults = [...module.classes]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map(c => this.generateClassWrapper(c, module.name, annotatedJSDoc));
+      .map(c => this.generateClassWrapper(c, module.name, annotatedJSDoc, localDeclaredNames));
     const typeAliasResults = [...(module.typeAliases ?? [])]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map(alias => this.generateTypeAlias(alias, module.name));
+      .map(alias => this.generateTypeAlias(alias, module.name, localDeclaredNames));
 
     const functionCodes = functionResults.map(result => result.typescript).join('\n');
     const classCodes = classResults.map(result => result.typescript).join('\n');
@@ -917,23 +974,27 @@ ${migrationNote}${declarationMethodsSection}
     };
   }
 
-  private typeToTs(type: TypescriptType): string {
+  private typeToTs(
+    type: TypescriptType,
+    ctx?: GenericRenderContext,
+    mappingContext: 'value' | 'return' = 'value'
+  ): string {
     switch (type.kind) {
       case 'primitive':
         return type.name;
       case 'array':
-        return `${this.typeToTs(type.elementType)}[]`;
+        return `${this.typeToTs(type.elementType, ctx, mappingContext)}[]`;
       case 'tuple': {
         const t = type as { kind: 'tuple'; elementTypes: TypescriptType[] };
-        const parts = t.elementTypes.map(e => this.typeToTs(e)).join(', ');
+        const parts = t.elementTypes.map(e => this.typeToTs(e, ctx, mappingContext)).join(', ');
         return `[${parts}]`;
       }
       case 'object': {
         const t = type;
         // If it's a simple Record<string, T> pattern, use that syntax
         if (t.properties.length === 0 && t.indexSignature) {
-          const keyType = this.typeToTs(t.indexSignature.keyType);
-          const valueType = this.typeToTs(t.indexSignature.valueType);
+          const keyType = this.typeToTs(t.indexSignature.keyType, ctx, mappingContext);
+          const valueType = this.typeToTs(t.indexSignature.valueType, ctx, mappingContext);
           if (keyType === 'string') {
             return `Record<string, ${valueType}>`;
           }
@@ -942,34 +1003,53 @@ ${migrationNote}${declarationMethodsSection}
         const props = t.properties
           .map(
             p =>
-              `${p.readonly ? 'readonly ' : ''}${p.name}${p.optional ? '?' : ''}: ${this.typeToTs(p.type)};`
+              `${p.readonly ? 'readonly ' : ''}${p.name}${p.optional ? '?' : ''}: ${this.typeToTs(p.type, ctx, mappingContext)};`
           )
           .join(' ');
         const indexSig = t.indexSignature
-          ? `[key: ${this.typeToTs(t.indexSignature.keyType)}]: ${this.typeToTs(t.indexSignature.valueType)};`
+          ? `[key: ${this.typeToTs(t.indexSignature.keyType, ctx, mappingContext)}]: ${this.typeToTs(t.indexSignature.valueType, ctx, mappingContext)};`
           : '';
         return `{ ${props} ${indexSig} }`;
       }
       case 'union':
-        return type.types.map(t => this.typeToTs(t)).join(' | ');
+        return type.types.map(t => this.typeToTs(t, ctx, mappingContext)).join(' | ');
       case 'function': {
         const ft = type;
         const params = ft.parameters
           .map(
-            p => `${p.rest ? '...' : ''}${p.name}${p.optional ? '?' : ''}: ${this.typeToTs(p.type)}`
+            p =>
+              `${p.rest ? '...' : ''}${p.name}${p.optional ? '?' : ''}: ${this.typeToTs(p.type, ctx, mappingContext)}`
           )
           .join(', ');
-        return `(${params}) => ${this.typeToTs(ft.returnType)}`;
+        return `(${params}) => ${this.typeToTs(ft.returnType, ctx, mappingContext)}`;
       }
       case 'generic': {
-        const g = type as { kind: 'generic'; name: string; typeArgs: TypescriptType[] };
-        const args = g.typeArgs.map(a => this.typeToTs(a)).join(', ');
+        const g = type as {
+          kind: 'generic';
+          name: string;
+          module?: string;
+          typeArgs: TypescriptType[];
+        };
+        if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(g.name)) {
+          return this.degradeType(g);
+        }
+        if (ctx && !this.builtinGenericNames.has(g.name) && !this.isLocalTypeIdentity(g, ctx)) {
+          return this.degradeType(g);
+        }
+        const args = g.typeArgs.map(a => this.typeToTs(a, ctx, mappingContext)).join(', ');
         return `${g.name}<${args}>`;
       }
       case 'custom': {
-        const c = type as { kind: 'custom'; name: string };
+        const c = type as { kind: 'custom'; name: string; module?: string };
         if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(c.name)) {
-          return 'unknown';
+          return this.degradeType(c);
+        }
+        if (
+          ctx &&
+          !this.isLocalTypeIdentity(c, ctx) &&
+          !(c.module === 'typing' && ctx.emittedNames.has(c.name))
+        ) {
+          return this.degradeType(c);
         }
         return c.name;
       }

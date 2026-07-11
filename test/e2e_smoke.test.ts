@@ -75,7 +75,7 @@ describeNodeOnly('E2E Smoke - CLI generate + runtime bridge', () => {
         modulePath,
         [
           'class Greeter:',
-          '    def __init__(self, name: str):',
+          '    def __init__(self, name: str) -> None:',
           '        self.name = name',
           '',
           '    def greet(self, suffix: str = "!") -> str:',

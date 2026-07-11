@@ -94,6 +94,85 @@ describe('CodeGenerator', () => {
     expect(code.typescript).toMatch(/Promise<\[number, string\]>/);
   });
 
+  it('degrades undeclared generated type leaves to unknown and reports them', () => {
+    const degraded: string[] = [];
+    const honestGenerator = new CodeGenerator(undefined, {
+      onTypeDegrade: typeName => degraded.push(typeName),
+    });
+    const code = honestGenerator.generateModuleDefinition({
+      name: 'local_module',
+      functions: [
+        {
+          name: 'external',
+          signature: {
+            parameters: [],
+            returnType: { kind: 'custom', name: 'Remote', module: 'other' },
+            isAsync: false,
+            isGenerator: false,
+          },
+          decorators: [],
+          isAsync: false,
+          isGenerator: false,
+          returnType: { kind: 'custom', name: 'Remote', module: 'other' },
+          parameters: [],
+        },
+      ],
+      classes: [],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    });
+
+    expect(code.typescript).toContain('Promise<unknown>');
+    expect(code.typescript).not.toContain('Promise<Remote>');
+    expect(degraded).toEqual(['other.Remote']);
+  });
+
+  it('degrades qualified generic heads and module-colliding leaves', () => {
+    const degraded: string[] = [];
+    const honestGenerator = new CodeGenerator(undefined, {
+      onTypeDegrade: typeName => degraded.push(typeName),
+    });
+    const makeFunction = (name: string, returnType: any): any => ({
+      name,
+      signature: { parameters: [], returnType, isAsync: false, isGenerator: false },
+      decorators: [],
+      isAsync: false,
+      isGenerator: false,
+      returnType,
+      parameters: [],
+    });
+    const code = honestGenerator.generateModuleDefinition({
+      name: 'local_module',
+      functions: [
+        makeFunction('generic', {
+          kind: 'generic',
+          name: 'Remote',
+          module: 'other',
+          typeArgs: [{ kind: 'primitive', name: 'int' }],
+        }),
+        makeFunction('collision', { kind: 'custom', name: 'Point', module: 'external' }),
+        makeFunction('invalid', { kind: 'custom', name: 'bad-name', module: 'external' }),
+      ],
+      classes: [
+        {
+          name: 'Point',
+          bases: [],
+          methods: [],
+          properties: [],
+          decorators: [],
+        },
+      ],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    });
+
+    expect(code.typescript).not.toContain('Remote<number>');
+    expect(code.typescript).not.toContain('Promise<Point>');
+    expect(degraded).toEqual(['external.Point', 'other.Remote', 'external.bad-name']);
+  });
+
   it('emits JSDoc with Annotated metadata when enabled', () => {
     const code = gen.generateFunctionWrapper(
       {

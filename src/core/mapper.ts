@@ -94,7 +94,7 @@ export class TypeMapper {
           : type.name === 'bool'
             ? 'boolean'
             : type.name === 'bytes'
-              ? 'string'
+              ? 'Uint8Array'
               : // None
                 context === 'return'
                 ? 'void'
@@ -137,16 +137,15 @@ export class TypeMapper {
       return { kind: 'tuple', elementTypes } satisfies TSTupleType;
     }
 
-    // set[T] -> Set<T>
+    // Python sets cross the JSON bridge as arrays in both directions.
     if (type.name === 'set' || type.name === 'frozenset') {
       const elementType = this.mapPythonType(
         type.itemTypes[0] ?? { kind: 'custom', name: 'Any', module: 'typing' }
       );
       return {
-        kind: 'generic',
-        name: 'Set',
-        typeArgs: [elementType],
-      } satisfies TSGenericType;
+        kind: 'array',
+        elementType,
+      } satisfies TSArrayType;
     }
 
     // dict[K, V] -> { [key: K]: V }
@@ -204,6 +203,7 @@ export class TypeMapper {
     return {
       kind: 'generic',
       name: normalized.name,
+      module: normalized.module,
       typeArgs,
     };
   }

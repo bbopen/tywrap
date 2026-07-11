@@ -178,7 +178,7 @@ describe('TypeMapper - Property-Based Tests', () => {
               );
             case 'set':
             case 'frozenset':
-              return result.kind === 'generic' && (result as any).name === 'Set';
+              return result.kind === 'array';
             default:
               return false;
           }
@@ -304,6 +304,8 @@ describe('TypeMapper - Property-Based Tests', () => {
               'void',
               'unknown',
               'never',
+              'object',
+              'Uint8Array',
             ];
             return primitiveNames.includes((result as any).name);
 

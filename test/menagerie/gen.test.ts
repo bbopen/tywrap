@@ -73,51 +73,42 @@ describe('menagerie generation gate', () => {
     30_000
   );
 
-  // FIXME(#267): map Decimal and complex to declared TypeScript types.
-  it.fails(
-    'typechecks the generated plain-values fixture',
-    async () => {
-      const tempDir = await mkdtemp(join(process.cwd(), '.tmp-menagerie-values-'));
-      try {
-        const outputDir = join(tempDir, 'generated');
-        const result = await generate({
-          pythonModules: { 'fixtures.values_torture': { runtime: 'node', typeHints: 'strict' } },
-          pythonImportPath: [fixtureImportPath],
-          output: { dir: outputDir, format: 'esm', declaration: true, sourceMap: false },
-          runtime: { node: { pythonPath: defaultPythonPath } },
-          performance: { caching: false, batching: false, compression: 'none' },
-        } as never);
-        const generatedTs = result.written.find(path => path.endsWith('.generated.ts'));
-        expect(generatedTs).toBeDefined();
-        await compileGeneratedFile(generatedTs as string);
-      } finally {
-        await rm(tempDir, { recursive: true, force: true });
-      }
-    },
-    30_000
-  );
+  it('typechecks the generated plain-values fixture', async () => {
+    const tempDir = await mkdtemp(join(process.cwd(), '.tmp-menagerie-values-'));
+    try {
+      const outputDir = join(tempDir, 'generated');
+      const result = await generate({
+        pythonModules: { 'fixtures.values_torture': { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: [fixtureImportPath],
+        output: { dir: outputDir, format: 'esm', declaration: true, sourceMap: false },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+      } as never);
+      expect(result.warnings.some(warning => warning.includes('Python IR warning:'))).toBe(true);
+      const generatedTs = result.written.find(path => path.endsWith('.generated.ts'));
+      expect(generatedTs).toBeDefined();
+      await compileGeneratedFile(generatedTs as string);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 
-  // FIXME(#267): preserve NewType declarations or map their use-sites to a declared TS alias.
-  it.fails(
-    'typechecks the generated NewType fixture',
-    async () => {
-      const tempDir = await mkdtemp(join(process.cwd(), '.tmp-menagerie-newtype-'));
-      try {
-        const outputDir = join(tempDir, 'generated');
-        const result = await generate({
-          pythonModules: { 'fixtures.typing_torture': { runtime: 'node', typeHints: 'strict' } },
-          pythonImportPath: [fixtureImportPath],
-          output: { dir: outputDir, format: 'esm', declaration: true, sourceMap: false },
-          runtime: { node: { pythonPath: defaultPythonPath } },
-          performance: { caching: false, batching: false, compression: 'none' },
-        } as never);
-        const generatedTs = result.written.find(path => path.endsWith('.generated.ts'));
-        expect(generatedTs).toBeDefined();
-        await compileGeneratedFile(generatedTs as string);
-      } finally {
-        await rm(tempDir, { recursive: true, force: true });
-      }
-    },
-    30_000
-  );
+  it('typechecks the generated NewType fixture', async () => {
+    const tempDir = await mkdtemp(join(process.cwd(), '.tmp-menagerie-newtype-'));
+    try {
+      const outputDir = join(tempDir, 'generated');
+      const result = await generate({
+        pythonModules: { 'fixtures.typing_torture': { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: [fixtureImportPath],
+        output: { dir: outputDir, format: 'esm', declaration: true, sourceMap: false },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+      } as never);
+      const generatedTs = result.written.find(path => path.endsWith('.generated.ts'));
+      expect(generatedTs).toBeDefined();
+      await compileGeneratedFile(generatedTs as string);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

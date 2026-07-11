@@ -37,9 +37,10 @@ async function callValues<T>(functionName: string, args: unknown[] = []): Promis
  * | --- | --- | --- | --- |
  * | values_torture | echo_int(), bools_and_ints(), finite_float_edges() | EXPECTED_OK | safe integers, booleans, -0, and subnormal float survive |
  * | values_torture | unicode_text(), lone_surrogate(), megabyte_text(), deeply_nested() | EXPECTED_OK | text and 100-level nesting survive |
- * | values_torture | bytes_echo() | KNOWN_LIE | bridge delivers Uint8Array; generated wrapper declares string |
+ * | values_torture | bytes_echo() | EXPECTED_OK | wrapper and bridge both use Uint8Array |
  * | values_torture | integer_boundaries() | KNOWN_LIE | unsafe integers lose precision |
- * | values_torture | empty_values(), set_and_frozenset() | KNOWN_LIE | tuple/set/frozenset become arrays |
+ * | values_torture | empty_values() | KNOWN_LIE | empty tuple typing remains inexact |
+ * | values_torture | set_and_frozenset() | EXPECTED_OK | set/frozenset are declared and delivered as arrays |
  * | values_torture | int_key_dict() | KNOWN_LIE | integer object keys stringify |
  * | values_torture | temporal_values(), decimal_values(), uuid_and_path() | KNOWN_LIE | values become strings or seconds |
  * | values_torture | special_floats(true) | LOUD_FAIL | non-finite numbers reject |
@@ -115,7 +116,7 @@ describe.skipIf(!bridgeAvailable)('menagerie runtime gate', () => {
       expect(sets[0]).toEqual(expect.arrayContaining([1, 2]));
       expect(sets[1]).toEqual(expect.arrayContaining(['a', 'b']));
       await expect(callValues('int_key_dict')).resolves.toEqual({ 1: 'one', 2: 'two' });
-      expect(RUNTIME_CATALOGUE.filter(row => row.status === 'KNOWN_LIE')).toHaveLength(5);
+      expect(RUNTIME_CATALOGUE.filter(row => row.status === 'KNOWN_LIE')).toHaveLength(4);
     },
     timeoutMs
   );
