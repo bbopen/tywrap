@@ -159,6 +159,30 @@ describe('encodeFrames + Reassembler round-trip', () => {
     }
     expect(out).toBe(logical);
   });
+
+  it('reassembles simultaneously interleaved stream ids without mixing their payloads', () => {
+    const first = 'first stream payload with enough content to chunk';
+    const second = 'second stream payload with enough content to chunk';
+    const firstFrames = encodeFrames(first, RESPONSE_OPTS(8, 101));
+    const secondFrames = encodeFrames(second, RESPONSE_OPTS(8, 202));
+    const reassembler = new Reassembler();
+    const completed = new Map<number, string>();
+
+    for (let index = 0; index < Math.max(firstFrames.length, secondFrames.length); index += 1) {
+      for (const frame of [firstFrames[index], secondFrames[index]]) {
+        if (!frame) continue;
+        const payload = reassembler.accept(frame);
+        if (payload !== null) completed.set(frame.id, payload);
+      }
+    }
+
+    expect(completed).toEqual(
+      new Map([
+        [101, first],
+        [202, second],
+      ])
+    );
+  });
 });
 
 // =============================================================================

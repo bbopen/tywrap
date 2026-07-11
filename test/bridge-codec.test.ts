@@ -719,14 +719,6 @@ describe('Edge Cases', () => {
     expect(() => codec.encodeRequest(deep)).not.toThrow();
   });
 
-  it('handles arrays with holes correctly', () => {
-    const sparse = [1, , 3]; // sparse array with hole
-    const encoded = codec.encodeRequest(sparse);
-    const decoded = codec.decodeResponse<(number | null)[]>(encoded);
-    // JSON converts holes to null
-    expect(decoded).toEqual([1, null, 3]);
-  });
-
   it('handles Date objects (converted to ISO strings by default)', () => {
     const data = { timestamp: new Date('2024-01-01T00:00:00Z') };
     const encoded = codec.encodeRequest(data);

@@ -20,6 +20,11 @@ const describeBunOnly = isBun() ? describe : describe.skip;
 describeBunOnly('Bun Runtime Support', () => {
   const bunDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'Bun');
   const canStubGlobalBun = !bunDescriptor || (bunDescriptor.configurable && bunDescriptor.writable);
+  const processAvailable = processUtils.isAvailable();
+  const fileSystemAvailable = fsUtils.isAvailable();
+  const falsePath = isBun() ? Bun.which?.('false') : undefined;
+  const pythonPath = isBun() ? (Bun.which?.('python3') ?? Bun.which?.('python')) : undefined;
+  const shellPath = isBun() ? Bun.which?.('sh') : undefined;
 
   describe('Runtime Detection', () => {
     it('should detect Bun runtime correctly', () => {
@@ -60,37 +65,35 @@ describeBunOnly('Bun Runtime Support', () => {
   });
 
   describe('Subprocess Performance', () => {
-    it('should create subprocess using Bun.spawn', async () => {
-      if (!processUtils.isAvailable()) return;
+    it.skipIf(!processAvailable)('should create subprocess using Bun.spawn', async () => {
       const result = await processUtils.exec('echo', ['Hello World']);
       expect(result.code).toBe(0);
       expect(result.stdout.trim()).toBe('Hello World');
     });
 
-    it('should handle subprocess errors in Bun', async () => {
-      if (!processUtils.isAvailable()) return;
-      const falsePath = Bun.which?.('false');
-      if (!falsePath) return;
-      const result = await processUtils.exec(falsePath);
-      expect(result.code).toBeGreaterThan(0);
-    });
+    it.skipIf(!processAvailable || !falsePath)(
+      'should handle subprocess errors in Bun',
+      async () => {
+        const result = await processUtils.exec(falsePath);
+        expect(result.code).toBeGreaterThan(0);
+      }
+    );
 
-    it('should handle Python subprocess execution', async () => {
-      if (!processUtils.isAvailable()) return;
-      const pythonPath = Bun.which?.('python3') ?? Bun.which?.('python');
-      if (!pythonPath) return;
-      const result = await processUtils.exec(pythonPath, [
-        '-c',
-        'import math; print(math.sqrt(9))',
-      ]);
-      expect(result.code).toBe(0);
-      expect(result.stdout.trim()).toBe('3.0');
-    });
+    it.skipIf(!processAvailable || !pythonPath)(
+      'should handle Python subprocess execution',
+      async () => {
+        const result = await processUtils.exec(pythonPath, [
+          '-c',
+          'import math; print(math.sqrt(9))',
+        ]);
+        expect(result.code).toBe(0);
+        expect(result.stdout.trim()).toBe('3.0');
+      }
+    );
 
-    it('should measure subprocess performance', async () => {
+    it.skipIf(!processAvailable)('should measure subprocess performance', async () => {
       const startTime = Date.now();
 
-      if (!processUtils.isAvailable()) return;
       await processUtils.exec('echo', ['fast']);
       const duration = Date.now() - startTime;
 
@@ -98,8 +101,7 @@ describeBunOnly('Bun Runtime Support', () => {
       expect(duration).toBeLessThan(1000);
     });
 
-    it('should handle concurrent subprocess execution', async () => {
-      if (!processUtils.isAvailable()) return;
+    it.skipIf(!processAvailable)('should handle concurrent subprocess execution', async () => {
       const results = await Promise.all([
         processUtils.exec('echo', ['0']),
         processUtils.exec('echo', ['1']),
@@ -130,8 +132,7 @@ describeBunOnly('Bun Runtime Support', () => {
       return filePath;
     };
 
-    it('should read files using Bun.file', async () => {
-      if (!fsUtils.isAvailable()) return;
+    it.skipIf(!fileSystemAvailable)('should read files using Bun.file', async () => {
       const filePath = trackTemp('read.txt');
       await Bun.write(filePath, 'File content');
 
@@ -139,8 +140,7 @@ describeBunOnly('Bun Runtime Support', () => {
       expect(content).toBe('File content');
     });
 
-    it('should write files using Bun.write', async () => {
-      if (!fsUtils.isAvailable()) return;
+    it.skipIf(!fileSystemAvailable)('should write files using Bun.write', async () => {
       const filePath = trackTemp('write.txt');
       await fsUtils.writeFile(filePath, 'New content');
 
@@ -148,8 +148,7 @@ describeBunOnly('Bun Runtime Support', () => {
       expect(content).toBe('New content');
     });
 
-    it('should handle binary file operations', async () => {
-      if (!fsUtils.isAvailable()) return;
+    it.skipIf(!fileSystemAvailable)('should handle binary file operations', async () => {
       const binaryData = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // PNG header
       const filePath = trackTemp('image.bin');
 
@@ -158,8 +157,7 @@ describeBunOnly('Bun Runtime Support', () => {
       expect(new Uint8Array(buffer)).toEqual(binaryData);
     });
 
-    it('should handle JSON file operations', async () => {
-      if (!fsUtils.isAvailable()) return;
+    it.skipIf(!fileSystemAvailable)('should handle JSON file operations', async () => {
       const jsonData = { name: 'test', value: 42 };
       const filePath = trackTemp('data.json');
 
@@ -168,8 +166,7 @@ describeBunOnly('Bun Runtime Support', () => {
       expect(data).toEqual(jsonData);
     });
 
-    it('should handle large file operations efficiently', async () => {
-      if (!fsUtils.isAvailable()) return;
+    it.skipIf(!fileSystemAvailable)('should handle large file operations efficiently', async () => {
       const largeContent = 'x'.repeat(5 * 1024 * 1024); // 5MB
       const filePath = trackTemp('large-file.txt');
       await Bun.write(filePath, largeContent);
@@ -405,20 +402,22 @@ describeBunOnly('Bun Runtime Support', () => {
       }
     });
 
-    it('should handle subprocess errors gracefully', async () => {
-      if (!processUtils.isAvailable()) return;
-      const shell = Bun.which?.('sh');
-      if (shell) {
-        const result = await processUtils.exec(shell, ['-c', 'echo Process failed 1>&2; exit 1']);
-        expect(result.code).toBe(1);
-        expect(result.stderr.trim()).toBe('Process failed');
-        return;
+    it.skipIf(!processAvailable || (!shellPath && !falsePath))(
+      'should handle subprocess errors gracefully',
+      async () => {
+        if (shellPath) {
+          const result = await processUtils.exec(shellPath, [
+            '-c',
+            'echo Process failed 1>&2; exit 1',
+          ]);
+          expect(result.code).toBe(1);
+          expect(result.stderr.trim()).toBe('Process failed');
+          return;
+        }
+        const result = await processUtils.exec(falsePath!);
+        expect(result.code).toBeGreaterThan(0);
       }
-      const falsePath = Bun.which?.('false');
-      if (!falsePath) return;
-      const result = await processUtils.exec(falsePath);
-      expect(result.code).toBeGreaterThan(0);
-    });
+    );
 
     it('should provide debugging utilities', () => {
       // Test that Bun provides good debugging info

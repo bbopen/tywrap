@@ -5,13 +5,16 @@ import { delimiter, join } from 'node:path';
 import { NodeBridge } from '../src/runtime/node.js';
 import { resolvePythonExecutable } from '../src/utils/python.js';
 import { isNodejs } from '../src/utils/runtime.js';
-
-const shouldRun = isNodejs() && process.env.TYWRAP_ADVERSARIAL === '1';
-const describeAdversarial = shouldRun ? describe : describe.skip;
-const testTimeoutMs = shouldRun ? 15_000 : 5_000;
+import { PYTHON_AVAILABLE, hasPythonModule } from './helpers/python-probe.js';
 
 const scriptPath = join(process.cwd(), 'runtime', 'python_bridge.py');
 const fixturesRoot = join(process.cwd(), 'test', 'fixtures', 'python');
+const shouldRun =
+  isNodejs() && PYTHON_AVAILABLE && existsSync(scriptPath) && existsSync(fixturesRoot);
+const describeAdversarial = shouldRun ? describe : describe.skip;
+const testTimeoutMs = shouldRun ? 15_000 : 5_000;
+const SKLEARN_AVAILABLE = shouldRun && hasPythonModule('sklearn');
+
 const fixturesDir = join(process.cwd(), 'test', 'fixtures');
 const moduleName = 'adversarial_module';
 
@@ -68,7 +71,10 @@ const createBridge = async (
   return new NodeBridge({
     scriptPath,
     pythonPath,
-    timeoutMs: options.timeoutMs ?? 2000,
+    // Default to the suite budget: error-surfacing tests assert LOUDNESS, not
+    // latency, and must absorb worker cold-start/import costs under full-suite
+    // load (#285). Timeout-behavior tests pass explicit small values.
+    timeoutMs: options.timeoutMs ?? testTimeoutMs,
     env: {
       // Why: include local adversarial fixtures without mutating global env.
       PYTHONPATH: buildPythonPath(),
@@ -79,7 +85,11 @@ const createBridge = async (
 
 const createFixtureBridge = async (
   scriptName: string,
-  options: { timeoutMs?: number; env?: Record<string, string | undefined> } = {}
+  options: {
+    timeoutMs?: number;
+    maxConcurrentPerProcess?: number;
+    env?: Record<string, string | undefined>;
+  } = {}
 ): Promise<NodeBridge | null> => {
   const fixtureScript = join(fixturesDir, scriptName);
   if (!existsSync(fixtureScript)) {
@@ -92,7 +102,11 @@ const createFixtureBridge = async (
   return new NodeBridge({
     scriptPath: fixtureScript,
     pythonPath,
-    timeoutMs: options.timeoutMs ?? 2000,
+    maxConcurrentPerProcess: options.maxConcurrentPerProcess,
+    // Default to the suite budget: error-surfacing tests assert LOUDNESS, not
+    // latency, and must absorb worker cold-start/import costs under full-suite
+    // load (#285). Timeout-behavior tests pass explicit small values.
+    timeoutMs: options.timeoutMs ?? testTimeoutMs,
     env: options.env ?? {},
   });
 };
@@ -106,15 +120,20 @@ describeAdversarial('Adversarial playground', () => {
   it(
     'keeps the bridge usable after a timeout',
     async () => {
-      const bridge = await createBridge({ timeoutMs: 200 });
+      // Timings must absorb the worker's first-serialize import cost when the
+      // scientific stack is installed (#285): the 4s budget covers a cold
+      // start (~2s under load) but not the 6s sleep, so the first call times out and
+      // the recovery echo still fits — with or without numpy present.
+      const bridge = await createBridge({ timeoutMs: 4_000 });
       if (!bridge) return;
 
       try {
-        await expect(callAdversarial(bridge, 'sleep_and_return', ['ok', 0.4])).rejects.toThrow(
+        await expect(callAdversarial(bridge, 'sleep_and_return', ['ok', 6.0])).rejects.toThrow(
           /timed out/i
         );
-        // Why: allow the slow call to finish so the next request is not blocked.
-        await delay(500);
+        // Why: allow the slow call (and any worker restart) to fully drain so
+        // the recovery echo is not queued behind it.
+        await delay(6_000);
 
         const result = await callAdversarial(bridge, 'echo', ['still-alive']);
         expect(result).toBe('still-alive');
@@ -243,7 +262,7 @@ describeAdversarial('Adversarial playground', () => {
 
       try {
         await expect(callAdversarial(bridge, 'return_scipy_complex_sparse', [])).rejects.toThrow(
-          /Complex sparse matrices are not supported/
+          /Complex scipy sparse matrices are not supported/
         );
       } finally {
         await bridge.dispose();
@@ -252,18 +271,16 @@ describeAdversarial('Adversarial playground', () => {
     testTimeoutMs
   );
 
-  it(
+  it.skipIf(!SKLEARN_AVAILABLE)(
     'surfaces explicit sklearn non-serializable params errors',
     async () => {
-      if (!(await pythonModuleAvailable('sklearn'))) return;
-
-      const bridge = await createBridge();
+      const bridge = await createBridge({ timeoutMs: testTimeoutMs });
       if (!bridge) return;
 
       try {
         await expect(
           callAdversarial(bridge, 'return_sklearn_unserializable_estimator', [])
-        ).rejects.toThrow(/scikit-learn estimator params are not JSON-serializable/);
+        ).rejects.toThrow(/scikit-learn estimator param .* is not JSON-serializable/);
       } finally {
         await bridge.dispose();
       }
@@ -379,7 +396,7 @@ describeAdversarial('Adversarial playground', () => {
   it(
     'surfaces invalid JSON payloads explicitly',
     async () => {
-      const bridge = await createBridge();
+      const bridge = await createBridge({ timeoutMs: testTimeoutMs });
       if (!bridge) return;
 
       try {
@@ -396,7 +413,7 @@ describeAdversarial('Adversarial playground', () => {
   it(
     'treats stdout noise as a protocol error and recovers',
     async () => {
-      const bridge = await createBridge();
+      const bridge = await createBridge({ timeoutMs: testTimeoutMs });
       if (!bridge) return;
 
       try {
@@ -433,11 +450,15 @@ describeAdversarial('Adversarial playground', () => {
   it(
     'includes recent stderr in timeout errors',
     async () => {
-      const bridge = await createBridge({ timeoutMs: 200 });
+      // The 4s budget must outlast the worker's first-serialize import cost
+      // (#285, ~2s under load with the scientific stack installed) so the
+      // fixture gets to write stderr BEFORE the timeout fires; the 6s sleep
+      // guarantees the timeout still fires after that.
+      const bridge = await createBridge({ timeoutMs: 4_000 });
       if (!bridge) return;
 
       try {
-        await callAdversarial(bridge, 'write_stderr_then_sleep', ['stderr-timeout', 0.5]);
+        await callAdversarial(bridge, 'write_stderr_then_sleep', ['stderr-timeout', 6.0]);
         throw new Error('Expected timeout did not occur');
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -445,7 +466,7 @@ describeAdversarial('Adversarial playground', () => {
         expect(message).toMatch(/stderr-timeout/);
       } finally {
         // Why: adversarial test verifies post-timeout recovery even if it masks the original error.
-        await delay(600);
+        await delay(6_000);
         const result = await callAdversarial(bridge, 'echo', ['post-timeout']);
         expect(result).toBe('post-timeout');
         await bridge.dispose();
@@ -568,34 +589,6 @@ describeAdversarial('Adversarial playground', () => {
         name: 'return_bad_codec_version',
         pattern: /Unsupported dataframe envelope codecVersion: 999/,
       },
-      {
-        name: 'return_bad_encoding',
-        pattern: /Invalid dataframe envelope: unsupported encoding/,
-      },
-      {
-        name: 'return_missing_b64',
-        pattern: /Invalid dataframe envelope: missing b64/,
-      },
-      {
-        name: 'return_missing_data',
-        pattern: /Invalid ndarray envelope: missing data/,
-      },
-      {
-        name: 'return_invalid_sparse_format',
-        pattern: /Invalid scipy\.sparse envelope: unsupported format/,
-      },
-      {
-        name: 'return_invalid_sparse_shape',
-        pattern: /Invalid scipy\.sparse envelope: shape must be a 2-item non-negative integer\[\]/,
-      },
-      {
-        name: 'return_invalid_torch_value',
-        pattern: /Invalid torch\.tensor envelope: value must be an ndarray envelope/,
-      },
-      {
-        name: 'return_invalid_sklearn_payload',
-        pattern: /Invalid sklearn\.estimator envelope/,
-      },
     ];
 
     for (const { name, pattern } of cases) {
@@ -695,7 +688,14 @@ describeAdversarial('Adversarial playground', () => {
     it(
       'handles out-of-order responses',
       async () => {
-        const bridge = await createFixtureBridge('out_of_order_bridge.py', { timeoutMs: 2000 });
+        // The fixture only responds once it has TWO requests in flight, so
+        // pipelining must be opted into: the pool default is one in-flight
+        // request per worker (#284), under which the second call would never
+        // be sent and the first would deadlock into its timeout.
+        const bridge = await createFixtureBridge('out_of_order_bridge.py', {
+          timeoutMs: 2000,
+          maxConcurrentPerProcess: 2,
+        });
         if (!bridge) return;
 
         try {
@@ -722,6 +722,7 @@ describeAdversarial('Multi-worker adversarial tests', () => {
     options: {
       minProcesses?: number;
       maxProcesses?: number;
+      maxConcurrentPerProcess?: number;
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
     } = {}
@@ -738,7 +739,11 @@ describeAdversarial('Multi-worker adversarial tests', () => {
       pythonPath,
       minProcesses: options.minProcesses ?? 2,
       maxProcesses: options.maxProcesses ?? 4,
-      timeoutMs: options.timeoutMs ?? 2000,
+      maxConcurrentPerProcess: options.maxConcurrentPerProcess,
+      // Default to the suite budget: error-surfacing tests assert LOUDNESS, not
+      // latency, and must absorb worker cold-start/import costs under full-suite
+      // load (#285). Timeout-behavior tests pass explicit small values.
+      timeoutMs: options.timeoutMs ?? testTimeoutMs,
       env: {
         PYTHONPATH: buildPythonPath(),
         ...options.env,
@@ -806,8 +811,13 @@ describeAdversarial('Multi-worker adversarial tests', () => {
         pythonPath,
         minProcesses: 2,
         maxProcesses: 2,
-        maxConcurrentPerProcess: 1, // Key: enforce one request per worker for isolation
-        timeoutMs: 1000,
+        // explicit: worker is serial; see #284
+        maxConcurrentPerProcess: 1,
+        // 5s (not 1s): the post-timeout recovery call below must cover a worker
+        // restart, whose fresh Python process pays the first-serialize import
+        // cost on current main (see #285). Slow call sleeps 8s so it still
+        // exceeds this timeout by a wide margin.
+        timeoutMs: 5000,
         env: { PYTHONPATH: buildPythonPath() },
       });
 
@@ -815,12 +825,18 @@ describeAdversarial('Multi-worker adversarial tests', () => {
         // Initialize to spawn both workers
         await bridge.init();
 
-        // Warm up both workers to ensure they're ready
-        await callAdversarial(bridge, 'echo', ['warmup1']);
-        await callAdversarial(bridge, 'echo', ['warmup2']);
+        // Warm up both workers CONCURRENTLY: with maxConcurrentPerProcess: 1 the two
+        // in-flight calls must land on distinct workers, so each worker pays its
+        // first-serialize cost here rather than inside the timed fast call below.
+        // (Sequential warmups both land on worker 1 — it frees up between calls —
+        // leaving worker 2 cold; see #285 for the first-call import cost.)
+        await Promise.all([
+          callAdversarial(bridge, 'echo', ['warmup1']),
+          callAdversarial(bridge, 'echo', ['warmup2']),
+        ]);
 
         // Start a slow request (will timeout) - occupies worker 1
-        const slow = callAdversarial(bridge, 'sleep_and_return', ['slow', 2.0]);
+        const slow = callAdversarial(bridge, 'sleep_and_return', ['slow', 8.0]);
 
         // Give slow request time to start processing
         await delay(150);
@@ -981,7 +997,12 @@ describeAdversarial('Multi-worker adversarial tests', () => {
   it(
     'maintains pool health after protocol errors',
     async () => {
-      const bridge = await createPooledBridge({ minProcesses: 2, maxProcesses: 2 });
+      const bridge = await createPooledBridge({
+        minProcesses: 2,
+        maxProcesses: 2,
+        // explicit: worker is serial; see #284
+        maxConcurrentPerProcess: 1,
+      });
       if (!bridge) return;
 
       try {

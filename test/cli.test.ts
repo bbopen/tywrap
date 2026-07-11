@@ -5,6 +5,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from 'node:os';
 
 const CLI_PATH = join(__dirname, '../dist/cli.js');
+const cliPythonEnv = (): NodeJS.ProcessEnv => {
+  const pythonPath = join(__dirname, '../tywrap_ir');
+  return {
+    ...process.env,
+    PYTHONPATH: process.env.PYTHONPATH
+      ? `${pythonPath}${delimiter}${process.env.PYTHONPATH}`
+      : pythonPath,
+  };
+};
+
 const ensureCliBuild = (): void => {
   const srcPath = join(__dirname, '../src/cli.ts');
   if (existsSync(CLI_PATH)) {
@@ -333,7 +343,7 @@ describe('CLI', () => {
       expect(res.stdout).toContain('--check');
     });
 
-    it('accepts --modules flag', () => {
+    it('parses --modules flag', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
         // Generate with modules flag - this will attempt to generate
@@ -350,7 +360,7 @@ describe('CLI', () => {
       }
     });
 
-    it('accepts --runtime flag', () => {
+    it('parses --runtime flag', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
         const res = spawnSync(
@@ -368,25 +378,28 @@ describe('CLI', () => {
       }
     });
 
-    it('accepts --output-dir flag', () => {
+    it('writes generated wrappers to --output-dir', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
+        const outputDir = join(tempDir, 'out');
         const res = spawnSync(
           'node',
-          [CLI_PATH, 'generate', '--modules', 'math', '--output-dir', './out'],
+          [CLI_PATH, 'generate', '--modules', 'math', '--output-dir', outputDir],
           {
             encoding: 'utf-8',
             cwd: tempDir,
+            env: cliPythonEnv(),
             timeout: 30000,
           }
         );
-        expect(res.stderr).not.toContain('Unknown argument');
+        expect(res.status).toBe(0);
+        expect(existsSync(join(outputDir, 'math.generated.ts'))).toBe(true);
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
     });
 
-    it('accepts --format flag with valid values', () => {
+    it('parses --format flag with valid values', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
         for (const format of ['esm', 'cjs', 'both']) {
@@ -425,33 +438,38 @@ describe('CLI', () => {
       }
     });
 
-    it('accepts --declaration flag', () => {
+    it('writes declaration files with --declaration', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
+        const outputDir = join(tempDir, 'generated');
         const res = spawnSync(
           'node',
-          [CLI_PATH, 'generate', '--modules', 'math', '--declaration'],
+          [CLI_PATH, 'generate', '--modules', 'math', '--output-dir', outputDir, '--declaration'],
           {
             encoding: 'utf-8',
             cwd: tempDir,
+            env: cliPythonEnv(),
             timeout: 30000,
           }
         );
-        expect(res.stderr).not.toContain('Unknown argument');
+        expect(res.status).toBe(0);
+        expect(existsSync(join(outputDir, 'math.generated.d.ts'))).toBe(true);
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
     });
 
-    it('accepts --source-map flag', () => {
+    it('writes source maps with --source-map', () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-cli-'));
       try {
-        const res = spawnSync('node', [CLI_PATH, 'generate', '--modules', 'math', '--source-map'], {
-          encoding: 'utf-8',
-          cwd: tempDir,
-          timeout: 30000,
-        });
-        expect(res.stderr).not.toContain('Unknown argument');
+        const outputDir = join(tempDir, 'generated');
+        const res = spawnSync(
+          'node',
+          [CLI_PATH, 'generate', '--modules', 'math', '--output-dir', outputDir, '--source-map'],
+          { encoding: 'utf-8', cwd: tempDir, env: cliPythonEnv(), timeout: 30000 }
+        );
+        expect(res.status).toBe(0);
+        expect(existsSync(join(outputDir, 'math.generated.ts.map'))).toBe(true);
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }

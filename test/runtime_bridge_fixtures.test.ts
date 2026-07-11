@@ -235,6 +235,7 @@ describeNodeOnly('Bridge behavior parity', () => {
   });
 
   describe('basic functionality parity', () => {
+    // Why: this spawns two real bridges and is load-sensitive under the full suite.
     it('Both bridges handle simple function calls identically', async () => {
       if (!pythonPath) return;
 
@@ -257,7 +258,7 @@ describeNodeOnly('Bridge behavior parity', () => {
         await nodeBridge.dispose();
         await optimizedBridge.dispose();
       }
-    });
+    }, 15_000);
 
     it('Both bridges handle multiple sequential calls', async () => {
       if (!pythonPath) return;

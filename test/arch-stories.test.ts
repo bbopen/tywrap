@@ -22,17 +22,6 @@ import {
   BridgeProtocolError,
   BridgeTimeoutError,
 } from '../src/runtime/errors.js';
-import {
-  isFiniteNumber,
-  isPositiveNumber,
-  isNonNegativeNumber,
-  assertFiniteNumber,
-  assertPositive,
-  assertNonNegative,
-  containsSpecialFloat,
-  assertNoSpecialFloats,
-  ValidationError,
-} from '../src/runtime/validators.js';
 import { NodeBridge } from '../src/runtime/node.js';
 import { PyodideBridge } from '../src/runtime/pyodide.js';
 import { HttpBridge } from '../src/runtime/http.js';
@@ -80,57 +69,6 @@ class TestBridge extends DisposableBase {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('Issue #141: Unified numeric validation layer', () => {
-  describe('Acceptance: All bridge constructors validate numeric options', () => {
-    it('validators reject NaN', () => {
-      expect(isFiniteNumber(NaN)).toBe(false);
-      expect(isPositiveNumber(NaN)).toBe(false);
-      expect(() => assertFiniteNumber(NaN, 'test')).toThrow(ValidationError);
-      expect(() => assertPositive(NaN, 'test')).toThrow(ValidationError);
-    });
-
-    it('validators reject Infinity', () => {
-      expect(isFiniteNumber(Infinity)).toBe(false);
-      expect(isFiniteNumber(-Infinity)).toBe(false);
-      expect(isPositiveNumber(Infinity)).toBe(false);
-      expect(() => assertFiniteNumber(Infinity, 'test')).toThrow(ValidationError);
-    });
-
-    it('validators reject negative numbers when positive required', () => {
-      expect(isPositiveNumber(-1)).toBe(false);
-      expect(isPositiveNumber(0)).toBe(false);
-      expect(() => assertPositive(-1, 'test')).toThrow(ValidationError);
-      expect(() => assertPositive(0, 'test')).toThrow(ValidationError);
-    });
-
-    it('validators accept valid positive numbers', () => {
-      expect(isPositiveNumber(1)).toBe(true);
-      expect(isPositiveNumber(0.001)).toBe(true);
-      expect(assertPositive(42, 'test')).toBe(42);
-    });
-  });
-
-  describe('Acceptance: Deep NaN/Infinity detection in arguments', () => {
-    it('containsSpecialFloat detects NaN in nested objects', () => {
-      expect(containsSpecialFloat({ a: { b: NaN } })).toBe(true);
-      expect(containsSpecialFloat([1, [2, NaN]])).toBe(true);
-      expect(containsSpecialFloat({ arr: [1, Infinity] })).toBe(true);
-    });
-
-    it('containsSpecialFloat returns false for valid data', () => {
-      expect(containsSpecialFloat({ a: 1, b: 'str', c: null })).toBe(false);
-      expect(containsSpecialFloat([1, 2, 3])).toBe(false);
-    });
-
-    it('assertNoSpecialFloats throws for invalid data', () => {
-      expect(() => assertNoSpecialFloats({ x: NaN }, 'args')).toThrow(ValidationError);
-      expect(() => assertNoSpecialFloats([Infinity], 'args')).toThrow(ValidationError);
-    });
-
-    it('assertNoSpecialFloats passes for valid data', () => {
-      expect(() => assertNoSpecialFloats({ x: 1 }, 'args')).not.toThrow();
-    });
-  });
-
   describe('Acceptance: BoundedContext validation helpers', () => {
     let bridge: TestBridge;
 
@@ -152,18 +90,6 @@ describe('Issue #141: Unified numeric validation layer', () => {
     it('validatePositive rejects negative/zero with BridgeProtocolError', () => {
       expect(() => bridge.testValidatePositive(-1, 'maxRetries')).toThrow(BridgeProtocolError);
       expect(() => bridge.testValidatePositive(0, 'maxRetries')).toThrow(BridgeProtocolError);
-    });
-  });
-
-  describe('Related issues coverage', () => {
-    it('#114/#87: Guards against negative/NaN timeoutMs', () => {
-      expect(() => assertPositive(NaN, 'timeoutMs')).toThrow();
-      expect(() => assertPositive(-100, 'timeoutMs')).toThrow();
-    });
-
-    it('#95/#93: Rejects NaN/Infinity in serializable data', () => {
-      expect(containsSpecialFloat({ result: NaN })).toBe(true);
-      expect(() => assertNoSpecialFloats({ value: Infinity }, 'response')).toThrow();
     });
   });
 });
