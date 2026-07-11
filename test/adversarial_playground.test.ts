@@ -5,7 +5,7 @@ import { delimiter, join } from 'node:path';
 import { NodeBridge } from '../src/runtime/node.js';
 import { resolvePythonExecutable } from '../src/utils/python.js';
 import { isNodejs } from '../src/utils/runtime.js';
-import { PYTHON_AVAILABLE } from './helpers/python-probe.js';
+import { PYTHON_AVAILABLE, hasPythonModule } from './helpers/python-probe.js';
 
 const scriptPath = join(process.cwd(), 'runtime', 'python_bridge.py');
 const fixturesRoot = join(process.cwd(), 'test', 'fixtures', 'python');
@@ -13,6 +13,7 @@ const shouldRun =
   isNodejs() && PYTHON_AVAILABLE && existsSync(scriptPath) && existsSync(fixturesRoot);
 const describeAdversarial = shouldRun ? describe : describe.skip;
 const testTimeoutMs = shouldRun ? 15_000 : 5_000;
+const SKLEARN_AVAILABLE = shouldRun && hasPythonModule('sklearn');
 
 const fixturesDir = join(process.cwd(), 'test', 'fixtures');
 const moduleName = 'adversarial_module';
@@ -255,12 +256,10 @@ describeAdversarial('Adversarial playground', () => {
     testTimeoutMs
   );
 
-  it(
+  it.skipIf(!SKLEARN_AVAILABLE)(
     'surfaces explicit sklearn non-serializable params errors',
     async () => {
-      if (!(await pythonModuleAvailable('sklearn'))) return;
-
-      const bridge = await createBridge();
+      const bridge = await createBridge({ timeoutMs: testTimeoutMs });
       if (!bridge) return;
 
       try {
@@ -382,7 +381,7 @@ describeAdversarial('Adversarial playground', () => {
   it(
     'surfaces invalid JSON payloads explicitly',
     async () => {
-      const bridge = await createBridge();
+      const bridge = await createBridge({ timeoutMs: testTimeoutMs });
       if (!bridge) return;
 
       try {
@@ -399,7 +398,7 @@ describeAdversarial('Adversarial playground', () => {
   it(
     'treats stdout noise as a protocol error and recovers',
     async () => {
-      const bridge = await createBridge();
+      const bridge = await createBridge({ timeoutMs: testTimeoutMs });
       if (!bridge) return;
 
       try {
@@ -698,6 +697,7 @@ describeAdversarial('Multi-worker adversarial tests', () => {
     options: {
       minProcesses?: number;
       maxProcesses?: number;
+      maxConcurrentPerProcess?: number;
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
     } = {}
@@ -714,6 +714,7 @@ describeAdversarial('Multi-worker adversarial tests', () => {
       pythonPath,
       minProcesses: options.minProcesses ?? 2,
       maxProcesses: options.maxProcesses ?? 4,
+      maxConcurrentPerProcess: options.maxConcurrentPerProcess,
       timeoutMs: options.timeoutMs ?? 2000,
       env: {
         PYTHONPATH: buildPythonPath(),
@@ -782,7 +783,8 @@ describeAdversarial('Multi-worker adversarial tests', () => {
         pythonPath,
         minProcesses: 2,
         maxProcesses: 2,
-        maxConcurrentPerProcess: 1, // Key: enforce one request per worker for isolation
+        // explicit: worker is serial; see #284
+        maxConcurrentPerProcess: 1,
         timeoutMs: 1000,
         env: { PYTHONPATH: buildPythonPath() },
       });
@@ -957,7 +959,12 @@ describeAdversarial('Multi-worker adversarial tests', () => {
   it(
     'maintains pool health after protocol errors',
     async () => {
-      const bridge = await createPooledBridge({ minProcesses: 2, maxProcesses: 2 });
+      const bridge = await createPooledBridge({
+        minProcesses: 2,
+        maxProcesses: 2,
+        // explicit: worker is serial; see #284
+        maxConcurrentPerProcess: 1,
+      });
       if (!bridge) return;
 
       try {
