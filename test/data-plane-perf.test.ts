@@ -229,7 +229,6 @@ function singleFrameTransport(): SubprocessTransport {
     cwd: RUNTIME_DIR,
     // Above 80 MiB so even the largest test payload is a single line.
     maxLineLength: EIGHTY_MIB * 2,
-    enableChunking: false,
     env: {
       ...process.env,
       TYWRAP_CODEC_MAX_BYTES: String(EIGHTY_MIB * 4),
@@ -247,7 +246,6 @@ function chunkedTransport(): SubprocessTransport {
     bridgeScript: REFERENCE_SCRIPT,
     cwd: RUNTIME_DIR,
     maxLineLength: ONE_MIB,
-    enableChunking: true,
     // Raise the reassembly cap to match the raised Python response cap — these
     // tests deliberately move 20-80 MiB, so the default 10 MiB bound would
     // (correctly) reject them. Symmetric config: both caps move together.

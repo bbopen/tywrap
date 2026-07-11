@@ -169,9 +169,7 @@ export class PooledTransport extends DisposableBase implements Transport {
     if (!this.isReady) {
       await this.init();
     }
-    return this.withWorker(worker =>
-      worker.transport.send(message, timeoutMs, signal, requestId)
-    );
+    return this.withWorker(worker => worker.transport.send(message, timeoutMs, signal, requestId));
   }
 
   capabilities(): TransportCapabilities {

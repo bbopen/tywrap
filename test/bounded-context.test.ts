@@ -585,12 +585,10 @@ describe('BoundedContext Bounded Execution', () => {
       let attempts = 0;
 
       await expect(
-        context.testExecute(
-          async () => {
-            attempts++;
-            throw new Error('Logic error');
-          }
-        )
+        context.testExecute(async () => {
+          attempts++;
+          throw new Error('Logic error');
+        })
       ).rejects.toThrow('Logic error');
 
       expect(attempts).toBe(1);
@@ -601,12 +599,10 @@ describe('BoundedContext Bounded Execution', () => {
       let attempts = 0;
 
       await expect(
-        context.testExecute(
-          async () => {
-            attempts++;
-            throw new BridgeTimeoutError('Timeout');
-          }
-        )
+        context.testExecute(async () => {
+          attempts++;
+          throw new BridgeTimeoutError('Timeout');
+        })
       ).rejects.toThrow(BridgeTimeoutError);
       expect(attempts).toBe(1);
     });

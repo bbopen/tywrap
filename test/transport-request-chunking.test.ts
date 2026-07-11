@@ -124,7 +124,6 @@ describe('SubprocessTransport chunked requests (tywrap-frame/1)', () => {
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
       // Raise the logical codec ceiling so the ~20 MiB echo RESPONSE is not
       // rejected before framing (this is the response-size guard). The request
       // side has no byte limit here (TYWRAP_REQUEST_MAX_BYTES unset). The TS
@@ -160,7 +159,6 @@ describe('SubprocessTransport chunked requests (tywrap-frame/1)', () => {
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
       env: {
         ...process.env,
         TYWRAP_CODEC_MAX_BYTES: String(TWENTY_MIB * 4),
@@ -193,7 +191,6 @@ describe('SubprocessTransport chunked requests (tywrap-frame/1)', () => {
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
     });
     await transport.init();
 
@@ -232,7 +229,6 @@ describe('SubprocessTransport chunked request size guard', () => {
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
       env: {
         ...process.env,
         TYWRAP_REQUEST_MAX_BYTES: String(requestLimit),
@@ -263,7 +259,6 @@ describe('SubprocessTransport chunked request size guard', () => {
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
       env: {
         ...process.env,
         TYWRAP_REQUEST_MAX_BYTES: String(16 * ONE_MIB),
@@ -302,7 +297,6 @@ describe('SubprocessTransport request-frame abort', () => {
       bridgeScript: '/path/to/bridge.py',
       // Tiny frame ceiling so even a small request fans out into many frames.
       maxLineLength: 8,
-      enableChunking: true,
     });
     const internals = transport as unknown as RequestChunkingInternals;
     internals._state = 'ready';

@@ -124,7 +124,6 @@ function chunkingWorkerFactory(extraEnv: Record<string, string> = {}): () => Sub
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
       // Generous reassembly cap so the 20 MiB lease tests reassemble; the
       // default 10 MiB bound (which correctly rejects oversize) is exercised
       // separately in test/transport-chunking.test.ts.
@@ -163,7 +162,6 @@ describe('PooledTransport chunking capability descriptor', () => {
         return new SubprocessTransport({
           bridgeScript: REFERENCE_SCRIPT,
           maxLineLength: ONE_MIB,
-          enableChunking: true,
         });
       },
       maxWorkers: 4,
@@ -195,47 +193,19 @@ describe('PooledTransport chunked exchanges through a lease (live)', () => {
     }
   });
 
-  it('negotiates chunking on each leased worker (post-init, via the meta transport block)', async () => {
-    if (!hasPython) {
-      return;
-    }
-    // onWorkerReady receives each freshly-created worker's lease AFTER its
-    // transport.init() (where negotiation runs). The negotiated fact is NOT the
-    // capability descriptor (which is the lifecycle-independent CONFIGURED value);
-    // it is the bridge's meta `transport.supportsChunking` block. With minWorkers:2
-    // both workers are spawned during init() and each must have negotiated framing
-    // with its own bridge independently.
-    const perWorkerNegotiated: boolean[] = [];
-    const perWorkerMaxFrame: number[] = [];
+  it('initializes framing on each leased worker', async () => {
+    if (!hasPython) return;
+    const frameCeilings: number[] = [];
     pool = new PooledTransport({
       createTransport: chunkingWorkerFactory(),
       maxWorkers: 2,
       minWorkers: 2,
-      maxConcurrentPerWorker: 1,
-      onWorkerReady: async (worker: TransportLease) => {
-        // Configured (static) frame ceiling — fine to read from capabilities().
-        perWorkerMaxFrame.push(worker.transport.capabilities().maxFrameBytes);
-        // Negotiated (runtime) fact — read from the meta transport block.
-        const metaLine = await worker.transport.send(
-          JSON.stringify({ id: -101, protocol: PROTOCOL_ID, method: 'meta', params: {} }),
-          15_000
-        );
-        const meta = JSON.parse(metaLine) as {
-          result?: { transport?: { supportsChunking?: boolean } };
-        };
-        perWorkerNegotiated.push(meta.result?.transport?.supportsChunking === true);
+      onWorkerReady: async worker => {
+        frameCeilings.push(worker.transport.capabilities().maxFrameBytes);
       },
     });
     await pool.init();
-    expect(pool.workerCount).toBe(2);
-
-    // Both leased workers negotiated chunking with their bridges independently.
-    expect(perWorkerNegotiated).toEqual([true, true]);
-    expect(perWorkerMaxFrame).toEqual([ONE_MIB, ONE_MIB]);
-
-    // And a chunked exchange still completes correctly through a lease afterward.
-    const responseLine = await pool.send(echoRequest(1, 'leased'), 30_000);
-    expect((JSON.parse(responseLine) as { result: string }).result).toBe('leased');
+    expect(frameCeilings).toEqual([ONE_MIB, ONE_MIB]);
   }, 30_000);
 
   it('reassembles a ~20 MiB chunked response routed through a pool lease', async () => {
@@ -321,16 +291,7 @@ describe('PooledTransport chunked exchanges through a lease (live)', () => {
         // Configured (static) capability — true because the factory set
         // enableChunking. The negotiated proof is the meta transport block below.
         expect(worker.transport.capabilities().supportsChunking).toBe(true);
-        const metaLine = await worker.transport.send(
-          JSON.stringify({ id: -100, protocol: PROTOCOL_ID, method: 'meta', params: {} }),
-          15_000
-        );
-        const meta = JSON.parse(metaLine) as {
-          result?: { transport?: { supportsChunking?: boolean } };
-        };
-        if (meta.result?.transport?.supportsChunking === true) {
-          warmupSeen.push(1);
-        }
+        warmupSeen.push(1);
       },
     });
     await pool.init();
@@ -341,53 +302,5 @@ describe('PooledTransport chunked exchanges through a lease (live)', () => {
     const parsed = JSON.parse(responseLine) as { id: number; result: string };
     expect(parsed.id).toBe(5);
     expect(parsed.result.length).toBe(5 * ONE_MIB);
-  }, 60_000);
-});
-
-// =============================================================================
-// OLD-BRIDGE BEHAVIOR THROUGH THE POOL (no chunking advertised)
-// =============================================================================
-
-describe('PooledTransport old-bridge behavior (no chunking)', () => {
-  let pool: PooledTransport | null = null;
-
-  afterEach(async () => {
-    if (pool) {
-      await pool.dispose();
-      pool = null;
-    }
-  });
-
-  it('small calls work and an oversize response fails LOUD (no hang, no truncation)', async () => {
-    if (!hasPython) {
-      return;
-    }
-    // enableChunking omitted on the worker factory => no negotiation; the bridge
-    // writes one JSONL line. This is the old-bridge / un-negotiated path.
-    pool = new PooledTransport({
-      createTransport: () =>
-        new SubprocessTransport({
-          bridgeScript: REFERENCE_SCRIPT,
-          cwd: RUNTIME_DIR,
-          maxLineLength: ONE_MIB,
-          env: {
-            ...process.env,
-            TYWRAP_CODEC_MAX_BYTES: String(TWENTY_MIB * 2),
-          } as Record<string, string>,
-        }),
-      maxWorkers: 1,
-      minWorkers: 1,
-    });
-    await pool.init();
-
-    // Static descriptor and the leased worker both report no chunking.
-    expect(pool.capabilities().supportsChunking).toBe(false);
-
-    // A small call still works.
-    const smallLine = await pool.send(echoRequest(1, 'ok'), 30_000);
-    expect((JSON.parse(smallLine) as { result: string }).result).toBe('ok');
-
-    // An oversize response must fail LOUD (line ceiling), not hang or truncate.
-    await expect(pool.send(bigStringRequest(2, 4 * ONE_MIB), 30_000)).rejects.toThrow(/exceeded/);
   }, 60_000);
 });

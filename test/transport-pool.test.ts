@@ -74,7 +74,9 @@ function createMockTransportFactory() {
 /**
  * Create default pool options for testing.
  */
-function createTestOptions(overrides: Partial<PooledTransportOptions> = {}): PooledTransportOptions {
+function createTestOptions(
+  overrides: Partial<PooledTransportOptions> = {}
+): PooledTransportOptions {
   const { factory } = createMockTransportFactory();
   return {
     createTransport: factory,

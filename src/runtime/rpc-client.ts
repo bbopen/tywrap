@@ -18,7 +18,7 @@
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import type { BridgeBackend, BridgeInfo, BridgeTransportInfo } from '../types/index.js';
+import type { BridgeBackend, BridgeInfo } from '../types/index.js';
 
 import { DisposableBase, type ExecuteOptions } from './bounded-context.js';
 import { BridgeProtocolError } from './errors.js';
@@ -179,55 +179,6 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
     );
   }
 
-  // OPTIONAL chunked-transport negotiation block. Absent on old bridges and on
-  // HTTP/Pyodide (single-frame in 0.8.0) — absence is backward compatible. When
-  // present, validate every field and CARRY IT THROUGH so negotiation data
-  // survives the rebuild below (the old validator silently dropped unknown
-  // fields, which would have discarded this block).
-  let transport: BridgeTransportInfo | undefined;
-  const rawTransport = obj.transport;
-  if (rawTransport !== undefined) {
-    if (!rawTransport || typeof rawTransport !== 'object' || Array.isArray(rawTransport)) {
-      const kind =
-        rawTransport === null
-          ? 'null'
-          : Array.isArray(rawTransport)
-            ? 'array'
-            : typeof rawTransport;
-      throw new BridgeProtocolError(
-        `Invalid bridge info payload: transport expected object, got ${kind}`
-      );
-    }
-    const t = rawTransport as {
-      frameProtocol?: unknown;
-      supportsChunking?: unknown;
-      maxFrameBytes?: unknown;
-    };
-    const frameProtocol = t.frameProtocol;
-    if (typeof frameProtocol !== 'string' || frameProtocol.length === 0) {
-      throw new BridgeProtocolError(
-        `Invalid bridge info payload: transport.frameProtocol expected non-empty string, got ${formatValue(frameProtocol)}`
-      );
-    }
-    const supportsChunking = t.supportsChunking;
-    if (typeof supportsChunking !== 'boolean') {
-      throw new BridgeProtocolError(
-        `Invalid bridge info payload: transport.supportsChunking expected boolean, got ${formatValue(supportsChunking)}`
-      );
-    }
-    const maxFrameBytes = t.maxFrameBytes;
-    if (
-      typeof maxFrameBytes !== 'number' ||
-      !Number.isInteger(maxFrameBytes) ||
-      maxFrameBytes <= 0
-    ) {
-      throw new BridgeProtocolError(
-        `Invalid bridge info payload: transport.maxFrameBytes expected positive integer, got ${formatValue(maxFrameBytes)}`
-      );
-    }
-    transport = { frameProtocol, supportsChunking, maxFrameBytes };
-  }
-
   const info: BridgeInfo = {
     protocol: PROTOCOL_ID,
     protocolVersion: TYWRAP_PROTOCOL_VERSION,
@@ -241,9 +192,6 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
     sklearnAvailable,
     instances,
   };
-  if (transport !== undefined) {
-    info.transport = transport;
-  }
   return info;
 }
 

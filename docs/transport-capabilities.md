@@ -41,29 +41,16 @@ interface TransportCapabilities {
 | `HttpTransport`                | `http`        | `true`          | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`       |
 | `PyodideTransport` (WASM)      | `pyodide`     | `false`         | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`       |
 
-\* `SubprocessTransport.supportsChunking` reports the **configured** capability:
-`true` when the transport was created with `enableChunking: true` (the default for
-`NodeBridge`), `false` otherwise. Like `supportsArrow`, it is a static,
-lifecycle-independent property of the transport — it does **not** make a round
-trip and does **not** change across `init()`/`dispose()`. Whether the *connected*
-bridge actually advertised the `tywrap-frame/1` block is the negotiated fact,
-surfaced separately on `BridgeInfo.transport.supportsChunking` (from the `meta`
-probe). "Will chunking actually happen for an oversize payload" needs **both**
-`true`; against an old/incapable bridge the oversize payload fails loud — never a
-silent single-frame fallback. Chunking is subprocess-only — it is the only backend
-with a real frame ceiling (the JSONL line-length limit). See
-[Transport framing](./transport-framing.md).
+`SubprocessTransport.supportsChunking` is always `true`. The npm package ships
+the JS and Python framing peers together, so no runtime negotiation is needed.
+Chunking is subprocess-only; HTTP and Pyodide have no JSONL line ceiling.
+See [Transport framing](./transport-framing.md).
 
 `PooledTransport` (the multi-process Node path) reports the capabilities of the
 worker transport it distributes across — in practice `SubprocessTransport`. Its
 `capabilities()` is a **static** descriptor read from an un-initialized probe
-worker built by the same factory, so it reports the configured
-`supportsChunking` the workers carry (e.g. `true` when the pool's workers are
-created with `enableChunking: true`). The pool builds no live worker to answer a
-capability query. Each leased worker negotiates `tywrap-frame/1` independently
-inside its own `init()` — that per-worker negotiated fact lives on each worker's
-`BridgeInfo.transport.supportsChunking`, and a chunked request or response routed
-through a pool lease reassembles correctly.
+worker built by the same factory. Each leased worker always uses
+`tywrap-frame/1`, and chunked traffic through a lease reassembles correctly.
 
 ## Notes per flag
 
@@ -89,13 +76,8 @@ Whether the transport can carry arbitrary binary data (e.g. Python `bytes`).
 
 `supportsChunking` is implemented for the **subprocess** backend as of **0.8.0**:
 it splits one logical message across multiple `tywrap-frame/1` frames so a payload
-can exceed the JSONL line ceiling. The capability reports the **configured** path
-(`enableChunking`, `true` by default on `NodeBridge`) and is static (see the table
-note above); the per-bridge negotiated fact lives on
-`BridgeInfo.transport.supportsChunking`. HTTP and Pyodide stay `false` — they have
-no line ceiling and buffer the whole payload in one frame. See
-[Transport framing](./transport-framing.md) for the wire format and negotiation
-handshake.
+can exceed the JSONL line ceiling. The capability is always `true` for subprocess and static. HTTP and Pyodide
+stay `false`. See [Transport framing](./transport-framing.md) for the wire format.
 
 `supportsStreaming` (incremental results for a single request) is `false` on every
 backend; it is not implemented in 0.8.0.

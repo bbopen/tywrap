@@ -6,7 +6,7 @@
  *    the real Python bridge return a ~20 MiB payload, and assert the TS side
  *    reassembles it byte-for-byte through SubprocessTransport.send.
  *  - negotiation: capabilities().supportsChunking reports the CONFIGURED path
- *    (enableChunking, lifecycle-independent per the Transport contract); whether
+ *    (always on and lifecycle-independent); whether
  *    the connected bridge advertised framing is the negotiated fact on the meta
  *    `transport` block / BridgeInfo.transport.supportsChunking.
  *  - late-frame-after-timeout discard: once an id times out, subsequent frames
@@ -111,24 +111,12 @@ describe('SubprocessTransport chunked responses (tywrap-frame/1)', () => {
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
     });
     await transport.init();
-    // Configured (static) capability: true because enableChunking:true, not
+    // Static capability: always true, not
     // because of any round trip — the descriptor is lifecycle-independent.
     expect(transport.capabilities().supportsChunking).toBe(true);
     expect(transport.capabilities().maxFrameBytes).toBe(ONE_MIB);
-
-    // Negotiated (runtime) fact lives on the meta transport block: the spawned
-    // bridge actually advertised tywrap-frame/1.
-    const metaLine = await transport.send(
-      JSON.stringify({ id: -1, protocol: PROTOCOL_ID, method: 'meta', params: {} }),
-      15_000
-    );
-    const meta = JSON.parse(metaLine) as {
-      result?: { transport?: { supportsChunking?: boolean } };
-    };
-    expect(meta.result?.transport?.supportsChunking).toBe(true);
   });
 
   it('reassembles a ~20 MiB response from 1 MiB frames end-to-end', async () => {
@@ -139,7 +127,6 @@ describe('SubprocessTransport chunked responses (tywrap-frame/1)', () => {
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
       // Raise the logical codec ceiling so Python does not reject the 20 MiB
       // response BEFORE it ever gets framed (this is the response-size guard,
       // distinct from the per-frame ceiling). The TS reassembly cap must rise
@@ -177,7 +164,6 @@ describe('SubprocessTransport chunked responses (tywrap-frame/1)', () => {
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
       env: {
         ...process.env,
         TYWRAP_CODEC_MAX_BYTES: String(TWENTY_MIB * 2),
@@ -197,7 +183,6 @@ describe('SubprocessTransport chunked responses (tywrap-frame/1)', () => {
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
     });
     await transport.init();
 
@@ -233,7 +218,6 @@ function forcedChunkingTransport(): {
   const transport = new SubprocessTransport({
     bridgeScript: '/path/to/bridge.py',
     maxLineLength: ONE_MIB,
-    enableChunking: true,
   });
   const internals = transport as unknown as ChunkingInternals;
   internals._state = 'ready';
@@ -351,48 +335,6 @@ describe('SubprocessTransport late-frame-after-timeout discard', () => {
 });
 
 // =============================================================================
-// NO NEGOTIATION: oversize fails LOUD (no silent single-frame fallback)
-// =============================================================================
-
-describe('SubprocessTransport without chunking (old-bridge behavior)', () => {
-  let transport: SubprocessTransport | null = null;
-
-  afterEach(async () => {
-    if (transport) {
-      await transport.dispose();
-      transport = null;
-    }
-  });
-
-  it('reports supportsChunking:false and fails loud on an oversize response', async () => {
-    if (!hasPython) {
-      return;
-    }
-    // enableChunking omitted => no negotiation; the bridge writes one JSONL line.
-    transport = new SubprocessTransport({
-      bridgeScript: REFERENCE_SCRIPT,
-      cwd: RUNTIME_DIR,
-      maxLineLength: ONE_MIB,
-      env: {
-        ...process.env,
-        TYWRAP_CODEC_MAX_BYTES: String(TWENTY_MIB * 2),
-      } as Record<string, string>,
-    });
-    await transport.init();
-    expect(transport.capabilities().supportsChunking).toBe(false);
-
-    // A response larger than maxLineLength must fail with a protocol error
-    // (line ceiling), NOT silently truncate.
-    await expect(transport.send(bigStringRequest(1, 4 * ONE_MIB), 30_000)).rejects.toThrow(
-      /exceeded/
-    );
-    // A too-long line is unrecoverable stdout desync: the subprocess is marked
-    // for restart (codex review bug 4).
-    expect((transport as unknown as { needsRestart: boolean }).needsRestart).toBe(true);
-  }, 30_000);
-});
-
-// =============================================================================
 // CHUNKING-CORE HARDENING (codex adversarial review fixes)
 // =============================================================================
 
@@ -408,7 +350,6 @@ describe('chunking-core hardening', () => {
     const writes: string[] = [];
     const transport = new SubprocessTransport({
       bridgeScript: '/path/to/bridge.py',
-      enableChunking: true,
     });
     const internals = transport as unknown as {
       _state: string;
@@ -543,38 +484,5 @@ describe('chunking-core hardening', () => {
     internals.pending.set(7, entryA);
     await internals.writeRequest('{"id":7}', 7, undefined, entryA);
     expect(writes.length).toBe(1);
-  });
-
-  it('negotiation rejects a transport block with an invalid maxFrameBytes', () => {
-    const transport = new SubprocessTransport({
-      bridgeScript: '/path/to/bridge.py',
-      enableChunking: true,
-    });
-    const advertises = (
-      transport as unknown as { bridgeAdvertisesChunking: (parsed: unknown) => boolean }
-    ).bridgeAdvertisesChunking.bind(transport);
-
-    const block = (maxFrameBytes: unknown): unknown => ({
-      result: {
-        transport: { frameProtocol: FRAME_PROTOCOL_ID, supportsChunking: true, maxFrameBytes },
-      },
-    });
-    expect(advertises(block(1024 * 1024))).toBe(true);
-    expect(advertises(block(0))).toBe(false);
-    expect(advertises(block(-1))).toBe(false);
-    expect(advertises(block(1.5))).toBe(false);
-    expect(advertises(block(undefined))).toBe(false);
-    // A mismatched frame protocol is rejected regardless of the rest.
-    expect(
-      advertises({
-        result: {
-          transport: {
-            frameProtocol: 'tywrap-frame/2',
-            supportsChunking: true,
-            maxFrameBytes: 4096,
-          },
-        },
-      })
-    ).toBe(false);
   });
 });

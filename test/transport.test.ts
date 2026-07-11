@@ -70,7 +70,7 @@ function createMockTransport(): Transport {
       backend: 'subprocess',
       supportsArrow: true,
       supportsBinary: true,
-      supportsChunking: false,
+      supportsChunking: true,
       supportsStreaming: false,
       maxFrameBytes: Number.POSITIVE_INFINITY,
     }),
@@ -1403,8 +1403,7 @@ describe('Cross-Transport Interface Compliance', () => {
         const after = transport.capabilities();
         // Capabilities are static, not lifecycle-dependent.
         expect(after).toEqual(before);
-        // Chunking/streaming are not implemented on any backend yet (0.8.0).
-        expect(before.supportsChunking).toBe(false);
+        expect(before.supportsChunking).toBe(before.backend === 'subprocess');
         expect(before.supportsStreaming).toBe(false);
       });
     });
@@ -1423,7 +1422,7 @@ describe('TransportCapabilities descriptors', () => {
       backend: 'subprocess',
       supportsArrow: true,
       supportsBinary: true,
-      supportsChunking: false,
+      supportsChunking: true,
       supportsStreaming: false,
       maxFrameBytes: 100 * 1024 * 1024,
     });
@@ -1469,7 +1468,7 @@ describe('TransportCapabilities descriptors', () => {
       backend: 'subprocess',
       supportsArrow: true,
       supportsBinary: true,
-      supportsChunking: false,
+      supportsChunking: true,
       supportsStreaming: false,
       maxFrameBytes: 100 * 1024 * 1024,
     });

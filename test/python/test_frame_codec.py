@@ -466,6 +466,33 @@ class TestCrossLanguageParity:
 
 
 class TestReassemblerResourceBounds:
+    def test_duplicate_first_frame_for_same_request_fails_loud(self):
+        import python_bridge
+
+        r = python_bridge._request_reassembler
+        r.clear_pending()
+        first = encode_frames('duplicate-frame', id=40, stream='request', max_frame_bytes=4)[0]
+        assert python_bridge._accept_request_frame(first) is None
+        with pytest.raises(FrameError, match='duplicate seq'):
+            python_bridge._accept_request_frame(first)
+        r.clear_pending()
+
+    def test_abandoned_chunked_request_is_cleared_before_new_chunked_request(self):
+        import python_bridge
+
+        r = python_bridge._request_reassembler
+        r.clear_pending()
+        frames = encode_frames('x' * 32, id=41, stream='request', max_frame_bytes=8)
+        assert python_bridge._accept_request_frame(frames[0]) is None
+        assert r.pending_count == 1
+
+        next_frames = encode_frames('next-request', id=42, stream='request', max_frame_bytes=4)
+        result = None
+        for frame in next_frames:
+            result = python_bridge._accept_request_frame(frame)
+        assert result == 'next-request'
+        assert r.pending_count == 0
+
     """Resource bounds — mirror of src/runtime/frame-codec.ts."""
 
     def test_caps_concurrent_streams(self) -> None:
