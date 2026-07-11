@@ -1358,6 +1358,42 @@ describe('CodeGenerator', () => {
     expect(code.declaration).not.toContain('get petName');
   });
 
+  it('keeps the migration note when static methods survive but instance methods are dropped', () => {
+    const method = (name: string, methodKind?: string) => ({
+      name,
+      signature: {
+        parameters: [],
+        returnType: { kind: 'primitive', name: 'int' },
+        isAsync: false,
+        isGenerator: false,
+      },
+      docstring: undefined,
+      decorators: [],
+      isAsync: false,
+      isGenerator: false,
+      ...(methodKind ? { methodKind } : {}),
+      returnType: { kind: 'primitive', name: 'int' },
+      parameters: [],
+    });
+
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Mixed',
+        bases: [],
+        methods: [method('helper', 'static'), method('compute')],
+        properties: [],
+        docstring: undefined,
+        decorators: [],
+      } as any,
+      'mixed_mod'
+    );
+
+    expect(code.typescript).toContain('static async helper');
+    expect(code.typescript).not.toContain('compute(');
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.declaration).toContain('Instance members are not generated in v0.9');
+  });
+
   it('emits the same empty class for implicit and explicit instance methods', () => {
     const base = {
       name: 'Widget',

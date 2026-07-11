@@ -212,8 +212,8 @@ async function demo() {
   const sum = await add(3.14159, 2.71828, 3);
   const product = await multiply(sum, 2, 3);
 
-  console.log(`Sum: ${sum}`); // Sum: 5.860
-  console.log(`Product: ${product}`); // Product: 11.720
+  console.log(`Sum: ${sum}`); // Sum: 5.86
+  console.log(`Product: ${product}`); // Product: 11.72
 }
 ```
 

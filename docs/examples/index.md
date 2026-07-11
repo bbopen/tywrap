@@ -59,13 +59,13 @@ console.log(await sin(pi / 4));
 
 ## Value-returning APIs
 
-v0.9 generated wrappers do not keep live Python class instances. Expose an operation as a
-value-returning module function instead:
+v0.9 generated wrappers do not keep live Python class instances. Expose an
+operation as a value-returning module function instead:
 
 ```ts
-import { most_common } from './generated/collections.generated.js';
+import { median } from './generated/statistics.generated.js';
 
-console.log(await most_common([1, 2, 2], 1));
+console.log(await median([1, 2, 2])); // 2
 ```
 
 ## More Docs

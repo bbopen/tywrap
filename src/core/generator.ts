@@ -798,13 +798,11 @@ ${callPrelude}${guards}    return ${callExpr};
     // The constructor counts: a class whose only member was __init__ loses
     // create(), so it needs the migration note as much as one with methods.
     const omittedInstanceMembers =
-      cls.methods.some(
-        method => method.methodKind !== 'class' && method.methodKind !== 'static'
-      ) || (cls.accessors?.length ?? 0) > 0;
-    const migrationNote =
-      methodBodies.length === 0 && omittedInstanceMembers
-        ? '  // NOTE: Instance members are not generated in v0.9; migrate this API to value-returning module functions.\n'
-        : '';
+      cls.methods.some(method => method.methodKind !== 'class' && method.methodKind !== 'static') ||
+      (cls.accessors?.length ?? 0) > 0;
+    const migrationNote = omittedInstanceMembers
+      ? '  // NOTE: Instance members are not generated in v0.9; migrate this API to value-returning module functions.\n'
+      : '';
     const ts = `${jsdoc}export class ${cname}${classTypeParamDecl} {
 ${migrationNote}${methodsSection}
 }

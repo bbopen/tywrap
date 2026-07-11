@@ -239,15 +239,18 @@ describe('Transport Interface', () => {
       expect(isProtocolMessage(msg)).toBe(true);
     });
 
-    it('rejects removed instance protocol messages', () => {
-      const msg = {
-        id: 1,
-        protocol: PROTOCOL_ID,
-        method: 'instantiate',
-        params: { module: 'mymodule', className: 'MyClass', args: [] },
-      };
-      expect(isProtocolMessage(msg)).toBe(false);
-    });
+    it.each(['instantiate', 'call_method', 'dispose_instance'])(
+      'rejects removed instance protocol message: %s',
+      method => {
+        const msg = {
+          id: 1,
+          protocol: PROTOCOL_ID,
+          method,
+          params: { module: 'mymodule', className: 'MyClass', args: [] },
+        };
+        expect(isProtocolMessage(msg)).toBe(false);
+      }
+    );
 
     it('returns false for null', () => {
       expect(isProtocolMessage(null)).toBe(false);
