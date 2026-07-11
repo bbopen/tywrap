@@ -88,69 +88,102 @@ function buildPath(basePath: string, key: string | number): string {
 }
 
 /**
- * Recursively validate request values that JSON.stringify cannot represent
- * without data loss, and optionally check object keys.
- * Throws BridgeCodecError with path indication if found.
+ * Validate request-only restrictions in one traversal.
+ *
+ * Request validation historically checked every finite number before checking
+ * structure. Keep that precedence while combining the walks: capture the first
+ * structural error (Map, Set, or symbol key) in traversal order, and prefer
+ * the special-float error after the traversal.
  */
-function assertRequestValues(
+function assertValidRequestValues(
   value: unknown,
+  rejectSpecialFloats: boolean,
   rejectNonStringKeys: boolean,
-  path: string = '',
-  visited: WeakSet<object> = new WeakSet<object>()
+  path: string = ''
 ): void {
-  if (value === null || typeof value !== 'object') {
-    return;
-  }
-  if (visited.has(value)) {
-    return;
-  }
-  visited.add(value);
+  let specialFloatPath: string | undefined;
+  let structuralError: BridgeCodecError | undefined;
+  const specialVisited = new WeakSet<object>();
+  const structVisited = new WeakSet<object>();
 
-  // JSON.stringify serializes every Map as {}, including Maps with string keys.
-  if (value instanceof Map) {
-    const location = path ? ` at ${path}` : '';
-    throw new BridgeCodecError(
-      `Cannot encode request: Map found${location}; convert it to a plain object before sending`,
-      { codecPhase: 'encode' }
-    );
-  }
-
-  // JSON.stringify serializes every Set as {}.
-  if (value instanceof Set) {
-    const location = path ? ` at ${path}` : '';
-    throw new BridgeCodecError(
-      `Cannot encode request: Set found${location}; convert it to an array before sending`,
-      { codecPhase: 'encode' }
-    );
-  }
-
-  // Check arrays
-  if (Array.isArray(value)) {
-    for (const [index, item] of value.entries()) {
-      assertRequestValues(item, rejectNonStringKeys, buildPath(path, index), visited);
+  const visit = (current: unknown, currentPath: string, structuralScope: boolean): void => {
+    if (typeof current === 'number' && !Number.isFinite(current)) {
+      if (rejectSpecialFloats) {
+        specialFloatPath ??= currentPath || 'root';
+      }
+      return;
     }
-    return;
-  }
+    if (current === null || typeof current !== 'object') {
+      return;
+    }
 
-  // Check plain objects for symbol keys
-  if (isPlainObject(value)) {
-    // Symbol keys are not enumerated by Object.keys, use getOwnPropertySymbols
-    if (rejectNonStringKeys) {
-      const symbolKeys = Object.getOwnPropertySymbols(value);
-      const firstSymbol = symbolKeys[0];
+    if (current instanceof Map || current instanceof Set) {
+      // JSON.stringify serializes every Map and Set as {}, including Maps with
+      // string keys — reject unconditionally. Special-float validation
+      // historically does not inspect Map/Set contents, so no recursion.
+      if (structuralScope && !structVisited.has(current)) {
+        structVisited.add(current);
+        const location = currentPath ? ` at ${currentPath}` : '';
+        structuralError ??= new BridgeCodecError(
+          current instanceof Map
+            ? `Cannot encode request: Map found${location}; convert it to a plain object before sending`
+            : `Cannot encode request: Set found${location}; convert it to an array before sending`,
+          { codecPhase: 'encode' }
+        );
+      }
+      return;
+    }
+
+    const needsSpecialWalk = rejectSpecialFloats && !specialVisited.has(current);
+    const needsStructWalk = structuralScope && !structVisited.has(current);
+    if (!needsSpecialWalk && !needsStructWalk) {
+      return;
+    }
+    if (needsSpecialWalk) {
+      specialVisited.add(current);
+    }
+    if (needsStructWalk) {
+      structVisited.add(current);
+    }
+
+    if (Array.isArray(current)) {
+      for (const [index, item] of current.entries()) {
+        visit(item, buildPath(currentPath, index), structuralScope);
+      }
+      return;
+    }
+
+    const plainObject = isPlainObject(current);
+    if (plainObject && needsStructWalk && rejectNonStringKeys) {
+      // Symbol keys are not enumerated by Object.keys, use getOwnPropertySymbols
+      const firstSymbol = Object.getOwnPropertySymbols(current)[0];
       if (firstSymbol !== undefined) {
-        const symbolDesc = firstSymbol.toString();
-        const location = path ? ` at ${path}` : '';
-        throw new BridgeCodecError(`Symbol key found in object${location}: ${symbolDesc}`, {
-          codecPhase: 'encode',
-        });
+        const location = currentPath ? ` at ${currentPath}` : '';
+        structuralError ??= new BridgeCodecError(
+          `Symbol key found in object${location}: ${firstSymbol.toString()}`,
+          { codecPhase: 'encode' }
+        );
       }
     }
-
-    // Recurse into object values
-    for (const [key, item] of Object.entries(value)) {
-      assertRequestValues(item, rejectNonStringKeys, buildPath(path, key), visited);
+    // Special-float detection historically traversed every non-array object
+    // with enumerable values, including class instances. Structural validation
+    // remains restricted to arrays and plain objects, matching its prior scope.
+    if (needsSpecialWalk || plainObject) {
+      for (const [key, item] of Object.entries(current)) {
+        visit(item, buildPath(currentPath, key), structuralScope && plainObject);
+      }
     }
+  };
+
+  visit(value, path, true);
+  if (rejectSpecialFloats && specialFloatPath !== undefined) {
+    throw new BridgeCodecError(
+      `Cannot encode request: contains non-finite number (NaN or Infinity) at ${specialFloatPath}`,
+      { codecPhase: 'encode', valueType: 'number' }
+    );
+  }
+  if (structuralError !== undefined) {
+    throw structuralError;
   }
 }
 
@@ -509,17 +542,9 @@ export class BridgeCodec {
    * @throws BridgeCodecError if validation fails or encoding fails
    */
   encodeRequest(message: unknown): string {
-    // Validate special floats if enabled
-    if (this.rejectSpecialFloats && containsSpecialFloat(message)) {
-      const floatPath = findSpecialFloatPath(message);
-      throw new BridgeCodecError(
-        `Cannot encode request: contains non-finite number (NaN or Infinity) at ${floatPath}`,
-        { codecPhase: 'encode', valueType: 'number' }
-      );
-    }
-
-    // Reject values JSON.stringify would silently mangle, and validate object keys.
-    assertRequestValues(message, this.rejectNonStringKeys);
+    // Reject, in one traversal, values JSON.stringify would silently mangle:
+    // non-finite numbers, Map/Set, and (optionally) non-string keys.
+    assertValidRequestValues(message, this.rejectSpecialFloats, this.rejectNonStringKeys);
 
     // Serialize to JSON with error handling
     let payload: string;
@@ -556,7 +581,10 @@ export class BridgeCodec {
     }
 
     // Check payload size
-    const payloadBytes = new TextEncoder().encode(payload).length;
+    const payloadBytes =
+      typeof Buffer !== 'undefined'
+        ? Buffer.byteLength(payload, 'utf8')
+        : new TextEncoder().encode(payload).length;
     if (payloadBytes > this.maxPayloadBytes) {
       throw new BridgeCodecError(
         `Payload size ${payloadBytes} bytes exceeds maximum ${this.maxPayloadBytes} bytes`,

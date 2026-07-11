@@ -326,7 +326,12 @@ export interface Transport extends Disposable {
    * @throws BridgeProtocolError if the message format is invalid
    * @throws BridgeError for other transport-level failures
    */
-  send(message: string, timeoutMs: number, signal?: AbortSignal): Promise<string>;
+  send(
+    message: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    requestId?: number
+  ): Promise<string>;
 
   /**
    * Whether the transport is ready to send messages.

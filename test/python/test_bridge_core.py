@@ -10,6 +10,10 @@ from pathlib import Path
 
 RUNTIME_DIR = Path(__file__).parent.parent.parent / 'runtime'
 
+sys.path.insert(0, str(RUNTIME_DIR))
+
+from tywrap_bridge_core import deserialize  # noqa: E402
+
 
 def test_plain_values_do_not_import_scientific_codecs() -> None:
     """Plain JSON values must not cold-import optional scientific packages."""
@@ -36,3 +40,15 @@ print(json.dumps(sorted(after - before)))
     )
 
     assert json.loads(completed.stdout) == []
+
+
+def test_deserialize_fast_path_preserves_plain_request_tree() -> None:
+    value = {'nested': [{'value': 1}, {'value': 'plain'}]}
+
+    assert deserialize(value, has_envelope_markers=False) is value
+
+
+def test_deserialize_still_decodes_bytes_envelope_when_markers_are_present() -> None:
+    value = {'data': {'__tywrap_bytes__': True, 'b64': 'aGVsbG8='}}
+
+    assert deserialize(value, has_envelope_markers=True) == {'data': b'hello'}

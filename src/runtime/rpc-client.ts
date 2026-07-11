@@ -400,7 +400,8 @@ export class RpcClient extends DisposableBase {
       const responseStr = await this.transport.send(
         encoded,
         options?.timeoutMs ?? this.defaultTimeoutMs,
-        options?.signal
+        options?.signal,
+        fullMessage.id
       );
 
       // 3. Decode response (sync or Arrow-aware, per caller)
@@ -434,7 +435,8 @@ export class RpcClient extends DisposableBase {
     const responseStr = await transport.send(
       encoded,
       opts?.timeoutMs ?? this.defaultTimeoutMs,
-      opts?.signal
+      opts?.signal,
+      fullMessage.id
     );
     return this.codec.decodeResponseAsync<T>(responseStr);
   }

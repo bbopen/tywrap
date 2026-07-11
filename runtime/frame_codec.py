@@ -70,6 +70,7 @@ def encode_frames(
     id: int,
     stream: str,
     max_frame_bytes: int,
+    total_bytes: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Fragment a complete logical JSON message into ``tywrap-frame/1`` frames.
 
@@ -96,7 +97,8 @@ def encode_frames(
             code='FRAME_MALFORMED',
         )
 
-    total_bytes = utf8_byte_length(logical_json)
+    if total_bytes is None:
+        total_bytes = utf8_byte_length(logical_json)
 
     # Walk codepoints, accumulating UTF-8 bytes into the current slice until the
     # next codepoint would exceed max_frame_bytes; that boundary is, by

@@ -451,6 +451,7 @@ describe('SubprocessTransport', () => {
     process: { stdin: { write: (data: string) => boolean } } | null;
     handleStdinDrain: () => void;
     handleResponseLine: (line: string) => void;
+    handleStdoutData: (chunk: Buffer | string) => void;
   }
 
   beforeEach(async () => {
@@ -667,6 +668,37 @@ describe('SubprocessTransport', () => {
       internals.handleResponseLine(JSON.stringify({ id: requestId, result: 'ok' }));
 
       await expect(pending).resolves.toContain(`"id":${requestId}`);
+    });
+
+    it('correlates a large stdout line split across many chunks', async () => {
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
+      const internals = transport as unknown as SubprocessTransportInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = { stdin: { write: (): boolean => true } };
+
+      const messageId = 77;
+      const pending = transport.send(JSON.stringify(createValidMessage({ id: messageId })), 1000);
+      const response = `${JSON.stringify({ id: messageId, result: 'x'.repeat(64 * 1024) })}\n`;
+      for (let offset = 0; offset < response.length; offset += 17) {
+        internals.handleStdoutData(response.slice(offset, offset + 17));
+      }
+
+      await expect(pending).resolves.toContain(`"id":${messageId}`);
+    });
+
+    it('skips an empty stdout line before a response', async () => {
+      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
+      const internals = transport as unknown as SubprocessTransportInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = { stdin: { write: (): boolean => true } };
+
+      const messageId = 78;
+      const pending = transport.send(JSON.stringify(createValidMessage({ id: messageId })), 1000);
+      internals.handleStdoutData(`\n${JSON.stringify({ id: messageId, result: 'ok' })}\n`);
+
+      await expect(pending).resolves.toContain(`"id":${messageId}`);
     });
 
     it('accepts id=0 for request/response correlation', async () => {

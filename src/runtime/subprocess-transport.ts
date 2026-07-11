@@ -165,6 +165,8 @@ interface QueuedWrite {
    * (and so never executes on) Python.
    */
   isLive?: () => boolean;
+  /** True while this entry is waiting to be flushed. */
+  isQueued?: boolean;
 }
 
 // =============================================================================
@@ -305,6 +307,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
   // Stream buffers
   private stdoutBuffer = '';
+  private stdoutScanOffset = 0;
   private stderrBuffer = '';
 
   // Request tracking
@@ -317,6 +320,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
   // Write queue for backpressure
   private readonly writeQueue: QueuedWrite[] = [];
+  private writeQueueHead = 0;
   private draining = false;
 
   /**
@@ -362,7 +366,12 @@ export class SubprocessTransport extends DisposableBase implements Transport {
    * @param signal - Optional AbortSignal for cancellation
    * @returns The raw JSON response string
    */
-  async send(message: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  async send(
+    message: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    requestId?: number
+  ): Promise<string> {
     // Check disposed state
     if (this.isDisposed) {
       throw new BridgeDisposedError('Transport has been disposed');
@@ -387,7 +396,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     }
 
     // Extract message ID for response correlation
-    const messageId = extractMessageId(message);
+    const messageId = requestId ?? extractMessageId(message);
     if (messageId === null) {
       throw new BridgeProtocolError('Message must contain an "id" field');
     }
@@ -674,17 +683,14 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.pending.clear();
 
     // Clear write queue
-    for (const queued of this.writeQueue) {
-      this.clearQueuedWriteTimeout(queued);
-      queued.reject(error);
-    }
-    this.writeQueue.length = 0;
+    this.rejectAllQueuedWrites(error);
 
     // Kill process
     await this.killProcess();
 
     // Clear buffers
     this.stdoutBuffer = '';
+    this.stdoutScanOffset = 0;
     this.stderrBuffer = '';
     this.timedOutRequests.clear();
     this.requestCount = 0;
@@ -840,6 +846,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
     // Clear buffers and restart flags
     this.stdoutBuffer = '';
+    this.stdoutScanOffset = 0;
     this.stderrBuffer = '';
     this.requestCount = 0;
     this.needsRestart = false;
@@ -897,22 +904,25 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
     const ceiling = this.effectiveLineCeiling();
 
-    // Check for excessive line length without newline
-    if (this.stdoutBuffer.length > ceiling && !this.stdoutBuffer.includes('\n')) {
+    // Scan only bytes newly appended since the last incomplete line.
+    let newlineIndex = this.stdoutBuffer.indexOf('\n', this.stdoutScanOffset);
+    if (this.stdoutBuffer.length > ceiling && newlineIndex === -1) {
       const snippet = this.stdoutBuffer.slice(0, 500);
       this.stdoutBuffer = '';
+      this.stdoutScanOffset = 0;
       this.handleProtocolError(`Response line exceeded ${ceiling} bytes`, snippet);
       return;
     }
 
     // Process complete lines
-    let newlineIndex: number;
-    while ((newlineIndex = this.stdoutBuffer.indexOf('\n')) !== -1) {
+    while (newlineIndex !== -1) {
       const line = this.stdoutBuffer.slice(0, newlineIndex);
       this.stdoutBuffer = this.stdoutBuffer.slice(newlineIndex + 1);
+      this.stdoutScanOffset = 0;
 
       // Skip empty lines
       if (!line.trim()) {
+        newlineIndex = this.stdoutBuffer.indexOf('\n', this.stdoutScanOffset);
         continue;
       }
 
@@ -924,7 +934,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       }
 
       this.handleResponseLine(line);
+      newlineIndex = this.stdoutBuffer.indexOf('\n', this.stdoutScanOffset);
     }
+    this.stdoutScanOffset = this.stdoutBuffer.length;
   }
 
   /**
@@ -1115,11 +1127,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     const error = new BridgeProtocolError(this.withStderrTail(`stdin error: ${err.message}`));
 
     // Reject all pending writes
-    for (const queued of this.writeQueue) {
-      this.clearQueuedWriteTimeout(queued);
-      queued.reject(error);
-    }
-    this.writeQueue.length = 0;
+    this.rejectAllQueuedWrites(error);
 
     // Reject all pending requests
     this.rejectAllPending(error);
@@ -1164,14 +1172,12 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     isLive?: () => boolean
   ): QueuedWrite {
     const queuedAt = Date.now();
-    const entry: QueuedWrite = { data, resolve, reject, queuedAt, isLive };
+    const entry: QueuedWrite = { data, resolve, reject, queuedAt, isLive, isQueued: true };
 
     // Set up timeout timer that fires if drain never happens
     entry.timeoutHandle = setTimeout(() => {
-      // Remove this entry from the queue
-      const index = this.writeQueue.indexOf(entry);
-      if (index !== -1) {
-        this.writeQueue.splice(index, 1);
+      if (entry.isQueued) {
+        entry.isQueued = false;
         reject(
           new BridgeTimeoutError(
             `Write queue timeout: entry waited ${this.writeQueueTimeoutMs}ms without drain`
@@ -1208,7 +1214,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         return;
       }
 
-      if (this.draining || this.writeQueue.length > 0) {
+      if (this.draining || this.writeQueue.length > this.writeQueueHead) {
         // Queue the write with timestamp, timeout timer, and liveness predicate
         // (checked again at flush — see processQueuedWrite).
         this.writeQueue.push(this.createQueuedWrite(data, resolve, reject, isLive));
@@ -1352,11 +1358,16 @@ export class SubprocessTransport extends DisposableBase implements Transport {
    * Clears each entry's timeout before rejecting so no late timer fires.
    */
   private rejectAllQueuedWrites(error: Error): void {
-    for (const q of this.writeQueue) {
-      this.clearQueuedWriteTimeout(q);
-      q.reject(error);
+    for (let index = this.writeQueueHead; index < this.writeQueue.length; index += 1) {
+      const queued = this.writeQueue[index];
+      if (queued?.isQueued) {
+        queued.isQueued = false;
+        this.clearQueuedWriteTimeout(queued);
+        queued.reject(error);
+      }
     }
     this.writeQueue.length = 0;
+    this.writeQueueHead = 0;
   }
 
   /**
@@ -1422,7 +1433,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private flushWriteQueue(): void {
     const now = Date.now();
 
-    while (this.writeQueue.length > 0 && !this.draining) {
+    while (this.writeQueueHead < this.writeQueue.length && !this.draining) {
       const stdin = this.process?.stdin;
       if (!stdin || this.processExited) {
         // Process died - reject all queued writes
@@ -1433,10 +1444,16 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         return;
       }
 
-      const queued = this.writeQueue.shift();
+      const queued = this.writeQueue[this.writeQueueHead];
+      this.writeQueueHead += 1;
       if (!queued) {
         return;
       }
+
+      if (!queued.isQueued) {
+        continue;
+      }
+      queued.isQueued = false;
 
       // Clear the timeout since we're processing this entry now
       this.clearQueuedWriteTimeout(queued);
@@ -1445,6 +1462,11 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       if (status === 'backpressure' || status === 'error') {
         return;
       }
+    }
+
+    if (this.writeQueueHead === this.writeQueue.length) {
+      this.writeQueue.length = 0;
+      this.writeQueueHead = 0;
     }
   }
 

@@ -107,6 +107,27 @@ describe('encodeRequest - Special Float Rejection', () => {
     expect(() => codec.encodeRequest(data)).toThrow(/at arr\[1\]\.deep/);
   });
 
+  it('rejects NaN in enumerable class-instance values', () => {
+    class Box {
+      value = NaN;
+    }
+
+    expect(() => codec.encodeRequest(new Box())).toThrow(/non-finite number.*at value/);
+  });
+
+  it('does not validate Map keys below a class instance', () => {
+    class Box {
+      child = new Map([[1, 'one']]);
+    }
+
+    expect(() => codec.encodeRequest(new Box())).not.toThrow();
+  });
+
+  it('keeps special-float errors ahead of later key-validation errors', () => {
+    const data = { value: NaN, invalid: new Map([[1, 'one']]) };
+    expect(() => codec.encodeRequest(data)).toThrow(/non-finite number.*at value/);
+  });
+
   it('passes valid numbers', () => {
     expect(() => codec.encodeRequest(0)).not.toThrow();
     expect(() => codec.encodeRequest(42)).not.toThrow();

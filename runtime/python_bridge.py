@@ -338,7 +338,7 @@ def handle_meta():
     )
 
 
-def dispatch_request(msg):
+def dispatch_request(msg, *, has_envelope_markers=True):
     """
     Dispatch a validated request to the correct handler (subprocess identity).
 
@@ -358,6 +358,7 @@ def dispatch_request(msg):
         allowed_modules=ALLOWED_MODULES,
         allow_private_attrs=ALLOW_PRIVATE_ATTRS,
         transport_info=TRANSPORT_INFO,
+        has_envelope_markers=has_envelope_markers,
     )
     return out['id'], out['result']
 
@@ -374,10 +375,11 @@ def encode_response(out):
     except CodecError as exc:
         # Convert CodecError to ValueError for consistent error handling
         raise ValueError(str(exc)) from exc
-    payload_bytes = len(payload.encode('utf-8'))
+    payload_utf8 = payload.encode('utf-8')
+    payload_bytes = len(payload_utf8)
     if CODEC_MAX_BYTES is not None and payload_bytes > CODEC_MAX_BYTES:
         raise PayloadTooLargeError(payload_bytes, CODEC_MAX_BYTES)
-    return payload
+    return payload, payload_utf8
 
 
 def write_payload(payload: str) -> bool:
@@ -395,7 +397,7 @@ def write_payload(payload: str) -> bool:
         return False
 
 
-def write_response(payload: str, response_id) -> bool:
+def write_response(payload: str, payload_utf8: bytes, response_id) -> bool:
     """
     Write a fully-encoded JSONL response, fragmenting it into ``tywrap-frame/1``
     frames when chunking is negotiated and the payload exceeds the per-frame
@@ -422,7 +424,7 @@ def write_response(payload: str, response_id) -> bool:
     if not CHUNKING_ENABLED or MAX_FRAME_BYTES is None:
         return write_payload(payload)
 
-    payload_bytes = len(payload.encode('utf-8'))
+    payload_bytes = len(payload_utf8)
     if payload_bytes <= MAX_FRAME_BYTES:
         return write_payload(payload)
 
@@ -437,6 +439,7 @@ def write_response(payload: str, response_id) -> bool:
         id=response_id,
         stream='response',
         max_frame_bytes=MAX_FRAME_BYTES,
+        total_bytes=payload_bytes,
     )
     for frame in frames:
         # One frame per JSONL line; flush per frame so the pipe backpressures
@@ -504,7 +507,8 @@ def process_request_line(line):
                 # Why: preserve request ids even when handlers raise.
                 mid = req_id
         try:
-            mid, result = dispatch_request(msg)
+            has_envelope_markers = '__tywrap' in line or '__type__' in line
+            mid, result = dispatch_request(msg, has_envelope_markers=has_envelope_markers)
             out = {'id': mid, 'protocol': PROTOCOL, 'result': result}
         except ProtocolError as e:
             emit_protocol_diagnostic(str(e))
@@ -523,11 +527,11 @@ def process_request_line(line):
         out = build_error_payload(mid, e, include_traceback=False)
 
     try:
-        payload = encode_response(out)
+        payload, payload_utf8 = encode_response(out)
         # Correlate frames by the response id when chunking; out always
         # carries the request id (or None for a malformed-request envelope).
         response_id = out.get('id') if isinstance(out, dict) else None
-        if not write_response(payload, response_id):
+        if not write_response(payload, payload_utf8, response_id):
             return False
     except Exception as e:  # noqa: BLE001
         # Why: fallback error keeps responses well-formed even if serialization fails.
