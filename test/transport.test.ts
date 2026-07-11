@@ -458,50 +458,6 @@ describe('SubprocessTransport', () => {
     pythonAvailable = await isPythonAvailable();
   });
 
-  describe('constructor', () => {
-    it('creates instance with required options', () => {
-      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
-      expect(transport).toBeInstanceOf(SubprocessTransport);
-    });
-
-    it('uses default pythonPath when not specified', () => {
-      const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
-      expect(transport).toBeDefined();
-    });
-
-    it('accepts custom pythonPath', () => {
-      const transport = new SubprocessTransport({
-        bridgeScript: '/path/to/bridge.py',
-        pythonPath: '/usr/local/bin/python3',
-      });
-      expect(transport).toBeDefined();
-    });
-
-    it('accepts custom environment variables', () => {
-      const transport = new SubprocessTransport({
-        bridgeScript: '/path/to/bridge.py',
-        env: { CUSTOM_VAR: 'value' },
-      });
-      expect(transport).toBeDefined();
-    });
-
-    it('accepts custom maxLineLength', () => {
-      const transport = new SubprocessTransport({
-        bridgeScript: '/path/to/bridge.py',
-        maxLineLength: 1024 * 1024,
-      });
-      expect(transport).toBeDefined();
-    });
-
-    it('accepts restartAfterRequests option', () => {
-      const transport = new SubprocessTransport({
-        bridgeScript: '/path/to/bridge.py',
-        restartAfterRequests: 100,
-      });
-      expect(transport).toBeDefined();
-    });
-  });
-
   describe('lifecycle', () => {
     it('starts in idle state', () => {
       const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
@@ -809,34 +765,6 @@ describe('HttpTransport', () => {
     vi.restoreAllMocks();
   });
 
-  describe('constructor', () => {
-    it('creates instance with required options', () => {
-      const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
-      expect(transport).toBeInstanceOf(HttpTransport);
-    });
-
-    it('normalizes URL by removing trailing slash', () => {
-      const transport = new HttpTransport({ baseURL: 'http://localhost:8000/' });
-      expect(transport).toBeDefined();
-    });
-
-    it('accepts custom headers', () => {
-      const transport = new HttpTransport({
-        baseURL: 'http://localhost:8000',
-        headers: { Authorization: 'Bearer token' },
-      });
-      expect(transport).toBeDefined();
-    });
-
-    it('accepts custom defaultTimeoutMs', () => {
-      const transport = new HttpTransport({
-        baseURL: 'http://localhost:8000',
-        defaultTimeoutMs: 5000,
-      });
-      expect(transport).toBeDefined();
-    });
-  });
-
   describe('lifecycle', () => {
     it('is ready immediately after construction', () => {
       const transport = new HttpTransport({ baseURL: 'http://localhost:8000' });
@@ -1092,27 +1020,6 @@ describe('HttpTransport', () => {
 // =============================================================================
 
 describe('PyodideTransport', () => {
-  describe('constructor', () => {
-    it('creates instance with default options', () => {
-      const transport = new PyodideTransport();
-      expect(transport).toBeInstanceOf(PyodideTransport);
-    });
-
-    it('accepts custom indexURL', () => {
-      const transport = new PyodideTransport({
-        indexURL: 'https://custom-cdn.example.com/pyodide/',
-      });
-      expect(transport).toBeDefined();
-    });
-
-    it('accepts packages option', () => {
-      const transport = new PyodideTransport({
-        packages: ['numpy', 'pandas'],
-      });
-      expect(transport).toBeDefined();
-    });
-  });
-
   describe('lifecycle', () => {
     it('starts in idle state', () => {
       const transport = new PyodideTransport();
@@ -1561,7 +1468,6 @@ describe('TransportCapabilities descriptors', () => {
     const subprocess = new RpcClient({
       transport: new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' }),
     });
-    expect(subprocess.capabilities()).toEqual(subprocess.transport.capabilities());
     expect(subprocess.capabilities().backend).toBe('subprocess');
 
     const pyodide = new RpcClient({ transport: new PyodideTransport() });

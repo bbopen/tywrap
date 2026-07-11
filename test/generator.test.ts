@@ -1409,4 +1409,49 @@ describe('CodeGenerator', () => {
     expect(withInstanceKind.typescript).toBe(withoutKind.typescript);
     expect(withInstanceKind.declaration).toBe(withoutKind.declaration);
   });
+
+  it('emits NamedTuple fields as an exact readonly tuple alias', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Point',
+        bases: [],
+        methods: [],
+        properties: [
+          { name: 'x', type: { kind: 'primitive', name: 'float' }, readonly: true },
+          { name: 'y', type: { kind: 'primitive', name: 'float' }, readonly: true },
+        ],
+        docstring: undefined,
+        decorators: [],
+        kind: 'namedtuple',
+      } as any,
+      'geometry'
+    );
+
+    expect(code.typescript).toMatch(/^export type Point = readonly \[number, number\]$/m);
+    expect(code.declaration).toMatch(/^export type Point = readonly \[number, number\]$/m);
+  });
+
+  it('escapes reserved TypeScript names while preserving the Python RPC target', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'default',
+        signature: {
+          parameters: [],
+          returnType: { kind: 'primitive', name: 'str' },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: { kind: 'primitive', name: 'str' },
+        parameters: [],
+      } as any,
+      'keywords'
+    );
+
+    expect(code.typescript).toMatch(/^export async function _default_\(\): Promise<string> \{$/m);
+    expect(code.typescript).toContain("getRuntimeBridge().call('keywords', 'default', __args)");
+  });
 });

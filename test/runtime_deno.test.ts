@@ -1,6 +1,9 @@
 /**
  * Deno Runtime Support Compatibility Tests
  * Tests permissions, subprocess handling, module resolution, and Deno Deploy constraints
+ *
+ * CI note: no current CI job executes this file. It requires a native Deno
+ * runner; adding that job is intentionally a separate decision from this suite.
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';

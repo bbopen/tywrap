@@ -105,44 +105,6 @@ describe('TransportPool', () => {
       expect(() => new TransportPool({ createTransport: factory, maxWorkers: 0 })).toThrow();
       expect(() => new TransportPool({ createTransport: factory, maxWorkers: -1 })).toThrow();
     });
-
-    it('creates instance with required options', () => {
-      const pool = new TransportPool(createTestOptions());
-      expect(pool).toBeInstanceOf(TransportPool);
-    });
-
-    it('uses default queueTimeoutMs of 30000', () => {
-      const pool = new TransportPool(createTestOptions());
-      // Verify through behavior - this will be tested in timeout tests
-      expect(pool).toBeInstanceOf(TransportPool);
-    });
-
-    it('uses default maxConcurrentPerWorker of 1', () => {
-      const pool = new TransportPool(createTestOptions());
-      // Verify through behavior - this will be tested in concurrency tests
-      expect(pool).toBeInstanceOf(TransportPool);
-    });
-
-    it('accepts custom queueTimeoutMs', () => {
-      const pool = new TransportPool(createTestOptions({ queueTimeoutMs: 5000 }));
-      expect(pool).toBeInstanceOf(TransportPool);
-    });
-
-    it('accepts custom maxConcurrentPerWorker', () => {
-      const pool = new TransportPool(createTestOptions({ maxConcurrentPerWorker: 5 }));
-      expect(pool).toBeInstanceOf(TransportPool);
-    });
-
-    it('accepts all custom options', () => {
-      const { factory } = createMockTransportFactory();
-      const pool = new TransportPool({
-        createTransport: factory,
-        maxWorkers: 8,
-        queueTimeoutMs: 10000,
-        maxConcurrentPerWorker: 3,
-      });
-      expect(pool).toBeInstanceOf(TransportPool);
-    });
   });
 
   // ===========================================================================

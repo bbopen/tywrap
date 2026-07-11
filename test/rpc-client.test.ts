@@ -205,24 +205,6 @@ describe('BridgeProtocol', () => {
       expect(encoded).toContain('null'); // NaN becomes null in JSON
     });
 
-    it('sets default timeout of 30000ms', () => {
-      const transport = new MockTransport();
-      const protocol = new TestBridgeProtocol({ transport });
-
-      // Default timeout is tested through behavior
-      expect(protocol).toBeDefined();
-    });
-
-    it('accepts custom defaultTimeoutMs', () => {
-      const transport = new MockTransport();
-      const protocol = new TestBridgeProtocol({
-        transport,
-        defaultTimeoutMs: 5000,
-      });
-
-      expect(protocol).toBeDefined();
-    });
-
     it('accepts all custom options', () => {
       const transport = new MockTransport();
       const protocol = new TestBridgeProtocol({
@@ -311,6 +293,25 @@ describe('BridgeProtocol', () => {
 
       await expect(protocol.call('module', 'function', [])).rejects.toThrow(BridgeDisposedError);
     });
+  });
+
+  it('sendOn bypasses lifecycle initialization while the client is idle', async () => {
+    const heldTransport = new MockTransport();
+    const explicitTransport = new MockTransport();
+    const client = new RpcClient({ transport: heldTransport });
+
+    try {
+      await client.sendOn(explicitTransport, {
+        method: 'call',
+        params: { module: 'test', functionName: 'echo', args: [] },
+      });
+
+      expect(heldTransport.initCalled).toBe(false);
+      expect(explicitTransport.initCalled).toBe(false);
+      expect(explicitTransport.lastMessage).toContain('"method":"call"');
+    } finally {
+      await client.dispose();
+    }
   });
 
   // ===========================================================================
