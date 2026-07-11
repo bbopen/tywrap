@@ -45,7 +45,7 @@ import importlib  # noqa: F401  (re-exported for compat / used by handlers via c
 from safe_codec import BridgeCodec, CodecError
 
 import tywrap_bridge_core as core
-from frame_codec import FRAME_PROTOCOL_ID, FrameError, Reassembler, encode_frames
+from frame_codec import FrameError, Reassembler, encode_frames
 
 # Re-export the shared protocol/serialization surface so existing importers of
 # python_bridge keep working after the extraction (codex-flagged: runtime/ ships).
