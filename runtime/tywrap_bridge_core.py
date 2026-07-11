@@ -778,14 +778,12 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
 
 
 # =============================================================================
-# JSON ENCODE: BridgeCodec-equivalent value handling (NaN reject, scalars, bytes)
+# JSON CODEC: value handling and size-limited encode/decode
 # =============================================================================
 #
-# This mirrors BridgeCodec._default_encoder (runtime/safe_codec.py) for the VALUE
-# behaviors that are part of the wire contract. The subprocess server still uses
-# the real BridgeCodec for its final encode (it also enforces size limits); this
-# core encoder exists so the Pyodide server gets identical value handling without
-# depending on safe_codec.py. The conformance suite asserts these behaviors match.
+# This is the single Python implementation used by both the subprocess bridge and
+# the embedded Pyodide core. BridgeCodec adds payload-size enforcement around the
+# shared encoder; encode_value is the unbounded form used by the in-memory bridge.
 
 def _is_nan_or_inf(value):
     if not isinstance(value, (int, float)):
@@ -908,6 +906,56 @@ def encode_value(value, *, allow_nan):
         raise CodecError(f'JSON encoding failed: {exc}') from exc
     except TypeError as exc:
         raise CodecError(f'JSON encoding failed: {exc}') from exc
+
+
+class BridgeCodec:
+    """Safe JSON codec with explicit value handling and payload-size limits."""
+
+    def __init__(self, allow_nan=False, max_payload_bytes=10 * 1024 * 1024):
+        self.allow_nan = allow_nan
+        self.max_payload_bytes = max_payload_bytes
+        self._encoder = make_default_encoder(allow_nan=allow_nan)
+
+    def encode(self, value):
+        result = encode_value(value, allow_nan=self.allow_nan)
+        if len(result.encode('utf-8')) > self.max_payload_bytes:
+            raise CodecError(f'Payload exceeds {self.max_payload_bytes} bytes')
+        return result
+
+    def decode(self, payload):
+        if len(payload.encode('utf-8')) > self.max_payload_bytes:
+            raise CodecError(f'Payload exceeds {self.max_payload_bytes} bytes')
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise CodecError(f'JSON decoding failed: {exc}') from exc
+
+    def _default_encoder(self, obj):
+        """Compatibility hook for callers that used the codec's JSON encoder."""
+        return self._encoder(obj)
+
+
+_default_codec = None
+
+
+def get_default_codec():
+    """Return the lazily-created default BridgeCodec instance."""
+    global _default_codec
+    if _default_codec is None:
+        _default_codec = BridgeCodec()
+    return _default_codec
+
+
+def encode(value, *, allow_nan=False):
+    """Encode a value with the default codec settings."""
+    if allow_nan:
+        return BridgeCodec(allow_nan=True).encode(value)
+    return get_default_codec().encode(value)
+
+
+def decode(payload):
+    """Decode a JSON payload with the default codec settings."""
+    return get_default_codec().decode(payload)
 
 
 # =============================================================================

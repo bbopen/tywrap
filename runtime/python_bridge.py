@@ -42,8 +42,6 @@ import json
 import os
 import importlib  # noqa: F401  (re-exported for compat / used by handlers via core)
 
-from safe_codec import BridgeCodec, CodecError
-
 import tywrap_bridge_core as core
 from frame_codec import FrameError, Reassembler, encode_frames
 
@@ -53,6 +51,8 @@ from tywrap_bridge_core import (  # noqa: F401
     PROTOCOL,
     PROTOCOL_VERSION,
     CODEC_VERSION,
+    BridgeCodec,
+    CodecError,
     ProtocolError,
     ImportNotAllowedError,
     AttributeNotAllowedError,

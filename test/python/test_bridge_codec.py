@@ -23,7 +23,7 @@ import pytest
 # Add runtime to path for import
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'runtime'))
 
-from safe_codec import CodecError, BridgeCodec, decode, encode
+from tywrap_bridge_core import BridgeCodec, CodecError, decode, encode
 
 
 # ═══════════════════════════════════════════════════════════════════════════
