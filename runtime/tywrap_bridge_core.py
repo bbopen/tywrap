@@ -49,6 +49,7 @@ import importlib.util
 import inspect
 import json
 import math
+import sys
 import traceback
 import uuid
 from pathlib import Path, PurePath
@@ -314,33 +315,33 @@ def module_available(module_name):
 
 
 def is_numpy_array(obj):
-    try:
-        import numpy as np  # noqa: F401
-    except Exception:
+    """Return whether obj is an ndarray without importing NumPy."""
+    np = sys.modules.get('numpy')
+    if np is None:
         return False
     return isinstance(obj, np.ndarray)
 
 
 def is_pandas_dataframe(obj):
-    try:
-        import pandas as pd  # noqa: F401
-    except Exception:
+    """Return whether obj is a DataFrame without importing pandas."""
+    pd = sys.modules.get('pandas')
+    if pd is None:
         return False
     return isinstance(obj, pd.DataFrame)
 
 
 def is_pandas_series(obj):
-    try:
-        import pandas as pd  # noqa: F401
-    except Exception:
+    """Return whether obj is a Series without importing pandas."""
+    pd = sys.modules.get('pandas')
+    if pd is None:
         return False
     return isinstance(obj, pd.Series)
 
 
 def is_scipy_sparse(obj):
-    try:
-        import scipy.sparse as sp  # noqa: F401
-    except Exception:
+    """Return whether obj is sparse without importing SciPy."""
+    sp = sys.modules.get('scipy.sparse')
+    if sp is None:
         return False
     try:
         return sp.issparse(obj)
@@ -349,9 +350,9 @@ def is_scipy_sparse(obj):
 
 
 def is_torch_tensor(obj):
-    try:
-        import torch  # noqa: F401
-    except Exception:
+    """Return whether obj is a Tensor without importing PyTorch."""
+    torch = sys.modules.get('torch')
+    if torch is None:
         return False
     try:
         return torch.is_tensor(obj)
@@ -360,11 +361,11 @@ def is_torch_tensor(obj):
 
 
 def is_sklearn_estimator(obj):
-    try:
-        from sklearn.base import BaseEstimator  # noqa: F401
-    except Exception:
+    """Return whether obj is an estimator without importing scikit-learn."""
+    sklearn_base = sys.modules.get('sklearn.base')
+    if sklearn_base is None:
         return False
-    return isinstance(obj, BaseEstimator)
+    return isinstance(obj, sklearn_base.BaseEstimator)
 
 
 # =============================================================================
@@ -748,26 +749,42 @@ def serialize_stdlib(obj):
 
 def serialize(obj, *, force_json_markers, torch_allow_copy=False):
     """
-    Top-level result serializer. Dispatch order is significant: numpy ndarray ->
-    dataframe -> series -> scipy.sparse -> torch -> sklearn -> Pydantic -> stdlib
-    -> passthrough. The remaining BridgeCodec value behaviors (numpy/pandas scalars,
-    bytes, sets, complex rejection, NaN/Infinity) are applied later during JSON
-    encoding by default_encoder.
+    Top-level result serializer.
+
+    Scientific codecs are type-first and only inspect packages that the value can
+    belong to. A value from an optional package implies that package is already in
+    sys.modules, so these checks never cold-import the scientific stack. The
+    package dispatch deliberately precedes the JSON-native fast path: e.g. a
+    package-defined subclass of dict still receives its relevant codec check.
+    The remaining BridgeCodec value behaviors (numpy/pandas scalars, bytes, sets,
+    complex rejection, NaN/Infinity) are applied later during JSON encoding by
+    default_encoder.
     """
-    if is_numpy_array(obj):
-        return serialize_ndarray(obj, force_json_markers=force_json_markers)
-    if is_pandas_dataframe(obj):
-        return serialize_dataframe(obj, force_json_markers=force_json_markers)
-    if is_pandas_series(obj):
-        return serialize_series(obj, force_json_markers=force_json_markers)
-    if is_scipy_sparse(obj):
-        return serialize_sparse_matrix(obj)
-    if is_torch_tensor(obj):
-        return serialize_torch_tensor(
-            obj, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy
-        )
-    if is_sklearn_estimator(obj):
-        return serialize_sklearn_estimator(obj)
+    package = type(obj).__module__.split('.', 1)[0]
+
+    if package == 'numpy' and 'numpy' in sys.modules:
+        if is_numpy_array(obj):
+            return serialize_ndarray(obj, force_json_markers=force_json_markers)
+    elif package == 'pandas' and 'pandas' in sys.modules:
+        if is_pandas_dataframe(obj):
+            return serialize_dataframe(obj, force_json_markers=force_json_markers)
+        if is_pandas_series(obj):
+            return serialize_series(obj, force_json_markers=force_json_markers)
+    elif package == 'scipy' and 'scipy.sparse' in sys.modules:
+        if is_scipy_sparse(obj):
+            return serialize_sparse_matrix(obj)
+    elif package == 'torch' and 'torch' in sys.modules:
+        if is_torch_tensor(obj):
+            return serialize_torch_tensor(
+                obj, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy
+            )
+    elif package == 'sklearn' and 'sklearn.base' in sys.modules:
+        if is_sklearn_estimator(obj):
+            return serialize_sklearn_estimator(obj)
+
+    if isinstance(obj, (type(None), bool, int, float, str, dict, list, tuple)):
+        return obj
+
     pydantic_value = serialize_pydantic(obj)
     if pydantic_value is not _NO_PYDANTIC:
         return pydantic_value
