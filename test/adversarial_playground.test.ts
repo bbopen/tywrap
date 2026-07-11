@@ -85,7 +85,11 @@ const createBridge = async (
 
 const createFixtureBridge = async (
   scriptName: string,
-  options: { timeoutMs?: number; env?: Record<string, string | undefined> } = {}
+  options: {
+    timeoutMs?: number;
+    maxConcurrentPerProcess?: number;
+    env?: Record<string, string | undefined>;
+  } = {}
 ): Promise<NodeBridge | null> => {
   const fixtureScript = join(fixturesDir, scriptName);
   if (!existsSync(fixtureScript)) {
@@ -98,6 +102,7 @@ const createFixtureBridge = async (
   return new NodeBridge({
     scriptPath: fixtureScript,
     pythonPath,
+    maxConcurrentPerProcess: options.maxConcurrentPerProcess,
     // Default to the suite budget: error-surfacing tests assert LOUDNESS, not
     // latency, and must absorb worker cold-start/import costs under full-suite
     // load (#285). Timeout-behavior tests pass explicit small values.
@@ -683,7 +688,14 @@ describeAdversarial('Adversarial playground', () => {
     it(
       'handles out-of-order responses',
       async () => {
-        const bridge = await createFixtureBridge('out_of_order_bridge.py', { timeoutMs: 2000 });
+        // The fixture only responds once it has TWO requests in flight, so
+        // pipelining must be opted into: the pool default is one in-flight
+        // request per worker (#284), under which the second call would never
+        // be sent and the first would deadlock into its timeout.
+        const bridge = await createFixtureBridge('out_of_order_bridge.py', {
+          timeoutMs: 2000,
+          maxConcurrentPerProcess: 2,
+        });
         if (!bridge) return;
 
         try {
