@@ -12,6 +12,8 @@ from uuid import UUID
 
 
 class TrafficLight(Enum):
+    """Signal colors."""
+
     RED = "red"
     GREEN = "green"
 

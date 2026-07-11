@@ -323,6 +323,9 @@ export async function uuidAndPath(): Promise<Record<string, object>> {
  */
 export type Point = { x: number; y: number; }
 
+/**
+ * Signal colors.
+ */
 export class TrafficLight {
   private readonly __handle: string;
   private constructor(handle: string) { this.__handle = handle; }
@@ -389,6 +392,9 @@ export function uuidAndPath(): Promise<Record<string, object>>;
  */
 export type Point = { x: number; y: number; }
 
+/**
+ * Signal colors.
+ */
 export class TrafficLight {
   private readonly __handle: string;
   private constructor(handle: string);
