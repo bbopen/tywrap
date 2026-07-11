@@ -2,7 +2,7 @@
  * Runtime detection and path utilities tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   detectRuntime,
   pathUtils,
@@ -10,20 +10,9 @@ import {
   isDeno,
   isBun,
   isBrowser,
-  clearRuntimeCache,
 } from '../src/utils/runtime.js';
 
 describe('Runtime Detection', () => {
-  beforeEach(() => {
-    // Clear runtime cache before each test
-    clearRuntimeCache();
-  });
-
-  afterEach(() => {
-    // Clear runtime cache after each test
-    clearRuntimeCache();
-  });
-
   it('should cache runtime detection results', () => {
     const first = detectRuntime();
     const second = detectRuntime();
@@ -117,12 +106,7 @@ describe('Runtime Detection', () => {
 });
 
 describe('Path Utilities', () => {
-  beforeEach(() => {
-    clearRuntimeCache();
-  });
-
   afterEach(() => {
-    clearRuntimeCache();
     vi.unstubAllGlobals();
   });
 
@@ -198,7 +182,6 @@ describe('Path Utilities', () => {
       vi.stubGlobal('Bun', undefined);
       vi.stubGlobal('window', { isSecureContext: true });
       vi.stubGlobal('location', { href: 'https://example.com/app/' });
-      clearRuntimeCache();
     });
 
     it('should normalize paths in browser runtime', () => {

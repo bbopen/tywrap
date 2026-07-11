@@ -23,13 +23,16 @@ interface RuntimeCapabilities {
 
 // Cache for runtime detection to avoid repeated environment checks
 let runtimeCache: RuntimeInfo | null = null;
+let runtimeCacheSignature: string | undefined;
 
-/**
- * Clear runtime cache (for testing purposes only)
- * @internal
- */
-export function clearRuntimeCache(): void {
-  runtimeCache = null;
+function currentRuntimeSignature(): string {
+  return [
+    typeof Deno !== 'undefined' && Deno !== null,
+    typeof Bun !== 'undefined' && Bun !== null,
+    typeof process !== 'undefined' && process.versions?.node,
+    typeof window !== 'undefined' ? window.isSecureContext : undefined,
+    typeof self !== 'undefined' ? self.isSecureContext : undefined,
+  ].join('|');
 }
 
 /**
@@ -37,7 +40,8 @@ export function clearRuntimeCache(): void {
  * Results are cached and frozen to prevent external mutation
  */
 export function detectRuntime(): RuntimeInfo {
-  if (runtimeCache) {
+  const signature = currentRuntimeSignature();
+  if (runtimeCache && runtimeCacheSignature === signature) {
     return runtimeCache;
   }
   // Deno detection (must come before Node.js check)
@@ -56,6 +60,7 @@ export function detectRuntime(): RuntimeInfo {
       capabilities: Object.freeze(capabilities),
     };
     runtimeCache = Object.freeze(result) as RuntimeInfo;
+    runtimeCacheSignature = signature;
     return runtimeCache;
   }
 
@@ -75,6 +80,7 @@ export function detectRuntime(): RuntimeInfo {
       capabilities: Object.freeze(capabilities),
     };
     runtimeCache = Object.freeze(result) as RuntimeInfo;
+    runtimeCacheSignature = signature;
     return runtimeCache;
   }
 
@@ -94,6 +100,7 @@ export function detectRuntime(): RuntimeInfo {
       capabilities: Object.freeze(capabilities),
     };
     runtimeCache = Object.freeze(result) as RuntimeInfo;
+    runtimeCacheSignature = signature;
     return runtimeCache;
   }
 
@@ -119,6 +126,7 @@ export function detectRuntime(): RuntimeInfo {
       capabilities: Object.freeze(capabilities),
     };
     runtimeCache = Object.freeze(result) as RuntimeInfo;
+    runtimeCacheSignature = signature;
     return runtimeCache;
   }
 
@@ -137,6 +145,7 @@ export function detectRuntime(): RuntimeInfo {
 
   // Cache and freeze the result to prevent external mutation
   runtimeCache = Object.freeze(result) as RuntimeInfo;
+  runtimeCacheSignature = signature;
   return runtimeCache;
 }
 
