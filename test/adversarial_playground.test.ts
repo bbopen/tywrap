@@ -785,7 +785,11 @@ describeAdversarial('Multi-worker adversarial tests', () => {
         maxProcesses: 2,
         // explicit: worker is serial; see #284
         maxConcurrentPerProcess: 1,
-        timeoutMs: 1000,
+        // 5s (not 1s): the post-timeout recovery call below must cover a worker
+        // restart, whose fresh Python process pays the first-serialize import
+        // cost on current main (see #285). Slow call sleeps 8s so it still
+        // exceeds this timeout by a wide margin.
+        timeoutMs: 5000,
         env: { PYTHONPATH: buildPythonPath() },
       });
 
@@ -793,12 +797,18 @@ describeAdversarial('Multi-worker adversarial tests', () => {
         // Initialize to spawn both workers
         await bridge.init();
 
-        // Warm up both workers to ensure they're ready
-        await callAdversarial(bridge, 'echo', ['warmup1']);
-        await callAdversarial(bridge, 'echo', ['warmup2']);
+        // Warm up both workers CONCURRENTLY: with maxConcurrentPerProcess: 1 the two
+        // in-flight calls must land on distinct workers, so each worker pays its
+        // first-serialize cost here rather than inside the timed fast call below.
+        // (Sequential warmups both land on worker 1 — it frees up between calls —
+        // leaving worker 2 cold; see #285 for the first-call import cost.)
+        await Promise.all([
+          callAdversarial(bridge, 'echo', ['warmup1']),
+          callAdversarial(bridge, 'echo', ['warmup2']),
+        ]);
 
         // Start a slow request (will timeout) - occupies worker 1
-        const slow = callAdversarial(bridge, 'sleep_and_return', ['slow', 2.0]);
+        const slow = callAdversarial(bridge, 'sleep_and_return', ['slow', 8.0]);
 
         // Give slow request time to start processing
         await delay(150);
