@@ -431,6 +431,8 @@ describe('SubprocessTransport', () => {
     handleStdinDrain: () => void;
     handleResponseLine: (line: string) => void;
     handleStdoutData: (chunk: Buffer | string) => void;
+    restartProcess: () => Promise<void>;
+    requestCount: number;
   }
 
   beforeEach(async () => {
@@ -469,6 +471,36 @@ describe('SubprocessTransport', () => {
   });
 
   describe('send - validation', () => {
+    it('waits for the old generation to drain before threshold restart', async () => {
+      const transport = new SubprocessTransport({
+        bridgeScript: '/path/to/bridge.py',
+        restartAfterRequests: 1,
+      });
+      const internals = transport as unknown as SubprocessTransportInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = { stdin: { write: () => true } };
+      let restarts = 0;
+      internals.restartProcess = async () => {
+        restarts++;
+        internals.requestCount = 0;
+      };
+
+      const first = transport.send(JSON.stringify(createValidMessage({ id: 501 })), 1000);
+      await Promise.resolve();
+      const second = transport.send(JSON.stringify(createValidMessage({ id: 502 })), 1000);
+      await Promise.resolve();
+      expect(restarts).toBe(0);
+
+      internals.handleResponseLine(JSON.stringify({ id: 501, result: 'first' }));
+      await first;
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(restarts).toBe(1);
+
+      internals.handleResponseLine(JSON.stringify({ id: 502, result: 'second' }));
+      await expect(second).resolves.toContain('second');
+    });
     it('rejects when process is not running (process exited)', async () => {
       const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
 

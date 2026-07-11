@@ -317,6 +317,10 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   });
   private requestCount = 0;
   private needsRestart = false;
+  /** Serializes restart decisions with dispatch reservations. */
+  private dispatchMutex: Promise<void> = Promise.resolve();
+  private activeDispatches = 0;
+  private readonly dispatchDrainWaiters: Array<() => void> = [];
 
   // Write queue for backpressure
   private readonly writeQueue: QueuedWrite[] = [];
@@ -401,14 +405,6 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       throw new BridgeProtocolError('Message must contain an "id" field');
     }
 
-    // Check for restart condition (either scheduled restart or forced by stream error)
-    if (
-      this.needsRestart ||
-      (this.restartAfterRequests > 0 && this.requestCount >= this.restartAfterRequests)
-    ) {
-      await this.restartProcess();
-    }
-
     // Create promise for response
     return new Promise<string>((resolve, reject) => {
       // Set up timeout if specified
@@ -482,17 +478,56 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       // mutex (W5); otherwise it goes out as a single JSONL line. Both paths
       // serialize through the same mutex so a small request can never slip
       // between another request's frames.
-      this.writeRequest(message, messageId, signal, pendingEntry).catch(err => {
-        this.pending.delete(messageId);
-        if (timer) {
-          clearTimeout(timer);
-        }
-        signal?.removeEventListener('abort', abortHandler);
-        reject(this.classifyError(err));
-      });
+      this.reserveDispatch()
+        .then(() => this.writeRequest(message, messageId, signal, pendingEntry))
+        .catch(err => {
+          this.pending.delete(messageId);
+          if (timer) {
+            clearTimeout(timer);
+          }
+          signal?.removeEventListener('abort', abortHandler);
+          reject(this.classifyError(err));
+        });
 
-      this.requestCount++;
+    }).finally(() => this.releaseDispatch());
+  }
+
+  /**
+   * Atomically reserve the current process generation for one request. A
+   * threshold restart waits for every request reserved on the old generation
+   * to settle before killing it; later callers remain queued behind this lock.
+   */
+  private async reserveDispatch(): Promise<void> {
+    let unlock!: () => void;
+    const previous = this.dispatchMutex;
+    this.dispatchMutex = new Promise<void>(resolve => {
+      unlock = resolve;
     });
+    await previous;
+    try {
+      if (
+        this.needsRestart ||
+        (this.restartAfterRequests > 0 && this.requestCount >= this.restartAfterRequests)
+      ) {
+        if (this.activeDispatches > 0) {
+          await new Promise<void>(resolve => this.dispatchDrainWaiters.push(resolve));
+        }
+        await this.restartProcess();
+      }
+      this.activeDispatches++;
+      this.requestCount++;
+    } finally {
+      unlock();
+    }
+  }
+
+  private releaseDispatch(): void {
+    this.activeDispatches = Math.max(0, this.activeDispatches - 1);
+    if (this.activeDispatches === 0) {
+      for (const resolve of this.dispatchDrainWaiters.splice(0)) {
+        resolve();
+      }
+    }
   }
 
   /**
