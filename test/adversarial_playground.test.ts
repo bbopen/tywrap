@@ -112,19 +112,23 @@ const callAdversarial = (bridge: NodeBridge, name: string, args: unknown[]) =>
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 describeAdversarial('Adversarial playground', () => {
-  // FIXME: NodeBridge does not recover a single-worker bridge after a request timeout.
-  it.fails(
+  it(
     'keeps the bridge usable after a timeout',
     async () => {
-      const bridge = await createBridge({ timeoutMs: 200 });
+      // Timings must absorb the worker's first-serialize import cost when the
+      // scientific stack is installed (#285): the 4s budget covers a cold
+      // start (~2s under load) but not the 6s sleep, so the first call times out and
+      // the recovery echo still fits — with or without numpy present.
+      const bridge = await createBridge({ timeoutMs: 4_000 });
       if (!bridge) return;
 
       try {
-        await expect(callAdversarial(bridge, 'sleep_and_return', ['ok', 0.4])).rejects.toThrow(
+        await expect(callAdversarial(bridge, 'sleep_and_return', ['ok', 6.0])).rejects.toThrow(
           /timed out/i
         );
-        // Why: allow the slow call to finish so the next request is not blocked.
-        await delay(500);
+        // Why: allow the slow call (and any worker restart) to fully drain so
+        // the recovery echo is not queued behind it.
+        await delay(6_000);
 
         const result = await callAdversarial(bridge, 'echo', ['still-alive']);
         expect(result).toBe('still-alive');
@@ -438,15 +442,18 @@ describeAdversarial('Adversarial playground', () => {
     testTimeoutMs
   );
 
-  // FIXME: NodeBridge does not recover a single-worker bridge after a request timeout.
-  it.fails(
+  it(
     'includes recent stderr in timeout errors',
     async () => {
-      const bridge = await createBridge({ timeoutMs: 200 });
+      // The 4s budget must outlast the worker's first-serialize import cost
+      // (#285, ~2s under load with the scientific stack installed) so the
+      // fixture gets to write stderr BEFORE the timeout fires; the 6s sleep
+      // guarantees the timeout still fires after that.
+      const bridge = await createBridge({ timeoutMs: 4_000 });
       if (!bridge) return;
 
       try {
-        await callAdversarial(bridge, 'write_stderr_then_sleep', ['stderr-timeout', 0.5]);
+        await callAdversarial(bridge, 'write_stderr_then_sleep', ['stderr-timeout', 6.0]);
         throw new Error('Expected timeout did not occur');
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -454,7 +461,7 @@ describeAdversarial('Adversarial playground', () => {
         expect(message).toMatch(/stderr-timeout/);
       } finally {
         // Why: adversarial test verifies post-timeout recovery even if it masks the original error.
-        await delay(600);
+        await delay(6_000);
         const result = await callAdversarial(bridge, 'echo', ['post-timeout']);
         expect(result).toBe('post-timeout');
         await bridge.dispose();
