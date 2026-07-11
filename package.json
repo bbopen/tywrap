@@ -48,6 +48,7 @@
     "test:watch": "vitest",
     "test:bun": "LC_ALL=C LANG=C bun run vitest --run test/runtime_bun.test.ts",
     "test:coverage": "vitest --run --coverage",
+    "test:menagerie": "vitest --run test/menagerie",
     "test:types": "tsd",
     "test:python:suite:core": "npm run build:tools && node dist/tools/python_suite.js core",
     "test:python:suite:data": "npm run build:tools && node dist/tools/python_suite.js data",
