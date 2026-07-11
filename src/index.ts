@@ -29,6 +29,7 @@ export {
 // Core types
 export type {
   PythonModule,
+  IrContract,
   PythonFunction,
   PythonClass,
   PythonTypeAlias,

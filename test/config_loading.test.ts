@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { loadConfigFile } from '../src/config/index.js';
+import { createConfig, loadConfigFile } from '../src/config/index.js';
 
 describe('config loading', () => {
+  it('accepts record-form contractInput paths', () => {
+    const config = createConfig({
+      contractInput: { math: './generated/math.contract.json' },
+    });
+    expect(config.contractInput).toEqual({ math: './generated/math.contract.json' });
+  });
+
   it('loads a .ts config that imports defineConfig from tywrap', async () => {
     // Why: tywrap is published as ESM, so TS configs that import from 'tywrap' must be evaluated
     // as ESM as well (CommonJS transpilation would try `require('tywrap')` and fail).

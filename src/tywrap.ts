@@ -16,6 +16,7 @@ import type {
   Parameter,
   PythonType,
   PythonModuleConfig,
+  IrContract,
 } from './types/index.js';
 import { fsUtils, pathUtils, processUtils, isWindows } from './utils/runtime.js';
 import { globalCache } from './utils/cache.js';
@@ -23,7 +24,7 @@ import { resolvePythonExecutable } from './utils/python.js';
 import { computeIrCacheFilename } from './utils/ir-cache.js';
 import { logger } from './utils/logger.js';
 
-const TYWRAP_IR_VERSION = '0.3.0';
+const TYWRAP_IR_VERSION = '0.4.0';
 
 // Collect unknown typing constructs encountered during annotation parsing (per-generate run)
 let unknownTypeNamesCollector: Map<string, number> = new Map();
@@ -66,7 +67,7 @@ export interface GenerateRunOptions {
 
 export interface GenerateFailure {
   module: string;
-  code: 'ir-unavailable';
+  code: 'ir-unavailable' | 'ir-version-mismatch' | 'contract-invalid';
   message: string;
 }
 
@@ -84,6 +85,68 @@ export interface GenerateResult {
 function normalizeForComparison(text: string): string {
   // Avoid false positives from CRLF vs LF (e.g. Windows checkouts)
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function stableJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJson);
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, child]) => [key, stableJson(child)])
+    );
+  }
+  return value;
+}
+
+function serializeContract(ir: IrContract): string {
+  const contract = { ...ir };
+  delete contract.metadata;
+  return `${JSON.stringify(stableJson(contract), null, 2)}\n`;
+}
+
+function validateIrVersion(
+  ir: unknown,
+  source: string
+): { ir: IrContract | null; error?: string; code?: GenerateFailure['code'] } {
+  if (ir === null || typeof ir !== 'object' || Array.isArray(ir)) {
+    return { ir: null, code: 'contract-invalid', error: `${source} is not a JSON IR object.` };
+  }
+  const contract = ir as IrContract;
+  if (typeof contract.ir_version !== 'string') {
+    return {
+      ir: null,
+      code: 'contract-invalid',
+      error: `${source} is missing its string ir_version.`,
+    };
+  }
+  if (contract.ir_version !== TYWRAP_IR_VERSION) {
+    return {
+      ir: null,
+      code: 'ir-version-mismatch',
+      error: `IR version mismatch: TypeScript expects ${TYWRAP_IR_VERSION}, but ${source} declares ${contract.ir_version}. Regenerate the contract with a matching tywrap_ir.`,
+    };
+  }
+  if (typeof contract.module !== 'string' || contract.module.length === 0) {
+    return { ir: null, code: 'contract-invalid', error: `${source} is missing its module name.` };
+  }
+  const requiredArrays: ReadonlyArray<readonly [string, unknown]> = [
+    ['functions', contract.functions],
+    ['classes', contract.classes],
+    ['type_aliases', contract.type_aliases],
+  ];
+  for (const [field, value] of requiredArrays) {
+    if (!Array.isArray(value)) {
+      return {
+        ir: null,
+        code: 'contract-invalid',
+        error: `${source} is missing required array field ${field}.`,
+      };
+    }
+  }
+  return { ir: contract };
 }
 
 async function safeReadFile(path: string): Promise<string | null> {
@@ -109,13 +172,17 @@ async function fetchAndCacheIr(
   cacheKey: string,
   caching: boolean,
   checkMode: boolean
-): Promise<{ ir: unknown | null; error?: string }> {
+): Promise<{ ir: IrContract | null; error?: string; code?: GenerateFailure['code'] }> {
   let ir: unknown | null = null;
   let irError: string | undefined;
   if (caching && fsUtils.isAvailable() && !checkMode) {
     try {
       const cached = await fsUtils.readFile(pathUtils.join(CACHE_DIR, cacheKey));
-      ir = JSON.parse(cached);
+      const cachedValidation = validateIrVersion(
+        JSON.parse(cached),
+        `Cached Python IR for ${moduleKey}`
+      );
+      ir = cachedValidation.ir;
     } catch {
       ir = null;
     }
@@ -127,13 +194,60 @@ async function fetchAndCacheIr(
     });
     ir = fetchResult.ir;
     irError = fetchResult.error;
-    if (ir && caching && fsUtils.isAvailable() && !checkMode) {
-      try {
-        await fsUtils.writeFile(pathUtils.join(CACHE_DIR, cacheKey), JSON.stringify(ir));
-      } catch {}
-    }
   }
-  return { ir, error: irError };
+  if (!ir) {
+    return { ir: null, error: irError, code: 'ir-unavailable' };
+  }
+  const validated = validateIrVersion(ir, `Python IR for ${moduleKey}`);
+  if (!validated.ir) {
+    return {
+      ir: null,
+      error: irError ?? validated.error,
+      code: validated.code ?? 'ir-unavailable',
+    };
+  }
+  if (caching && fsUtils.isAvailable() && !checkMode) {
+    try {
+      await fsUtils.writeFile(pathUtils.join(CACHE_DIR, cacheKey), JSON.stringify(validated.ir));
+    } catch {}
+  }
+  return { ir: validated.ir };
+}
+
+async function readContractInput(
+  moduleKey: string,
+  contractInput: TywrapOptions['contractInput']
+): Promise<{ ir: IrContract | null; error?: string; code?: GenerateFailure['code'] }> {
+  const inputPath = typeof contractInput === 'string' ? contractInput : contractInput?.[moduleKey];
+  if (!inputPath) {
+    return {
+      ir: null,
+      code: 'contract-invalid',
+      error: `No contractInput path configured for module ${moduleKey}.`,
+    };
+  }
+  try {
+    const parsed = JSON.parse(await fsUtils.readFile(inputPath)) as unknown;
+    const validated = validateIrVersion(parsed, `Contract ${inputPath}`);
+    if (!validated.ir) {
+      return { ir: null, error: validated.error, code: validated.code };
+    }
+    if (validated.ir.module !== moduleKey) {
+      return {
+        ir: null,
+        code: 'contract-invalid',
+        error: `Contract ${inputPath} is for module ${validated.ir.module}, not ${moduleKey}.`,
+      };
+    }
+    return { ir: validated.ir };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ir: null,
+      code: 'contract-invalid',
+      error: `Failed to read contract ${inputPath}: ${message}`,
+    };
+  }
 }
 
 /**
@@ -323,20 +437,16 @@ export async function generate(
     unknownTypeNamesCollector = new Map();
     // Resolve module IR via the Python extractor (with optional cache)
     const cacheKey = await computeCacheKey(moduleKey, resolvedOptions);
-    const { ir, error: irError } = await fetchAndCacheIr(
-      moduleKey,
-      resolvedOptions,
-      pythonPath,
-      cacheKey,
-      caching,
-      checkMode
-    );
+    const irResult = resolvedOptions.contractInput
+      ? await readContractInput(moduleKey, resolvedOptions.contractInput)
+      : await fetchAndCacheIr(moduleKey, resolvedOptions, pythonPath, cacheKey, caching, checkMode);
+    const { ir, error: irError } = irResult;
     if (!ir) {
       const message = `No IR produced for module ${moduleKey}${irError ? `: ${irError}` : ''}`;
       warnings.push(message);
       failures.push({
         module: moduleKey,
-        code: 'ir-unavailable',
+        code: irResult.code ?? 'ir-unavailable',
         message,
       });
       continue;
@@ -372,6 +482,10 @@ export async function generate(
     const baseName = moduleModel.name || 'module';
     const filesToEmit: Array<{ path: string; content: string }> = [
       { path: pathUtils.join(outputDir, `${baseName}.generated.ts`), content: gen.typescript },
+      {
+        path: pathUtils.join(outputDir, `${baseName}.contract.json`),
+        content: serializeContract(ir),
+      },
     ];
 
     // Optional .d.ts emission (header-only declarations mirroring exports)
@@ -462,7 +576,7 @@ async function fetchPythonIr(
   try {
     const primary = await execAndParseIr(
       pythonPath,
-      ['-m', 'tywrap_ir', '--module', moduleName, '--ir-version', TYWRAP_IR_VERSION, '--no-pretty'],
+      ['-m', 'tywrap_ir', '--module', moduleName, '--no-pretty'],
       execOptions,
       'tywrap_ir output'
     );
@@ -497,7 +611,7 @@ async function fetchPythonIr(
 
     const fallback = await execAndParseIr(
       pythonPath,
-      [localMain, '--module', moduleName, '--ir-version', TYWRAP_IR_VERSION, '--no-pretty'],
+      [localMain, '--module', moduleName, '--no-pretty'],
       execOptions,
       'tywrap_ir fallback output'
     );

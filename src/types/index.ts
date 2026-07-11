@@ -13,6 +13,13 @@ export interface PythonModule {
   exports: string[];
 }
 
+/** A pinned, versioned JSON IR artifact emitted alongside generated wrappers. */
+export interface IrContract {
+  ir_version: string;
+  module: string;
+  [key: string]: unknown;
+}
+
 /**
  * How a callable is bound on its owning class.
  *
@@ -340,6 +347,11 @@ export interface TywrapOptions {
    * and discovery (IR extraction). Useful for local modules not installed in site-packages.
    */
   pythonImportPath?: string[];
+  /**
+   * Read one pinned IR contract instead of spawning Python. A string applies to
+   * every configured module; a record selects a contract path per module.
+   */
+  contractInput?: string | Record<string, string>;
   output: OutputConfig;
   runtime: RuntimeConfig;
   performance: PerformanceConfig;
