@@ -33,3 +33,4 @@
 - [Releases](https://github.com/bbopen/tywrap/releases): Version history and breaking changes
 - [Contributing](https://github.com/bbopen/tywrap/blob/main/CONTRIBUTING.md): Development setup, PR guidelines
 - [AGENTS.md](https://github.com/bbopen/tywrap/blob/main/AGENTS.md): AI coding agent build/test instructions
+- [Security Policy](https://github.com/bbopen/tywrap/blob/main/SECURITY.md): Bridge trust model and vulnerability reporting

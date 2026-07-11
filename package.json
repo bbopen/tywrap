@@ -35,7 +35,8 @@
     "dist",
     "runtime",
     "src",
-    "README.md"
+    "README.md",
+    "SECURITY.md"
   ],
   "scripts": {
     "build": "npm run build:version && npm run build:pyodide-bootstrap && tsc && npm run build:tools",
