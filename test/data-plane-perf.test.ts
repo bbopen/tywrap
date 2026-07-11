@@ -407,13 +407,14 @@ describePerf('data-plane perf: chunk overhead vs same-run single-frame', () => {
         return;
       }
 
-      // Baseline: high-ceiling single-frame transport (no chunking). The whole
-      // 20 MiB response is one JSONL line.
+      // Baseline: high-ceiling transport. Framing is always on, but the whole
+      // 20 MiB response fits one frame under this ceiling, so this arm measures
+      // the effectively-single-frame path.
       const single = singleFrameTransport();
       await single.init();
       let singleMedian = 0;
       try {
-        expect(single.capabilities().supportsChunking).toBe(false);
+        expect(single.capabilities().supportsChunking).toBe(true);
         let calls = 0;
         singleMedian = await medianMs(
           async () => {
