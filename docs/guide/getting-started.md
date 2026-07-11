@@ -138,19 +138,13 @@ def calculate_area(width: float, height: float) -> float:
     """Calculate rectangular area."""
     return width * height
 
-class Calculator:
-    """Simple calculator class."""
+def add(a: float, b: float, precision: int = 2) -> float:
+    """Add two numbers."""
+    return round(a + b, precision)
 
-    def __init__(self, precision: int = 2):
-        self.precision = precision
-
-    def add(self, a: float, b: float) -> float:
-        """Add two numbers."""
-        return round(a + b, self.precision)
-
-    def multiply(self, a: float, b: float) -> float:
-        """Multiply two numbers."""
-        return round(a * b, self.precision)
+def multiply(a: float, b: float, precision: int = 2) -> float:
+    """Multiply two numbers."""
+    return round(a * b, precision)
 ```
 
 ### Configuration
@@ -199,7 +193,8 @@ import { setRuntimeBridge } from 'tywrap/runtime';
 import {
   greet,
   calculate_area,
-  Calculator,
+  add,
+  multiply,
 } from './generated/my_utils.generated.js';
 
 const bridge = new NodeBridge({ pythonPath: 'python3' });
@@ -213,11 +208,9 @@ async function demo() {
   const area = await calculate_area(10.5, 8.2);
   console.log(`Area: ${area}`); // Area: 86.1
 
-  // Class instantiation and methods
-  const calc = await Calculator.create(3);
-  const sum = await calc.add(3.14159, 2.71828);
-  const product = await calc.multiply(sum, 2);
-  await calc.disposeHandle();
+  // Use value-returning module functions instead of live class handles.
+  const sum = await add(3.14159, 2.71828, 3);
+  const product = await multiply(sum, 2, 3);
 
   console.log(`Sum: ${sum}`); // Sum: 5.860
   console.log(`Product: ${product}`); // Product: 11.720

@@ -449,10 +449,9 @@ describe('CodeGenerator', () => {
       'm'
     );
 
-    expect(code.typescript).toMatch(/static create\(kwargs: \{ "c": number; \}\): Promise<C>;/);
-
-    expect(code.typescript).toMatch(/m\(kwargs: \{ "k": number; \}\): Promise<number>;/);
-    expect(code.typescript).toMatch(/async m\(kwargs\?: \{ "k": number; \}\): Promise<number>/);
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.typescript).not.toContain('static create');
+    expect(code.typescript).not.toContain('async m');
   });
 
   it('generates constructor typing from __init__ and sorts members', () => {
@@ -589,11 +588,10 @@ describe('CodeGenerator', () => {
       } as any,
       'm'
     );
-    expect(code.typescript).toContain('static async create(x?: number, ...args: unknown[])');
-    const idxA = code.typescript.indexOf('async a(');
-    const idxB = code.typescript.indexOf('async b(');
-    expect(idxA).toBeGreaterThan(0);
-    expect(idxB).toBeGreaterThan(idxA);
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.typescript).not.toContain('static async create');
+    expect(code.typescript).not.toContain('async a(');
+    expect(code.typescript).not.toContain('async b(');
   });
 
   it('emits TypedDict as a TS object type alias with required/optional keys', () => {
@@ -1136,10 +1134,10 @@ describe('CodeGenerator', () => {
     );
     expect(code.typescript).toContain('Promise<Container<T>>');
     expect(code.typescript).toContain('export class Container<T>');
-    expect(code.typescript).toContain('static async create<T>(value: T): Promise<Container<T>>');
-    expect(code.typescript).toContain('static fromHandle<T>(handle: string): Container<T>');
-    expect(code.typescript).toContain('async clone(): Promise<Container<T>>');
-    expect(code.typescript).toContain('async id<U>(x: U): Promise<[T, U]>');
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.typescript).not.toContain('static async create');
+    expect(code.typescript).not.toContain('fromHandle');
+    expect(code.typescript).not.toContain('async clone');
     expect(code.typescript).toContain('export type Pair<T> = [T, T]');
     expect(code.typescript).toContain(
       'export type Transform<P extends unknown[], T> = (...args: P) => T'
@@ -1153,7 +1151,7 @@ describe('CodeGenerator', () => {
     expect(code.declaration).toContain(
       'export function acceptTransform<P extends unknown[], T>(transform: Transform<P, T>): Promise<Transform<P, T>>;'
     );
-    expect(code.declaration).toContain('id<U>(x: U): Promise<[T, U]>;');
+    expect(code.declaration).not.toContain('id<U>(x: U): Promise<[T, U]>;');
     expect(code.declaration).not.toContain('getRuntimeBridge');
   });
 
@@ -1231,8 +1229,9 @@ describe('CodeGenerator', () => {
       'math'
     );
     expect(code.typescript).toContain('export class Calculator');
-    expect(code.typescript).toContain('async add(');
-    expect(code.typescript).toContain('getRuntimeBridge().callMethod');
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.typescript).not.toContain('async add(');
+    expect(code.typescript).not.toContain('callMethod');
   });
 
   it('emits @classmethod and @staticmethod as static members invoked through the class', () => {
@@ -1320,7 +1319,7 @@ describe('CodeGenerator', () => {
     expect(code.declaration).toContain('static isValidName(name: string): Promise<boolean>;');
   });
 
-  it('emits @property / cached_property accessors as readonly getters', () => {
+  it('omits @property / cached_property accessors with a value-function migration note', () => {
     const code = gen.generateClassWrapper(
       {
         name: 'Pet',
@@ -1353,16 +1352,13 @@ describe('CodeGenerator', () => {
       'pets'
     );
 
-    // TS member name is escaped (camelCased) while the RPC attribute name stays raw.
-    expect(code.typescript).toContain('get petName(): Promise<string>');
-    expect(code.typescript).toContain(
-      "getRuntimeBridge().callMethod(this.__handle, 'pet_name', [])"
-    );
-    expect(code.typescript).toContain('get expensive(): Promise<number[]>');
-    expect(code.declaration).toContain('get petName(): Promise<string>;');
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.typescript).not.toContain('get petName');
+    expect(code.typescript).not.toContain('callMethod');
+    expect(code.declaration).not.toContain('get petName');
   });
 
-  it('keeps instance-only class output unchanged when methodKind/accessors are present-but-default', () => {
+  it('emits the same empty class for implicit and explicit instance methods', () => {
     const base = {
       name: 'Widget',
       bases: [],
