@@ -229,8 +229,8 @@ registerArrowDecoder(bytes => tableFromIPC(bytes));
 
 ## Security
 
-See [SECURITY.md](./SECURITY.md) for the bridge trust model and vulnerability
-reporting.
+Read the [Security policy](./SECURITY.md) for the bridge trust model and
+vulnerability reporting.
 
 ## Contributing
 
