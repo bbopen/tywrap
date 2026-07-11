@@ -2387,24 +2387,6 @@ These affect the Python bridge or decoded runtime behavior.
 | `TYWRAP_ALLOWED_MODULES`     | Python bridge | unset   | Comma- and/or whitespace-separated import allowlist; blank is unset, while a non-empty value permits only named modules plus bridge-required stdlib modules. See [SECURITY.md](https://github.com/bbopen/tywrap/blob/main/SECURITY.md). |
 | `TYWRAP_ALLOW_PRIVATE_ATTRS` | Python bridge | off     | Set to `1`, `true`, or `yes` to allow underscore-prefixed attribute access; otherwise it is blocked                                                                                                                                     |
 
-## Chunked transport (`tywrap-frame/1`)
-
-These negotiate the large-payload chunked transport. They are set **by the Node
-subprocess transport on the Python bridge it spawns** when `enableChunking` is
-requested — you do not normally set them by hand. Chunking is
-**subprocess-only** (it is the only backend with a real frame ceiling, the JSONL
-line-length limit); HTTP and Pyodide are single-frame and ignore these. If the
-bridge does not see all three agree, it stays single-frame and an oversize
-payload fails loud — there is no silent single-frame fallback. See
-[Transport framing](https://bbopen.github.io/tywrap/transport-framing.md) and the
-[capability matrix](https://bbopen.github.io/tywrap/transport-capabilities.md).
-
-| Variable                           | Scope         | Default | Purpose                                                                                         |
-| ---------------------------------- | ------------- | ------- | ----------------------------------------------------------------------------------------------- |
-| `TYWRAP_TRANSPORT_CHUNKING`        | Python bridge | unset   | Set to `1`/`true`/`yes` to enable `tywrap-frame/1` chunked framing on the bridge                |
-| `TYWRAP_TRANSPORT_FRAME_PROTOCOL`  | Python bridge | unset   | The framing protocol the JS side advertises; must equal `tywrap-frame/1` for chunking to enable |
-| `TYWRAP_TRANSPORT_MAX_FRAME_BYTES` | Python bridge | unset   | Per-frame UTF-8 byte ceiling for each frame's data slice (the JS side's JSONL `maxLineLength`)  |
-
 ## Logging
 
 These control the structured logger in the JavaScript runtime.
@@ -2693,19 +2675,20 @@ export async function summarize(
 
 Every tywrap transport exposes a static, transport-level capability descriptor
 via `Transport.capabilities()`. The same descriptor is surfaced by
-`RpcClient.capabilities()` (it delegates to the held transport). It tells callers
-what the wire channel can carry and how it frames messages **without** a network
-round-trip.
+`RpcClient.capabilities()` (it delegates to the held transport). It tells
+callers what the wire channel can carry and how it frames messages **without** a
+network round-trip.
 
 This descriptor is deliberately separate from the bridge `meta` report
 (`BridgeInfo`, fetched via `RpcClient.getBridgeInfo()`):
 
 - The **transport descriptor** is authoritative for transport-level flags — what
-  bytes the channel moves and how it frames them. It does not depend on lifecycle
-  state, so it is safe to read before `init()` and after `dispose()`.
-- The **`BridgeInfo` meta report** is authoritative for the *Python environment* —
-  which optional libraries (`arrowAvailable`, `scipyAvailable`, `torchAvailable`,
-  `sklearnAvailable`) happen to be importable in the running interpreter.
+  bytes the channel moves and how it frames them. It does not depend on
+  lifecycle state, so it is safe to read before `init()` and after `dispose()`.
+- The **`BridgeInfo` meta report** is authoritative for the _Python environment_
+  — which optional libraries (`arrowAvailable`, `scipyAvailable`,
+  `torchAvailable`, `sklearnAvailable`) happen to be importable in the running
+  interpreter.
 
 When you need both questions answered — "can this transport carry Arrow **and**
 does this Python have pyarrow?" — consult both: the transport descriptor for the
@@ -2726,47 +2709,34 @@ interface TransportCapabilities {
 
 ## Matrix
 
-| Backend (transport)            | `backend`     | `supportsArrow` | `supportsBinary` | `supportsChunking`         | `supportsStreaming` | `maxFrameBytes`                  |
-| ------------------------------ | ------------- | --------------- | ---------------- | -------------------------- | ------------------- | -------------------------------- |
-| `SubprocessTransport` (Node)   | `subprocess`  | `true`          | `true`           | `true` when configured\*   | `false`             | JSONL line limit (default 100 MB) |
-| `HttpTransport`                | `http`        | `true`          | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`       |
-| `PyodideTransport` (WASM)      | `pyodide`     | `false`         | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`       |
+| Backend (transport)          | `backend`    | `supportsArrow` | `supportsBinary` | `supportsChunking`         | `supportsStreaming` | `maxFrameBytes`                    |
+| ---------------------------- | ------------ | --------------- | ---------------- | -------------------------- | ------------------- | ---------------------------------- |
+| `SubprocessTransport` (Node) | `subprocess` | `true`          | `true`           | `true` (always-on framing) | `false`             | Per-frame ceiling (default 100 MB) |
+| `HttpTransport`              | `http`       | `true`          | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`         |
+| `PyodideTransport` (WASM)    | `pyodide`    | `false`         | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`         |
 
-\* `SubprocessTransport.supportsChunking` reports the **configured** capability:
-`true` when the transport was created with `enableChunking: true` (the default for
-`NodeBridge`), `false` otherwise. Like `supportsArrow`, it is a static,
-lifecycle-independent property of the transport — it does **not** make a round
-trip and does **not** change across `init()`/`dispose()`. Whether the *connected*
-bridge actually advertised the `tywrap-frame/1` block is the negotiated fact,
-surfaced separately on `BridgeInfo.transport.supportsChunking` (from the `meta`
-probe). "Will chunking actually happen for an oversize payload" needs **both**
-`true`; against an old/incapable bridge the oversize payload fails loud — never a
-silent single-frame fallback. Chunking is subprocess-only — it is the only backend
-with a real frame ceiling (the JSONL line-length limit). See
+`SubprocessTransport.supportsChunking` is always `true`. The npm package ships
+the JS and Python framing peers together, so no runtime negotiation is needed.
+Chunking is subprocess-only; HTTP and Pyodide have no JSONL line ceiling. See
 [Transport framing](https://bbopen.github.io/tywrap/transport-framing.md).
 
 `PooledTransport` (the multi-process Node path) reports the capabilities of the
 worker transport it distributes across — in practice `SubprocessTransport`. Its
 `capabilities()` is a **static** descriptor read from an un-initialized probe
-worker built by the same factory, so it reports the configured
-`supportsChunking` the workers carry (e.g. `true` when the pool's workers are
-created with `enableChunking: true`). The pool builds no live worker to answer a
-capability query. Each leased worker negotiates `tywrap-frame/1` independently
-inside its own `init()` — that per-worker negotiated fact lives on each worker's
-`BridgeInfo.transport.supportsChunking`, and a chunked request or response routed
-through a pool lease reassembles correctly.
+worker built by the same factory. Each leased worker always uses
+`tywrap-frame/1`, and chunked traffic through a lease reassembles correctly.
 
 ## Notes per flag
 
 ### `supportsArrow`
 
-Whether the transport can carry Arrow-encoded payloads (binary IPC frames) on the
-wire.
+Whether the transport can carry Arrow-encoded payloads (binary IPC frames) on
+the wire.
 
-- **subprocess / http**: `true`. The channel can move Arrow bytes. Whether Arrow is
-  actually *used* for a given response still depends on the Python side
-  (`BridgeInfo.arrowAvailable`) and the `TYWRAP_CODEC_FALLBACK` setting — those are
-  runtime/codec concerns, not transport-level ones.
+- **subprocess / http**: `true`. The channel can move Arrow bytes. Whether Arrow
+  is actually _used_ for a given response still depends on the Python side
+  (`BridgeInfo.arrowAvailable`) and the `TYWRAP_CODEC_FALLBACK` setting — those
+  are runtime/codec concerns, not transport-level ones.
 - **pyodide**: `false`. pyarrow is unavailable in WASM, so the Pyodide bootstrap
   forces JSON markers (`force_json_markers=True`) and reports
   `arrowAvailable: false`. The channel is JSON-only.
@@ -2778,33 +2748,29 @@ Whether the transport can carry arbitrary binary data (e.g. Python `bytes`).
 
 ### `supportsChunking` and `supportsStreaming`
 
-`supportsChunking` is implemented for the **subprocess** backend as of **0.8.0**:
-it splits one logical message across multiple `tywrap-frame/1` frames so a payload
-can exceed the JSONL line ceiling. The capability reports the **configured** path
-(`enableChunking`, `true` by default on `NodeBridge`) and is static (see the table
-note above); the per-bridge negotiated fact lives on
-`BridgeInfo.transport.supportsChunking`. HTTP and Pyodide stay `false` — they have
-no line ceiling and buffer the whole payload in one frame. See
-[Transport framing](https://bbopen.github.io/tywrap/transport-framing.md) for the wire format and negotiation
-handshake.
+`supportsChunking` is implemented for the **subprocess** backend as of
+**0.8.0**: it splits one logical message across multiple `tywrap-frame/1` frames
+so a payload can exceed the JSONL line ceiling. The capability is statically
+`true` for subprocess. HTTP and Pyodide stay `false`. See
+[Transport framing](https://bbopen.github.io/tywrap/transport-framing.md) for the wire format.
 
-`supportsStreaming` (incremental results for a single request) is `false` on every
-backend; it is not implemented in 0.8.0.
+`supportsStreaming` (incremental results for a single request) is `false` on
+every backend; it is not implemented in 0.8.0.
 
 ### `maxFrameBytes`
 
 Maximum size, in bytes, of a single wire frame the transport itself will accept.
-`Number.POSITIVE_INFINITY` means the transport imposes no frame ceiling of its own
-(a higher layer — e.g. the codec's payload limit, default 10 MB — may still cap
-the size).
+`Number.POSITIVE_INFINITY` means the transport imposes no frame ceiling of its
+own (a higher layer — e.g. the codec's payload limit, default 10 MB — may still
+cap the size).
 
 - **subprocess**: the JSONL line-length limit (`maxLineLength`, default
-  `100 * 1024 * 1024` = 100 MB). A response line larger than this raises a protocol
-  error.
-- **http**: `Number.POSITIVE_INFINITY`. The whole response body is read in one shot;
-  the transport imposes no frame limit.
-- **pyodide**: `Number.POSITIVE_INFINITY`. Calls are in-memory string passing with no
-  framing.
+  `100 * 1024 * 1024` = 100 MB). A response line larger than this raises a
+  protocol error.
+- **http**: `Number.POSITIVE_INFINITY`. The whole response body is read in one
+  shot; the transport imposes no frame limit.
+- **pyodide**: `Number.POSITIVE_INFINITY`. Calls are in-memory string passing
+  with no framing.
 
 ## Example
 
@@ -2832,16 +2798,14 @@ protocol that fragments one logical message across multiple wire frames and
 reassembles it on the other side, so a payload larger than one frame can still
 cross the boundary without a silent lossy fallback.
 
-This document is the spec. As of 0.8.0 the wire contract, the negotiation
-handshake, and the fragment/reassembly machinery are **fully implemented** for the
-subprocess backend: the TS side fragments/reassembles in
-`src/runtime/subprocess-transport.ts` (with the pure codec in
+This document is the spec. The wire contract and fragment/reassembly machinery
+are always enabled for the subprocess backend: the TS side fragments/reassembles
+in `src/runtime/subprocess-transport.ts` (with the pure codec in
 `src/runtime/frame-codec.ts`), and the Python side does the same in
 `runtime/python_bridge.py`. Chunking composes with the worker pool — each leased
-worker negotiates independently and a chunked request or response routed through a
-`PooledTransport` lease reassembles correctly (see
-[the capability matrix](https://bbopen.github.io/tywrap/transport-capabilities.md)). The env vars that drive
-negotiation are listed in the [environment variable reference](https://bbopen.github.io/tywrap/reference/env-vars.md).
+worker uses the same packaged codec and a chunked request or response routed
+through a `PooledTransport` lease reassembles correctly (see
+[the capability matrix](https://bbopen.github.io/tywrap/transport-capabilities.md)).
 
 ## Scope: subprocess only
 
@@ -2869,10 +2833,9 @@ frames. Both sides fragment and reassemble:
 `runtime/tywrap_bridge_core.py` (dispatch + serializers) stays oblivious — it
 produces and consumes complete logical JSON messages.
 
-The logical RPC protocol stays `tywrap/1`. We do **not** bump `PROTOCOL_ID` to
-`tywrap/2`: an old bridge rejects any non-`tywrap/1` request, so a `tywrap/2`
-request could never bootstrap its own negotiation. Instead `tywrap-frame/1` is a
-separate framing protocol, advertised through a `tywrap/1` `meta` extension.
+The logical RPC protocol stays `tywrap/1`; `tywrap-frame/1` is a separate
+framing protocol below it. The npm package ships both sides, so version-skew
+negotiation would add states without providing compatibility.
 
 ## Frame envelope
 
@@ -2894,21 +2857,21 @@ JSON message:
 }
 ```
 
-| Field             | Meaning                                                                          |
-| ----------------- | -------------------------------------------------------------------------------- |
-| `__tywrap_frame__`| `"chunk"` (data frame) or `"error"` (framing-layer error, no more data frames).  |
-| `frameProtocol`   | Must equal `tywrap-frame/1` (`FRAME_PROTOCOL_ID`); any other value is rejected.   |
-| `stream`          | `"request"` (JS → Python) or `"response"` (Python → JS).                          |
-| `id`              | RPC correlation id, shared with the logical `ProtocolMessage.id`.                |
-| `seq`             | Zero-based frame index within the stream.                                        |
-| `total`           | Total frame count for the stream; repeated on every frame.                       |
-| `totalBytes`      | Byte length of the complete reassembled message; repeated on every frame.        |
-| `encoding`        | Per-frame payload encoding: `"utf8-slice"` (chosen) or `"utf8-base64"`.          |
-| `data`            | This frame's slice of the logical message, encoded per `encoding`.               |
+| Field              | Meaning                                                                         |
+| ------------------ | ------------------------------------------------------------------------------- |
+| `__tywrap_frame__` | `"chunk"` (data frame) or `"error"` (framing-layer error, no more data frames). |
+| `frameProtocol`    | Must equal `tywrap-frame/1` (`FRAME_PROTOCOL_ID`); any other value is rejected. |
+| `stream`           | `"request"` (JS → Python) or `"response"` (Python → JS).                        |
+| `id`               | RPC correlation id, shared with the logical `ProtocolMessage.id`.               |
+| `seq`              | Zero-based frame index within the stream.                                       |
+| `total`            | Total frame count for the stream; repeated on every frame.                      |
+| `totalBytes`       | Byte length of the complete reassembled message; repeated on every frame.       |
+| `encoding`         | Per-frame payload encoding: `"utf8-slice"` (chosen) or `"utf8-base64"`.         |
+| `data`             | This frame's slice of the logical message, encoded per `encoding`.              |
 
 The TypeScript type is `ChunkFrame` in `src/runtime/transport.ts`; the constants
-are `FRAME_PROTOCOL_ID` and `FRAME_PROTOCOL_VERSION` (the version derived from the
-trailing number, the same pattern as `TYWRAP_PROTOCOL_VERSION`).
+are `FRAME_PROTOCOL_ID` and `FRAME_PROTOCOL_VERSION` (the version derived from
+the trailing number, the same pattern as `TYWRAP_PROTOCOL_VERSION`).
 
 ## Encoding: `utf8-slice` (chosen)
 
@@ -2918,10 +2881,9 @@ The chunked payload is the bytes of a complete, valid-UTF-8 JSON message. Two
 candidates were considered:
 
 - **`utf8-base64`** — base64-encode the UTF-8 bytes of each chunk. Safe for
-  arbitrary byte split points, but inflates the wire by ~33% and forces a
-  full base64 decode plus a separate bytes buffer per frame — a memory
-  amplification (string + UTF-8 bytes + base64) flagged as a real risk in the
-  design review.
+  arbitrary byte split points, but inflates the wire by ~33% and forces a full
+  base64 decode plus a separate bytes buffer per frame — a memory amplification
+  (string + UTF-8 bytes + base64) flagged as a real risk in the design review.
 - **`utf8-slice`** (chosen) — because the payload is already valid UTF-8, split
   it on **UTF-8 codepoint boundaries** and embed the raw string slice directly.
   Reassembly is plain concatenation of the slices; the result is the original
@@ -2940,17 +2902,17 @@ use (e.g. a non-text payload), but tywrap does not emit it in 0.8.0.
 
 > Implementation note for later workstreams: `total` and the per-frame split
 > points are computed over the message's UTF-8 **byte** length against
-> `maxFrameBytes` (the frame ceiling is a byte limit), but each frame boundary is
-> snapped back to the nearest codepoint boundary at or before the byte limit so
-> no multi-byte sequence is split. `totalBytes` is the exact UTF-8 byte length of
-> the full reassembled message.
+> `maxFrameBytes` (the frame ceiling is a byte limit), but each frame boundary
+> is snapped back to the nearest codepoint boundary at or before the byte limit
+> so no multi-byte sequence is split. `totalBytes` is the exact UTF-8 byte
+> length of the full reassembled message.
 
 ## Correlation and reassembly
 
 - **Correlation** reuses the existing RPC `id`. A receiver groups inbound frames
   by `(stream, id)`.
-- `seq` is zero-based and dense: a complete stream has exactly one frame for each
-  `seq` in `[0, total)`.
+- `seq` is zero-based and dense: a complete stream has exactly one frame for
+  each `seq` in `[0, total)`.
 - `total` and `totalBytes` are repeated on every frame and MUST be identical
   across all frames of a stream; a mismatch is a framing error.
 
@@ -2963,27 +2925,28 @@ decoding:
 4. The concatenated payload's UTF-8 byte length equals `totalBytes` exactly.
 5. The concatenated payload decodes as strict UTF-8.
 
-Only when all five hold does the framing layer hand the reassembled string to the
-existing JSON/codec path and resolve the pending `id`. Any failure rejects the
-pending `id` and marks the subprocess for restart (the stdout stream can no
-longer be trusted to be frame-aligned). There is no silent single-frame fallback:
-a payload that requires chunking against a bridge that cannot chunk fails
-explicitly.
+Only when all five hold does the framing layer hand the reassembled string to
+the existing JSON/codec path and resolve the pending `id`. Any failure rejects
+the pending `id` and marks the subprocess for restart (the stdout stream can no
+longer be trusted to be frame-aligned). There is no silent single-frame
+fallback: a payload that requires chunking against a bridge that cannot chunk
+fails explicitly.
 
 ### Resource bounds
 
-Chunking removes the per-line stdout ceiling, so the reassembler enforces its own
-bounds — a buggy or oversized peer cannot grow memory without limit:
+Chunking removes the per-line stdout ceiling, so the reassembler enforces its
+own bounds — a buggy or oversized peer cannot grow memory without limit:
 
-- **Per-stream byte cap.** The response reassembler is constructed with
+- **Logical payload cap.** The response reassembler is constructed with
   `maxReassemblyBytes` (default 10 MiB, matching the codec's `maxPayloadBytes`;
   `NodeBridge` sets it from the configured `codec.maxPayloadBytes`). A stream
   whose **declared** `totalBytes` — or **accumulated** bytes — exceeds the cap
-  fails loud (`FRAME_PAYLOAD_TOO_LARGE`) on the first offending frame rather than
-  buffering the whole payload. To carry a payload larger than 10 MiB you raise
-  **both** the codec cap and this reassembly cap; they move together. (Requests
-  are already bounded by the codec's `encodeRequest` cap on the sending side, so
-  the Python request reassembler relies on the post-reassembly
+  fails loud (`FRAME_PAYLOAD_TOO_LARGE`) on the first offending frame rather
+  than buffering the whole payload. To carry a payload larger than 10 MiB you
+  raise the codec cap; NodeBridge moves both together. The frame ceiling only
+  controls wire fragmentation and is not a second logical payload limit.
+  (Requests are already bounded by the codec's `encodeRequest` cap on the
+  sending side, so the Python request reassembler relies on the post-reassembly
   `TYWRAP_REQUEST_MAX_BYTES` check.)
 - **Concurrent streams** are capped (`FRAME_TOO_MANY_STREAMS`) and the timed-out
   id discard set is FIFO-bounded, so neither grows without limit over a
@@ -2991,55 +2954,26 @@ bounds — a buggy or oversized peer cannot grow memory without limit:
 - **Stream direction** is enforced: the response reassembler rejects `request`
   frames and vice-versa.
 
-## Negotiation handshake
+## Always-on framing
 
-The subprocess spawns the bridge with three env vars:
-
-| Env var                          | Value                                  |
-| -------------------------------- | -------------------------------------- |
-| `TYWRAP_TRANSPORT_CHUNKING`      | `1` to enable framing                  |
-| `TYWRAP_TRANSPORT_FRAME_PROTOCOL`| `tywrap-frame/1`                       |
-| `TYWRAP_TRANSPORT_MAX_FRAME_BYTES`| the JSONL `maxLineLength`             |
-
-After spawn, the JS side issues a small **unchunked** `tywrap/1` `meta` probe. A
-bridge that understands framing returns a `transport` block in its `BridgeInfo`:
-
-```json
-{
-  "transport": {
-    "frameProtocol": "tywrap-frame/1",
-    "supportsChunking": true,
-    "maxFrameBytes": 104857600
-  }
-}
-```
-
-- If the `transport` block is **present** and `supportsChunking: true`, the JS
-  side may fragment requests and expect fragmented responses up to
-  `maxFrameBytes` per frame.
-- If the block is **absent** (an old bridge, or HTTP/Pyodide), small calls still
-  work unchanged. Payloads that *require* chunking fail explicitly — **no silent
-  single-frame fallback** that would either truncate or blow the line ceiling.
-
-The `BridgeInfo.transport` block (TypeScript type `BridgeTransportInfo`) is
-**optional** in the wire contract. The `meta` validator
-(`validateBridgeInfoPayload` in `src/runtime/rpc-client.ts`) validates the block
-when present and **carries it through** so negotiation data survives; absence is
-backward compatible.
+`SubprocessTransport` always accepts and emits `tywrap-frame/1`. It passes its
+configured `maxLineLength` to the packaged Python bridge as a private process
+argument, and both sides use that value as the per-frame data ceiling. Small
+messages remain one JSONL line; messages over the ceiling are framed.
 
 ### Validator changes that land in W1
 
 The same pass relaxes two over-strict `meta` checks so the honest per-backend
 identities validate:
 
-- `bridge` accepts the full `BridgeBackend` union
-  (`python-subprocess` | `pyodide` | `http`) instead of hardcoding
-  `python-subprocess`. All backends speak the identical `tywrap/1` protocol; this
-  lets the Pyodide and HTTP facades route `getBridgeInfo()` through the same
-  validator. (Today the Python subprocess server reports `python-subprocess`,
-  the Pyodide bootstrap reports `pyodide`; HTTP uses the subprocess server and so
-  reports `python-subprocess`. Honest per-backend HTTP reporting is a possible
-  follow-up, but accepting the union now is safe and backward compatible.)
+- `bridge` accepts the full `BridgeBackend` union (`python-subprocess` |
+  `pyodide` | `http`) instead of hardcoding `python-subprocess`. All backends
+  speak the identical `tywrap/1` protocol; this lets the Pyodide and HTTP
+  facades route `getBridgeInfo()` through the same validator. (Today the Python
+  subprocess server reports `python-subprocess`, the Pyodide bootstrap reports
+  `pyodide`; HTTP uses the subprocess server and so reports `python-subprocess`.
+  Honest per-backend HTTP reporting is a possible follow-up, but accepting the
+  union now is safe and backward compatible.)
 - `pid` accepts a positive integer **or** `null`. Subprocess reports a real OS
   pid; in-WASM Pyodide (and HTTP) have no local process and report `null`.
 
@@ -3079,12 +3013,8 @@ response-read + reassembly. On timeout or abort:
 
 ## See also
 
-- [Transport capability matrix](https://bbopen.github.io/tywrap/transport-capabilities.md) — which backends
-  chunk, the configured vs negotiated layers, and how `PooledTransport` reports
-  the configured chunking capability.
-- [Environment variables](https://bbopen.github.io/tywrap/reference/env-vars.md) — the `TYWRAP_TRANSPORT_*`
-  negotiation env vars and the `TYWRAP_*_MAX_BYTES` size guards (enforced
-  post-reassembly).
+- [Transport capability matrix](https://bbopen.github.io/tywrap/transport-capabilities.md) — backend framing support.
+- [Environment variables](https://bbopen.github.io/tywrap/reference/env-vars.md) — logical payload size guards.
 
 ---
 
@@ -3459,8 +3389,8 @@ console.log(await sin(pi / 4));
 
 ## Value-returning APIs
 
-v0.9 generated wrappers do not keep live Python class instances. Expose an operation as a
-value-returning module function instead:
+v0.9 generated wrappers do not keep live Python class instances. Expose an
+operation as a value-returning module function instead:
 
 ```ts
 import { median } from './generated/statistics.generated.js';

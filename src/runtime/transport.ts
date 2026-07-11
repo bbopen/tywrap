@@ -226,8 +226,8 @@ export interface TransportCapabilities {
 
   /**
    * Whether the transport splits a single logical message across multiple wire
-   * frames. Not implemented on any backend yet (planned for 0.8.0) — always
-   * `false`.
+   * frames. This is always `true` for the packaged subprocess transport and
+   * `false` for HTTP and Pyodide.
    */
   readonly supportsChunking: boolean;
 
@@ -241,7 +241,8 @@ export interface TransportCapabilities {
    * Maximum size, in bytes, of a single wire frame the transport will accept.
    * `Number.POSITIVE_INFINITY` means the transport imposes no frame ceiling of
    * its own (a higher layer — e.g. the codec's payload limit — may still cap the
-   * size). For the subprocess backend this is the JSONL line-length limit.
+   * size). For the subprocess backend this is the always-on framing ceiling for
+   * each JSONL wire frame.
    */
   readonly maxFrameBytes: number;
 }

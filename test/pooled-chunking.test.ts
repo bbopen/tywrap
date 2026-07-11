@@ -4,22 +4,15 @@
  * The riskiest integration slice: prove chunking composes with the pool and the
  * per-worker warmup path. Specifically:
  *
- *  - Each leased worker subprocess negotiates `tywrap-frame/1` independently (the
- *    negotiation runs inside SubprocessTransport.init(), which the pool calls per
- *    worker via createWorker -> transport.init()). A leased worker's transport
- *    therefore reports supportsChunking:true post-init.
+ *  - Each leased worker subprocess uses the packaged `tywrap-frame/1` codec.
+ *    PooledTransport initializes every worker before making it available.
  *  - The PooledTransport static capabilities() descriptor is built from an
- *    un-initialized probe transport, so it HONESTLY reports supportsChunking:false
- *    (no negotiation has happened on a static, no-init probe) and is memoized to
- *    exactly one probe regardless of call count.
+ *    un-initialized probe transport, so it reports the always-on subprocess
+ *    framing capability and is memoized to exactly one probe.
  *  - A chunked request AND a chunked response both complete correctly when routed
  *    through a pool lease (PooledTransport.send -> withWorker -> worker.send).
- *  - A per-worker warmup callback (onWorkerReady) composes with negotiation: the
- *    warmup `meta` probe runs after init()'s negotiation and the worker still
+ *  - A per-worker warmup callback composes with framing and the worker still
  *    chunks correctly afterward.
- *  - OLD-BRIDGE behavior through the pool: a worker that does not advertise the
- *    transport block (enableChunking omitted) keeps small calls working and fails
- *    an oversize response LOUD — no hang, no silent truncation.
  *
  * Real-Python tests spawn runtime/python_bridge.py through SubprocessTransport
  * workers and are skipped when python3 is unavailable. A 5s-timeout flake under
@@ -142,11 +135,8 @@ describe('PooledTransport chunking capability descriptor', () => {
       createTransport: chunkingWorkerFactory(),
       maxWorkers: 2,
     });
-    // The static descriptor reads an un-init probe built by the same factory, so
-    // it reflects the CONFIGURED capability (enableChunking:true) — lifecycle-
-    // independent, no round trip. Whether the connected bridge actually advertised
-    // framing is the negotiated fact (BridgeInfo.transport.supportsChunking),
-    // proven per-worker in the live test below.
+    // The static descriptor reads an uninitialized probe built by the same
+    // factory. Subprocess framing is always on and lifecycle-independent.
     const caps = pool.capabilities();
     expect(caps.backend).toBe('subprocess');
     expect(caps.supportsChunking).toBe(true);
@@ -284,12 +274,9 @@ describe('PooledTransport chunked exchanges through a lease (live)', () => {
       }),
       maxWorkers: 1,
       minWorkers: 1,
-      // Per-worker warmup runs AFTER the transport's init() (where negotiation
-      // happens). A raw meta probe on the leased worker confirms the post-init
-      // transport block is present, proving warmup composes with negotiation.
+      // Per-worker warmup runs after transport initialization; framing remains
+      // available for subsequent calls.
       onWorkerReady: async (worker: TransportLease) => {
-        // Configured (static) capability — true because the factory set
-        // enableChunking. The negotiated proof is the meta transport block below.
         expect(worker.transport.capabilities().supportsChunking).toBe(true);
         warmupSeen.push(1);
       },
