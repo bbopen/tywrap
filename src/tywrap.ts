@@ -21,6 +21,7 @@ import { fsUtils, pathUtils, processUtils, isWindows } from './utils/runtime.js'
 import { globalCache } from './utils/cache.js';
 import { resolvePythonExecutable } from './utils/python.js';
 import { computeIrCacheFilename } from './utils/ir-cache.js';
+import { logger } from './utils/logger.js';
 
 const TYWRAP_IR_VERSION = '0.3.0';
 
@@ -42,7 +43,9 @@ interface TywrapInstance {
 
 export async function tywrap(options: Partial<TywrapOptions> = {}): Promise<TywrapInstance> {
   const mapper = new TypeMapper({ presets: options.types?.presets });
-  const generator = new CodeGenerator(mapper);
+  const generator = new CodeGenerator(mapper, {
+    onTypeDegrade: typeName => recordUnknown(`unresolvable generated type ${typeName}`),
+  });
 
   globalCache.setDebug(options.debug ?? false);
 
@@ -337,6 +340,24 @@ export async function generate(
         message,
       });
       continue;
+    }
+
+    const irWarnings = Array.isArray((ir as Record<string, unknown>).warnings)
+      ? ((ir as Record<string, unknown>).warnings as unknown[])
+      : [];
+    for (const warning of irWarnings) {
+      if (typeof warning !== 'string') {
+        continue;
+      }
+      // Only type-honesty degrades feed --fail-on-warn. Environment capability
+      // notices (e.g. typing.get_overloads missing on Python < 3.11) describe
+      // the analyzing interpreter, not the generated types, and must not fail
+      // an otherwise clean build.
+      if (warning.startsWith('Return annotation for ')) {
+        recordUnknown(`Python IR warning: ${warning}`);
+      } else {
+        logger.info(`Python IR notice: ${warning}`, { component: 'Generate' });
+      }
     }
 
     const moduleModel = transformIrToTsModel(ir);

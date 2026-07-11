@@ -7,6 +7,7 @@ import importlib
 import inspect
 import json
 import platform
+import re
 import sys
 import types
 import typing
@@ -137,8 +138,6 @@ def _stringify_annotation(annotation: Any) -> Optional[str]:
         str_repr = str(annotation)
         if str_repr.startswith("<class '") and str_repr.endswith("'>"):
             class_path = str_repr[8:-2]
-            if "." in class_path:
-                return class_path.split(".")[-1]
             return class_path
         return str_repr
     except Exception:
@@ -310,6 +309,8 @@ def _collect_scoped_type_params(
 
 
 def _unwrap_type_alias_value(value: Any) -> Any:
+    if hasattr(value, "__supertype__"):
+        return value.__supertype__
     type_alias_type = getattr(typing, "TypeAliasType", None)
     if type_alias_type is None or not isinstance(value, type_alias_type):
         return value
@@ -347,6 +348,8 @@ def _top_level_assigned_names(module: Any) -> set[str]:
 
 
 def _is_type_alias_value(value: Any) -> bool:
+    if hasattr(value, "__supertype__"):
+        return True
     if inspect.isfunction(value) or inspect.isbuiltin(value) or inspect.isclass(value) or inspect.ismodule(value):
         return False
     type_alias_type = getattr(typing, "TypeAliasType", None)
@@ -917,6 +920,36 @@ def extract_module_ir(
     if _pending_overload_warnings:
         warnings.extend(_pending_overload_warnings)
         _pending_overload_warnings.clear()
+
+    # Class annotations were historically reduced to their leaf name (for
+    # example ``decimal.Decimal`` became ``Decimal``), making it impossible for
+    # the generator to tell a local declaration from an imported object. Keep the
+    # full path above and surface return annotations that cannot be resolved from
+    # this module as structured diagnostics. The TS generator turns these leaves
+    # into ``unknown`` unless it emits a declaration for them.
+    external_return_pattern = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)")
+    exempt_return_prefixes = ("typing.", "typing_extensions.", "collections.abc.", "builtins.")
+
+    def record_return_warning(fn: IRFunction) -> None:
+        if fn.returns is None:
+            warnings.append(f"Return annotation for {fn.qualname} is missing.")
+            return
+        for candidate in external_return_pattern.findall(fn.returns):
+            if candidate.startswith(exempt_return_prefixes) or candidate.startswith(f"{module_name}."):
+                continue
+            warnings.append(
+                f"Return annotation for {fn.qualname} resolves outside analyzed module: {candidate}."
+            )
+            break
+
+    for fn in functions:
+        record_return_warning(fn)
+    for cls in classes:
+        for method in cls.methods:
+            record_return_warning(method)
+        for accessor in cls.accessors:
+            if accessor.returns is None:
+                warnings.append(f"Return annotation for {cls.qualname}.{accessor.name} is missing.")
 
     ir = IRModule(
         ir_version=ir_version,

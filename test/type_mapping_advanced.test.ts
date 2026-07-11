@@ -27,7 +27,7 @@ describe('TypeMapper - Advanced Type Mapping Validation', () => {
       { python: 'float', expected: 'number' },
       { python: 'str', expected: 'string' },
       { python: 'bool', expected: 'boolean' },
-      { python: 'bytes', expected: 'string' },
+      { python: 'bytes', expected: 'Uint8Array' },
       { python: 'None', expected: 'null', context: 'value' },
       { python: 'None', expected: 'void', context: 'return' },
     ];
@@ -106,32 +106,30 @@ describe('TypeMapper - Advanced Type Mapping Validation', () => {
       expect(result.elementTypes).toEqual([{ kind: 'primitive', name: 'undefined' }]);
     });
 
-    test('maps set[T] to Set<T>', () => {
+    test('maps set[T] to T[]', () => {
       const pythonType: PythonType = {
         kind: 'collection',
         name: 'set',
         itemTypes: [{ kind: 'primitive', name: 'str' }],
       };
 
-      const result = mapper.mapPythonType(pythonType) as TSGenericType;
+      const result = mapper.mapPythonType(pythonType) as TSArrayType;
 
-      expect(result.kind).toBe('generic');
-      expect(result.name).toBe('Set');
-      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'string' }]);
+      expect(result.kind).toBe('array');
+      expect(result.elementType).toEqual({ kind: 'primitive', name: 'string' });
     });
 
-    test('maps frozenset[T] to Set<T>', () => {
+    test('maps frozenset[T] to T[]', () => {
       const pythonType: PythonType = {
         kind: 'collection',
         name: 'frozenset',
         itemTypes: [{ kind: 'primitive', name: 'int' }],
       };
 
-      const result = mapper.mapPythonType(pythonType) as TSGenericType;
+      const result = mapper.mapPythonType(pythonType) as TSArrayType;
 
-      expect(result.kind).toBe('generic');
-      expect(result.name).toBe('Set');
-      expect(result.typeArgs).toEqual([{ kind: 'primitive', name: 'number' }]);
+      expect(result.kind).toBe('array');
+      expect(result.elementType).toEqual({ kind: 'primitive', name: 'number' });
     });
 
     test('maps dict[K, V] to index signature object', () => {

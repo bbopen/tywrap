@@ -65,6 +65,7 @@ describe('annotation parser', () => {
   it('does not treat arbitrary dotted names as ParamSpec packs', () => {
     const t = parseAnnotationToPythonType('Request.args');
     expect(t.kind).toBe('custom');
-    expect((t as any).name).toBe('Request.args');
+    expect((t as any).name).toBe('args');
+    expect((t as any).module).toBe('Request');
   });
 });

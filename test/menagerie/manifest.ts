@@ -28,10 +28,17 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
   },
   {
     fixture: 'values_torture',
-    call: 'empty_values(), set_and_frozenset()',
+    call: 'empty_values()',
     status: 'KNOWN_LIE',
-    currentBehavior: 'Python tuples, sets, and frozensets decode as JavaScript arrays.',
-    expectedFix: 'Future tagged tuple/set transport.',
+    currentBehavior:
+      'The empty Python tuple is not represented exactly in the generated tuple type.',
+    expectedFix: 'Future exact empty-tuple typing.',
+  },
+  {
+    fixture: 'values_torture',
+    call: 'set_and_frozenset()',
+    status: 'EXPECTED_OK',
+    currentBehavior: 'Python sets and frozensets are declared and delivered as JavaScript arrays.',
   },
   {
     fixture: 'values_torture',
@@ -43,17 +50,15 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
   {
     fixture: 'values_torture',
     call: 'bytes_echo()',
-    status: 'KNOWN_LIE',
-    currentBehavior:
-      'The bridge delivers Uint8Array while generated wrappers currently declare string.',
-    expectedFix: 'Future bytes mapper alignment.',
+    status: 'EXPECTED_OK',
+    currentBehavior: 'Python bytes are declared and delivered as Uint8Array.',
   },
   {
     fixture: 'values_torture',
     call: 'temporal_values(), decimal_values(), uuid_and_path()',
     status: 'KNOWN_LIE',
     currentBehavior:
-      'Python temporal values, Decimal, UUID, and Path decode as strings or seconds.',
+      'Python temporal values, Decimal, UUID, and Path decode as strings or seconds; Decimal is now generated as unknown rather than an undeclared TypeScript leaf.',
     expectedFix: 'Future tagged stdlib-value transport.',
   },
   {
@@ -82,7 +87,7 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'coroutine_value(), dataclass_instance(), complex_value(), generator_value()',
     status: 'LOUD_FAIL',
     currentBehavior:
-      'Coroutines and unsupported Python objects reject instead of silently coercing.',
+      'Coroutines and unsupported Python objects reject instead of silently coercing; unsupported return leaves (including complex) are generated as unknown. Local Point stays typed to document intent, while its dataclass instance fails loudly at serialization as the catalogued Class-C residual.',
   },
   {
     fixture: 'library_torture',

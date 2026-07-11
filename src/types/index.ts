@@ -261,7 +261,8 @@ export interface TSPrimitiveType {
     | 'void'
     | 'unknown'
     | 'never'
-    | 'object';
+    | 'object'
+    | 'Uint8Array';
 }
 
 export interface TSArrayType {
@@ -314,6 +315,7 @@ export interface TSParameter {
 export interface TSGenericType {
   kind: 'generic';
   name: string;
+  module?: string;
   typeArgs: TypescriptType[];
 }
 
@@ -404,6 +406,8 @@ export interface PerformanceConfig {
   compression: 'auto' | 'gzip' | 'brotli' | 'none';
 }
 
+// `numpy` is intentionally accepted as a no-op in 0.9: decoded ndarrays are JS
+// arrays, and a faithful static shape awaits #268 return validation.
 export type TypePreset = 'numpy' | 'pandas' | 'pydantic' | 'stdlib' | 'scipy' | 'torch' | 'sklearn';
 
 export interface TypeMappingConfig {

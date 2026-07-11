@@ -129,6 +129,7 @@ const VALID_OUTPUT_FORMATS = ['esm', 'cjs', 'both'];
 const VALID_COMPRESSION = ['auto', 'gzip', 'brotli', 'none'];
 const VALID_TYPE_HINTS = ['strict', 'loose', 'ignore'];
 const VALID_TYPE_PRESETS = new Set([
+  // Accepted as an explicit no-op in 0.9; ndarray shape typing depends on #268.
   'numpy',
   'pandas',
   'pydantic',

@@ -407,8 +407,7 @@ export function parseAnnotationToPythonType(
     const builtInClassMatch = raw.match(/^<class ['"][^'"]+['"]>$/);
     if (builtInClassMatch) {
       const inner = (raw.match(/^<class ['"]([^'"]+)['"]>$/) ?? [])[1] ?? '';
-      const name = (inner.split('.').pop() ?? '').toString();
-      return mapSimpleName(name);
+      return mapSimpleName(inner);
     }
 
     if (raw.includes('|')) {
@@ -506,7 +505,11 @@ export function parseAnnotationToPythonType(
       };
     }
 
-    return mapSimpleName(raw);
+    const qualified = splitQualifiedName(raw);
+    if (qualified.module) {
+      return { kind: 'custom', name: qualified.name, module: qualified.module };
+    }
+    return mapSimpleName(qualified.name);
   };
 
   return parse(annotation, 0);
