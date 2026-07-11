@@ -71,7 +71,10 @@ const createBridge = async (
   return new NodeBridge({
     scriptPath,
     pythonPath,
-    timeoutMs: options.timeoutMs ?? 2000,
+    // Default to the suite budget: error-surfacing tests assert LOUDNESS, not
+    // latency, and must absorb worker cold-start/import costs under full-suite
+    // load (#285). Timeout-behavior tests pass explicit small values.
+    timeoutMs: options.timeoutMs ?? testTimeoutMs,
     env: {
       // Why: include local adversarial fixtures without mutating global env.
       PYTHONPATH: buildPythonPath(),
@@ -95,7 +98,10 @@ const createFixtureBridge = async (
   return new NodeBridge({
     scriptPath: fixtureScript,
     pythonPath,
-    timeoutMs: options.timeoutMs ?? 2000,
+    // Default to the suite budget: error-surfacing tests assert LOUDNESS, not
+    // latency, and must absorb worker cold-start/import costs under full-suite
+    // load (#285). Timeout-behavior tests pass explicit small values.
+    timeoutMs: options.timeoutMs ?? testTimeoutMs,
     env: options.env ?? {},
   });
 };
@@ -715,7 +721,10 @@ describeAdversarial('Multi-worker adversarial tests', () => {
       minProcesses: options.minProcesses ?? 2,
       maxProcesses: options.maxProcesses ?? 4,
       maxConcurrentPerProcess: options.maxConcurrentPerProcess,
-      timeoutMs: options.timeoutMs ?? 2000,
+      // Default to the suite budget: error-surfacing tests assert LOUDNESS, not
+      // latency, and must absorb worker cold-start/import costs under full-suite
+      // load (#285). Timeout-behavior tests pass explicit small values.
+      timeoutMs: options.timeoutMs ?? testTimeoutMs,
       env: {
         PYTHONPATH: buildPythonPath(),
         ...options.env,
