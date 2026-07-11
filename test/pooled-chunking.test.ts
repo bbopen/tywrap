@@ -4,22 +4,15 @@
  * The riskiest integration slice: prove chunking composes with the pool and the
  * per-worker warmup path. Specifically:
  *
- *  - Each leased worker subprocess negotiates `tywrap-frame/1` independently (the
- *    negotiation runs inside SubprocessTransport.init(), which the pool calls per
- *    worker via createWorker -> transport.init()). A leased worker's transport
- *    therefore reports supportsChunking:true post-init.
+ *  - Each leased worker subprocess uses the packaged `tywrap-frame/1` codec.
+ *    PooledTransport initializes every worker before making it available.
  *  - The PooledTransport static capabilities() descriptor is built from an
- *    un-initialized probe transport, so it HONESTLY reports supportsChunking:false
- *    (no negotiation has happened on a static, no-init probe) and is memoized to
- *    exactly one probe regardless of call count.
+ *    un-initialized probe transport, so it reports the always-on subprocess
+ *    framing capability and is memoized to exactly one probe.
  *  - A chunked request AND a chunked response both complete correctly when routed
  *    through a pool lease (PooledTransport.send -> withWorker -> worker.send).
- *  - A per-worker warmup callback (onWorkerReady) composes with negotiation: the
- *    warmup `meta` probe runs after init()'s negotiation and the worker still
+ *  - A per-worker warmup callback composes with framing and the worker still
  *    chunks correctly afterward.
- *  - OLD-BRIDGE behavior through the pool: a worker that does not advertise the
- *    transport block (enableChunking omitted) keeps small calls working and fails
- *    an oversize response LOUD — no hang, no silent truncation.
  *
  * Real-Python tests spawn runtime/python_bridge.py through SubprocessTransport
  * workers and are skipped when python3 is unavailable. A 5s-timeout flake under
@@ -37,7 +30,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { PooledTransport } from '../src/runtime/pooled-transport.js';
 import { SubprocessTransport } from '../src/runtime/subprocess-transport.js';
-import type { TransportLease } from '../src/runtime/transport-pool.js';
+import type { TransportLease } from '../src/runtime/pooled-transport.js';
 import { PROTOCOL_ID } from '../src/runtime/transport.js';
 import { utf8ByteLength } from '../src/runtime/frame-codec.js';
 import { getDefaultPythonPath } from '../src/utils/python.js';
@@ -124,7 +117,6 @@ function chunkingWorkerFactory(extraEnv: Record<string, string> = {}): () => Sub
       bridgeScript: REFERENCE_SCRIPT,
       cwd: RUNTIME_DIR,
       maxLineLength: ONE_MIB,
-      enableChunking: true,
       // Generous reassembly cap so the 20 MiB lease tests reassemble; the
       // default 10 MiB bound (which correctly rejects oversize) is exercised
       // separately in test/transport-chunking.test.ts.
@@ -143,11 +135,8 @@ describe('PooledTransport chunking capability descriptor', () => {
       createTransport: chunkingWorkerFactory(),
       maxWorkers: 2,
     });
-    // The static descriptor reads an un-init probe built by the same factory, so
-    // it reflects the CONFIGURED capability (enableChunking:true) — lifecycle-
-    // independent, no round trip. Whether the connected bridge actually advertised
-    // framing is the negotiated fact (BridgeInfo.transport.supportsChunking),
-    // proven per-worker in the live test below.
+    // The static descriptor reads an uninitialized probe built by the same
+    // factory. Subprocess framing is always on and lifecycle-independent.
     const caps = pool.capabilities();
     expect(caps.backend).toBe('subprocess');
     expect(caps.supportsChunking).toBe(true);
@@ -163,7 +152,6 @@ describe('PooledTransport chunking capability descriptor', () => {
         return new SubprocessTransport({
           bridgeScript: REFERENCE_SCRIPT,
           maxLineLength: ONE_MIB,
-          enableChunking: true,
         });
       },
       maxWorkers: 4,
@@ -195,47 +183,19 @@ describe('PooledTransport chunked exchanges through a lease (live)', () => {
     }
   });
 
-  it('negotiates chunking on each leased worker (post-init, via the meta transport block)', async () => {
-    if (!hasPython) {
-      return;
-    }
-    // onWorkerReady receives each freshly-created worker's lease AFTER its
-    // transport.init() (where negotiation runs). The negotiated fact is NOT the
-    // capability descriptor (which is the lifecycle-independent CONFIGURED value);
-    // it is the bridge's meta `transport.supportsChunking` block. With minWorkers:2
-    // both workers are spawned during init() and each must have negotiated framing
-    // with its own bridge independently.
-    const perWorkerNegotiated: boolean[] = [];
-    const perWorkerMaxFrame: number[] = [];
+  it('initializes framing on each leased worker', async () => {
+    if (!hasPython) return;
+    const frameCeilings: number[] = [];
     pool = new PooledTransport({
       createTransport: chunkingWorkerFactory(),
       maxWorkers: 2,
       minWorkers: 2,
-      maxConcurrentPerWorker: 1,
-      onWorkerReady: async (worker: TransportLease) => {
-        // Configured (static) frame ceiling — fine to read from capabilities().
-        perWorkerMaxFrame.push(worker.transport.capabilities().maxFrameBytes);
-        // Negotiated (runtime) fact — read from the meta transport block.
-        const metaLine = await worker.transport.send(
-          JSON.stringify({ id: -101, protocol: PROTOCOL_ID, method: 'meta', params: {} }),
-          15_000
-        );
-        const meta = JSON.parse(metaLine) as {
-          result?: { transport?: { supportsChunking?: boolean } };
-        };
-        perWorkerNegotiated.push(meta.result?.transport?.supportsChunking === true);
+      onWorkerReady: async worker => {
+        frameCeilings.push(worker.transport.capabilities().maxFrameBytes);
       },
     });
     await pool.init();
-    expect(pool.workerCount).toBe(2);
-
-    // Both leased workers negotiated chunking with their bridges independently.
-    expect(perWorkerNegotiated).toEqual([true, true]);
-    expect(perWorkerMaxFrame).toEqual([ONE_MIB, ONE_MIB]);
-
-    // And a chunked exchange still completes correctly through a lease afterward.
-    const responseLine = await pool.send(echoRequest(1, 'leased'), 30_000);
-    expect((JSON.parse(responseLine) as { result: string }).result).toBe('leased');
+    expect(frameCeilings).toEqual([ONE_MIB, ONE_MIB]);
   }, 30_000);
 
   it('reassembles a ~20 MiB chunked response routed through a pool lease', async () => {
@@ -314,23 +274,11 @@ describe('PooledTransport chunked exchanges through a lease (live)', () => {
       }),
       maxWorkers: 1,
       minWorkers: 1,
-      // Per-worker warmup runs AFTER the transport's init() (where negotiation
-      // happens). A raw meta probe on the leased worker confirms the post-init
-      // transport block is present, proving warmup composes with negotiation.
+      // Per-worker warmup runs after transport initialization; framing remains
+      // available for subsequent calls.
       onWorkerReady: async (worker: TransportLease) => {
-        // Configured (static) capability — true because the factory set
-        // enableChunking. The negotiated proof is the meta transport block below.
         expect(worker.transport.capabilities().supportsChunking).toBe(true);
-        const metaLine = await worker.transport.send(
-          JSON.stringify({ id: -100, protocol: PROTOCOL_ID, method: 'meta', params: {} }),
-          15_000
-        );
-        const meta = JSON.parse(metaLine) as {
-          result?: { transport?: { supportsChunking?: boolean } };
-        };
-        if (meta.result?.transport?.supportsChunking === true) {
-          warmupSeen.push(1);
-        }
+        warmupSeen.push(1);
       },
     });
     await pool.init();
@@ -341,53 +289,5 @@ describe('PooledTransport chunked exchanges through a lease (live)', () => {
     const parsed = JSON.parse(responseLine) as { id: number; result: string };
     expect(parsed.id).toBe(5);
     expect(parsed.result.length).toBe(5 * ONE_MIB);
-  }, 60_000);
-});
-
-// =============================================================================
-// OLD-BRIDGE BEHAVIOR THROUGH THE POOL (no chunking advertised)
-// =============================================================================
-
-describe('PooledTransport old-bridge behavior (no chunking)', () => {
-  let pool: PooledTransport | null = null;
-
-  afterEach(async () => {
-    if (pool) {
-      await pool.dispose();
-      pool = null;
-    }
-  });
-
-  it('small calls work and an oversize response fails LOUD (no hang, no truncation)', async () => {
-    if (!hasPython) {
-      return;
-    }
-    // enableChunking omitted on the worker factory => no negotiation; the bridge
-    // writes one JSONL line. This is the old-bridge / un-negotiated path.
-    pool = new PooledTransport({
-      createTransport: () =>
-        new SubprocessTransport({
-          bridgeScript: REFERENCE_SCRIPT,
-          cwd: RUNTIME_DIR,
-          maxLineLength: ONE_MIB,
-          env: {
-            ...process.env,
-            TYWRAP_CODEC_MAX_BYTES: String(TWENTY_MIB * 2),
-          } as Record<string, string>,
-        }),
-      maxWorkers: 1,
-      minWorkers: 1,
-    });
-    await pool.init();
-
-    // Static descriptor and the leased worker both report no chunking.
-    expect(pool.capabilities().supportsChunking).toBe(false);
-
-    // A small call still works.
-    const smallLine = await pool.send(echoRequest(1, 'ok'), 30_000);
-    expect((JSON.parse(smallLine) as { result: string }).result).toBe('ok');
-
-    // An oversize response must fail LOUD (line ceiling), not hang or truncate.
-    await expect(pool.send(bigStringRequest(2, 4 * ONE_MIB), 30_000)).rejects.toThrow(/exceeded/);
   }, 60_000);
 });

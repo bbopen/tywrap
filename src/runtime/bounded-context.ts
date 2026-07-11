@@ -2,7 +2,7 @@
  * DisposableBase - Lifecycle-and-resource base for cross-boundary components.
  *
  * Provides ONLY: init/dispose state machine, validation helpers, error
- * classification, bounded execution (timeout/retry/abort), and resource
+ * classification, single-attempt bounded execution (timeout/abort), and resource
  * ownership tracking. It carries ZERO RPC methods by design — the
  * cross-boundary RPC contract (call)
  * is PythonRuntime, implemented only by the bridge facades, never by a base
@@ -53,10 +53,6 @@ export type ContextState = 'idle' | 'initializing' | 'ready' | 'disposing' | 'di
 export interface ExecuteOptions<T = unknown> {
   /** Timeout in milliseconds. Default: 30000 (30s). Set to 0 to disable. */
   timeoutMs?: number;
-  /** Number of retry attempts on retryable errors. Default: 0. */
-  retries?: number;
-  /** Base delay between retries in ms. Multiplied by attempt number. Default: 100. */
-  retryDelayMs?: number;
   /** Optional validation function applied to the result. */
   validate?: (result: T) => T;
   /** Optional abort signal for external cancellation. */
@@ -375,12 +371,11 @@ export abstract class DisposableBase {
    * This method:
    * - Auto-initializes if not ready
    * - Enforces timeout limits
-   * - Supports retry on retryable errors
    * - Respects abort signals
    * - Validates results if a validator is provided
    *
    * @param operation - The async operation to execute
-   * @param options - Execution options (timeout, retries, etc.)
+   * @param options - Execution options (timeout, validation, and abort)
    * @returns The operation result
    * @throws BridgeTimeoutError if the operation times out
    * @throws BridgeDisposedError if the context is disposed
@@ -400,35 +395,16 @@ export abstract class DisposableBase {
       throw new BridgeDisposedError('Context disposed');
     }
 
-    const { timeoutMs = 30000, retries = 0, retryDelayMs = 100, validate, signal } = options;
-
-    let lastError: BridgeError | undefined;
-
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      // Check for abort before each attempt
-      if (signal?.aborted) {
-        throw new BridgeTimeoutError('Operation aborted');
-      }
-
-      try {
-        const result = await this.withTimeout(operation(), timeoutMs, signal);
-        return validate ? validate(result) : result;
-      } catch (error) {
-        lastError = this.classifyError(error);
-
-        // Retry if appropriate
-        if (attempt < retries && this.isRetryable(lastError)) {
-          await this.delay(retryDelayMs * (attempt + 1));
-          continue;
-        }
-
-        throw lastError;
-      }
+    const { timeoutMs = 30000, validate, signal } = options;
+    if (signal?.aborted) {
+      throw new BridgeTimeoutError('Operation aborted');
     }
-
-    // Should not reach here, but TypeScript doesn't know that
-    /* istanbul ignore next */
-    throw lastError ?? new BridgeExecutionError('Unexpected execution flow');
+    try {
+      const result = await this.withTimeout(operation(), timeoutMs, signal);
+      return validate ? validate(result) : result;
+    } catch (error) {
+      throw this.classifyError(error);
+    }
   }
 
   /**
@@ -496,37 +472,6 @@ export abstract class DisposableBase {
           reject(error);
         });
     });
-  }
-
-  /**
-   * Determine if an error is retryable.
-   * Override in subclasses to customize retry logic.
-   *
-   * @param error - The error to check
-   * @returns True if the operation should be retried
-   */
-  protected isRetryable(error: BridgeError): boolean {
-    // Timeout and connection errors are typically retryable
-    if (error instanceof BridgeTimeoutError) {
-      return true;
-    }
-
-    const message = error.message.toLowerCase();
-    return (
-      message.includes('econnreset') ||
-      message.includes('econnrefused') ||
-      message.includes('epipe') ||
-      message.includes('connection reset')
-    );
-  }
-
-  /**
-   * Delay for a specified duration.
-   *
-   * @param ms - Milliseconds to delay
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

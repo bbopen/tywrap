@@ -1355,35 +1355,16 @@ describeNodeOnly('NodeBridge construction and stats', () => {
     const negotiationTimeoutMs = 30000;
 
     it.skipIf(!PYTHON_OK)(
-      'negotiates tywrap-frame/1 by default (enableChunking on)',
+      'uses tywrap-frame/1 by default',
       async () => {
         const chunked = new NodeBridge({ scriptPath, timeoutMs: 5000 });
         try {
           await chunked.init();
-          // Wiring proof: NodeBridge defaults enableChunking=true and propagates
-          // it to the pooled SubprocessTransport workers, so the live meta probe
+          // Wiring proof: NodeBridge uses always-on framing in pooled subprocess workers, so the live meta probe
           // against the real bridge flips supportsChunking on through the facade.
           expect(chunked.capabilities().supportsChunking).toBe(true);
         } finally {
           await chunked.dispose();
-        }
-      },
-      negotiationTimeoutMs
-    );
-
-    it.skipIf(!PYTHON_OK)(
-      'leaves chunking off when enableChunking is false',
-      async () => {
-        const single = new NodeBridge({
-          scriptPath,
-          timeoutMs: 5000,
-          enableChunking: false,
-        });
-        try {
-          await single.init();
-          expect(single.capabilities().supportsChunking).toBe(false);
-        } finally {
-          await single.dispose();
         }
       },
       negotiationTimeoutMs

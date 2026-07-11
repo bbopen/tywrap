@@ -68,7 +68,6 @@ export type {
   TypeMappingConfig,
   TypePreset,
   BridgeInfo,
-  BridgeTransportInfo,
   AnalysisResult,
   AnalysisError,
   AnalysisWarning,

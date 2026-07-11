@@ -408,6 +408,10 @@ class Reassembler:
             oldest = next(iter(self._discarded))
             self._discarded.pop(oldest, None)
 
+    def clear_pending(self) -> None:
+        """Drop incomplete streams after their logical request was abandoned."""
+        self._streams.clear()
+
     def is_pending(self, frame_id: int) -> bool:
         """Whether any frame for ``frame_id`` is still being accumulated."""
         return frame_id in self._streams

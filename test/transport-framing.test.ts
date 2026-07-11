@@ -127,66 +127,6 @@ describe('validateBridgeInfoPayload — old payload (no transport block)', () =>
 // VALIDATOR — NEW PAYLOAD (transport block carried through)
 // =============================================================================
 
-describe('validateBridgeInfoPayload — new payload (transport block)', () => {
-  it('carries through a valid transport negotiation block', async () => {
-    const client = clientReturning(
-      metaResult({
-        transport: {
-          frameProtocol: FRAME_PROTOCOL_ID,
-          supportsChunking: true,
-          maxFrameBytes: 104857600,
-        },
-      })
-    );
-    const info: BridgeInfo = await client.getBridgeInfo();
-    expect(info.transport).toEqual({
-      frameProtocol: FRAME_PROTOCOL_ID,
-      supportsChunking: true,
-      maxFrameBytes: 104857600,
-    });
-  });
-
-  it('rejects a transport block with a non-boolean supportsChunking', async () => {
-    const client = clientReturning(
-      metaResult({
-        transport: {
-          frameProtocol: FRAME_PROTOCOL_ID,
-          supportsChunking: 'yes',
-          maxFrameBytes: 104857600,
-        },
-      })
-    );
-    await expect(client.getBridgeInfo()).rejects.toThrow(BridgeProtocolError);
-  });
-
-  it('rejects a transport block with a non-positive maxFrameBytes', async () => {
-    const client = clientReturning(
-      metaResult({
-        transport: {
-          frameProtocol: FRAME_PROTOCOL_ID,
-          supportsChunking: true,
-          maxFrameBytes: 0,
-        },
-      })
-    );
-    await expect(client.getBridgeInfo()).rejects.toThrow(BridgeProtocolError);
-  });
-
-  it('rejects a transport block with an empty frameProtocol', async () => {
-    const client = clientReturning(
-      metaResult({
-        transport: { frameProtocol: '', supportsChunking: true, maxFrameBytes: 1024 },
-      })
-    );
-    await expect(client.getBridgeInfo()).rejects.toThrow(BridgeProtocolError);
-  });
-
-  it('rejects a non-object transport block', async () => {
-    const client = clientReturning(metaResult({ transport: 'tywrap-frame/1' }));
-    await expect(client.getBridgeInfo()).rejects.toThrow(BridgeProtocolError);
-  });
-});
-
 // =============================================================================
 // VALIDATOR — BACKEND UNION + OPTIONAL PID
 // =============================================================================

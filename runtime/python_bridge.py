@@ -45,7 +45,7 @@ import importlib  # noqa: F401  (re-exported for compat / used by handlers via c
 from safe_codec import BridgeCodec, CodecError
 
 import tywrap_bridge_core as core
-from frame_codec import FRAME_PROTOCOL_ID, FrameError, Reassembler, encode_frames
+from frame_codec import FrameError, Reassembler, encode_frames
 
 # Re-export the shared protocol/serialization surface so existing importers of
 # python_bridge keep working after the extraction (codex-flagged: runtime/ ships).
@@ -224,70 +224,22 @@ def get_request_max_bytes():
 REQUEST_MAX_BYTES = get_request_max_bytes()
 
 
-class TransportFrameBytesParseError(CodecConfigError):
-    """Invalid TYWRAP_TRANSPORT_MAX_FRAME_BYTES value."""
-
-    def __init__(self) -> None:
-        super().__init__('TYWRAP_TRANSPORT_MAX_FRAME_BYTES must be a positive integer byte count')
-
-
-def negotiate_chunking():
-    """
-    Resolve the chunked-transport (``tywrap-frame/1``) negotiation from env.
-
-    The subprocess transport spawns this bridge with three env vars
-    (see docs/transport-framing.md):
-
-      * ``TYWRAP_TRANSPORT_CHUNKING=1``       -- enable framing
-      * ``TYWRAP_TRANSPORT_FRAME_PROTOCOL``   -- must equal ``tywrap-frame/1``
-      * ``TYWRAP_TRANSPORT_MAX_FRAME_BYTES``  -- the JS-side JSONL line ceiling
-
-    Returns ``(enabled, max_frame_bytes)``. Chunking is enabled ONLY when all
-    three agree: the flag is truthy, the advertised frame protocol matches the
-    one this bridge implements, and the max-frame size is a positive integer.
-    A mismatched frame protocol (a future framing version this bridge does not
-    speak) leaves chunking disabled -- the bridge then advertises
-    ``supportsChunking: false`` and oversize responses fail LOUD (no silent
-    single-frame fallback), exactly as an old un-negotiated bridge would.
-
-    :raises TransportFrameBytesParseError: if the flag/protocol are set to enable
-        chunking but the max-frame-bytes value is not a positive integer.
-    """
-    flag = os.environ.get('TYWRAP_TRANSPORT_CHUNKING', '').lower() in ('1', 'true', 'yes')
-    if not flag:
-        return False, None
-    frame_protocol = os.environ.get('TYWRAP_TRANSPORT_FRAME_PROTOCOL', '')
-    if frame_protocol != FRAME_PROTOCOL_ID:
-        # A framing protocol this bridge does not implement: stay single-frame.
-        return False, None
-    raw = os.environ.get('TYWRAP_TRANSPORT_MAX_FRAME_BYTES', '')
-    raw = str(raw).strip()
+def get_transport_frame_bytes():
+    """Read the private frame ceiling argument supplied by SubprocessTransport."""
+    if "--tywrap-max-frame-bytes" not in sys.argv:
+        return 100 * 1024 * 1024
     try:
-        value = int(raw)
-    except Exception as exc:
-        raise TransportFrameBytesParseError() from exc
+        index = sys.argv.index("--tywrap-max-frame-bytes")
+        value = int(sys.argv[index + 1])
+    except (ValueError, IndexError) as exc:
+        raise CodecConfigError("--tywrap-max-frame-bytes must be a positive integer") from exc
     if value <= 0:
-        raise TransportFrameBytesParseError()
-    return True, value
+        raise CodecConfigError("--tywrap-max-frame-bytes must be a positive integer")
+    return value
 
 
-# Why: parse once at startup. CHUNKING_ENABLED gates the chunked write path and
-# the transport block advertised in meta; MAX_FRAME_BYTES is the negotiated
-# per-frame UTF-8 byte ceiling.
-CHUNKING_ENABLED, MAX_FRAME_BYTES = negotiate_chunking()
+MAX_FRAME_BYTES = get_transport_frame_bytes()
 
-# The transport negotiation block echoed back in the `meta` response so the JS
-# side learns this bridge can reassemble chunked frames. None => omitted (an old
-# bridge / un-negotiated process is indistinguishable on the wire).
-TRANSPORT_INFO = (
-    {
-        'frameProtocol': FRAME_PROTOCOL_ID,
-        'supportsChunking': True,
-        'maxFrameBytes': MAX_FRAME_BYTES,
-    }
-    if CHUNKING_ENABLED
-    else None
-)
 
 
 def serialize(obj):
@@ -335,7 +287,6 @@ def handle_meta():
         pid=os.getpid(),
         python_version=sys.version.split()[0],
         codec_fallback='json' if FALLBACK_JSON else 'none',
-        transport_info=TRANSPORT_INFO,
     )
 
 
@@ -357,7 +308,6 @@ def dispatch_request(msg, *, has_envelope_markers=True):
         torch_allow_copy=TORCH_ALLOW_COPY,
         allowed_modules=ALLOWED_MODULES,
         allow_private_attrs=ALLOW_PRIVATE_ATTRS,
-        transport_info=TRANSPORT_INFO,
         has_envelope_markers=has_envelope_markers,
     )
     return out['id'], out['result']
@@ -400,19 +350,14 @@ def write_payload(payload: str) -> bool:
 def write_response(payload: str, payload_utf8: bytes, response_id) -> bool:
     """
     Write a fully-encoded JSONL response, fragmenting it into ``tywrap-frame/1``
-    frames when chunking is negotiated and the payload exceeds the per-frame
-    ceiling.
+    frames when the payload exceeds the fixed per-frame ceiling.
 
     Why: a single response can exceed the JS-side JSONL line ceiling
-    (``maxLineLength``). When the subprocess transport negotiated chunking (the
-    three ``TYWRAP_TRANSPORT_*`` env vars), an oversize response is split into
-    frames, each written as its own JSONL line and flushed one at a time so the
-    OS pipe provides backpressure. The TS reassembler (W3) rebuilds the single
-    logical response before the codec ever sees it. Small responses (or any
-    response when chunking was not negotiated) keep going out as one JSONL line
-    exactly as before. There is NO silent single-frame fallback for an oversize
-    response on an un-negotiated bridge: it is written whole and the JS line
-    ceiling rejects it LOUD, by design.
+    (``maxLineLength``). The packaged subprocess transport always enables
+    framing, so an oversize response is split into frames, each written as its
+    own JSONL line and flushed one at a time so the OS pipe provides
+    backpressure. The TS reassembler rebuilds the logical response before the
+    codec sees it. Small responses keep the single-line fast path.
 
     Frames require an integer correlation id. A response with a non-integer id
     (only reachable on a malformed request whose error envelope carries id=None)
@@ -421,9 +366,6 @@ def write_response(payload: str, payload_utf8: bytes, response_id) -> bool:
     Returns False if the parent's stdin/our stdout closed mid-write (BrokenPipe),
     so the caller can exit the loop cleanly.
     """
-    if not CHUNKING_ENABLED or MAX_FRAME_BYTES is None:
-        return write_payload(payload)
-
     payload_bytes = len(payload_utf8)
     if payload_bytes <= MAX_FRAME_BYTES:
         return write_payload(payload)
@@ -450,15 +392,24 @@ def write_response(payload: str, payload_utf8: bytes, response_id) -> bool:
 
 
 # Reassembles `tywrap-frame/1` REQUEST frames (W5) back into a single logical
-# request line. Created only when chunking is negotiated; None means no request
-# framing is expected and every line is a normal single-line request. Restricted
-# to the 'request' stream. No reassembly-bytes cap here: the request size is
+# request line. Framing is always accepted and restricted to the 'request'
+# stream. No reassembly-bytes cap here: the request size is
 # already bounded by the TS codec's maxPayloadBytes on the sending side, and
 # TYWRAP_REQUEST_MAX_BYTES is enforced on the complete payload after reassembly
 # (process_request_line), preserving the W5 post-reassembly semantics.
-_request_reassembler = (
-    Reassembler(expected_stream='request') if CHUNKING_ENABLED else None
-)
+_request_reassembler = Reassembler(expected_stream='request')
+
+
+def _accept_request_frame(frame):
+    """Accept one request frame, abandoning a different older serialized burst."""
+    frame_id = frame.get('id')
+    if frame.get('seq') == 0 and not _request_reassembler.is_pending(frame_id):
+        # The stdin loop is deliberately blocking/serial: an abandoned partial
+        # buffer persists while the worker is idle, then is freed by the next
+        # logical request (or by process restart). A background TTL timer would
+        # add concurrency solely to reclaim memory during an otherwise idle loop.
+        _request_reassembler.clear_pending()
+    return _request_reassembler.accept(frame)
 
 
 def _try_parse_frame_line(line):
@@ -466,7 +417,7 @@ def _try_parse_frame_line(line):
     Return a frame dict if ``line`` is a ``tywrap-frame/1`` envelope, else None.
 
     Why: a request frame is a JSON object carrying ``__tywrap_frame__``. We only
-    treat a line as a frame when chunking was negotiated AND it parses as such an
+    treat a line as a frame when it parses as such an
     object; anything else (including invalid JSON) falls through to the normal
     single-line request path, which reports the JSON error exactly as before.
     Structural validity (protocol, seq/total ranges, etc.) is enforced by the
@@ -552,30 +503,35 @@ def main():
         if not line:
             continue
 
-        # W5: when chunking is negotiated, a line may be a `tywrap-frame/1`
-        # REQUEST frame. Reassemble per id; only the completed logical request is
-        # handed to process_request_line (which then enforces the request-size
-        # guard on the reassembled payload). Non-frame lines are normal requests.
-        if _request_reassembler is not None:
-            frame = _try_parse_frame_line(line)
-            if frame is not None:
-                try:
-                    reassembled = _request_reassembler.accept(frame)
-                except FrameError as exc:
-                    # A framing-protocol violation desyncs the request stream and
-                    # there is no correlatable response to write (the id may be
-                    # malformed). Fail LOUD on stderr and stop the loop so the
-                    # transport restarts the bridge rather than silently
-                    # mis-parsing subsequent frames.
-                    emit_protocol_diagnostic(f'Request frame error: {exc}')
-                    return
-                if reassembled is None:
-                    # More frames needed for this id; await the rest.
-                    continue
-                if not process_request_line(reassembled):
-                    return
+        # A line may be a `tywrap-frame/1` REQUEST frame. Reassemble per id; only
+        # the completed logical request is handed to process_request_line (which
+        # then enforces the request-size guard on the reassembled payload).
+        # Non-frame lines are normal requests.
+        frame = _try_parse_frame_line(line)
+        if frame is not None:
+            # JS serializes request frame bursts. A seq=0 frame for a different
+            # id proves any older partial stream was abandoned; a duplicate
+            # seq=0 for the same id must still fail loud in the reassembler.
+            try:
+                reassembled = _accept_request_frame(frame)
+            except FrameError as exc:
+                # A framing-protocol violation desyncs the request stream and
+                # there is no correlatable response to write (the id may be
+                # malformed). Fail LOUD on stderr and stop the loop so the
+                # transport restarts the bridge rather than silently
+                # mis-parsing subsequent frames.
+                emit_protocol_diagnostic(f'Request frame error: {exc}')
+                return
+            if reassembled is None:
+                # More frames needed for this id; await the rest.
                 continue
+            if not process_request_line(reassembled):
+                return
+            continue
 
+        # Same idle-retention tradeoff as _accept_request_frame: a partial burst
+        # is retained only until the next request or process restart.
+        _request_reassembler.clear_pending()
         if not process_request_line(line):
             return
 

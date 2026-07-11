@@ -6,7 +6,7 @@
  * NOT a base class bridges extend. It owns the one place where the wire frame
  * is built and correlated: id generation, {id, protocol} stamping, codec
  * encode/decode, and transport.send. It composes DisposableBase to obtain its
- * lifecycle (init/dispose) and bounded execution (timeout/retry/abort), but it
+ * lifecycle (init/dispose) and single-attempt bounded execution (timeout/abort), but it
  * carries no PythonRuntime contract obligation — the facade implements
  * PythonRuntime and delegates the four RPC methods to this client.
  *
@@ -18,7 +18,7 @@
  * @see https://github.com/bbopen/tywrap/issues/149
  */
 
-import type { BridgeBackend, BridgeInfo, BridgeTransportInfo } from '../types/index.js';
+import type { BridgeBackend, BridgeInfo } from '../types/index.js';
 
 import { DisposableBase, type ExecuteOptions } from './bounded-context.js';
 import { BridgeProtocolError } from './errors.js';
@@ -179,55 +179,6 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
     );
   }
 
-  // OPTIONAL chunked-transport negotiation block. Absent on old bridges and on
-  // HTTP/Pyodide (single-frame in 0.8.0) — absence is backward compatible. When
-  // present, validate every field and CARRY IT THROUGH so negotiation data
-  // survives the rebuild below (the old validator silently dropped unknown
-  // fields, which would have discarded this block).
-  let transport: BridgeTransportInfo | undefined;
-  const rawTransport = obj.transport;
-  if (rawTransport !== undefined) {
-    if (!rawTransport || typeof rawTransport !== 'object' || Array.isArray(rawTransport)) {
-      const kind =
-        rawTransport === null
-          ? 'null'
-          : Array.isArray(rawTransport)
-            ? 'array'
-            : typeof rawTransport;
-      throw new BridgeProtocolError(
-        `Invalid bridge info payload: transport expected object, got ${kind}`
-      );
-    }
-    const t = rawTransport as {
-      frameProtocol?: unknown;
-      supportsChunking?: unknown;
-      maxFrameBytes?: unknown;
-    };
-    const frameProtocol = t.frameProtocol;
-    if (typeof frameProtocol !== 'string' || frameProtocol.length === 0) {
-      throw new BridgeProtocolError(
-        `Invalid bridge info payload: transport.frameProtocol expected non-empty string, got ${formatValue(frameProtocol)}`
-      );
-    }
-    const supportsChunking = t.supportsChunking;
-    if (typeof supportsChunking !== 'boolean') {
-      throw new BridgeProtocolError(
-        `Invalid bridge info payload: transport.supportsChunking expected boolean, got ${formatValue(supportsChunking)}`
-      );
-    }
-    const maxFrameBytes = t.maxFrameBytes;
-    if (
-      typeof maxFrameBytes !== 'number' ||
-      !Number.isInteger(maxFrameBytes) ||
-      maxFrameBytes <= 0
-    ) {
-      throw new BridgeProtocolError(
-        `Invalid bridge info payload: transport.maxFrameBytes expected positive integer, got ${formatValue(maxFrameBytes)}`
-      );
-    }
-    transport = { frameProtocol, supportsChunking, maxFrameBytes };
-  }
-
   const info: BridgeInfo = {
     protocol: PROTOCOL_ID,
     protocolVersion: TYWRAP_PROTOCOL_VERSION,
@@ -241,9 +192,6 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
     sklearnAvailable,
     instances,
   };
-  if (transport !== undefined) {
-    info.transport = transport;
-  }
   return info;
 }
 
@@ -338,7 +286,7 @@ export class RpcClient extends DisposableBase {
    * 4. Decodes and validates the response
    *
    * @param message - The protocol message (without id field)
-   * @param options - Execution options (timeout, retries, validation)
+   * @param options - Execution options (timeout, validation, and abort)
    * @returns The typed response from Python
    *
    * @throws BridgeProtocolError if encoding/decoding fails
@@ -359,7 +307,7 @@ export class RpcClient extends DisposableBase {
    * ndarrays, or other Arrow-encoded data structures.
    *
    * @param message - The protocol message (without id field)
-   * @param options - Execution options (timeout, retries, validation)
+   * @param options - Execution options (timeout, validation, and abort)
    * @returns The typed response from Python with Arrow decoding applied
    *
    * @throws BridgeProtocolError if encoding/decoding fails
@@ -378,7 +326,7 @@ export class RpcClient extends DisposableBase {
   /**
    * Shared body for sendMessage/sendMessageAsync: stamp the frame, run the
    * encode -> transport.send -> decode pipeline inside this.execute() (which
-   * supplies auto-init, timeout/retry/abort), where the only difference between
+   * supplies auto-init and exactly-one-attempt timeout/abort handling), where the only difference between
    * the sync and Arrow-aware paths is the supplied `decode` step.
    *
    * Behavior-preserving extraction of the two twins; ordering, the

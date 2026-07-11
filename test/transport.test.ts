@@ -70,7 +70,7 @@ function createMockTransport(): Transport {
       backend: 'subprocess',
       supportsArrow: true,
       supportsBinary: true,
-      supportsChunking: false,
+      supportsChunking: true,
       supportsStreaming: false,
       maxFrameBytes: Number.POSITIVE_INFINITY,
     }),
@@ -431,6 +431,12 @@ describe('SubprocessTransport', () => {
     handleStdinDrain: () => void;
     handleResponseLine: (line: string) => void;
     handleStdoutData: (chunk: Buffer | string) => void;
+    restartProcess: () => Promise<void>;
+    killProcess: () => Promise<void>;
+    spawnProcess: () => Promise<void>;
+    dispatchMutex: Promise<void>;
+    requestCount: number;
+    activeDispatches: number;
   }
 
   beforeEach(async () => {
@@ -469,6 +475,161 @@ describe('SubprocessTransport', () => {
   });
 
   describe('send - validation', () => {
+    it('waits for the old generation to drain before threshold restart', async () => {
+      const transport = new SubprocessTransport({
+        bridgeScript: '/path/to/bridge.py',
+        restartAfterRequests: 1,
+      });
+      const internals = transport as unknown as SubprocessTransportInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = { stdin: { write: () => true } };
+      let restarts = 0;
+      internals.restartProcess = async () => {
+        restarts++;
+        internals.requestCount = 0;
+      };
+
+      const first = transport.send(JSON.stringify(createValidMessage({ id: 501 })), 1000);
+      await Promise.resolve();
+      const second = transport.send(JSON.stringify(createValidMessage({ id: 502 })), 1000);
+      await Promise.resolve();
+      expect(restarts).toBe(0);
+
+      internals.handleResponseLine(JSON.stringify({ id: 501, result: 'first' }));
+      await first;
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(restarts).toBe(1);
+
+      internals.handleResponseLine(JSON.stringify({ id: 502, result: 'second' }));
+      await expect(second).resolves.toContain('second');
+    });
+
+    it('does not reserve or restart when abort wins before reservation', async () => {
+      const transport = new SubprocessTransport({
+        bridgeScript: '/path/to/bridge.py',
+        restartAfterRequests: 1,
+      });
+      const internals = transport as unknown as SubprocessTransportInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = { stdin: { write: () => true } };
+      let restarts = 0;
+      internals.restartProcess = async () => {
+        restarts++;
+        internals.requestCount = 0;
+      };
+
+      const first = transport.send(JSON.stringify(createValidMessage({ id: 601 })), 1000);
+      await Promise.resolve();
+      const controller = new AbortController();
+      const abandoned = transport.send(
+        JSON.stringify(createValidMessage({ id: 602 })),
+        1000,
+        controller.signal
+      );
+      controller.abort();
+      await expect(abandoned).rejects.toThrow('Operation aborted');
+      expect(internals.activeDispatches).toBe(1);
+      expect(restarts).toBe(0);
+
+      internals.handleResponseLine(JSON.stringify({ id: 601, result: 'first' }));
+      await first;
+      await internals.dispatchMutex;
+      expect(restarts).toBe(0);
+      expect(internals.requestCount).toBe(1);
+      expect(internals.activeDispatches).toBe(0);
+    });
+
+    it('does not restart for a burst of requests aborted before dispatch', async () => {
+      const transport = new SubprocessTransport({
+        bridgeScript: '/path/to/bridge.py',
+        restartAfterRequests: 1,
+      });
+      const internals = transport as unknown as SubprocessTransportInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = { stdin: { write: () => true } };
+      let restarts = 0;
+      internals.restartProcess = async () => {
+        restarts++;
+        internals.requestCount = 0;
+      };
+
+      const first = transport.send(JSON.stringify(createValidMessage({ id: 610 })), 1000);
+      await Promise.resolve();
+      const controllers = Array.from({ length: 8 }, () => new AbortController());
+      const abandoned = controllers.map((controller, index) =>
+        transport.send(
+          JSON.stringify(createValidMessage({ id: 611 + index })),
+          1000,
+          controller.signal
+        )
+      );
+      for (const controller of controllers) {
+        controller.abort();
+      }
+      await Promise.all(abandoned.map(request => expect(request).rejects.toThrow('aborted')));
+
+      internals.handleResponseLine(JSON.stringify({ id: 610, result: 'first' }));
+      await first;
+      await internals.dispatchMutex;
+      expect(restarts).toBe(0);
+      expect(internals.requestCount).toBe(1);
+      expect(internals.activeDispatches).toBe(0);
+    });
+
+    it('does not spawn a restart child after concurrent disposal begins', async () => {
+      const transport = new SubprocessTransport({
+        bridgeScript: '/path/to/bridge.py',
+        restartAfterRequests: 1,
+      });
+      const internals = transport as unknown as SubprocessTransportInternals;
+      internals._state = 'ready';
+      internals.processExited = false;
+      internals.process = { stdin: { write: () => true } };
+
+      let signalRestartKill!: () => void;
+      const restartKillStarted = new Promise<void>(resolve => {
+        signalRestartKill = resolve;
+      });
+      let allowRestartKill!: () => void;
+      const restartKillGate = new Promise<void>(resolve => {
+        allowRestartKill = resolve;
+      });
+      let killCalls = 0;
+      let spawnCalls = 0;
+      internals.killProcess = async () => {
+        killCalls++;
+        if (killCalls === 1) {
+          signalRestartKill();
+          await restartKillGate;
+        }
+        internals.process = null;
+      };
+      internals.spawnProcess = async () => {
+        spawnCalls++;
+        internals.process = { stdin: { write: () => true } };
+      };
+
+      const first = transport.send(JSON.stringify(createValidMessage({ id: 620 })), 1000);
+      await Promise.resolve();
+      const second = transport.send(JSON.stringify(createValidMessage({ id: 621 })), 1000);
+      internals.handleResponseLine(JSON.stringify({ id: 620, result: 'first' }));
+      await first;
+      await restartKillStarted;
+
+      const disposePromise = transport.dispose();
+      allowRestartKill();
+      await expect(second).rejects.toThrow(BridgeDisposedError);
+      await disposePromise;
+
+      expect(spawnCalls).toBe(0);
+      expect(killCalls).toBe(2);
+      expect(internals.process).toBeNull();
+    });
+
     it('rejects when process is not running (process exited)', async () => {
       const transport = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
 
@@ -1371,8 +1532,7 @@ describe('Cross-Transport Interface Compliance', () => {
         const after = transport.capabilities();
         // Capabilities are static, not lifecycle-dependent.
         expect(after).toEqual(before);
-        // Chunking/streaming are not implemented on any backend yet (0.8.0).
-        expect(before.supportsChunking).toBe(false);
+        expect(before.supportsChunking).toBe(before.backend === 'subprocess');
         expect(before.supportsStreaming).toBe(false);
       });
     });
@@ -1391,7 +1551,7 @@ describe('TransportCapabilities descriptors', () => {
       backend: 'subprocess',
       supportsArrow: true,
       supportsBinary: true,
-      supportsChunking: false,
+      supportsChunking: true,
       supportsStreaming: false,
       maxFrameBytes: 100 * 1024 * 1024,
     });
@@ -1437,7 +1597,7 @@ describe('TransportCapabilities descriptors', () => {
       backend: 'subprocess',
       supportsArrow: true,
       supportsBinary: true,
-      supportsChunking: false,
+      supportsChunking: true,
       supportsStreaming: false,
       maxFrameBytes: 100 * 1024 * 1024,
     });

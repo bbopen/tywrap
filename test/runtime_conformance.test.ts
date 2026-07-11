@@ -1321,21 +1321,8 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
       expect(pyodide.capabilities().supportsStreaming).toBe(false);
       expect(pyodide.capabilities().maxFrameBytes).toBe(Number.POSITIVE_INFINITY);
 
-      // Subprocess WITHOUT chunking configured (enableChunking omitted): false.
-      const subNoChunk = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
-      expect(subNoChunk.capabilities().supportsChunking).toBe(false);
-
-      // Subprocess WITH enableChunking: true even pre-init. The capability
-      // descriptor reports the CONFIGURED path and is lifecycle-independent (no
-      // round trip). Whether the connected bridge actually advertised framing is
-      // the negotiated fact on BridgeInfo.transport.supportsChunking — proven live
-      // below.
-      const subChunk = new SubprocessTransport({
-        bridgeScript: '/path/to/bridge.py',
-        maxLineLength: 1024 * 1024,
-        enableChunking: true,
-      });
-      expect(subChunk.capabilities().supportsChunking).toBe(true);
+      const subprocess = new SubprocessTransport({ bridgeScript: '/path/to/bridge.py' });
+      expect(subprocess.capabilities().supportsChunking).toBe(true);
     });
   });
 
@@ -1359,7 +1346,6 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
           cwd: RUNTIME_DIR,
           pythonPath: PYTHON,
           maxLineLength: ONE_MIB,
-          enableChunking: true,
         });
         try {
           await transport.init();

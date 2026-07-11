@@ -978,7 +978,6 @@ def build_meta(
     python_version,
     codec_fallback,
     arrow_available_override=None,
-    transport_info=None,
 ):
     """
     Build the bridge metadata payload.
@@ -992,13 +991,6 @@ def build_meta(
     instead of probing pyarrow. The Pyodide server forces markers to JSON
     unconditionally, so it advertises arrowAvailable=False regardless of whether
     pyarrow happens to be importable in the WASM environment.
-
-    transport_info: optional chunked-transport negotiation block (BridgeInfo
-    .transport). Core stays oblivious to framing policy -- it only echoes what
-    the I/O layer tells it. The subprocess server passes a {'frameProtocol',
-    'supportsChunking', 'maxFrameBytes'} dict when chunking is negotiated; the
-    Pyodide server passes None (single-frame, in-memory). When None the block is
-    omitted entirely (backward compatible: old bridges never emit it).
     """
     arrow = arrow_available() if arrow_available_override is None else arrow_available_override
     meta = {
@@ -1014,8 +1006,6 @@ def build_meta(
         'sklearnAvailable': module_available('sklearn'),
         'instances': 0,
     }
-    if transport_info is not None:
-        meta['transport'] = transport_info
     return meta
 
 
@@ -1031,7 +1021,6 @@ def dispatch_request(
     arrow_available_override=None,
     allowed_modules=None,
     allow_private_attrs=False,
-    transport_info=None,
     has_envelope_markers=True,
 ):
     """
@@ -1075,7 +1064,6 @@ def dispatch_request(
             python_version=python_version,
             codec_fallback=codec_fallback,
             arrow_available_override=arrow_available_override,
-            transport_info=transport_info,
         )
     else:
         raise ProtocolError(f'Unknown method: {method}')
