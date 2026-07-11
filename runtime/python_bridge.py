@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Reference tywrap Python bridge server (subprocess + HTTP transports).
+Reference tywrap Python subprocess bridge.
+
+This module implements only the stdin/stdout subprocess loop for the Node/Bun/
+Deno transport. `HttpBridge` connects to an HTTP server provided by the
+operator; tywrap does not ship that server or an HTTP transport in this module.
+The operator is responsible for securing any network exposure.
 
 This module owns the I/O concerns and process identity for the Node/Bun/Deno
-subprocess transport and the HTTP transport:
+subprocess transport:
   - the stdin/stdout JSONL request/response loop (main())
   - env-var size guards (TYWRAP_CODEC_MAX_BYTES / TYWRAP_REQUEST_MAX_BYTES)
   - TYWRAP_CODEC_FALLBACK=json marker mode and TYWRAP_TORCH_ALLOW_COPY
