@@ -16,7 +16,6 @@ import { createRequire } from 'node:module';
 import { autoRegisterArrowDecoder } from '../utils/codec.js';
 import { getDefaultPythonPath } from '../utils/python.js';
 import { getVenvBinDir, getVenvPythonExe } from '../utils/runtime.js';
-import { globalCache } from '../utils/cache.js';
 
 import { BasePythonBridge } from './base-bridge.js';
 import { RpcClient } from './rpc-client.js';
@@ -63,9 +62,6 @@ export interface NodeBridgeOptions {
 
   /** Inherit all environment variables from parent process. Default: false */
   inheritProcessEnv?: boolean;
-
-  /** Enable result caching for pure functions. Default: false */
-  enableCache?: boolean;
 
   /** Optional extra environment variables to pass to the Python subprocess. */
   env?: Record<string, string | undefined>;
@@ -132,7 +128,6 @@ interface ResolvedOptions {
   timeoutMs: number;
   queueTimeoutMs: number;
   inheritProcessEnv: boolean;
-  enableCache: boolean;
   enableChunking: boolean;
   env: Record<string, string | undefined>;
   codec?: CodecOptions;
@@ -293,7 +288,6 @@ function normalizeWarmupCommands(commands: NodeBridgeOptions['warmupCommands']):
  * - Virtual environment support
  * - Full BridgeCodec validation (NaN/Infinity rejection, key validation)
  * - Automatic Arrow decoding for DataFrames/ndarrays
- * - Optional result caching for pure functions
  * - Process warmup commands
  *
  * @example
@@ -314,7 +308,6 @@ function normalizeWarmupCommands(commands: NodeBridgeOptions['warmupCommands']):
  * const pooledBridge = new NodeBridge({
  *   maxProcesses: 4,
  *   maxConcurrentPerProcess: 2,
- *   enableCache: true,
  * });
  * await pooledBridge.init();
  * ```
@@ -352,7 +345,6 @@ export class NodeBridge extends BasePythonBridge {
       timeoutMs: options.timeoutMs ?? 30000,
       queueTimeoutMs: options.queueTimeoutMs ?? 30000,
       inheritProcessEnv: options.inheritProcessEnv ?? false,
-      enableCache: options.enableCache ?? false,
       enableChunking: options.enableChunking ?? true,
       env: options.env ?? {},
       codec: options.codec,
@@ -457,55 +449,10 @@ export class NodeBridge extends BasePythonBridge {
 
   /**
    * Expose the held RpcClient to BasePythonBridge's shared delegating methods
-   * (instantiate/callMethod/disposeInstance/getBridgeInfo). call() is
-   * overridden below to layer caching on top.
+   * (call/instantiate/callMethod/disposeInstance/getBridgeInfo).
    */
   protected getRpcClient(): RpcClient {
     return this.rpc;
-  }
-
-  /**
-   * Call a Python function, with optional result caching.
-   *
-   * Overrides BasePythonBridge.call() to layer the cache lookup/writeback on
-   * top of the shared delegation. Cache lookup stays FIRST so cache hits return
-   * without forcing init, preserving the pre-composition behavior.
-   */
-  override async call<T = unknown>(
-    module: string,
-    functionName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    // Check cache if enabled
-    if (this.resolvedOptions.enableCache) {
-      const cacheKey = this.safeCacheKey('runtime_call', module, functionName, args, kwargs);
-      if (cacheKey) {
-        const cached = await globalCache.get<T>(cacheKey);
-        if (cached !== null) {
-          return cached;
-        }
-      }
-
-      // Execute and cache if pure function
-      const startTime = performance.now();
-      await this.ensureReady();
-      const result = await this.rpc.call<T>(module, functionName, args, kwargs);
-      const duration = performance.now() - startTime;
-
-      if (cacheKey && this.isPureFunctionCandidate(functionName, args)) {
-        await globalCache.set(cacheKey, result, {
-          computeTime: duration,
-          dependencies: [module],
-        });
-      }
-
-      return result;
-    }
-
-    // No caching - direct call
-    await this.ensureReady();
-    return this.rpc.call<T>(module, functionName, args, kwargs);
   }
 
   // ===========================================================================
@@ -560,52 +507,6 @@ export class NodeBridge extends BasePythonBridge {
       poolSize: poolStats.workerCount,
       busyWorkers: poolStats.totalInFlight,
     };
-  }
-
-  // ===========================================================================
-  // PRIVATE HELPERS
-  // ===========================================================================
-
-  /**
-   * Generate a cache key, returning null if generation fails.
-   */
-  private safeCacheKey(prefix: string, ...inputs: unknown[]): string | null {
-    try {
-      return globalCache.generateKey(prefix, ...inputs);
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Heuristic to determine if function result should be cached.
-   */
-  private isPureFunctionCandidate(functionName: string, args: unknown[]): boolean {
-    const pureFunctionPatterns = [
-      /^(get|fetch|read|load|find|search|query|select)_/i,
-      /^(compute|calculate|process|transform|convert)_/i,
-      /^(encode|decode|serialize|deserialize)_/i,
-    ];
-
-    const impureFunctionPatterns = [
-      /^(set|save|write|update|insert|delete|create|modify)_/i,
-      /^(send|post|put|patch)_/i,
-      /random|uuid|timestamp|now|current/i,
-    ];
-
-    if (impureFunctionPatterns.some(pattern => pattern.test(functionName))) {
-      return false;
-    }
-
-    if (pureFunctionPatterns.some(pattern => pattern.test(functionName))) {
-      return true;
-    }
-
-    const hasComplexArgs = args.some(
-      arg => arg !== null && typeof arg === 'object' && !(arg instanceof Date)
-    );
-
-    return !hasComplexArgs && args.length <= 3;
   }
 }
 

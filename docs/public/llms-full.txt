@@ -1254,7 +1254,6 @@ const bridge = new NodeBridge({
 | `maxProcesses`            | `number`                                 | `1`             | Maximum worker count                     |
 | `maxConcurrentPerProcess` | `number`                                 | `10`            | Concurrent requests per worker           |
 | `inheritProcessEnv`       | `boolean`                                | `false`         | Pass the full parent environment through |
-| `enableCache`             | `boolean`                                | `false`         | Cache pure function results              |
 | `env`                     | `Record<string, string \| undefined>`    | `{}`            | Extra subprocess env vars                |
 | `codec`                   | `CodecOptions`                           | —               | Codec validation and byte handling       |
 | `warmupCommands`          | `Array<{ module, functionName, args? }>` | `[]`            | Commands to run when each worker starts  |
@@ -3219,7 +3218,6 @@ const info = await bridge.getBridgeInfo({ refresh: true });
 | `maxProcesses`            | `1`             | Maximum worker count                            |
 | `maxConcurrentPerProcess` | `10`            | Concurrent requests per worker                  |
 | `inheritProcessEnv`       | `false`         | Pass full parent env through                    |
-| `enableCache`             | `false`         | Cache pure function results                     |
 | `env`                     | `{}`            | Extra subprocess env vars                       |
 | `codec`                   | —               | `CodecOptions` for validation and byte handling |
 | `warmupCommands`          | `[]`            | Per-worker startup calls                        |

@@ -142,7 +142,6 @@ const info = await bridge.getBridgeInfo({ refresh: true });
 | `maxProcesses`            | `1`             | Maximum worker count                            |
 | `maxConcurrentPerProcess` | `10`            | Concurrent requests per worker                  |
 | `inheritProcessEnv`       | `false`         | Pass full parent env through                    |
-| `enableCache`             | `false`         | Cache pure function results                     |
 | `env`                     | `{}`            | Extra subprocess env vars                       |
 | `codec`                   | —               | `CodecOptions` for validation and byte handling |
 | `warmupCommands`          | `[]`            | Per-worker startup calls                        |
