@@ -109,6 +109,18 @@ class TestUtf8ByteLength:
 
 
 class TestRoundTrip:
+    def test_uses_precomputed_total_bytes(self) -> None:
+        logical = 'hello\U0001f600'
+        frames = encode_frames(
+            logical,
+            id=1,
+            stream='response',
+            max_frame_bytes=64,
+            total_bytes=len(logical.encode('utf-8')),
+        )
+
+        assert frames[0]['totalBytes'] == len(logical.encode('utf-8'))
+
     def test_single_frame(self) -> None:
         logical = json.dumps({'id': 1, 'result': [1, 2, 3]})
         frames = encode_frames(logical, id=1, stream='response', max_frame_bytes=1024)

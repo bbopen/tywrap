@@ -148,7 +148,12 @@ export class HttpTransport implements Transport {
    * @throws BridgeExecutionError if the server returns a non-2xx status
    * @throws BridgeProtocolError if the response cannot be read
    */
-  async send(message: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  async send(
+    message: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    _requestId?: number
+  ): Promise<string> {
     if (this._isDisposed) {
       throw new BridgeDisposedError('Transport has been disposed');
     }

@@ -179,13 +179,18 @@ export class PooledTransport extends DisposableBase implements Transport {
    * @throws BridgeDisposedError if transport is disposed
    * @throws BridgeTimeoutError if queue timeout or request timeout expires
    */
-  async send(message: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  async send(
+    message: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    requestId?: number
+  ): Promise<string> {
     if (this.isDisposed || !this.pool) {
       throw new BridgeDisposedError('Transport has been disposed');
     }
 
     return this.pool.withWorker(async worker => {
-      return worker.transport.send(message, timeoutMs, signal);
+      return worker.transport.send(message, timeoutMs, signal, requestId);
     });
   }
 

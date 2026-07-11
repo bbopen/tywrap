@@ -138,6 +138,7 @@ def __tywrap_dispatch(message_json):
                 force_json_markers=True,
                 allow_nan=False,
                 arrow_available_override=False,
+                has_envelope_markers=('__tywrap' in message_json or '__type__' in message_json),
             )
         except core.ProtocolError as e:
             out = core.build_error_payload(mid, e, include_traceback=False)
@@ -277,7 +278,12 @@ export class PyodideTransport extends DisposableBase implements Transport {
    * @throws BridgeTimeoutError if operation times out or is aborted
    * @throws BridgeExecutionError for Python execution errors
    */
-  async send(message: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  async send(
+    message: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    _requestId?: number
+  ): Promise<string> {
     return this.execute(
       async () => {
         if (!this.py) {

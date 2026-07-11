@@ -270,22 +270,24 @@ def _deserialize_bytes_envelope(value):
     return _NO_DESERIALIZE
 
 
-def deserialize(value):
+def deserialize(value, *, has_envelope_markers=True):
     """
     Recursively deserialize request values into Python-native types.
 
     Why: requests are JSON-only; we need a small set of explicit decoders
     (currently bytes) to restore Python semantics at the boundary.
     """
+    if not has_envelope_markers:
+        return value
     decoded = _deserialize_bytes_envelope(value)
     if decoded is not _NO_DESERIALIZE:
         return decoded
 
     if isinstance(value, list):
-        return [deserialize(item) for item in value]
+        return [deserialize(item, has_envelope_markers=True) for item in value]
     if isinstance(value, dict):
         # Preserve dict shape while decoding nested values.
-        return {k: deserialize(v) for k, v in value.items()}
+        return {k: deserialize(v, has_envelope_markers=True) for k, v in value.items()}
     return value
 
 
@@ -966,11 +968,19 @@ def coerce_dict(value, key):
     return value
 
 
-def handle_call(params, *, force_json_markers, torch_allow_copy, allowed_modules, allow_private_attrs):
+def handle_call(
+    params,
+    *,
+    force_json_markers,
+    torch_allow_copy,
+    allowed_modules,
+    allow_private_attrs,
+    has_envelope_markers,
+):
     module_name = require_str(params, 'module')
     function_name = require_str(params, 'functionName')
-    args = deserialize(coerce_list(params.get('args'), 'args'))
-    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'))
+    args = deserialize(coerce_list(params.get('args'), 'args'), has_envelope_markers=has_envelope_markers)
+    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'), has_envelope_markers=has_envelope_markers)
     mod = import_allowed_module(module_name, allowed_modules)
     # function_name may be dotted ('Class.method') for @classmethod/@staticmethod
     # calls, which the generated wrapper routes through call() rather than an
@@ -980,11 +990,13 @@ def handle_call(params, *, force_json_markers, torch_allow_copy, allowed_modules
     return serialize(res, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy)
 
 
-def handle_instantiate(params, instances, *, allowed_modules, allow_private_attrs):
+def handle_instantiate(
+    params, instances, *, allowed_modules, allow_private_attrs, has_envelope_markers
+):
     module_name = require_str(params, 'module')
     class_name = require_str(params, 'className')
-    args = deserialize(coerce_list(params.get('args'), 'args'))
-    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'))
+    args = deserialize(coerce_list(params.get('args'), 'args'), has_envelope_markers=has_envelope_markers)
+    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'), has_envelope_markers=has_envelope_markers)
     mod = import_allowed_module(module_name, allowed_modules)
     cls = get_allowed_attr(mod, class_name, allow_private_attrs=allow_private_attrs)
     obj = cls(*args, **kwargs)
@@ -993,11 +1005,19 @@ def handle_instantiate(params, instances, *, allowed_modules, allow_private_attr
     return handle_id
 
 
-def handle_call_method(params, instances, *, force_json_markers, torch_allow_copy, allow_private_attrs):
+def handle_call_method(
+    params,
+    instances,
+    *,
+    force_json_markers,
+    torch_allow_copy,
+    allow_private_attrs,
+    has_envelope_markers,
+):
     handle_id = require_str(params, 'handle')
     method_name = require_str(params, 'methodName')
-    args = deserialize(coerce_list(params.get('args'), 'args'))
-    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'))
+    args = deserialize(coerce_list(params.get('args'), 'args'), has_envelope_markers=has_envelope_markers)
+    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'), has_envelope_markers=has_envelope_markers)
     if handle_id not in instances:
         raise InstanceHandleError(f'Unknown instance handle: {handle_id}')
     obj = instances[handle_id]
@@ -1089,6 +1109,7 @@ def dispatch_request(
     allowed_modules=None,
     allow_private_attrs=False,
     transport_info=None,
+    has_envelope_markers=True,
 ):
     """
     Validate and route a request, returning the fully-serialized response dict
@@ -1118,10 +1139,15 @@ def dispatch_request(
             torch_allow_copy=torch_allow_copy,
             allowed_modules=allowed_modules,
             allow_private_attrs=allow_private_attrs,
+            has_envelope_markers=has_envelope_markers,
         )
     elif method == 'instantiate':
         result = handle_instantiate(
-            params, instances, allowed_modules=allowed_modules, allow_private_attrs=allow_private_attrs
+            params,
+            instances,
+            allowed_modules=allowed_modules,
+            allow_private_attrs=allow_private_attrs,
+            has_envelope_markers=has_envelope_markers,
         )
     elif method == 'call_method':
         result = handle_call_method(
@@ -1130,6 +1156,7 @@ def dispatch_request(
             force_json_markers=force_json_markers,
             torch_allow_copy=torch_allow_copy,
             allow_private_attrs=allow_private_attrs,
+            has_envelope_markers=has_envelope_markers,
         )
     elif method == 'dispose_instance':
         result = handle_dispose_instance(params, instances)
