@@ -5,6 +5,6 @@ __all__ = [
 ]
 
 __version__ = "0.2.1"
-IR_VERSION = "0.3.0"
+IR_VERSION = "0.4.0"
 
 from .ir import extract_module_ir  # noqa: E402

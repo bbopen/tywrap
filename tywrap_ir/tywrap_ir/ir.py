@@ -391,7 +391,13 @@ def _extract_constants(module: Any, module_name: str, include_private: bool) -> 
         is_final = bool(annotation_str and ("Final[" in annotation_str or annotation_str == "Final"))
 
         try:
-            value_repr = repr(value)
+            if isinstance(value, set):
+                value_repr = "set()" if not value else "{" + ", ".join(sorted(repr(item) for item in value)) + "}"
+            elif isinstance(value, frozenset):
+                inner = ", ".join(sorted(repr(item) for item in value))
+                value_repr = f"frozenset({{{inner}}})"
+            else:
+                value_repr = repr(value)
             if len(value_repr) > 200:
                 value_repr = value_repr[:197] + "..."
         except Exception:

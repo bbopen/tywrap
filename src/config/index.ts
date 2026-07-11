@@ -118,6 +118,7 @@ function detectLegacyFields(config: TywrapConfig): void {
 const ALLOWED_TOP_LEVEL = new Set([
   'pythonModules',
   'pythonImportPath',
+  'contractInput',
   'output',
   'runtime',
   'performance',
@@ -275,6 +276,15 @@ function validateConfig(config: ResolvedTywrapConfig): void {
 
   if (config.pythonImportPath !== undefined && !isStringArray(config.pythonImportPath)) {
     throw new Error('pythonImportPath must be an array of strings');
+  }
+
+  if (
+    config.contractInput !== undefined &&
+    typeof config.contractInput !== 'string' &&
+    (!isPlainObject(config.contractInput) ||
+      !Object.values(config.contractInput).every(value => typeof value === 'string'))
+  ) {
+    throw new Error('contractInput must be a path string or a record of module paths');
   }
 
   validateOutput(config.output);
