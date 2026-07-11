@@ -6,7 +6,7 @@
  * NOT a base class bridges extend. It owns the one place where the wire frame
  * is built and correlated: id generation, {id, protocol} stamping, codec
  * encode/decode, and transport.send. It composes DisposableBase to obtain its
- * lifecycle (init/dispose) and bounded execution (timeout/retry/abort), but it
+ * lifecycle (init/dispose) and single-attempt bounded execution (timeout/abort), but it
  * carries no PythonRuntime contract obligation — the facade implements
  * PythonRuntime and delegates the four RPC methods to this client.
  *
@@ -338,7 +338,7 @@ export class RpcClient extends DisposableBase {
    * 4. Decodes and validates the response
    *
    * @param message - The protocol message (without id field)
-   * @param options - Execution options (timeout, retries, validation)
+   * @param options - Execution options (timeout, validation, and abort)
    * @returns The typed response from Python
    *
    * @throws BridgeProtocolError if encoding/decoding fails
@@ -359,7 +359,7 @@ export class RpcClient extends DisposableBase {
    * ndarrays, or other Arrow-encoded data structures.
    *
    * @param message - The protocol message (without id field)
-   * @param options - Execution options (timeout, retries, validation)
+   * @param options - Execution options (timeout, validation, and abort)
    * @returns The typed response from Python with Arrow decoding applied
    *
    * @throws BridgeProtocolError if encoding/decoding fails
@@ -378,7 +378,7 @@ export class RpcClient extends DisposableBase {
   /**
    * Shared body for sendMessage/sendMessageAsync: stamp the frame, run the
    * encode -> transport.send -> decode pipeline inside this.execute() (which
-   * supplies auto-init, timeout/retry/abort), where the only difference between
+   * supplies auto-init and exactly-one-attempt timeout/abort handling), where the only difference between
    * the sync and Arrow-aware paths is the supplied `decode` step.
    *
    * Behavior-preserving extraction of the two twins; ordering, the

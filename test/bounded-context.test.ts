@@ -579,27 +579,8 @@ describe('BoundedContext Bounded Execution', () => {
     });
   });
 
-  describe('retry', () => {
-    it('retries on retryable errors', async () => {
-      await context.init();
-      let attempts = 0;
-
-      const result = await context.testExecute(
-        async () => {
-          attempts++;
-          if (attempts < 3) {
-            throw new Error('ECONNRESET');
-          }
-          return 'success';
-        },
-        { retries: 5, retryDelayMs: 1 }
-      );
-
-      expect(result).toBe('success');
-      expect(attempts).toBe(3);
-    });
-
-    it('does not retry non-retryable errors', async () => {
+  describe('single attempt', () => {
+    it('surfaces transport errors without retrying', async () => {
       await context.init();
       let attempts = 0;
 
@@ -608,53 +589,26 @@ describe('BoundedContext Bounded Execution', () => {
           async () => {
             attempts++;
             throw new Error('Logic error');
-          },
-          { retries: 5, retryDelayMs: 1 }
+          }
         )
       ).rejects.toThrow('Logic error');
 
       expect(attempts).toBe(1);
     });
 
-    it('retries on timeout errors', async () => {
+    it('surfaces timeout errors without retrying', async () => {
       await context.init();
       let attempts = 0;
-
-      const result = await context.testExecute(
-        async () => {
-          attempts++;
-          if (attempts < 2) {
-            throw new BridgeTimeoutError('Timeout');
-          }
-          return 'success';
-        },
-        { retries: 3, retryDelayMs: 1 }
-      );
-
-      expect(result).toBe('success');
-      expect(attempts).toBe(2);
-    });
-
-    it('applies linear backoff', async () => {
-      await context.init();
-      const timestamps: number[] = [];
 
       await expect(
         context.testExecute(
           async () => {
-            timestamps.push(Date.now());
-            throw new Error('ECONNRESET');
-          },
-          { retries: 2, retryDelayMs: 20 }
+            attempts++;
+            throw new BridgeTimeoutError('Timeout');
+          }
         )
-      ).rejects.toThrow();
-
-      // 3 attempts: initial, +20ms, +40ms
-      expect(timestamps).toHaveLength(3);
-      const delay1 = timestamps[1] - timestamps[0];
-      const delay2 = timestamps[2] - timestamps[1];
-      expect(delay1).toBeGreaterThanOrEqual(15); // ~20ms
-      expect(delay2).toBeGreaterThanOrEqual(35); // ~40ms
+      ).rejects.toThrow(BridgeTimeoutError);
+      expect(attempts).toBe(1);
     });
   });
 
