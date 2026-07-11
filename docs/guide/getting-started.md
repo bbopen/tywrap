@@ -5,7 +5,8 @@ TypeScript wrapper for a Python library.
 
 ## Prerequisites
 
-- Node.js ≥20.0.0, Deno ≥1.46.0, or Bun ≥1.1.0
+- Node.js ≥20.0.0, Bun ≥1.1.0, or Deno ≥1.46.0 (Deno subprocess support is
+  experimental and untested in CI)
 - Python 3.10+ with target libraries installed
 - Basic TypeScript knowledge
 
@@ -105,7 +106,7 @@ import * as math from './generated/math.generated.js';
 const bridge = new NodeBridge({ pythonPath: 'python3' });
 setRuntimeBridge(bridge);
 
-// Use with full type safety
+// Types are precise where tywrap can resolve them.
 async function example() {
   const result = await math.sqrt(16); // TypeScript knows this returns Promise<number>
   const power = await math.pow(2, 3); // Full autocompletion and type checking
@@ -296,9 +297,8 @@ const session = await startNodeWatchSession({
 });
 ```
 
-For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual
-bridge replacement. For HTTP, restart or redeploy the remote server outside
-tywrap.
+For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual bridge
+replacement. For HTTP, restart or redeploy the remote server outside tywrap.
 
 `startNodeWatchSession(...)` watches local package directories as directory
 trees, refreshes those trees when nested directories change, and keeps the last

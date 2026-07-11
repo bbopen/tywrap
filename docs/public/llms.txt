@@ -1,9 +1,10 @@
 # tywrap
 
-> TypeScript wrapper generator for Python libraries. Auto-generates type-safe
-> TypeScript bindings from Python source via AST analysis, then calls them at
-> runtime over a subprocess bridge (Node.js, Bun, Deno), in-browser WebAssembly
-> (Pyodide), or HTTP. Apache Arrow is the default binary transport for
+> TypeScript binding generator for Python libraries. It produces precise
+> TypeScript types for fully annotated, in-module, serializable Python returns
+> and falls back where a type cannot be resolved, then calls them at runtime
+> over a subprocess bridge (Node.js, Bun, experimental/untested Deno),
+> in-browser WebAssembly (Pyodide), or HTTP. Apache Arrow is the default binary transport for
 > numpy/pandas data (JSON fallback); the Node bridge chunks results larger than
 > a single JSONL line. Experimental (pre-v1.0.0) — APIs may change.
 
@@ -14,7 +15,7 @@
 - [Runtime Comparison](https://bbopen.github.io/tywrap/guide/runtimes/comparison): Which bridge to use and when
 - [Node.js Runtime](https://bbopen.github.io/tywrap/guide/runtimes/node): NodeBridge setup, virtual envs, pooling, large-payload chunking
 - [Bun Runtime](https://bbopen.github.io/tywrap/guide/runtimes/bun): NodeBridge on Bun, bunfig.toml
-- [Deno Runtime](https://bbopen.github.io/tywrap/guide/runtimes/deno): npm: prefix, --allow-run, Deno Deploy limitation
+- [Deno Runtime](https://bbopen.github.io/tywrap/guide/runtimes/deno): Experimental, untested-in-CI subprocess support; npm: prefix, --allow-run, Deno Deploy limitation
 - [Browser Runtime (Pyodide)](https://bbopen.github.io/tywrap/guide/runtimes/browser): WebAssembly Python, no subprocess needed
 - [HTTP Bridge](https://bbopen.github.io/tywrap/guide/runtimes/http): Remote Python server, stateless HTTP POST
 - [Development Hot Reload](https://bbopen.github.io/tywrap/guide/dev-reload): tywrap/dev watch sessions, bridge swap, reload contract

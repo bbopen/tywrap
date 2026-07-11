@@ -18,8 +18,7 @@ The Node.js runtime:
 ## Bridge Selection
 
 - **NodeBridge (default)**: the public Node bridge. It supports both
-  single-process execution and pooled execution through its constructor
-  options.
+  single-process execution and pooled execution through its constructor options.
 - **OptimizedNodeBridge**: deprecated compatibility alias for older deep
   imports. It is not part of the package exports and should not be used in new
   code.
@@ -29,8 +28,8 @@ stderr buffering.
 
 ## Development Hot Reload
 
-Node hot reload in tywrap means wrapper regeneration plus bridge replacement.
-It lives in `tywrap/dev`, not in `tywrap.config.*`.
+Node hot reload in tywrap means wrapper regeneration plus bridge replacement. It
+lives in `tywrap/dev`, not in `tywrap.config.*`.
 
 ```typescript
 import { startNodeWatchSession } from 'tywrap/dev';
@@ -148,27 +147,27 @@ const bridge = new NodeBridge({
 });
 ```
 
-| Option                    | Type                                     | Default         | Description                              |
-| ------------------------- | ---------------------------------------- | --------------- | ---------------------------------------- |
-| `pythonPath`              | `string`                                 | auto-detect     | Path to the Python executable            |
-| `scriptPath`              | `string`                                 | built-in bridge | Custom `python_bridge.py` path           |
-| `virtualEnv`              | `string`                                 | —               | Virtual environment root                 |
-| `cwd`                     | `string`                                 | `process.cwd()` | Working directory for the subprocess     |
-| `timeoutMs`               | `number`                                 | `30000`         | Per-call timeout                         |
-| `queueTimeoutMs`          | `number`                                 | `30000`         | Queue timeout when the pool is saturated |
-| `minProcesses`            | `number`                                 | `1`             | Minimum worker count                     |
-| `maxProcesses`            | `number`                                 | `1`             | Maximum worker count                     |
-| `maxConcurrentPerProcess` | `number`                                 | `1`             | Concurrent requests per serial Python worker |
-| `inheritProcessEnv`       | `boolean`                                | `false`         | Pass the full parent environment through |
-| `env`                     | `Record<string, string \| undefined>`    | `{}`            | Extra subprocess env vars                |
-| `codec`                   | `CodecOptions`                           | —               | Codec validation and byte handling       |
-| `warmupCommands`          | `Array<{ module, functionName, args? }>` | `[]`            | Commands to run when each worker starts  |
+| Option                    | Type                                     | Default         | Description                                                                             |
+| ------------------------- | ---------------------------------------- | --------------- | --------------------------------------------------------------------------------------- |
+| `pythonPath`              | `string`                                 | auto-detect     | Path to the Python executable                                                           |
+| `scriptPath`              | `string`                                 | built-in bridge | Custom `python_bridge.py` path                                                          |
+| `virtualEnv`              | `string`                                 | —               | Virtual environment root                                                                |
+| `cwd`                     | `string`                                 | `process.cwd()` | Working directory for the subprocess                                                    |
+| `timeoutMs`               | `number`                                 | `30000`         | Per-call timeout                                                                        |
+| `queueTimeoutMs`          | `number`                                 | `30000`         | Queue timeout when the pool is saturated                                                |
+| `minProcesses`            | `number`                                 | `1`             | Minimum worker count                                                                    |
+| `maxProcesses`            | `number`                                 | `1`             | Maximum worker count                                                                    |
+| `maxConcurrentPerProcess` | `number`                                 | `1`             | Concurrent requests per serial Python worker; use more worker processes for concurrency |
+| `inheritProcessEnv`       | `boolean`                                | `false`         | Pass the full parent environment through                                                |
+| `env`                     | `Record<string, string \| undefined>`    | `{}`            | Extra subprocess env vars                                                               |
+| `codec`                   | `CodecOptions`                           | —               | Codec validation and byte handling                                                      |
+| `warmupCommands`          | `Array<{ module, functionName, args? }>` | `[]`            | Commands to run when each worker starts                                                 |
 
 Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
 `maxRequestsPerProcess`, `enableJsonFallback`, and `maxLineLength`. Avoid them
-in new code.
-By default, the subprocess environment is minimal (PATH/PYTHON*/TYWRAP\_* only).
-Set `inheritProcessEnv: true` to pass through the full environment when needed.
+in new code. By default, the subprocess environment is minimal
+(PATH/PYTHON*/TYWRAP\_* only). Set `inheritProcessEnv: true` to pass through the
+full environment when needed.
 
 ## Python Environment Setup
 
