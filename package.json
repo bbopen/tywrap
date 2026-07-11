@@ -1,7 +1,7 @@
 {
   "name": "tywrap",
   "version": "0.8.0",
-  "description": "Generate type-safe TypeScript wrappers for any Python library \u2014 Node.js, Deno, Bun, and browsers via Pyodide.",
+  "description": "Generate TypeScript bindings for Python libraries with precise types where tywrap can resolve them — Node.js, experimental Deno, Bun, and browsers via Pyodide.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -88,7 +88,7 @@
     "typescript",
     "python",
     "bridge",
-    "type-safety",
+    "typed-bindings",
     "interop",
     "pyodide",
     "ast",

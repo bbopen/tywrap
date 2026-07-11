@@ -1,8 +1,9 @@
-import { defineConfig } from 'vitepress'
+import { defineConfig } from 'vitepress';
 
 export default defineConfig({
   title: 'tywrap',
-  description: 'Generate type-safe TypeScript wrappers for any Python library — Node.js, Deno, Bun, and browsers via Pyodide.',
+  description:
+    'Generate TypeScript bindings with precise types for fully annotated, in-module, serializable Python returns, with fallbacks where tywrap cannot resolve a type.',
   base: '/tywrap/',
   appearance: 'force-dark',
   cleanUrls: true,
@@ -53,15 +54,11 @@ export default defineConfig({
       },
       {
         text: 'Examples',
-        items: [
-          { text: 'Quick Examples', link: '/examples/' },
-        ],
+        items: [{ text: 'Quick Examples', link: '/examples/' }],
       },
       {
         text: 'Help',
-        items: [
-          { text: 'Troubleshooting', link: '/troubleshooting/' },
-        ],
+        items: [{ text: 'Troubleshooting', link: '/troubleshooting/' }],
       },
     ],
 
@@ -69,9 +66,7 @@ export default defineConfig({
       provider: 'local',
     },
 
-    socialLinks: [
-      { icon: 'github', link: 'https://github.com/bbopen/tywrap' },
-    ],
+    socialLinks: [{ icon: 'github', link: 'https://github.com/bbopen/tywrap' }],
 
     editLink: {
       pattern: 'https://github.com/bbopen/tywrap/edit/main/docs/:path',
@@ -83,4 +78,4 @@ export default defineConfig({
       copyright: 'Copyright © tywrap contributors',
     },
   },
-})
+});

@@ -4,25 +4,25 @@ tywrap supports five runtime configurations. Choose based on your environment.
 
 ## Feature Matrix
 
-| Feature | Node.js | Bun | Deno (local) | Browser (Pyodide) | HTTP |
-|---------|:-------:|:---:|:------------:|:-----------------:|:----:|
-| Python subprocess | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Deno Deploy / serverless | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Apache Arrow transport | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Virtual environment support | ✅ | ✅ | ✅ | ❌ | Server-side |
-| Process pooling (experimental) | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Development hot reload | ✅ | ❌ | ❌ | Manual bridge reload | External |
-| Tested in CI | ✅ | ✅ | Mocked | ✅ | ✅ |
+| Feature                        | Node.js | Bun | Deno (experimental) |  Browser (Pyodide)   |    HTTP     |
+| ------------------------------ | :-----: | :-: | :-----------------: | :------------------: | :---------: |
+| Python subprocess              |   ✅    | ✅  |         ✅          |          ❌          |     ❌      |
+| Deno Deploy / serverless       |   ❌    | ❌  |         ❌          |          ✅          |     ✅      |
+| Apache Arrow transport         |   ✅    | ✅  |         ✅          |          ✅          |     ✅      |
+| Virtual environment support    |   ✅    | ✅  |         ✅          |          ❌          | Server-side |
+| Process pooling (experimental) |   ✅    | ✅  |         ✅          |          ❌          |     ❌      |
+| Development hot reload         |   ✅    | ❌  |         ❌          | Manual bridge reload |  External   |
+| Tested in CI                   |   ✅    | ✅  |    ❌ (untested)    |          ✅          |     ✅      |
 
 ## Import Paths
 
-| Runtime | Import |
-|---------|--------|
-| Node.js | `import { NodeBridge } from 'tywrap/node'` |
-| Bun | `import { NodeBridge } from 'tywrap/node'` |
-| Deno | `import { NodeBridge } from 'npm:tywrap'` |
-| Browser | `import { PyodideBridge } from 'tywrap/pyodide'` |
-| HTTP | `import { HttpBridge } from 'tywrap/http'` |
+| Runtime                       | Import                                           |
+| ----------------------------- | ------------------------------------------------ |
+| Node.js                       | `import { NodeBridge } from 'tywrap/node'`       |
+| Bun                           | `import { NodeBridge } from 'tywrap/node'`       |
+| Deno (experimental, untested) | `import { NodeBridge } from 'npm:tywrap'`        |
+| Browser                       | `import { PyodideBridge } from 'tywrap/pyodide'` |
+| HTTP                          | `import { HttpBridge } from 'tywrap/http'`       |
 
 ## Decision Guide
 
@@ -30,7 +30,7 @@ tywrap supports five runtime configurations. Choose based on your environment.
 Do you need subprocess-based Python execution?
 ├── Yes → Does your environment support subprocess?
 │   ├── Node.js or Bun → Use NodeBridge (import from 'tywrap/node' or 'tywrap')
-│   ├── Deno (local) → Use NodeBridge with --allow-run=python3
+│   ├── Deno (experimental, untested) → Use NodeBridge with --allow-run=python3
 │   └── Deno Deploy / serverless → Continue ↓
 └── No (browser, edge, serverless) →
     ├── Can you load ~50MB WebAssembly? → Use PyodideBridge
@@ -39,8 +39,8 @@ Do you need subprocess-based Python execution?
 
 ## Bridge Reference
 
-| Bridge | Export | Guide |
-|--------|--------|-------|
-| `NodeBridge` | `tywrap/node` | [Node.js](./node) · [Bun](./bun) · [Deno](./deno) |
-| `PyodideBridge` | `tywrap/pyodide` | [Browser](./browser) |
-| `HttpBridge` | `tywrap/http` | [HTTP](./http) |
+| Bridge          | Export           | Guide                                             |
+| --------------- | ---------------- | ------------------------------------------------- |
+| `NodeBridge`    | `tywrap/node`    | [Node.js](./node) · [Bun](./bun) · [Deno](./deno) |
+| `PyodideBridge` | `tywrap/pyodide` | [Browser](./browser)                              |
+| `HttpBridge`    | `tywrap/http`    | [HTTP](./http)                                    |

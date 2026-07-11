@@ -9,7 +9,9 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Docs](https://img.shields.io/badge/docs-bbopen.github.io%2Ftywrap-blue)](https://bbopen.github.io/tywrap)
 
-TypeScript wrapper for Python libraries with full type safety.
+TypeScript bindings for Python libraries, with precise types for fully
+annotated, in-module, serializable Python returns and fallbacks where tywrap
+cannot resolve a type.
 
 > **⚠️ Experimental** — APIs may change before v1.0.0. See the
 > [releases page](https://github.com/bbopen/tywrap/releases) for breaking
@@ -17,13 +19,15 @@ TypeScript wrapper for Python libraries with full type safety.
 
 ## Features
 
-- **Full Type Safety** - TypeScript definitions generated from Python source
-  analysis
+- **Accurate Type Coverage** - Precise TypeScript types for fully annotated,
+  in-module, serializable Python returns, with fallbacks where resolution is not
+  possible
 - **Development Hot Reload** - Real Node watch sessions regenerate wrappers and
   swap the active bridge without re-importing generated modules
 - **Generic-Aware Declarations** - Preserves simple `TypeVar` and callable
   `ParamSpec` generics in generated `.ts` and `.d.ts` output
-- **Multi-Runtime** - Node.js (subprocess) and browsers (Pyodide)
+- **Multi-Runtime** - Node.js and Bun (subprocess), browsers (Pyodide), and
+  experimental, untested-in-CI Deno subprocess support
 - **Rich Data Types** - numpy, pandas, scipy, torch, sklearn, and stdlib types
 - **Efficient Serialization** - Apache Arrow binary format with JSON fallback
 - **Large-Payload Transport** - the Node subprocess bridge chunks results that
@@ -42,7 +46,8 @@ TypeScript wrapper for Python libraries with full type safety.
 
 ## Requirements
 
-- Node.js 20+ (or Bun 1.1+ / Deno 1.46+)
+- Node.js 20+ (or Bun 1.1+ / Deno 1.46+; Deno subprocess support is experimental
+  and untested in CI)
 - Python 3.10+ with `tywrap-ir`:
 
   ```bash
@@ -121,7 +126,8 @@ Raise `codec.maxPayloadBytes` to carry genuinely large results. You can still
 bound JSONL traffic explicitly with `TYWRAP_CODEC_MAX_BYTES` (responses) and
 `TYWRAP_REQUEST_MAX_BYTES` (requests). See the
 [transport framing](https://bbopen.github.io/tywrap/transport-framing) and
-[capability matrix](https://bbopen.github.io/tywrap/transport-capabilities) docs.
+[capability matrix](https://bbopen.github.io/tywrap/transport-capabilities)
+docs.
 
 ## Development Hot Reload
 
@@ -159,6 +165,8 @@ await bridge.init();
 ```
 
 ### Deno / Bun
+
+Deno subprocess support is experimental and untested in CI.
 
 ```typescript
 import { NodeBridge } from 'npm:tywrap'; // Deno
@@ -218,6 +226,11 @@ registerArrowDecoder(bytes => tableFromIPC(bytes));
 - [API Reference](https://bbopen.github.io/tywrap/reference/api/)
 - [Troubleshooting](https://bbopen.github.io/tywrap/troubleshooting/)
 - [Roadmap](./ROADMAP.md)
+
+## Security
+
+See [SECURITY.md](./SECURITY.md) for the bridge trust model and vulnerability
+reporting.
 
 ## Contributing
 

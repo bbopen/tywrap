@@ -130,21 +130,21 @@ const result = await bridge.call('math', 'sqrt', [16]);
 const info = await bridge.getBridgeInfo({ refresh: true });
 ```
 
-| Option                    | Default         | Notes                                           |
-| ------------------------- | --------------- | ----------------------------------------------- |
-| `pythonPath`              | auto-detect     | Python executable                               |
-| `scriptPath`              | built-in bridge | Custom `python_bridge.py`                       |
-| `virtualEnv`              | —               | Virtual environment root                        |
-| `cwd`                     | `process.cwd()` | Subprocess working directory                    |
-| `timeoutMs`               | `30000`         | Per-call timeout                                |
-| `queueTimeoutMs`          | `30000`         | Wait time when the worker pool is saturated     |
-| `minProcesses`            | `1`             | Minimum worker count                            |
-| `maxProcesses`            | `1`             | Maximum worker count                            |
-| `maxConcurrentPerProcess` | `1`             | Concurrent requests per serial Python worker    |
-| `inheritProcessEnv`       | `false`         | Pass full parent env through                    |
-| `env`                     | `{}`            | Extra subprocess env vars                       |
-| `codec`                   | —               | `CodecOptions` for validation and byte handling |
-| `warmupCommands`          | `[]`            | Per-worker startup calls                        |
+| Option                    | Default         | Notes                                                                                   |
+| ------------------------- | --------------- | --------------------------------------------------------------------------------------- |
+| `pythonPath`              | auto-detect     | Python executable                                                                       |
+| `scriptPath`              | built-in bridge | Custom `python_bridge.py`                                                               |
+| `virtualEnv`              | —               | Virtual environment root                                                                |
+| `cwd`                     | `process.cwd()` | Subprocess working directory                                                            |
+| `timeoutMs`               | `30000`         | Per-call timeout                                                                        |
+| `queueTimeoutMs`          | `30000`         | Wait time when the worker pool is saturated                                             |
+| `minProcesses`            | `1`             | Minimum worker count                                                                    |
+| `maxProcesses`            | `1`             | Maximum worker count                                                                    |
+| `maxConcurrentPerProcess` | `1`             | Concurrent requests per serial Python worker; use more worker processes for concurrency |
+| `inheritProcessEnv`       | `false`         | Pass full parent env through                                                            |
+| `env`                     | `{}`            | Extra subprocess env vars                                                               |
+| `codec`                   | —               | `CodecOptions` for validation and byte handling                                         |
+| `warmupCommands`          | `[]`            | Per-worker startup calls                                                                |
 
 Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
 `maxRequestsPerProcess`, `enableJsonFallback`, and `maxLineLength`.
