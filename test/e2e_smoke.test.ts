@@ -81,6 +81,9 @@ describeNodeOnly('E2E Smoke - CLI generate + runtime bridge', () => {
           '    def greet(self, suffix: str = "!") -> str:',
           '        return f"Hello, {self.name}{suffix}"',
           '',
+          'def greet(name: str, suffix: str = "!") -> str:',
+          '    return f"Hello, {name}{suffix}"',
+          '',
           'def add(a: int, b: int) -> int:',
           '    return a + b',
           '',
@@ -125,29 +128,19 @@ describeNodeOnly('E2E Smoke - CLI generate + runtime bridge', () => {
 
       setRuntimeBridge({
         call: bridge.call.bind(bridge),
-        instantiate: bridge.instantiate.bind(bridge),
-        callMethod: bridge.callMethod.bind(bridge),
-        disposeInstance: bridge.disposeInstance.bind(bridge),
         dispose: bridge.dispose.bind(bridge),
       });
 
       const mod = (await import(pathToFileURL(generatedPath).href)) as {
         add: (a: number, b: number) => Promise<number>;
-        Greeter: {
-          create: (name: string) => Promise<{
-            greet: (suffix?: string) => Promise<string>;
-            disposeHandle: () => Promise<void>;
-          }>;
-        };
+        greet: (name: string, suffix?: string) => Promise<string>;
       };
 
       const sum = await mod.add(2, 3);
       expect(sum).toBe(5);
 
-      const greeter = await mod.Greeter.create('Tywrap');
-      const greeting = await greeter.greet('!');
+      const greeting = await mod.greet('Tywrap', '!');
       expect(greeting).toBe('Hello, Tywrap!');
-      await greeter.disposeHandle();
     },
     e2eTimeoutMs
   );

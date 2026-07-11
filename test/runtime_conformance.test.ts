@@ -110,22 +110,12 @@ def make_model():
     return _Model(userName='ada', count=3)
 `;
 
-// A stdlib-only fixture (no third-party deps) exercising every class-member
-// category the IR 0.3.0 generator now emits: @classmethod and @staticmethod
-// (invoked via call() with a dotted 'Widget.method' name) and @property /
-// functools.cached_property (read via call_method with no args). Guards the
-// W3c bridge-dispatch support across every backend.
+// A stdlib-only fixture exercising the class/static members generated in v0.9.
 const MEMBER_FIXTURE_MODULE = '_tywrap_member_fixtures';
 const MEMBER_FIXTURE_PATH = resolve(RUNTIME_DIR, `${MEMBER_FIXTURE_MODULE}.py`);
 const MEMBER_FIXTURE_SOURCE = `
-import functools
-
-
 class Widget:
     label = 'widget'
-
-    def __init__(self, size):
-        self.size = size
 
     @classmethod
     def named(cls):
@@ -135,13 +125,6 @@ class Widget:
     def doubled(n):
         return n * 2
 
-    @property
-    def area(self):
-        return self.size * self.size
-
-    @functools.cached_property
-    def cached_area(self):
-        return self.size * self.size + 1
 `;
 
 // #234 hardening fixture: a sklearn estimator whose constructor stores a callable
@@ -557,13 +540,9 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
         const missingMethod = await backend.dispatch({ params: {} } as Record<string, unknown>);
         expect(missingMethod.error?.message, `${name} missing method`).toBe('Missing method');
 
-        // Unknown instance handle.
-        const badHandle = await backend.dispatch({
-          method: 'call_method',
-          params: { handle: 'nope', methodName: 'x', args: [], kwargs: {} },
-        });
-        expect(badHandle.error?.message, `${name} bad handle`).toBe(
-          'Unknown instance handle: nope'
+        const removedMethod = await backend.dispatch({ method: 'instantiate', params: {} });
+        expect(removedMethod.error?.message, `${name} removed instance method`).toBe(
+          'Unknown method: instantiate'
         );
       }
     },
@@ -600,6 +579,7 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
         }
         expect(m.protocol, `${name} meta protocol`).toBe(PROTOCOL);
         expect(m.protocolVersion, `${name} meta protocolVersion`).toBe(PROTOCOL_VERSION);
+        expect(m.instances, `${name} meta instances`).toBe(0);
         // pid must be a positive integer (subprocess) OR null (pyodide).
         expect(
           (typeof m.pid === 'number' && Number.isInteger(m.pid) && m.pid > 0) || m.pid === null,
@@ -623,73 +603,10 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
   );
 
   // -------------------------------------------------------------------------
-  // Case 9: instance lifecycle + meta.instances
+  // classmethod/staticmethod (dotted call) dispatch parity.
   // -------------------------------------------------------------------------
   it.skipIf(!PYTHON_OK)(
-    'instantiate / call_method / dispose_instance lifecycle parity',
-    async () => {
-      for (const { name, get } of liveBackends()) {
-        const backend = get();
-        if (!backend) continue;
-
-        const before = await backend.dispatch({ method: 'meta', params: {} });
-        const beforeCount = (before.result as Record<string, unknown>).instances as number;
-
-        // decimal.Decimal('2.5') -> instance; call_method as_integer_ratio? Use a stable stdlib class.
-        const inst = await backend.dispatch({
-          method: 'instantiate',
-          params: {
-            module: 'collections',
-            className: 'Counter',
-            args: [['a', 'a', 'b']],
-            kwargs: {},
-          },
-        });
-        expect(inst.error, `${name} instantiate error`).toBeUndefined();
-        const handle = inst.result as string;
-        expect(typeof handle, `${name} handle type`).toBe('string');
-
-        const mid = await backend.dispatch({ method: 'meta', params: {} });
-        expect(
-          (mid.result as Record<string, unknown>).instances,
-          `${name} instances incremented`
-        ).toBe(beforeCount + 1);
-
-        const called = await backend.dispatch({
-          method: 'call_method',
-          params: { handle, methodName: 'most_common', args: [1], kwargs: {} },
-        });
-        expect(called.error, `${name} call_method error`).toBeUndefined();
-        expect(called.result, `${name} most_common`).toEqual([['a', 2]]);
-
-        const disposed = await backend.dispatch({
-          method: 'dispose_instance',
-          params: { handle },
-        });
-        expect(disposed.result, `${name} dispose true`).toBe(true);
-
-        const disposedAgain = await backend.dispatch({
-          method: 'dispose_instance',
-          params: { handle },
-        });
-        expect(disposedAgain.result, `${name} dispose false`).toBe(false);
-
-        const after = await backend.dispatch({ method: 'meta', params: {} });
-        expect(
-          (after.result as Record<string, unknown>).instances,
-          `${name} instances back to baseline`
-        ).toBe(beforeCount);
-      }
-    },
-    caseTimeoutMs
-  );
-
-  // -------------------------------------------------------------------------
-  // classmethod/staticmethod (dotted call) + property/cached_property
-  // (accessor read) dispatch parity — the IR 0.3.0 member surface.
-  // -------------------------------------------------------------------------
-  it.skipIf(!PYTHON_OK)(
-    'classmethod/staticmethod and property/cached_property dispatch parity',
+    'classmethod/staticmethod dispatch parity',
     async () => {
       for (const { name, get } of liveBackends()) {
         const backend = get();
@@ -720,43 +637,6 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
         });
         expect(doubled.error, `${name} staticmethod error`).toBeUndefined();
         expect(doubled.result, `${name} staticmethod result`).toBe(42);
-
-        const inst = await backend.dispatch({
-          method: 'instantiate',
-          params: { module: MEMBER_FIXTURE_MODULE, className: 'Widget', args: [5], kwargs: {} },
-        });
-        expect(inst.error, `${name} member instantiate error`).toBeUndefined();
-        const handle = inst.result as string;
-
-        // @property: read via call_method with no args — the bridge must return
-        // the value, not try to call it.
-        const area = await backend.dispatch({
-          method: 'call_method',
-          params: { handle, methodName: 'area', args: [], kwargs: {} },
-        });
-        expect(area.error, `${name} property error`).toBeUndefined();
-        expect(area.result, `${name} property result`).toBe(25);
-
-        // @cached_property: same shape; classification must survive the cached
-        // second read.
-        for (const attempt of [1, 2]) {
-          const cached = await backend.dispatch({
-            method: 'call_method',
-            params: { handle, methodName: 'cached_area', args: [], kwargs: {} },
-          });
-          expect(cached.error, `${name} cached_property error (read ${attempt})`).toBeUndefined();
-          expect(cached.result, `${name} cached_property result (read ${attempt})`).toBe(26);
-        }
-
-        // An accessor read that supplies arguments is a malformed request and
-        // must fail loudly rather than silently dropping the args.
-        const accessorWithArgs = await backend.dispatch({
-          method: 'call_method',
-          params: { handle, methodName: 'area', args: [1], kwargs: {} },
-        });
-        expect(accessorWithArgs.error, `${name} accessor-with-args rejected`).toBeDefined();
-
-        await backend.dispatch({ method: 'dispose_instance', params: { handle } });
       }
     },
     caseTimeoutMs
@@ -970,18 +850,14 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
       for (const { name, backend } of jsonMarkerBackends()) {
         const b = backend();
         if (!b) continue;
-        const handle = await b.dispatch({
-          method: 'instantiate',
+        const df = await b.dispatch({
+          method: 'call',
           params: {
             module: 'pandas',
-            className: 'DataFrame',
+            functionName: 'DataFrame',
             args: [{ x: [1, 2], y: [3, 4] }],
             kwargs: {},
           },
-        });
-        const df = await b.dispatch({
-          method: 'call_method',
-          params: { handle: handle.result as string, methodName: 'copy', args: [], kwargs: {} },
         });
         expect(df.error, `${name} dataframe error`).toBeUndefined();
         const dfEnv = df.result as Record<string, unknown>;

@@ -570,10 +570,6 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
     );
     const classTypeParamDecl = classGenericContext.declaration;
     const cname = this.escapeIdentifier(cls.name);
-    const classSelfType = `${cname}${classGenericContext.typeArguments}`;
-    const tsValueType = (p: (typeof cls.methods)[number]['parameters'][number]): string =>
-      this.typeToTsFromPython(p.type, classGenericContext, 'value');
-
     const wrapAlias = (body: string): GeneratedCode => {
       const ts = `${jsdoc}export type ${cname}${classTypeParamDecl} = ${body}\n`;
       return this.wrap(ts, ts, [cls.name]);
@@ -659,14 +655,15 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
     const methodDeclarations: string[] = [];
 
     sortedMethods
-      .filter(method => method.name !== '__init__')
+      .filter(
+        method =>
+          method.name !== '__init__' &&
+          (method.methodKind === 'class' || method.methodKind === 'static')
+      )
       .forEach(method => {
-        // @classmethod and @staticmethod become `static` members invoked through
-        // the class (`Class.method`), not the instance handle. Instance methods
-        // (the default, or an absent methodKind) keep the existing emission so
-        // their output stays byte-identical.
-        const isStatic = method.methodKind === 'class' || method.methodKind === 'static';
-        const staticPrefix = isStatic ? 'static ' : '';
+        // v0.9 wrappers expose only class/static methods. They route through
+        // the ordinary module call path and never retain process-local state.
+        const staticPrefix = 'static ';
         const fparams = method.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
         const methodOwnGenericContext = this.buildGenericRenderContext(
           this.getTypeParameters(method.typeParameters),
@@ -784,13 +781,9 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
         const guardLines = emitArgGuards(callDescriptor);
         const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
 
-        const callExpr = isStatic
-          ? `getRuntimeBridge().call('${moduleId}', '${cls.name}.${method.name}', __args${
-              needsKwargsParam ? ', __kwargs' : ''
-            })`
-          : `getRuntimeBridge().callMethod(this.__handle, '${method.name}', __args${
-              needsKwargsParam ? ', __kwargs' : ''
-            })`;
+        const callExpr = `getRuntimeBridge().call('${moduleId}', '${cls.name}.${method.name}', __args${
+          needsKwargsParam ? ', __kwargs' : ''
+        })`;
         methodBodies.push(`${overloadDecl}  ${staticPrefix}async ${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}> {
 ${callPrelude}${guards}    return ${callExpr};
   }`);
@@ -799,167 +792,24 @@ ${callPrelude}${guards}    return ${callExpr};
         );
       });
 
-    const init = cls.methods.find(m => m.name === '__init__');
-    const ctorSpec = (() => {
-      if (!init) {
-        return {
-          overloadDecl: '',
-          declaration: `  static create${classTypeParamDecl}(...args: unknown[]): Promise<${classSelfType}>;\n`,
-          paramsDecl: `...args: unknown[]`,
-          callPrelude: `    const __args: unknown[] = [...args];\n`,
-          hasKwargs: false,
-          guardLines: [] as string[],
-        };
-      }
-
-      const fparams = init.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
-      const keywordOnlyParams = fparams.filter(p => p.keywordOnly);
-      const positionalOnlyNames = fparams.filter(p => p.positionalOnly).map(p => p.name);
-      const hasVarKwArgs = fparams.some(p => p.kwArgs);
-      const needsKwargsParam = keywordOnlyParams.length > 0 || hasVarKwArgs;
-      const varArgsParam = fparams.find(p => p.varArgs);
-      const needsVarArgsArray = Boolean(varArgsParam) && needsKwargsParam;
-      const positionalParams = fparams.filter(p => !p.keywordOnly && !p.varArgs && !p.kwArgs);
-      const firstOptionalPosIndex = positionalParams.findIndex(p => p.optional);
-      const requiredPosCount =
-        firstOptionalPosIndex >= 0 ? firstOptionalPosIndex : positionalParams.length;
-      const keywordOnlyNames = keywordOnlyParams.map(p => p.name);
-
-      const renderPositionalParam = (
-        p: (typeof positionalParams)[number],
-        forceRequired = false
-      ): string => {
-        const pname = this.escapeIdentifier(p.name);
-        const opt = !forceRequired && p.optional ? '?' : '';
-        return `${pname}${opt}: ${tsValueType(p)}`;
-      };
-
-      const kwargsType = (() => {
-        if (!needsKwargsParam) {
-          return '';
-        }
-        if (keywordOnlyParams.length === 0 && hasVarKwArgs) {
-          return 'Record<string, unknown>';
-        }
-        const props = keywordOnlyParams
-          .map(p => `${JSON.stringify(p.name)}${p.optional ? '?' : ''}: ${tsValueType(p)};`)
-          .join(' ');
-        const obj = `{ ${props} }`;
-        return hasVarKwArgs ? `(${obj} & Record<string, unknown>)` : obj;
-      })();
-
-      const paramsDeclParts: string[] = [];
-      positionalParams.forEach(p => {
-        paramsDeclParts.push(renderPositionalParam(p));
-      });
-      if (varArgsParam) {
-        const vname = this.escapeIdentifier(varArgsParam.name);
-        paramsDeclParts.push(needsVarArgsArray ? `${vname}?: unknown[]` : `...${vname}: unknown[]`);
-      }
-      if (needsKwargsParam) {
-        paramsDeclParts.push(`kwargs?: ${kwargsType}`);
-      }
-      const paramsDecl = paramsDeclParts.join(', ');
-
-      const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
-      const overloads: string[] = [];
-      if (needsKwargsParam && requiredKwOnlyNames.length > 0) {
-        const firstOptionalIndex = positionalParams.findIndex(p => p.optional);
-        const requiredPosCount =
-          firstOptionalIndex >= 0 ? firstOptionalIndex : positionalParams.length;
-        for (let i = requiredPosCount; i <= positionalParams.length; i++) {
-          const head = positionalParams.slice(0, i).map(p => renderPositionalParam(p, true));
-          const rest: string[] = [];
-          if (varArgsParam) {
-            const vname = this.escapeIdentifier(varArgsParam.name);
-            rest.push(
-              needsVarArgsArray ? `${vname}: unknown[] | undefined` : `...${vname}: unknown[]`
-            );
-          }
-          rest.push(`kwargs: ${kwargsType}`);
-          overloads.push(
-            `  static create${classTypeParamDecl}(${[...head, ...rest].join(', ')}): Promise<${classSelfType}>;`
-          );
-          if (varArgsParam && needsVarArgsArray) {
-            overloads.push(
-              `  static create${classTypeParamDecl}(${[...head, `kwargs: ${kwargsType}`].join(', ')}): Promise<${classSelfType}>;`
-            );
-          }
-        }
-      }
-      const overloadDecl = overloads.length > 0 ? `${overloads.join('\n')}\n` : '';
-      const declaration =
-        overloads.length > 0
-          ? overloadDecl
-          : `  static create${classTypeParamDecl}(${paramsDecl}): Promise<${classSelfType}>;\n`;
-
-      const callDescriptor: CallDescriptor = {
-        positionalParams,
-        varArgsParam,
-        needsVarArgsArray,
-        hasKwArgs: needsKwargsParam,
-        hasVarKwArgs,
-        keywordOnlyNames,
-        requiredKwOnlyNames,
-        positionalOnlyNames,
-        requiredPosCount,
-        indent: '    ',
-        errorLabel: '__init__',
-      };
-      const callPreludeLines = emitCallPrelude(callDescriptor, this.callEmitHelpers());
-      const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
-      const guardLines = emitArgGuards(callDescriptor);
-
-      return {
-        overloadDecl,
-        declaration,
-        paramsDecl,
-        callPrelude,
-        hasKwargs: needsKwargsParam,
-        guardLines,
-      };
-    })();
-
-    // @property / functools.cached_property → TS getters returning Promise<T>.
-    // Reading the attribute fires the getter on the Python side; the bridge
-    // resolves it via callMethod with no args. Sorted for stable output.
-    const accessorBodies: string[] = [];
-    const accessorDeclarations: string[] = [];
-    const sortedAccessors = [...(cls.accessors ?? [])].sort((a, b) => a.name.localeCompare(b.name));
-    sortedAccessors.forEach(accessor => {
-      const aname = this.escapeIdentifier(accessor.name);
-      const accessorType = this.typeToTsFromPython(accessor.type, classGenericContext, 'return');
-      const jsdocAcc = this.generateJsDoc(accessor.docstring);
-      accessorBodies.push(
-        `${jsdocAcc}  get ${aname}(): Promise<${accessorType}> { return getRuntimeBridge().callMethod(this.__handle, '${accessor.name}', []); }`
-      );
-      accessorDeclarations.push(`${jsdocAcc}  get ${aname}(): Promise<${accessorType}>;\n`);
-    });
-    const accessorsImpl = accessorBodies.length > 0 ? `${accessorBodies.join('\n')}\n` : '';
-    const accessorsDecl = accessorDeclarations.length > 0 ? `${accessorDeclarations.join('')}` : '';
-
     const methodsSection = methodBodies.length > 0 ? `\n${methodBodies.join('\n')}\n` : '\n';
     const declarationMethodsSection =
       methodDeclarations.length > 0 ? `\n${methodDeclarations.join('')}\n` : '\n';
-    const ctorGuards = ctorSpec.guardLines.length > 0 ? `${ctorSpec.guardLines.join('\n')}\n` : '';
-    const newClassExpr = `new ${cname}${classGenericContext.typeArguments}(handle)`;
+    // The constructor counts: a class whose only member was __init__ loses
+    // create(), so it needs the migration note as much as one with methods.
+    const omittedInstanceMembers =
+      cls.methods.some(method => method.methodKind !== 'class' && method.methodKind !== 'static') ||
+      (cls.accessors?.length ?? 0) > 0;
+    const migrationNote = omittedInstanceMembers
+      ? '  // NOTE: Instance members are not generated in v0.9; migrate this API to value-returning module functions.\n'
+      : '';
     const ts = `${jsdoc}export class ${cname}${classTypeParamDecl} {
-  private readonly __handle: string;
-  private constructor(handle: string) { this.__handle = handle; }
-${ctorSpec.overloadDecl}  static async create${classTypeParamDecl}(${ctorSpec.paramsDecl}): Promise<${classSelfType}> {
-${ctorSpec.callPrelude}${ctorGuards}    const handle = await getRuntimeBridge().instantiate<string>('${moduleId}', '${cls.name}', __args${
-      ctorSpec.hasKwargs ? ', __kwargs' : ''
-    });
-    return ${newClassExpr};
-  }
-  static fromHandle${classTypeParamDecl}(handle: string): ${classSelfType} { return ${newClassExpr}; }${methodsSection}${accessorsImpl}  async disposeHandle(): Promise<void> { await getRuntimeBridge().disposeInstance(this.__handle); }
+${migrationNote}${methodsSection}
 }
 `;
 
     const declaration = `${jsdoc}export class ${cname}${classTypeParamDecl} {
-  private readonly __handle: string;
-  private constructor(handle: string);
-${ctorSpec.declaration}  static fromHandle${classTypeParamDecl}(handle: string): ${classSelfType};${declarationMethodsSection}${accessorsDecl}  disposeHandle(): Promise<void>;
+${migrationNote}${declarationMethodsSection}
 }
 `;
 

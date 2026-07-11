@@ -49,31 +49,6 @@ export abstract class BasePythonBridge extends DisposableBase implements PythonR
     return this.getRpcClient().call<T>(module, functionName, args, kwargs);
   }
 
-  async instantiate<T = unknown>(
-    module: string,
-    className: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    await this.ensureReady();
-    return this.getRpcClient().instantiate<T>(module, className, args, kwargs);
-  }
-
-  async callMethod<T = unknown>(
-    handle: string,
-    methodName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    await this.ensureReady();
-    return this.getRpcClient().callMethod<T>(handle, methodName, args, kwargs);
-  }
-
-  async disposeInstance(handle: string): Promise<void> {
-    await this.ensureReady();
-    return this.getRpcClient().disposeInstance(handle);
-  }
-
   /**
    * Fetch bridge diagnostics and feature availability.
    */

@@ -7,12 +7,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 RUNTIME_DIR = Path(__file__).parent.parent.parent / 'runtime'
 
 sys.path.insert(0, str(RUNTIME_DIR))
 
-from tywrap_bridge_core import deserialize  # noqa: E402
+from tywrap_bridge_core import PROTOCOL, ProtocolError, deserialize, dispatch_request  # noqa: E402
 
 
 def test_plain_values_do_not_import_scientific_codecs() -> None:
@@ -52,3 +54,13 @@ def test_deserialize_still_decodes_bytes_envelope_when_markers_are_present() -> 
     value = {'data': {'__tywrap_bytes__': True, 'b64': 'aGVsbG8='}}
 
     assert deserialize(value, has_envelope_markers=True) == {'data': b'hello'}
+
+
+def test_stateful_instance_methods_are_unknown() -> None:
+    with pytest.raises(ProtocolError, match='Unknown method: instantiate'):
+        dispatch_request(
+            {'id': 1, 'protocol': PROTOCOL, 'method': 'instantiate', 'params': {}},
+            bridge='test',
+            pid=None,
+            force_json_markers=True,
+        )

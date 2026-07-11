@@ -43,10 +43,8 @@ derived from TYWRAP_CODEC_FALLBACK=json so that "Node in json-fallback mode" and
 import base64
 import datetime as dt
 import decimal
-import functools
 import importlib
 import importlib.util
-import inspect
 import json
 import math
 import sys
@@ -63,10 +61,6 @@ CODEC_VERSION = 1
 
 class ProtocolError(Exception):
     """Raised for malformed requests (bad protocol/id/method/params)."""
-
-
-class InstanceHandleError(ValueError):
-    """Raised when an instance handle is unknown or no longer valid."""
 
 
 class ImportNotAllowedError(PermissionError):
@@ -97,8 +91,8 @@ class AttributeNotAllowedError(PermissionError):
 # IMPORT / ATTRIBUTE ALLOWLIST (trust boundary enforcement)
 # =============================================================================
 #
-# The bridge dispatches call/instantiate/call_method by importing the requested
-# module and getattr-ing the requested function/class/method. That is an
+# The bridge dispatches call requests by importing the requested module and
+# getattr-ing the requested function/class method. That is an
 # arbitrary import+getattr+call surface, so two complementary guards live here.
 # Both are PURE (no env reads) so the rules behave identically under the
 # subprocess server and the in-WASM Pyodide server; the subprocess server derives
@@ -203,22 +197,6 @@ def resolve_allowed_attr_path(root, dotted_name, *, allow_private_attrs):
     for segment in dotted_name.split('.'):
         obj = get_allowed_attr(obj, segment, allow_private_attrs=allow_private_attrs)
     return obj
-
-
-def is_accessor_attr(obj, attr_name):
-    """
-    True when attr_name resolves to a @property or functools.cached_property on
-    obj's type — i.e. it is read by attribute access, not called.
-
-    Inspects type(obj)'s MRO via getattr_static (which never triggers the
-    descriptor protocol), NOT the instance dict. That matters for
-    cached_property: after the first read it stores its value in the instance
-    __dict__, so an instance-level static lookup would return the cached value
-    rather than the descriptor and misclassify it as a method on the next read.
-    Reading from the type keeps the classification stable across repeated reads.
-    """
-    descriptor = inspect.getattr_static(type(obj), attr_name, None)
-    return isinstance(descriptor, (property, functools.cached_property))
 
 
 class CodecError(Exception):
@@ -990,64 +968,7 @@ def handle_call(
     return serialize(res, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy)
 
 
-def handle_instantiate(
-    params, instances, *, allowed_modules, allow_private_attrs, has_envelope_markers
-):
-    module_name = require_str(params, 'module')
-    class_name = require_str(params, 'className')
-    args = deserialize(coerce_list(params.get('args'), 'args'), has_envelope_markers=has_envelope_markers)
-    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'), has_envelope_markers=has_envelope_markers)
-    mod = import_allowed_module(module_name, allowed_modules)
-    cls = get_allowed_attr(mod, class_name, allow_private_attrs=allow_private_attrs)
-    obj = cls(*args, **kwargs)
-    handle_id = str(id(obj))
-    instances[handle_id] = obj
-    return handle_id
-
-
-def handle_call_method(
-    params,
-    instances,
-    *,
-    force_json_markers,
-    torch_allow_copy,
-    allow_private_attrs,
-    has_envelope_markers,
-):
-    handle_id = require_str(params, 'handle')
-    method_name = require_str(params, 'methodName')
-    args = deserialize(coerce_list(params.get('args'), 'args'), has_envelope_markers=has_envelope_markers)
-    kwargs = deserialize(coerce_dict(params.get('kwargs'), 'kwargs'), has_envelope_markers=has_envelope_markers)
-    if handle_id not in instances:
-        raise InstanceHandleError(f'Unknown instance handle: {handle_id}')
-    obj = instances[handle_id]
-    # A @property / functools.cached_property is read, not called: the generated
-    # `get prop()` accessor emits callMethod(handle, name, []). Classify before
-    # touching the value (so cached_property is detected on its first read) and
-    # return the attribute directly; everything else is a bound method to call.
-    if is_accessor_attr(obj, method_name):
-        # An accessor is read, never called: a generated `get prop()` always
-        # sends empty args. Reject a malformed request that supplies any so it
-        # fails loudly instead of silently dropping the arguments.
-        if args or kwargs:
-            raise ProtocolError(f'Accessor {method_name!r} does not accept arguments')
-        res = get_allowed_attr(obj, method_name, allow_private_attrs=allow_private_attrs)
-    else:
-        func = get_allowed_attr(obj, method_name, allow_private_attrs=allow_private_attrs)
-        res = func(*args, **kwargs)
-    return serialize(res, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy)
-
-
-def handle_dispose_instance(params, instances):
-    handle_id = require_str(params, 'handle')
-    if handle_id not in instances:
-        return False
-    del instances[handle_id]
-    return True
-
-
 def build_meta(
-    instances,
     *,
     bridge,
     pid,
@@ -1088,7 +1009,7 @@ def build_meta(
         'scipyAvailable': module_available('scipy'),
         'torchAvailable': module_available('torch'),
         'sklearnAvailable': module_available('sklearn'),
-        'instances': len(instances),
+        'instances': 0,
     }
     if transport_info is not None:
         meta['transport'] = transport_info
@@ -1097,7 +1018,6 @@ def build_meta(
 
 def dispatch_request(
     msg,
-    instances,
     *,
     bridge,
     pid,
@@ -1121,7 +1041,7 @@ def dispatch_request(
     the final encode_value() call, which the caller performs.
 
     allowed_modules: None (default) disables the import allowlist so existing
-    behavior is preserved. Supplying a set restricts call/instantiate imports to
+    behavior is preserved. Supplying a set restricts call imports to
     those modules (plus the stdlib the bridge itself needs) and raises
     ImportNotAllowedError otherwise. allow_private_attrs=False (default) blocks
     getattr of underscore-prefixed names; True restores unrestricted access. See
@@ -1141,32 +1061,12 @@ def dispatch_request(
             allow_private_attrs=allow_private_attrs,
             has_envelope_markers=has_envelope_markers,
         )
-    elif method == 'instantiate':
-        result = handle_instantiate(
-            params,
-            instances,
-            allowed_modules=allowed_modules,
-            allow_private_attrs=allow_private_attrs,
-            has_envelope_markers=has_envelope_markers,
-        )
-    elif method == 'call_method':
-        result = handle_call_method(
-            params,
-            instances,
-            force_json_markers=force_json_markers,
-            torch_allow_copy=torch_allow_copy,
-            allow_private_attrs=allow_private_attrs,
-            has_envelope_markers=has_envelope_markers,
-        )
-    elif method == 'dispose_instance':
-        result = handle_dispose_instance(params, instances)
     elif method == 'meta':
         if python_version is None:
             import sys
             python_version = sys.version.split()[0]
         codec_fallback = 'json' if force_json_markers else 'none'
         result = build_meta(
-            instances,
             bridge=bridge,
             pid=pid,
             python_version=python_version,

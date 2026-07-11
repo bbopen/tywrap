@@ -313,9 +313,10 @@ class Container(Generic[T]):
       expect(typescript).toContain('export async function passthrough(args?: unknown[]');
       expect(typescript).toContain('kwargs?: Record<string, unknown>');
       expect(typescript).toContain('export class Container<T>');
-      expect(typescript).toContain('static async create<T>(value: T): Promise<Container<T>>');
-      expect(typescript).toContain('static fromHandle<T>(handle: string): Container<T>');
-      expect(typescript).toContain('async id<U>(x: U): Promise<[T, U]>');
+      expect(typescript).toContain('Instance members are not generated in v0.9');
+      expect(typescript).not.toContain('static async create');
+      expect(typescript).not.toContain('fromHandle');
+      expect(typescript).not.toContain('async id');
       expect(typescript).toContain('export type Pair<T> = [T, T]');
       expect(typescript).toContain(
         'export type Transform<P extends unknown[], T> = (...args: P) => T'
@@ -327,7 +328,7 @@ class Container(Generic[T]):
       expect(declaration).toContain('export type Pair<T> = [T, T]');
       expect(declaration).toContain('export class Container<T>');
       expect(declaration).toContain('export function acceptTransform<P extends unknown[], T>(');
-      expect(declaration).toContain('id<U>(x: U): Promise<[T, U]>;');
+      expect(declaration).not.toContain('id<U>(x: U): Promise<[T, U]>;');
       expect(declaration).not.toContain('getRuntimeBridge');
 
       const compileDir = join(tempDir, 'compile');
@@ -338,9 +339,6 @@ class Container(Generic[T]):
 // The real RuntimeExecution also has dispose() and other members; expand this if codegen starts using them.
 export interface RuntimeBridge {
   call<T = unknown>(module: string, functionName: string, args: unknown[], kwargs?: Record<string, unknown>): Promise<T>;
-  instantiate<T = unknown>(module: string, className: string, args: unknown[], kwargs?: Record<string, unknown>): Promise<T>;
-  callMethod<T = unknown>(handle: string, methodName: string, args: unknown[], kwargs?: Record<string, unknown>): Promise<T>;
-  disposeInstance(handle: string): Promise<void>;
 }
 
 export declare function getRuntimeBridge(): RuntimeBridge;
@@ -353,12 +351,10 @@ export declare function getRuntimeBridge(): RuntimeBridge;
 
 const pair: Pair<string> = ['a', 'b'];
 const transform: Transform<[number], string> = (...args) => String(args[0]);
-const container = Container.fromHandle<number>('handle');
+const container = {} as Container<number>;
 const accepted: Promise<Transform<[number], string>> = acceptTransform<[number], string>(transform);
 const forwarded: Promise<Container<number>> = forward<number>(container);
 const resolved: Promise<number> = identity<number>(1);
-const cloned: Promise<Container<number>> = container.clone();
-const identified: Promise<[number, string]> = container.id<string>('value');
 const passthroughResult: Promise<void> = passthrough([1, 2], { flag: true });
 
 void pair;
@@ -366,8 +362,6 @@ void transform;
 void accepted;
 void forwarded;
 void resolved;
-void cloned;
-void identified;
 void passthroughResult;
 `,
         'utf-8'

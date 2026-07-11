@@ -57,9 +57,6 @@ export const FRAME_PROTOCOL_VERSION = Number.parseInt(FRAME_PROTOCOL_ID.split('/
  *
  * Each method corresponds to a BridgeProtocol operation:
  * - `call`: Invoke a module-level function
- * - `instantiate`: Create a new class instance
- * - `call_method`: Invoke a method on an existing instance
- * - `dispose_instance`: Release an instance handle
  * - `meta`: Get bridge metadata
  */
 export interface ProtocolMessage {
@@ -70,24 +67,15 @@ export interface ProtocolMessage {
   protocol: typeof PROTOCOL_ID;
 
   /** The method to invoke */
-  method: 'call' | 'instantiate' | 'call_method' | 'dispose_instance' | 'meta';
+  method: 'call' | 'meta';
 
   /** Method parameters */
   params: {
-    /** Python module path (for call and instantiate) */
+    /** Python module path (for call) */
     module?: string;
 
     /** Function name (for call) */
     functionName?: string;
-
-    /** Class name (for instantiate) */
-    className?: string;
-
-    /** Instance handle (for call_method and dispose_instance) */
-    handle?: string;
-
-    /** Method name (for call_method) */
-    methodName?: string;
 
     /** Positional arguments */
     args?: unknown[];
@@ -423,7 +411,7 @@ export function isProtocolMessage(value: unknown): value is ProtocolMessage {
     typeof msg.id === 'number' &&
     msg.protocol === PROTOCOL_ID &&
     typeof msg.method === 'string' &&
-    ['call', 'instantiate', 'call_method', 'dispose_instance', 'meta'].includes(msg.method) &&
+    (msg.method === 'call' || msg.method === 'meta') &&
     typeof msg.params === 'object' &&
     msg.params !== null
   );

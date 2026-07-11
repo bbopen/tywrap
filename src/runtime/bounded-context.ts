@@ -4,7 +4,7 @@
  * Provides ONLY: init/dispose state machine, validation helpers, error
  * classification, bounded execution (timeout/retry/abort), and resource
  * ownership tracking. It carries ZERO RPC methods by design — the
- * cross-boundary RPC contract (call/instantiate/callMethod/disposeInstance)
+ * cross-boundary RPC contract (call)
  * is PythonRuntime, implemented only by the bridge facades, never by a base
  * class or a transport. This separation is what keeps transports (SubprocessTransport,
  * PooledTransport, TransportPool, PyodideTransport) and RpcClient from having to stub

@@ -143,27 +143,7 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
     );
 
     it.skipIf(!PYTHON_OK)(
-      'should handle class instantiation',
-      async () => {
-        // Test with built-in Counter class
-        const counterHandle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2, 3]]);
-        expect(typeof counterHandle).toBe('string');
-
-        const mostCommon = await bridge.callMethod<Array<[number, number]>>(
-          counterHandle,
-          'most_common',
-          [1]
-        );
-        expect(mostCommon[0]?.[0]).toBe(2);
-        expect(mostCommon[0]?.[1]).toBe(2);
-
-        await bridge.disposeInstance(counterHandle);
-      },
-      testTimeout
-    );
-
-    it.skipIf(!PYTHON_OK)(
-      'should report bridge info and track instance counts',
+      'should report bridge info with no instance registry',
       async () => {
         const info = await bridge.getBridgeInfo();
         expect(info.protocol).toBe('tywrap/1');
@@ -178,19 +158,10 @@ describeNodeOnly('Node.js Runtime Bridge', () => {
         expect(typeof info.torchAvailable).toBe('boolean');
         expect(typeof info.sklearnAvailable).toBe('boolean');
         expect(Number.isInteger(info.instances)).toBe(true);
-        expect(info.instances).toBeGreaterThanOrEqual(0);
+        expect(info.instances).toBe(0);
 
         const cached = await bridge.getBridgeInfo();
         expect(cached).toBe(info);
-
-        const before = info.instances;
-        const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
-        const mid = await bridge.getBridgeInfo({ refresh: true });
-        expect(mid.instances).toBe(before + 1);
-
-        await bridge.disposeInstance(handle);
-        const after = await bridge.getBridgeInfo({ refresh: true });
-        expect(after.instances).toBe(before);
       },
       testTimeout
     );
@@ -407,30 +378,6 @@ def get_bad():
       'should handle invalid function names',
       async () => {
         await expect(bridge.call('math', 'nonexistent_function', [])).rejects.toThrow();
-      },
-      testTimeout
-    );
-
-    it.skipIf(!PYTHON_OK)(
-      'should reject invalid instance handles',
-      async () => {
-        const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
-        await bridge.disposeInstance(handle);
-
-        await expect(bridge.callMethod(handle, 'most_common', [1])).rejects.toThrow(
-          /InstanceHandleError: Unknown instance handle:/
-        );
-      },
-      testTimeout
-    );
-
-    it.skipIf(!PYTHON_OK)(
-      'should allow disposing the same instance handle twice',
-      async () => {
-        const handle = await bridge.instantiate('collections', 'Counter', [[1, 2, 2]]);
-        await bridge.disposeInstance(handle);
-
-        await expect(bridge.disposeInstance(handle)).resolves.toBeUndefined();
       },
       testTimeout
     );
@@ -1273,19 +1220,6 @@ def get_bad():
         const unicodeString = '🐍 Python with Unicode: αβγδε ñáéíóú 中文';
         const result = await bridge.call<string>('builtins', 'str', [unicodeString]);
         expect(result).toBe(unicodeString);
-      },
-      testTimeout
-    );
-
-    it.skipIf(!PYTHON_OK)(
-      'should handle None/null values',
-      async () => {
-        bridge = new NodeBridge({ scriptPath, timeoutMs: defaultTimeoutMs });
-
-        const listHandle = await bridge.instantiate('builtins', 'list', []);
-        const result = await bridge.callMethod(listHandle, 'append', [1]);
-        expect(result).toBeNull(); // list.append returns None, which should be null in JS
-        await bridge.disposeInstance(listHandle);
       },
       testTimeout
     );

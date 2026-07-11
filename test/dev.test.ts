@@ -37,16 +37,6 @@ class FakeBridge implements RuntimeExecution {
     return this.label as T;
   }
 
-  async instantiate<T = unknown>(): Promise<T> {
-    return `${String(this.label)}-handle` as T;
-  }
-
-  async callMethod<T = unknown>(): Promise<T> {
-    return this.label as T;
-  }
-
-  async disposeInstance(): Promise<void> {}
-
   async dispose(): Promise<void> {
     this.disposed = true;
   }
@@ -83,16 +73,6 @@ class SnapshotPythonBridge implements RuntimeExecution {
     const result = await execFileAsync(this.pythonPath, ['-c', script]);
     return JSON.parse(result.stdout) as T;
   }
-
-  async instantiate<T = unknown>(): Promise<T> {
-    throw new Error('instantiate() is not supported in this test bridge');
-  }
-
-  async callMethod<T = unknown>(): Promise<T> {
-    throw new Error('callMethod() is not supported in this test bridge');
-  }
-
-  async disposeInstance(): Promise<void> {}
 
   async dispose(): Promise<void> {}
 }

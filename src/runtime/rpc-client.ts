@@ -266,7 +266,7 @@ function validateBridgeInfoPayload(value: unknown): BridgeInfo {
  *     this.rpc = new RpcClient({ transport, defaultTimeoutMs: options.timeout });
  *     this.trackResource(this.rpc);
  *   }
- *   // call/instantiate/callMethod/disposeInstance delegate to this.rpc.*
+ *   // call and getBridgeInfo delegate to this.rpc.*
  * }
  * ```
  */
@@ -496,79 +496,10 @@ export class RpcClient extends DisposableBase {
   }
 
   /**
-   * Instantiate a Python class.
-   *
-   * @param module - Python module path containing the class
-   * @param className - Class name to instantiate
-   * @param args - Positional constructor arguments
-   * @param kwargs - Keyword constructor arguments
-   * @returns A handle to the created instance
-   */
-  async instantiate<T = unknown>(
-    module: string,
-    className: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    return this.sendMessageAsync<T>({
-      method: 'instantiate',
-      params: {
-        module,
-        className,
-        args,
-        kwargs,
-      },
-    });
-  }
-
-  /**
-   * Call a method on a Python instance.
-   *
-   * @param handle - Instance handle returned from instantiate()
-   * @param methodName - Method name to call
-   * @param args - Positional arguments
-   * @param kwargs - Keyword arguments
-   * @returns The method result
-   */
-  async callMethod<T = unknown>(
-    handle: string,
-    methodName: string,
-    args: unknown[],
-    kwargs?: Record<string, unknown>
-  ): Promise<T> {
-    return this.sendMessageAsync<T>({
-      method: 'call_method',
-      params: {
-        handle,
-        methodName,
-        args,
-        kwargs,
-      },
-    });
-  }
-
-  /**
-   * Dispose a Python instance.
-   *
-   * Releases the instance handle on the Python side, allowing
-   * the object to be garbage collected.
-   *
-   * @param handle - Instance handle to dispose
-   */
-  async disposeInstance(handle: string): Promise<void> {
-    await this.sendMessageAsync<void>({
-      method: 'dispose_instance',
-      params: {
-        handle,
-      },
-    });
-  }
-
-  /**
    * Fetch bridge diagnostics and feature availability.
    *
    * The Python bridge supports a `meta` method that returns protocol and environment info
-   * (including optional codec availability and current instance count).
+   * (including optional codec availability and a fixed zero instance count).
    */
   async getBridgeInfo(options: GetBridgeInfoOptions = {}): Promise<BridgeInfo> {
     if (!options.refresh && this.bridgeInfoCache) {
@@ -584,6 +515,12 @@ export class RpcClient extends DisposableBase {
         validate: validateBridgeInfoPayload,
       }
     );
+
+    if (info.instances !== 0) {
+      throw new BridgeProtocolError(
+        `Invalid bridge info payload: instances expected 0, got ${String(info.instances)}`
+      );
+    }
 
     this.bridgeInfoCache = info;
     return info;

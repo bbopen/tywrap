@@ -57,16 +57,15 @@ import { sin, pi } from './generated/math.generated.js';
 console.log(await sin(pi / 4));
 ```
 
-## Generated Classes
+## Value-returning APIs
 
-Generated classes have an async `create(...)` constructor and an explicit `disposeHandle()`:
+v0.9 generated wrappers do not keep live Python class instances. Expose an
+operation as a value-returning module function instead:
 
 ```ts
-import { Counter } from './generated/collections.generated.js';
+import { median } from './generated/statistics.generated.js';
 
-const counter = await Counter.create([1, 2, 2]);
-console.log(await counter.mostCommon(1));
-await counter.disposeHandle();
+console.log(await median([1, 2, 2])); // 2
 ```
 
 ## More Docs

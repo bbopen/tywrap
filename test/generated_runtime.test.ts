@@ -29,9 +29,6 @@ suite('Generated runtime wiring - math', () => {
     }
     setRuntimeBridge({
       call: bridge.call.bind(bridge),
-      instantiate: bridge.instantiate.bind(bridge),
-      callMethod: bridge.callMethod.bind(bridge),
-      disposeInstance: bridge.disposeInstance.bind(bridge),
       dispose: bridge.dispose.bind(bridge),
     });
   });

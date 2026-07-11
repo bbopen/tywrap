@@ -19,7 +19,7 @@ subprocess transport:
     the explicit byte-size limit error message)
 
 SECURITY / TRUST MODEL: the bridge imports the requested module and getattrs the
-requested function/class/method, so call/instantiate/call_method are an arbitrary
+requested function/class method, so call is an arbitrary
 import+getattr+call surface. Two guards (implemented in tywrap_bridge_core) bound
 that surface:
   * TYWRAP_ALLOWED_MODULES (comma/space separated): when set, only those modules
@@ -54,7 +54,6 @@ from tywrap_bridge_core import (  # noqa: F401
     PROTOCOL_VERSION,
     CODEC_VERSION,
     ProtocolError,
-    InstanceHandleError,
     ImportNotAllowedError,
     AttributeNotAllowedError,
     import_allowed_module,
@@ -94,8 +93,6 @@ except (OSError, ValueError, TypeError, AttributeError) as exc:
         sys.stderr.write(f'[tywrap] Warning: could not add cwd to sys.path: {exc}\n')
     except (OSError, ValueError):
         pass
-
-instances = {}
 
 FALLBACK_JSON = os.environ.get('TYWRAP_CODEC_FALLBACK', '').lower() == 'json'
 TORCH_ALLOW_COPY = os.environ.get('TYWRAP_TORCH_ALLOW_COPY', '').lower() in ('1', 'true', 'yes')
@@ -334,7 +331,6 @@ def handle_meta():
     real pid and bridge='python-subprocess'.
     """
     return core.build_meta(
-        instances,
         bridge=BRIDGE_NAME,
         pid=os.getpid(),
         python_version=sys.version.split()[0],
@@ -353,7 +349,6 @@ def dispatch_request(msg, *, has_envelope_markers=True):
     """
     out = core.dispatch_request(
         msg,
-        instances,
         bridge=BRIDGE_NAME,
         pid=os.getpid(),
         force_json_markers=FALLBACK_JSON,

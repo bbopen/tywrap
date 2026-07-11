@@ -239,39 +239,18 @@ describe('Transport Interface', () => {
       expect(isProtocolMessage(msg)).toBe(true);
     });
 
-    it('returns true for valid instantiate message', () => {
-      const msg = createValidMessage({
-        method: 'instantiate',
-        params: {
-          module: 'mymodule',
-          className: 'MyClass',
-          args: [],
-        },
-      });
-      expect(isProtocolMessage(msg)).toBe(true);
-    });
-
-    it('returns true for valid call_method message', () => {
-      const msg = createValidMessage({
-        method: 'call_method',
-        params: {
-          handle: 'handle-123',
-          methodName: 'myMethod',
-          args: [],
-        },
-      });
-      expect(isProtocolMessage(msg)).toBe(true);
-    });
-
-    it('returns true for valid dispose_instance message', () => {
-      const msg = createValidMessage({
-        method: 'dispose_instance',
-        params: {
-          handle: 'handle-123',
-        },
-      });
-      expect(isProtocolMessage(msg)).toBe(true);
-    });
+    it.each(['instantiate', 'call_method', 'dispose_instance'])(
+      'rejects removed instance protocol message: %s',
+      method => {
+        const msg = {
+          id: 1,
+          protocol: PROTOCOL_ID,
+          method,
+          params: { module: 'mymodule', className: 'MyClass', args: [] },
+        };
+        expect(isProtocolMessage(msg)).toBe(false);
+      }
+    );
 
     it('returns false for null', () => {
       expect(isProtocolMessage(null)).toBe(false);
