@@ -144,26 +144,36 @@ describeAdversarial('Adversarial playground', () => {
     testTimeoutMs
   );
 
-  it.fails(
-    'handles mixed concurrency with a timeout and a fast success',
+  it(
+    'settles every call loudly when a timeout interleaves with a queued call',
     async () => {
-      const bridge = await createBridge({ timeoutMs: 250 });
+      // Whether the queued fast call starves into its own timeout or completes
+      // once the worker frees up depends on scheduler timing under the serial
+      // pool default — both are loud, and asserting one side made this test
+      // flap between environments (it passed on fast CI runners while marked
+      // it.fails from local behavior). The deterministic invariants: the slow
+      // call times out, the fast call settles either way with a real
+      // value/error, and the bridge stays usable afterwards.
+      const bridge = await createBridge({ timeoutMs: 4_000 });
       if (!bridge) return;
 
       try {
-        const slow = callAdversarial(bridge, 'sleep_and_return', ['slow', 0.5]);
+        const slow = callAdversarial(bridge, 'sleep_and_return', ['slow', 6.0]);
         const fast = callAdversarial(bridge, 'echo', ['fast']);
         const results = await Promise.allSettled([slow, fast]);
 
-        // Known limitation: the subprocess bridge is serial, so a slow call can
-        // starve subsequent calls and time them out.
         expect(results[0].status).toBe('rejected');
-        expect(results[1].status).toBe('fulfilled');
+        if (results[0].status === 'rejected') {
+          expect(String(results[0].reason)).toMatch(/timed out/i);
+        }
         if (results[1].status === 'fulfilled') {
           expect(results[1].value).toBe('fast');
+        } else {
+          expect(String(results[1].reason)).toMatch(/timed out/i);
         }
 
-        await delay(600);
+        // Why: let the slow worker drain (or restart) before probing recovery.
+        await delay(6_000);
         const again = await callAdversarial(bridge, 'echo', ['after-timeout']);
         expect(again).toBe('after-timeout');
       } finally {
