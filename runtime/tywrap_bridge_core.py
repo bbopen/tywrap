@@ -758,9 +758,12 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
             return serialize_torch_tensor(
                 obj, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy
             )
-    elif package == 'sklearn' and 'sklearn.base' in sys.modules:
-        if is_sklearn_estimator(obj):
-            return serialize_sklearn_estimator(obj)
+    elif 'sklearn.base' in sys.modules and is_sklearn_estimator(obj):
+        # No package gate here, unlike the branches above: subclassing
+        # BaseEstimator is sklearn's documented extension point, so user-defined
+        # estimators live outside the 'sklearn' package and must still get the
+        # estimator serializer (and its param-naming errors).
+        return serialize_sklearn_estimator(obj)
 
     if isinstance(obj, (type(None), bool, int, float, str, dict, list, tuple)):
         return obj
