@@ -23,7 +23,7 @@ import { BridgeCodecError, BridgeExecutionError, BridgeProtocolError } from './e
 import { SubprocessTransport } from './subprocess-transport.js';
 import { PooledTransport } from './pooled-transport.js';
 import type { CodecOptions } from './bridge-codec.js';
-import type { TransportLease } from './transport-pool.js';
+import type { TransportLease } from './pooled-transport.js';
 
 // =============================================================================
 // OPTIONS

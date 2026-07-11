@@ -37,7 +37,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { PooledTransport } from '../src/runtime/pooled-transport.js';
 import { SubprocessTransport } from '../src/runtime/subprocess-transport.js';
-import type { TransportLease } from '../src/runtime/transport-pool.js';
+import type { TransportLease } from '../src/runtime/pooled-transport.js';
 import { PROTOCOL_ID } from '../src/runtime/transport.js';
 import { utf8ByteLength } from '../src/runtime/frame-codec.js';
 import { getDefaultPythonPath } from '../src/utils/python.js';
