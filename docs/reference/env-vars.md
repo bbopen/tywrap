@@ -7,14 +7,14 @@ today.
 
 These affect the Python bridge or decoded runtime behavior.
 
-| Variable                     | Scope         | Default | Purpose                                                                                                                                                     |
-| ---------------------------- | ------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TYWRAP_CODEC_FALLBACK`      | Python bridge | unset   | Set to `json` to allow JSON fallback when Arrow encoding is unavailable                                                                                     |
-| `TYWRAP_CODEC_MAX_BYTES`     | Python bridge | unset   | Reject response payloads larger than this byte count (applied post-reassembly)                                                                              |
-| `TYWRAP_REQUEST_MAX_BYTES`   | Python bridge | unset   | Reject request payloads larger than this byte count (applied post-reassembly)                                                                               |
-| `TYWRAP_TORCH_ALLOW_COPY`    | Python bridge | off     | Allow GPU-to-CPU or contiguous-copy conversion when serializing `torch.Tensor`                                                                              |
-| `TYWRAP_ALLOWED_MODULES`     | Python bridge | unset   | Comma- and/or whitespace-separated import allowlist; blank is unset, while a non-empty value permits only named modules plus bridge-required stdlib modules |
-| `TYWRAP_ALLOW_PRIVATE_ATTRS` | Python bridge | off     | Set to `1`, `true`, or `yes` to allow underscore-prefixed attribute access; otherwise it is blocked                                                         |
+| Variable                     | Scope         | Default | Purpose                                                                                                                                                                                                                                 |
+| ---------------------------- | ------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TYWRAP_CODEC_FALLBACK`      | Python bridge | unset   | Set to `json` to allow JSON fallback when Arrow encoding is unavailable                                                                                                                                                                 |
+| `TYWRAP_CODEC_MAX_BYTES`     | Python bridge | unset   | Reject response payloads larger than this byte count (applied post-reassembly)                                                                                                                                                          |
+| `TYWRAP_REQUEST_MAX_BYTES`   | Python bridge | unset   | Reject request payloads larger than this byte count (applied post-reassembly)                                                                                                                                                           |
+| `TYWRAP_TORCH_ALLOW_COPY`    | Python bridge | off     | Allow GPU-to-CPU or contiguous-copy conversion when serializing `torch.Tensor`                                                                                                                                                          |
+| `TYWRAP_ALLOWED_MODULES`     | Python bridge | unset   | Comma- and/or whitespace-separated import allowlist; blank is unset, while a non-empty value permits only named modules plus bridge-required stdlib modules. See [SECURITY.md](https://github.com/bbopen/tywrap/blob/main/SECURITY.md). |
+| `TYWRAP_ALLOW_PRIVATE_ATTRS` | Python bridge | off     | Set to `1`, `true`, or `yes` to allow underscore-prefixed attribute access; otherwise it is blocked                                                                                                                                     |
 
 ## Chunked transport (`tywrap-frame/1`)
 

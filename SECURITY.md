@@ -15,8 +15,8 @@ Two environment-variable controls bound that surface:
 - Underscore-prefixed attributes are blocked by default. Set
   `TYWRAP_ALLOW_PRIVATE_ATTRS=1` only to opt out for trusted code.
 
-No HTTP server ships with tywrap. `HttpBridge` is a client for a server that you
-run and secure.
+No HTTP server or server-side HTTP transport ships with tywrap. `HttpBridge`
+only connects to a server that you run and secure.
 
 ## Network exposure
 
