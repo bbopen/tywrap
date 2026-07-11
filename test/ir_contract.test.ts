@@ -99,10 +99,15 @@ describe('pinned IR contracts', () => {
   it('fails clearly when Python IR reports a different schema version', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-ir-contract-version-'));
     try {
-      const fakePython = join(tempDir, 'fake-python');
+      // Windows cannot spawn an extensionless sh script (ENOENT), so the fake
+      // interpreter is a .cmd shim there and a sh shim elsewhere.
+      const isWindows = process.platform === 'win32';
+      const fakePython = join(tempDir, isWindows ? 'fake-python.cmd' : 'fake-python');
       await writeFile(
         fakePython,
-        '#!/bin/sh\nprintf \'{"ir_version":"0.3.0","module":"math"}\\n\'\n',
+        isWindows
+          ? '@echo {"ir_version":"0.3.0","module":"math"}\r\n'
+          : '#!/bin/sh\nprintf \'{"ir_version":"0.3.0","module":"math"}\\n\'\n',
         'utf8'
       );
       await chmod(fakePython, 0o755);
