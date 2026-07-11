@@ -20,6 +20,7 @@ describe('public API surface', () => {
       'BridgeExecutionError',
       'BridgeProtocolError',
       'BridgeTimeoutError',
+      'BridgeValidationError',
       'VERSION',
       'autoRegisterArrowDecoder',
       'clearArrowDecoder',

@@ -28,6 +28,10 @@ class Movie(_TypedDict):
     year: int
 
 
+class RatedMovie(Movie, total=False):
+    rating: float
+
+
 class SupportsClose(Protocol):
     def close(self) -> None: ...
 
@@ -43,6 +47,10 @@ def literal_echo(value: Literal["red", "blue", 7]) -> Literal["red", "blue", 7]:
 
 def typed_dict_echo(value: Movie) -> Movie:
     return value
+
+
+def rated_movie() -> RatedMovie:
+    return {"title": "Arrival", "year": 2016}
 
 
 def protocol_identity(value: SupportsClose) -> SupportsClose:

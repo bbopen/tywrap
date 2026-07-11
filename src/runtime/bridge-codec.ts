@@ -643,6 +643,9 @@ export class BridgeCodec {
     // Note: Arrow decoders can introduce NaN/Infinity from binary representations.
     this.assertNoSpecialFloats(decoded);
 
+    // Return-contract validation is intentionally downstream of this codec. At
+    // this boundary we guarantee only a sound wire envelope and decoded value;
+    // generated wrappers validate the Python annotation after Arrow/JSON decode.
     return decoded as T;
   }
 

@@ -11,6 +11,12 @@ import type { RuntimeExecution } from '../types/index.js';
 
 // BridgeCodec — validation and serialization for the JS<->Python boundary
 export { BridgeCodec, type CodecOptions } from './bridge-codec.js';
+export {
+  createReturnValidator,
+  describeReceivedShape,
+  type ReturnSchema,
+  type ReturnValidator,
+} from './validators.js';
 
 // Transport contract — abstract I/O channel interface and guards
 export type {

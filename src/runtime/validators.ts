@@ -1,3 +1,5 @@
+import { BridgeValidationError } from './errors.js';
+
 /**
  * Pure validation functions for runtime value checking.
  *
@@ -13,6 +15,208 @@ export class ValidationError extends Error {
     super(message);
     this.name = 'ValidationError';
   }
+}
+
+/** A serializable return-contract description emitted by the code generator. */
+export type ReturnSchema =
+  | { kind: 'any' }
+  | {
+      kind: 'primitive';
+      type: 'number' | 'string' | 'boolean' | 'null' | 'undefined' | 'Uint8Array' | 'object';
+    }
+  | { kind: 'literal'; value: string | number | boolean | null }
+  | { kind: 'array'; element: ReturnSchema }
+  | { kind: 'tuple'; elements: ReturnSchema[] }
+  | {
+      kind: 'record';
+      fields?: Record<string, { schema: ReturnSchema; optional?: boolean }>;
+      values?: ReturnSchema;
+    }
+  | { kind: 'union'; options: ReturnSchema[] }
+  | { kind: 'ref'; name: string }
+  | { kind: 'marker'; marker: 'dataframe' | 'series' | 'ndarray'; dims?: number; dtype?: string };
+
+export type ReturnValidator<T = unknown> = (result: T) => T;
+
+export interface DecodedShapeMetadata {
+  marker: 'dataframe' | 'series' | 'ndarray';
+  dims?: number;
+  dtype?: string;
+}
+
+const decodedShapeMetadata = new WeakMap<object, DecodedShapeMetadata>();
+
+/** @internal Preserve wire provenance after codec decoding changes the JS shape. */
+export function tagDecodedShape<T>(value: T, metadata: DecodedShapeMetadata): T {
+  if (value !== null && (typeof value === 'object' || typeof value === 'function')) {
+    decodedShapeMetadata.set(value as object, metadata);
+  }
+  return value;
+}
+
+function isObjectLike(value: unknown): value is object {
+  return value !== null && (typeof value === 'object' || typeof value === 'function');
+}
+
+/** A short, bounded description suitable for an error message. */
+export function describeReceivedShape(value: unknown): string {
+  if (value === null) {
+    return 'null';
+  }
+  if (value === undefined) {
+    return 'undefined';
+  }
+  if (value instanceof Uint8Array) {
+    return `Uint8Array(${value.byteLength})`;
+  }
+  if (Array.isArray(value)) {
+    return `array(${value.length})`;
+  }
+  if (typeof value === 'object') {
+    const marker = decodedShapeMetadata.get(value);
+    if (marker) {
+      const details = [marker.dims === undefined ? undefined : `${marker.dims}d`, marker.dtype]
+        .filter(Boolean)
+        .join(', ');
+      return `${marker.marker}${details ? ` (${details})` : ''}`;
+    }
+    const name = (value as { constructor?: { name?: unknown } }).constructor?.name;
+    return typeof name === 'string' && name !== 'Object' ? name : 'object';
+  }
+  return typeof value;
+}
+
+function renderSchema(schema: ReturnSchema): string {
+  switch (schema.kind) {
+    case 'any':
+      return 'unknown';
+    case 'primitive':
+      return schema.type;
+    case 'literal':
+      return JSON.stringify(schema.value);
+    case 'array':
+      return `${renderSchema(schema.element)}[]`;
+    case 'tuple':
+      return `[${schema.elements.map(renderSchema).join(', ')}]`;
+    case 'record':
+      return 'record';
+    case 'union':
+      return schema.options.map(renderSchema).join(' | ');
+    case 'ref':
+      return schema.name;
+    case 'marker':
+      return schema.marker;
+  }
+}
+
+interface CheckState {
+  readonly definitions: Readonly<Record<string, ReturnSchema>>;
+  readonly pairs: WeakMap<object, Set<string>>;
+}
+
+function check(schema: ReturnSchema, value: unknown, state: CheckState): boolean {
+  if (schema.kind === 'any') {
+    return true;
+  }
+
+  if (schema.kind === 'ref') {
+    const definition = state.definitions[schema.name];
+    if (!definition) {
+      return true;
+    } // unresolved/erased types deliberately degrade to unknown.
+    if (isObjectLike(value)) {
+      const seen = state.pairs.get(value) ?? new Set<string>();
+      if (seen.has(schema.name)) {
+        return true;
+      }
+      seen.add(schema.name);
+      state.pairs.set(value, seen);
+    }
+    return check(definition, value, state);
+  }
+
+  switch (schema.kind) {
+    case 'primitive':
+      if (schema.type === 'null') {
+        return value === null;
+      }
+      if (schema.type === 'undefined') {
+        return value === undefined;
+      }
+      if (schema.type === 'Uint8Array') {
+        return value instanceof Uint8Array;
+      }
+      if (schema.type === 'object') {
+        return isPlainObject(value);
+      }
+      return typeof value === schema.type;
+    case 'literal':
+      return Object.is(value, schema.value);
+    case 'array':
+      return Array.isArray(value) && value.every(item => check(schema.element, item, state));
+    case 'tuple':
+      return (
+        Array.isArray(value) &&
+        value.length === schema.elements.length &&
+        schema.elements.every((entry, index) => check(entry, value[index], state))
+      );
+    case 'record': {
+      if (!isPlainObject(value)) {
+        return false;
+      }
+      if (schema.fields) {
+        for (const [key, field] of Object.entries(schema.fields)) {
+          if (!(key in value)) {
+            if (field.optional) {
+              continue;
+            }
+            return false;
+          }
+          if (!check(field.schema, value[key], state)) {
+            return false;
+          }
+        }
+      }
+      return (
+        !schema.values ||
+        Object.values(value).every(item => check(schema.values as ReturnSchema, item, state))
+      );
+    }
+    case 'union':
+      return schema.options.some(option => check(option, value, state));
+    case 'marker': {
+      const metadata = isObjectLike(value) ? decodedShapeMetadata.get(value) : undefined;
+      if (metadata?.marker !== schema.marker) {
+        return false;
+      }
+      return (
+        (schema.dims === undefined || metadata.dims === schema.dims) &&
+        (schema.dtype === undefined || metadata.dtype === schema.dtype)
+      );
+    }
+  }
+}
+
+/**
+ * Construct a cycle-safe structural validator for one generated callable.
+ * Unknown/Any/void schemas intentionally validate nothing.
+ */
+export function createReturnValidator<T = unknown>(
+  schema: ReturnSchema,
+  callSite: string,
+  definitions: Readonly<Record<string, ReturnSchema>> = {}
+): ReturnValidator<T> {
+  const declaredType = renderSchema(schema);
+  return (result: T): T => {
+    if (!check(schema, result, { definitions, pairs: new WeakMap<object, Set<string>>() })) {
+      throw new BridgeValidationError({
+        declaredType,
+        receivedShape: describeReceivedShape(result),
+        callSite,
+      });
+    }
+    return result;
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

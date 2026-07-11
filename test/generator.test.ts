@@ -55,7 +55,67 @@ describe('CodeGenerator', () => {
     );
     expect(code.typescript).toContain('export async function add');
     expect(code.typescript).toContain('Add two numbers');
-    expect(code.typescript).toContain("getRuntimeBridge().call('math', 'add'");
+    expect(code.typescript).toContain("getRuntimeBridge().call<number>('math', 'add'");
+    expect(code.typescript).toContain('createReturnValidator');
+  });
+
+  it('emits a null union member for X | None returns, not an accept-everything any', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'maybe_count',
+        signature: {
+          parameters: [],
+          returnType: {
+            kind: 'union',
+            types: [
+              { kind: 'primitive', name: 'int' },
+              { kind: 'primitive', name: 'None' },
+            ],
+          },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: {
+          kind: 'union',
+          types: [
+            { kind: 'primitive', name: 'int' },
+            { kind: 'primitive', name: 'None' },
+          ],
+        },
+        parameters: [],
+      } as any,
+      'maybe_mod'
+    );
+
+    expect(code.typescript).toContain('"type":"null"');
+    expect(code.typescript).not.toContain('"kind":"any"');
+  });
+
+  it('keeps a bare -> None return as a validation no-op', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'do_nothing',
+        signature: {
+          parameters: [],
+          returnType: { kind: 'primitive', name: 'None' },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: { kind: 'primitive', name: 'None' },
+        parameters: [],
+      } as any,
+      'maybe_mod'
+    );
+
+    expect(code.typescript).toContain('{"kind":"any"}');
   });
 
   it('serializes tuple types as TS tuples', () => {
@@ -1386,11 +1446,13 @@ describe('CodeGenerator', () => {
     // The TS member name is escaped (camelCased) while the dotted RPC target
     // (Class.method) keeps the raw Python names.
     expect(code.typescript).toContain('static async createDog(name: string): Promise<Pet>');
-    expect(code.typescript).toContain("getRuntimeBridge().call('pets', 'Pet.create_dog', __args)");
+    expect(code.typescript).toContain(
+      "getRuntimeBridge().call<Pet>('pets', 'Pet.create_dog', __args"
+    );
     // staticmethod: static member, no implicit first param, class-routed call.
     expect(code.typescript).toContain('static async isValidName(name: string): Promise<boolean>');
     expect(code.typescript).toContain(
-      "getRuntimeBridge().call('pets', 'Pet.is_valid_name', __args)"
+      "getRuntimeBridge().call<boolean>('pets', 'Pet.is_valid_name', __args"
     );
     // Must NOT route static/class members through the instance handle.
     expect(code.typescript).not.toContain('callMethod');
@@ -1563,6 +1625,8 @@ describe('CodeGenerator', () => {
     );
 
     expect(code.typescript).toMatch(/^export async function _default_\(\): Promise<string> \{$/m);
-    expect(code.typescript).toContain("getRuntimeBridge().call('keywords', 'default', __args)");
+    expect(code.typescript).toContain(
+      "getRuntimeBridge().call<string>('keywords', 'default', __args"
+    );
   });
 });
