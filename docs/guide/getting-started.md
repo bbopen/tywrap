@@ -121,9 +121,9 @@ example().catch(console.error);
 ## Runtime return validation
 
 Generated wrappers validate returns at runtime after decoding. If a Python
-implementation returns a value that does not match its annotation, tywrap throws
+function returns a value that does not match its annotation, tywrap throws
 `BridgeValidationError` with the wrapped call site and received shape. Fix the
-Python annotation or implementation; use `-> Any` only when that return is
+Python annotation or function. Use `-> Any` only when that return is
 intentionally untyped.
 
 ## Custom Module Example
@@ -302,9 +302,9 @@ For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual bridge
 replacement. For HTTP, restart or redeploy the remote server outside tywrap.
 
 `startNodeWatchSession(...)` watches local package directories as directory
-trees, refreshes those trees when nested directories change, and keeps the last
-known good wrappers and bridge live if a reload produces structured generation
-failures. See [Watch & Reload](./dev-reload.md) for the reload lifecycle events
+trees and refreshes them when nested directories change. A structured generation
+failure leaves the last known good wrappers and bridge live. See
+[Watch & Reload](./dev-reload.md) for the reload lifecycle events
 and the full failure / recovery contract.
 
 ### Build Integration
@@ -319,24 +319,24 @@ and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).
 
 ## Performance Tips
 
-1. **Enable Caching**: Set `"caching": true` for faster rebuilds
-2. **Use Batching**: Set `"batching": true` for multiple modules
-3. **Smart Compression**: Use `"compression": "auto"` for optimal size
-4. **Selective Imports**: Specify only needed functions/classes
+1. Set `"caching": true` to reuse generation IR across rebuilds.
+2. Limit `functions` and `classes` when a wrapper needs only part of a module.
+
+`batching` and `compression` are accepted config fields in 0.9.0, but no current
+generator or runtime code applies them.
 
 ```json
 {
   "pythonModules": {
     "numpy": {
-      "runtime": "node",
       "functions": ["array", "zeros", "ones"],
       "classes": ["ndarray"]
     }
   },
   "performance": {
     "caching": true,
-    "batching": true,
-    "compression": "auto"
+    "batching": false,
+    "compression": "none"
   }
 }
 ```

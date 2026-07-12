@@ -1,7 +1,7 @@
 # HTTP Bridge Guide
 
 `HttpBridge` connects to a Python server over HTTP. Use it when Python must run
-separately — including Deno Deploy, serverless environments, or distributed
+separately, including Deno Deploy, serverless environments, or distributed
 architectures.
 
 ## When to Use HttpBridge
@@ -38,7 +38,7 @@ setRuntimeBridge(
 
 | Option      | Required | Default | Description                                |
 | ----------- | -------- | ------- | ------------------------------------------ |
-| `baseURL`   | Yes      | —       | Base URL of the Python bridge server       |
+| `baseURL`   | Yes      | required | Base URL of the Python bridge server      |
 | `headers`   | No       | `{}`    | Additional HTTP headers (auth, CORS, etc.) |
 | `timeoutMs` | No       | `30000` | Request timeout in milliseconds            |
 | `codec`     | No       | Arrow   | Codec options                              |
@@ -46,11 +46,11 @@ setRuntimeBridge(
 ## Running the Python Server
 
 `HttpBridge` expects a server that accepts POST requests with JSON/Arrow
-payloads. You must implement or deploy a compatible server endpoint. The
-protocol is stateless — each call is an independent POST request.
+payloads. You must provide a compatible server endpoint. Each call is an
+independent POST request because the protocol is stateless.
 
-> **Note:** tywrap does not ship an HTTP server. See the
-> [API reference](/reference/api/) for the expected request/response format.
+tywrap does not include an HTTP server. See the [API reference](/reference/api/)
+for the expected request and response format.
 
 ## Apache Arrow
 

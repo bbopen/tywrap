@@ -11,7 +11,7 @@ The scientific codec envelope reference lives in
 ### v0.9.0: typed value-RPC
 
 `v0.9.0` narrowed tywrap to one job done well: typed value-RPC between
-TypeScript and Python (roadmap #260–#270). The stateful instance API is gone
+TypeScript and Python (roadmap #260-#270). The stateful instance API is gone
 (#264-#266). A handle lived in one pool worker while calls routed to any
 worker, so instance methods silently broke under pooling. Generated classes now
 expose only static and classmethod members routed through ordinary calls. The

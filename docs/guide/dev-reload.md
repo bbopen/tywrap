@@ -1,24 +1,23 @@
 # Watch & Reload (Failure / Recovery Contract)
 
-`tywrap/dev` provides development-time wrapper regeneration plus runtime bridge
-replacement. It does **not** provide application-level hot module reloading — it
-keeps your generated wrappers and the active Python bridge in sync with your
-Python sources while your process stays up.
+`tywrap/dev` regenerates wrappers and replaces the runtime bridge during
+development. Application-level hot module reloading remains the application's
+job. The helper keeps generated wrappers and the active Python bridge in sync
+with Python sources while the process stays up.
 
-This page documents the reload **lifecycle** and, in particular, the
-**failure / recovery contract**: what happens when a reload fails, and what stays
-live so your app keeps working.
+This page documents the reload lifecycle and failure behavior: what happens when
+a reload fails, and what stays live so your app keeps working.
 
 > Reload is configured in code through `tywrap/dev`, never in `tywrap.config.*`.
 > The legacy `development` block and `pythonModules.<module>.watch` fields were
-> removed in 0.4.0; using them now raises an explicit migration error.
+> removed in 0.4.0. Using them now raises an explicit migration error.
 
 ## The two entry points
 
 | Helper | Use it for |
 | --- | --- |
-| `startNodeWatchSession(...)` | Node-only. Watches your config file and local Python sources, regenerates wrappers, and swaps the active bridge in place. |
-| `createBridgeReloader(...)` | Cross-runtime manual primitive (e.g. Pyodide). You call `reload()` yourself; there is no filesystem watcher. |
+| `startNodeWatchSession(...)` | Node-only. Watches the config and local Python sources. After regenerating wrappers, it swaps the active bridge in place. |
+| `createBridgeReloader(...)` | Cross-runtime manual primitive (e.g. Pyodide). You call `reload()` yourself. It has no filesystem watcher. |
 
 ```typescript
 import { startNodeWatchSession } from 'tywrap/dev';
@@ -43,7 +42,7 @@ await session.close();
 `createBridge` receives the **freshly resolved config for that reload cycle**, so
 config edits (e.g. a changed `timeout`) are picked up on the next reload. By
 default the newly created bridge is published to the global runtime registry, so
-existing generated wrappers transparently route through the swapped bridge — no
+existing generated wrappers transparently route through the swapped bridge. No
 imports change and the process never restarts.
 
 ## Reload lifecycle events
@@ -54,7 +53,7 @@ order for a successful cycle:
 | Event | Meaning |
 | --- | --- |
 | `watchPaths` | The set of paths the session is currently watching (config file, resolved Python package trees, and `extraWatchPaths`). Re-emitted whenever the watched set changes. |
-| `change` | A watched path changed (`manual: false`) — a reload has been scheduled. |
+| `change` | A watched path changed (`manual: false`), so a reload has been scheduled. |
 | `reload-start` | A reload cycle began (`manual: true` for `reloadNow()` / initial startup). |
 | `reload-success` | Regeneration and bridge swap completed. Carries `written` (relative paths of the generated files now on disk) and `warnings`. |
 | `reload-error` | The reload failed. Carries the underlying `error: Error`. |
@@ -73,7 +72,7 @@ finishes before the next one starts, and rapid edits are debounced
 
 ## Failure / recovery contract
 
-If **any** step of a reload throws, the session does **not** tear down. The
+If any step of a reload throws, the session stays up. The
 last-known-good state stays live:
 
 - The **previously generated wrappers remain on disk unchanged.** Staging happens
@@ -81,17 +80,17 @@ last-known-good state stays live:
   succeeds. If promotion itself fails partway, the previous file contents are
   restored.
 - The **previously active bridge stays active** in the runtime registry and is
-  **not disposed.** A bridge that was warmed for the failed reload is disposed
+  not disposed. A bridge that was warmed for the failed reload is disposed
   instead, so you never leak the half-prepared one.
 - A structured `reload-error` event is emitted with the underlying `Error`, and
   the failing call (`reloadNow()` or the debounced auto-reload) resolves to
   `false`. The session keeps watching and will attempt the next reload normally.
 
-Two distinct failure sources surface the same way:
+Generation and bridge construction failures surface through the same event:
 
 | Source | What the `error` looks like |
 | --- | --- |
-| **Generation failure** (a watched module's IR can't be produced — e.g. a syntax error). This is the `GenerateFailure` path. | `error.message` begins with `Generation failed for N module(s):` followed by per-module detail. |
+| **Generation failure** (a watched module's IR can't be produced, such as after a syntax error). This is the `GenerateFailure` path. | `error.message` begins with `Generation failed for N module(s):` followed by per-module detail. |
 | **Bridge construction failure** (your `createBridge` throws). | The error your factory threw, propagated verbatim. |
 
 ```typescript
@@ -113,7 +112,7 @@ const session = await startNodeWatchSession({
 > **Startup is the exception.** There is no last-known-good state on the very
 > first reload, so if the *initial* `startNodeWatchSession(...)` setup fails, the
 > promise rejects (watchers are closed and any partial bridge disposed). After a
-> successful start, every subsequent failure is recoverable as described above.
+> successful start, subsequent failures keep the last known good state live.
 
 ## Other notes
 
@@ -124,4 +123,4 @@ const session = await startNodeWatchSession({
   generation does not retrigger itself.
 - For Pyodide use `createBridgeReloader(...)` and drive `reload()` from your own
   trigger. For the HTTP runtime, reload by restarting/redeploying the remote
-  server — that is external to tywrap.
+  server. That reload is external to tywrap.

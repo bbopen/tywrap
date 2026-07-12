@@ -20,7 +20,7 @@ export default defineConfig({
 
 ### `resolveConfig(options?)`
 
-Loads a config file, merges defaults, and applies overrides.
+Loads a config file and merges it with defaults plus overrides.
 
 ```ts
 import { resolveConfig } from 'tywrap';
@@ -134,7 +134,7 @@ const info = await bridge.getBridgeInfo({ refresh: true });
 | ------------------------- | --------------- | --------------------------------------------------------------------------------------- |
 | `pythonPath`              | auto-detect     | Python executable                                                                       |
 | `scriptPath`              | built-in bridge | Custom `python_bridge.py`                                                               |
-| `virtualEnv`              | —               | Virtual environment root                                                                |
+| `virtualEnv`              | not set         | Virtual environment root                                                                |
 | `cwd`                     | `process.cwd()` | Subprocess working directory                                                            |
 | `timeoutMs`               | `30000`         | Per-call timeout                                                                        |
 | `queueTimeoutMs`          | `30000`         | Wait time when the worker pool is saturated                                             |
@@ -143,7 +143,7 @@ const info = await bridge.getBridgeInfo({ refresh: true });
 | `maxConcurrentPerProcess` | `1`             | Concurrent requests per serial Python worker; use more worker processes for concurrency |
 | `inheritProcessEnv`       | `false`         | Pass full parent env through                                                            |
 | `env`                     | `{}`            | Extra subprocess env vars                                                               |
-| `codec`                   | —               | `CodecOptions` for validation and byte handling                                         |
+| `codec`                   | not set         | `CodecOptions` for validation and byte handling                                         |
 | `warmupCommands`          | `[]`            | Per-worker startup calls                                                                |
 
 Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
@@ -168,7 +168,7 @@ const bridge = new PyodideBridge({
 | `indexURL`  | Pyodide CDN | Package index URL            |
 | `packages`  | `[]`        | Packages to load during init |
 | `timeoutMs` | `30000`     | Default operation timeout    |
-| `codec`     | —           | `CodecOptions`               |
+| `codec`     | not set     | `CodecOptions`               |
 
 ### `HttpBridge`
 
@@ -189,7 +189,7 @@ const bridge = new HttpBridge({
 | `baseURL`   | required | Server endpoint URL     |
 | `headers`   | `{}`     | Extra request headers   |
 | `timeoutMs` | `30000`  | Default request timeout |
-| `codec`     | —        | `CodecOptions`          |
+| `codec`     | not set  | `CodecOptions`          |
 
 ## HTTP Server Contract
 
