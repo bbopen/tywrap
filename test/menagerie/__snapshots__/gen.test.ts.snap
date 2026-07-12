@@ -38,11 +38,11 @@ export async function frozenValues(value: string[]): Promise<string[]> {
   return getRuntimeBridge().call<string[]>('fixtures.typing_torture', 'frozen_values', __args, undefined, __validatefrozen_valuesResult);
 }
 
-const __validategenerator_valuesResult = createReturnValidator({"kind":"array","element":{"kind":"primitive","type":"number"}}, "fixtures.typing_torture.generator_values", __tywrapReturnDefinitions);
+const __validategenerator_valuesResult = createReturnValidator({"kind":"any"}, "fixtures.typing_torture.generator_values", __tywrapReturnDefinitions);
 
-export async function generatorValues(): Promise<Generator<number, void, void>> {
+export async function generatorValues(): Promise<unknown> {
   const __args: unknown[] = [];
-  return getRuntimeBridge().call<Generator<number, void, void>>('fixtures.typing_torture', 'generator_values', __args, undefined, __validategenerator_valuesResult);
+  return getRuntimeBridge().call<unknown>('fixtures.typing_torture', 'generator_values', __args, undefined, __validategenerator_valuesResult);
 }
 
 const __validategeneric_identityResult = createReturnValidator({"kind":"any"}, "fixtures.typing_torture.generic_identity", __tywrapReturnDefinitions);
@@ -59,11 +59,11 @@ export async function intKeyDict(value: {  [key: number]: string; }): Promise<{ 
   return getRuntimeBridge().call<{  [key: number]: string; }>('fixtures.typing_torture', 'int_key_dict', __args, undefined, __validateint_key_dictResult);
 }
 
-const __validateiterator_valuesResult = createReturnValidator({"kind":"array","element":{"kind":"primitive","type":"number"}}, "fixtures.typing_torture.iterator_values", __tywrapReturnDefinitions);
+const __validateiterator_valuesResult = createReturnValidator({"kind":"any"}, "fixtures.typing_torture.iterator_values", __tywrapReturnDefinitions);
 
-export async function iteratorValues(): Promise<Iterator<number>> {
+export async function iteratorValues(): Promise<unknown> {
   const __args: unknown[] = [];
-  return getRuntimeBridge().call<Iterator<number>>('fixtures.typing_torture', 'iterator_values', __args, undefined, __validateiterator_valuesResult);
+  return getRuntimeBridge().call<unknown>('fixtures.typing_torture', 'iterator_values', __args, undefined, __validateiterator_valuesResult);
 }
 
 const __validateliteral_echoResult = createReturnValidator({"kind":"union","options":[{"kind":"literal","value":"red"},{"kind":"literal","value":"blue"},{"kind":"literal","value":7}]}, "fixtures.typing_torture.literal_echo", __tywrapReturnDefinitions);
@@ -195,13 +195,13 @@ export function bytesEcho(value: Uint8Array): Promise<Uint8Array>;
 
 export function frozenValues(value: string[]): Promise<string[]>;
 
-export function generatorValues(): Promise<Generator<number, void, void>>;
+export function generatorValues(): Promise<unknown>;
 
 export function genericIdentity<T>(value: T): Promise<T>;
 
 export function intKeyDict(value: {  [key: number]: string; }): Promise<{  [key: number]: string; }>;
 
-export function iteratorValues(): Promise<Iterator<number>>;
+export function iteratorValues(): Promise<unknown>;
 
 export function literalEcho(value: "red" | "blue" | 7): Promise<"red" | "blue" | 7>;
 

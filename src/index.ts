@@ -1,8 +1,10 @@
 /**
- * tywrap - TypeScript wrapper for Python libraries with full type safety
+ * tywrap - TypeScript bindings for Python libraries
  *
- * @description Build-time code generation system that makes Python libraries
- * feel native in TypeScript with zero runtime overhead
+ * @description Build-time code generation that produces typed wrappers for
+ * Python modules: precise types where annotations resolve, `unknown` where
+ * they cannot, and runtime validation of decoded returns against the
+ * declared types.
  *
  * This is the package root. It intentionally exposes only the stable,
  * consumer-facing surface. Runtime plumbing (codec, transport, bridge

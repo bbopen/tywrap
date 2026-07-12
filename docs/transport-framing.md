@@ -17,7 +17,7 @@ through a `PooledTransport` lease reassembles correctly (see
 
 ## Scope: subprocess only
 
-`tywrap-frame/1` is **subprocess-only** for 0.8.0. The subprocess transport is
+`tywrap-frame/1` is **subprocess-only** as of 0.9.0. The subprocess transport is
 the only backend with a real frame ceiling — the JSONL line-length limit. The
 other backends stay single-frame and keep `supportsChunking: false`:
 
@@ -27,7 +27,7 @@ other backends stay single-frame and keep `supportsChunking: false`:
 - **Pyodide** is in-memory (`maxFrameBytes: Number.POSITIVE_INFINITY`,
   JSON-only); there is no wire to fragment.
 
-`supportsStreaming` stays `false` on every backend in 0.8.0.
+`supportsStreaming` stays `false` on every backend as of 0.9.0.
 
 ## Layering
 
@@ -106,7 +106,7 @@ construction. The codepoint-boundary rule is a sender obligation: a frame's
 `data` MUST NOT split a multi-byte UTF-8 sequence, so the receiver can decode
 each frame as valid UTF-8 and concatenate without re-aligning bytes across frame
 edges. `utf8-base64` remains a defined alternative in the wire schema for future
-use (e.g. a non-text payload), but tywrap does not emit it in 0.8.0.
+use (e.g. a non-text payload), but tywrap does not emit it as of 0.9.0.
 
 > Implementation note for later workstreams: `total` and the per-frame split
 > points are computed over the message's UTF-8 **byte** length against

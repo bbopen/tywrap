@@ -55,6 +55,18 @@ export class CodeGenerator {
     'Promise',
     'Record',
   ]);
+  // Iterator-protocol objects can never cross the bridge: the Python side
+  // rejects them loudly at serialization, so a return typed as one of these
+  // could never carry a value. Returns degrade to `unknown` (and count as a
+  // degrade for --fail-on-warn). Iterable/Sequence are NOT here — a list
+  // satisfies those annotations and decodes to an array, which structurally
+  // satisfies the emitted TS type.
+  private readonly nonDecodableReturnGenerics = new Set([
+    'Generator',
+    'AsyncGenerator',
+    'Iterator',
+    'AsyncIterator',
+  ]);
   private readonly reservedTsIdentifiers = new Set([
     'default',
     'delete',
@@ -466,18 +478,9 @@ export class CodeGenerator {
           if (leaf === 'NDArray' || leaf === 'ndarray') {
             return { kind: 'marker', marker: 'ndarray' };
           }
-          if (
-            [
-              'list',
-              'List',
-              'Sequence',
-              'Iterable',
-              'Iterator',
-              'Generator',
-              'set',
-              'frozenset',
-            ].includes(leaf)
-          ) {
+          // Iterator/Generator are deliberately absent: those returns emit
+          // `unknown` (see nonDecodableReturnGenerics) and validate nothing.
+          if (['list', 'List', 'Sequence', 'Iterable', 'set', 'frozenset'].includes(leaf)) {
             return {
               kind: 'array',
               element: schema(current.typeArgs[0] ?? { kind: 'custom', name: 'Any' }),
@@ -1205,6 +1208,9 @@ ${migrationNote}${declarationMethodsSection}
           typeArgs: TypescriptType[];
         };
         if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(g.name)) {
+          return this.degradeType(g);
+        }
+        if (mappingContext === 'return' && this.nonDecodableReturnGenerics.has(g.name)) {
           return this.degradeType(g);
         }
         if (ctx && !this.builtinGenericNames.has(g.name) && !this.isLocalTypeIdentity(g, ctx)) {

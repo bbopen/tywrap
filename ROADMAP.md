@@ -8,6 +8,26 @@ The detailed technical appendix for the scientific data plane lives in
 
 ## Recently Shipped
 
+### v0.9.0: typed value-RPC
+
+`v0.9.0` narrowed tywrap to one job done well: typed value-RPC between
+TypeScript and Python (roadmap #260–#270). The stateful instance API is gone
+(#264–#266) — a handle lived in one pool worker while calls routed to any
+worker, so instance methods silently broke under pooling; generated classes now
+expose only static and classmethod members routed through ordinary calls. The
+generated types stopped lying (#267): a return tywrap cannot back with a
+declaration or a codec is `unknown`, `bytes` maps to `Uint8Array`, `set[T]` to
+`T[]`. Decoded returns are validated against the declared type at runtime, with
+`BridgeValidationError` carrying the declared type, received shape, and call
+site (#268). The IR is a pinned, versioned contract (#269): generation writes a
+byte-stable `<module>.contract.json`, `generate --check` catches drift,
+`contractInput` regenerates without spawning Python, and `IR_VERSION 0.4.0` is
+enforced on both sides. Result caching and request retries are removed, the
+subprocess transport stack collapsed from six layers to a merged pool/transport
+with atomic restarts, framing negotiation is gone (always-on), and `SECURITY.md`
+documents the bridge trust model (#262, #263). Docs claim what the tool does,
+not more (#261).
+
 ### v0.8.0: large-payload transport
 
 `v0.8.0` is the second half of the scientific data plane (#237). When a request
@@ -93,19 +113,18 @@ and bridge live.
 
 ## Now
 
-The scientific data plane (#237) is complete as of `v0.8.0`. The next release
-theme is not yet locked; candidates are drawn from **Later** below.
+The typed value-RPC contract pass (#260) is complete as of `v0.9.0`, and the
+scientific data plane (#237) as of `v0.8.0`. The next release theme is not yet
+locked; candidates are drawn from **Later** below.
 
 See [docs/codec-roadmap.md](./docs/codec-roadmap.md) for the deeper technical
 appendix behind the data-plane work.
 
 ## Later
 
-These items are intentionally not part of the scientific data plane (`0.7.0`/`0.8.0`):
+These items are intentionally deferred:
 
 - GPU-native transport such as DLPack or Arrow CUDA
 - HTTP server lifecycle management owned by Tywrap
 - app-level HMR beyond Tywrap wrapper regeneration and bridge reload
 - unsafe default model-serialization paths such as implicit pickle or joblib
-- broader runtime surface removals that should wait for a later major-version
-  contract pass
