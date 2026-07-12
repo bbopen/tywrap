@@ -82,7 +82,7 @@ so a payload can exceed the JSONL line ceiling. The capability is statically
 [Transport framing](./transport-framing.md) for the wire format.
 
 `supportsStreaming` (incremental results for a single request) is `false` on
-every backend; it is not implemented in 0.8.0.
+every backend; it is not implemented as of 0.9.0.
 
 ### `maxFrameBytes`
 

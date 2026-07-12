@@ -1,6 +1,6 @@
 {
   "name": "tywrap",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Generate TypeScript bindings for Python libraries with precise types where tywrap can resolve them — Node.js, experimental Deno, Bun, and browsers via Pyodide.",
   "type": "module",
   "main": "dist/index.js",
@@ -34,6 +34,7 @@
   "files": [
     "dist",
     "runtime",
+    "!runtime/__pycache__",
     "src",
     "README.md",
     "SECURITY.md"
