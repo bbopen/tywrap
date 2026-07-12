@@ -33,14 +33,14 @@ npx tywrap init --format json --modules math,numpy
 | `--config`, `-c`                      | Path for the new config file                           |
 | `--format ts\|json`                   | Output format for the starter config                   |
 | `--modules`                           | Comma-separated Python modules to seed into the config |
-| `--runtime node\|pyodide\|http\|auto` | Runtime to use for seeded module entries               |
+| `--runtime node\|pyodide\|http\|auto` | Accepted for compatibility. Set the active runtime under top-level `runtime` in the generated config. |
 | `--output-dir`                        | Generated wrapper directory in the starter config      |
 | `--force`                             | Overwrite an existing config file                      |
 | `--scripts`, `--no-scripts`           | Add or skip recommended `package.json` scripts         |
 
 ## `tywrap generate`
 
-Loads config, resolves Python IR, and writes generated wrapper files.
+Reads config and writes generated wrapper files from Python IR.
 
 When `--config` is omitted, the CLI searches in this order:
 
@@ -64,7 +64,7 @@ npx tywrap generate --modules math,statistics --runtime node
 | ------------------------------------- | ------------------------------------------------------------------- |
 | `--config`, `-c`                      | Config file path                                                    |
 | `--modules`                           | Comma-separated Python modules to wrap                              |
-| `--runtime node\|pyodide\|http\|auto` | Runtime to use when `--modules` is provided                         |
+| `--runtime node\|pyodide\|http\|auto` | Accepted for compatibility. Set the active runtime under top-level `runtime` in the config. |
 | `--python`                            | Python executable path override                                     |
 | `--output-dir`                        | Override `output.dir`                                               |
 | `--format esm\|cjs\|both`             | Override `output.format`                                            |
@@ -80,6 +80,16 @@ npx tywrap generate --modules math,statistics --runtime node
 
 `--check` is for CI and upgrade verification. It does not write files.
 
+Each generation writes `<module>.contract.json` beside the generated wrapper.
+The contract is byte-stable across machines and Python processes. `--check`
+compares that file as well as generated TypeScript, declaration files, and source
+maps when those outputs are enabled, so it also reports contract drift.
+
+Set `contractInput` in the config to regenerate from a pinned contract without
+starting Python. The TypeScript generator and the Python extractor use IR
+version `0.4.0`. Generation fails with a version-mismatch error that names the
+expected and received versions when they differ.
+
 ```bash
 npx tywrap generate --check
 ```
@@ -90,7 +100,7 @@ Exit codes:
 - `2`: generation succeeded but warnings were present and `--fail-on-warn` was
   set
 - `3`: generated files are out of date
-- `1`: general failure, such as missing config, import failure, or write error
+- `1`: general failure, including missing config or import failure
 
 Typical CI step:
 
@@ -106,8 +116,8 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
-    numpy: { runtime: 'node', typeHints: 'strict', alias: 'np' },
+    math: { typeHints: 'strict' },
+    numpy: { typeHints: 'strict', alias: 'np' },
   },
   output: {
     dir: './generated',
