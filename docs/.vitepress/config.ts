@@ -7,7 +7,7 @@ export default defineConfig({
   base: '/tywrap/',
   appearance: 'force-dark',
   cleanUrls: true,
-  srcExclude: ['**/plans/**', 'release.md', 'codec-roadmap.md'],
+  srcExclude: ['**/plans/**', 'release.md'],
 
   themeConfig: {
     siteTitle: 'tywrap',
@@ -49,6 +49,7 @@ export default defineConfig({
           { text: 'CLI', link: '/reference/cli' },
           { text: 'Environment Variables', link: '/reference/env-vars' },
           { text: 'Type Mapping', link: '/reference/type-mapping' },
+          { text: 'Scientific Codec Envelopes', link: '/codec-envelopes' },
           { text: 'API', link: '/reference/api/' },
         ],
       },
