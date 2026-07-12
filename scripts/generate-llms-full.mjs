@@ -15,6 +15,7 @@ const orderedDocs = [
   'docs/reference/cli.md',
   'docs/reference/env-vars.md',
   'docs/reference/type-mapping.md',
+  'docs/codec-envelopes.md',
   'docs/transport-capabilities.md',
   'docs/transport-framing.md',
   'docs/reference/api/index.md',
@@ -24,7 +25,6 @@ const orderedDocs = [
 
 // Internal / forward-looking docs kept out of the agent-facing llms-full bundle.
 const excludedDocs = new Set([
-  'docs/codec-roadmap.md',
   'docs/perf-baselines.md',
   'docs/release.md',
 ]);
