@@ -188,6 +188,86 @@ describe('CodeGenerator', () => {
     expect(degraded).toEqual(['other.Remote']);
   });
 
+  it('degrades iterator-protocol returns to unknown with a no-op validator', () => {
+    // A generator/iterator object can never cross the bridge (serialization
+    // rejects it loudly), so Generator<...> as a return type could never
+    // carry a value.
+    const degraded: string[] = [];
+    const honestGenerator = new CodeGenerator(undefined, {
+      onTypeDegrade: typeName => degraded.push(typeName),
+    });
+    const returnType = {
+      kind: 'generic',
+      name: 'Generator',
+      module: 'typing',
+      typeArgs: [
+        { kind: 'primitive', name: 'int' },
+        { kind: 'primitive', name: 'None' },
+        { kind: 'primitive', name: 'None' },
+      ],
+    };
+    const code = honestGenerator.generateModuleDefinition({
+      name: 'local_module',
+      functions: [
+        {
+          name: 'counting',
+          signature: { parameters: [], returnType, isAsync: false, isGenerator: true },
+          decorators: [],
+          isAsync: false,
+          isGenerator: true,
+          returnType,
+          parameters: [],
+        },
+      ],
+      classes: [],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    });
+
+    expect(code.typescript).toContain('Promise<unknown>');
+    expect(code.typescript).not.toContain('Generator<');
+    expect(code.typescript).toContain('{"kind":"any"}');
+    expect(degraded).toEqual(['typing.Generator']);
+  });
+
+  it('keeps Iterable returns as arrays — a decoded list satisfies them honestly', () => {
+    const degraded: string[] = [];
+    const honestGenerator = new CodeGenerator(undefined, {
+      onTypeDegrade: typeName => degraded.push(typeName),
+    });
+    const returnType = {
+      kind: 'generic',
+      name: 'Iterable',
+      module: 'typing',
+      typeArgs: [{ kind: 'primitive', name: 'int' }],
+    };
+    const code = honestGenerator.generateModuleDefinition({
+      name: 'local_module',
+      functions: [
+        {
+          name: 'values',
+          signature: { parameters: [], returnType, isAsync: false, isGenerator: false },
+          decorators: [],
+          isAsync: false,
+          isGenerator: false,
+          returnType,
+          parameters: [],
+        },
+      ],
+      classes: [],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    });
+
+    expect(code.typescript).toContain('Promise<Iterable<number>>');
+    expect(code.typescript).toContain(
+      '{"kind":"array","element":{"kind":"primitive","type":"number"}}'
+    );
+    expect(degraded).toEqual([]);
+  });
+
   it('degrades qualified generic heads and module-colliding leaves', () => {
     const degraded: string[] = [];
     const honestGenerator = new CodeGenerator(undefined, {
