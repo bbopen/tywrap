@@ -1,0 +1,36 @@
+# tywrap
+
+> TypeScript binding generator for Python libraries. It produces precise
+> TypeScript types for fully annotated, in-module, serializable Python returns
+> and falls back where a type cannot be resolved, then calls them at runtime
+> over a subprocess bridge (Node.js, Bun, experimental/untested Deno),
+> in-browser WebAssembly (Pyodide), or HTTP. Apache Arrow is the default binary transport for
+> numpy/pandas data (JSON fallback); the Node bridge chunks results larger than
+> a single JSONL line. Experimental (pre-v1.0.0) — APIs may change.
+
+## Docs
+
+- [Getting Started](https://bbopen.github.io/tywrap/guide/getting-started): Installation, quick start, first wrapper
+- [Configuration](https://bbopen.github.io/tywrap/guide/configuration): tywrap.config.ts / .json, all options
+- [Runtime Comparison](https://bbopen.github.io/tywrap/guide/runtimes/comparison): Which bridge to use and when
+- [Node.js Runtime](https://bbopen.github.io/tywrap/guide/runtimes/node): NodeBridge setup, virtual envs, pooling, large-payload chunking
+- [Bun Runtime](https://bbopen.github.io/tywrap/guide/runtimes/bun): NodeBridge on Bun, bunfig.toml
+- [Deno Runtime](https://bbopen.github.io/tywrap/guide/runtimes/deno): Experimental, untested-in-CI subprocess support; npm: prefix, --allow-run, Deno Deploy limitation
+- [Browser Runtime (Pyodide)](https://bbopen.github.io/tywrap/guide/runtimes/browser): WebAssembly Python, no subprocess needed
+- [HTTP Bridge](https://bbopen.github.io/tywrap/guide/runtimes/http): Remote Python server, stateless HTTP POST
+- [Development Hot Reload](https://bbopen.github.io/tywrap/guide/dev-reload): tywrap/dev watch sessions, bridge swap, reload contract
+- [CLI Reference](https://bbopen.github.io/tywrap/reference/cli): tywrap init, generate, generate --check
+- [Environment Variables](https://bbopen.github.io/tywrap/reference/env-vars): All TYWRAP\_\* variables with defaults
+- [Type Mapping](https://bbopen.github.io/tywrap/reference/type-mapping): Python→TypeScript type conversions (numpy, pandas, scipy, torch, sklearn)
+- [Transport Capabilities](https://bbopen.github.io/tywrap/transport-capabilities): Per-backend capability matrix (Arrow, binary, chunking, frame size)
+- [Transport Framing](https://bbopen.github.io/tywrap/transport-framing): tywrap-frame/1 chunked-transport spec, negotiation, and size bounds
+- [API Reference](https://bbopen.github.io/tywrap/reference/api/): Programmatic API, bridge classes, codec utilities, error types
+- [Examples](https://bbopen.github.io/tywrap/examples/): Copy-pasteable runtime examples
+
+## Optional
+
+- [Troubleshooting](https://bbopen.github.io/tywrap/troubleshooting/): Common errors and fixes
+- [Releases](https://github.com/bbopen/tywrap/releases): Version history and breaking changes
+- [Contributing](https://github.com/bbopen/tywrap/blob/main/CONTRIBUTING.md): Development setup, PR guidelines
+- [AGENTS.md](https://github.com/bbopen/tywrap/blob/main/AGENTS.md): AI coding agent build/test instructions
+- [Security Policy](https://github.com/bbopen/tywrap/blob/main/SECURITY.md): Bridge trust model and vulnerability reporting

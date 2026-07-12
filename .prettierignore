@@ -1,0 +1,26 @@
+# Build outputs
+dist/
+build/
+coverage/
+
+# Dependencies  
+node_modules/
+
+# Cache
+.cache/
+.tmp/
+.temp/
+
+# Generated files
+*.generated.ts
+*.generated.js
+
+# Package files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Documentation build
+docs/build/
+# Generated version constant (built from package.json by scripts/generate-version.mjs)
+src/version.ts

@@ -1,0 +1,1712 @@
+import { describe, it, expect } from 'vitest';
+import { CodeGenerator } from '../src/core/generator.js';
+
+describe('CodeGenerator', () => {
+  const gen = new CodeGenerator();
+
+  it('generates function wrapper with JSDoc', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'add',
+        signature: {
+          parameters: [
+            {
+              name: 'x',
+              type: { kind: 'primitive', name: 'int' },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+            {
+              name: 'y',
+              type: { kind: 'primitive', name: 'int' },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+          ],
+          returnType: { kind: 'primitive', name: 'int' },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: 'Add two numbers',
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: { kind: 'primitive', name: 'int' },
+        parameters: [
+          {
+            name: 'x',
+            type: { kind: 'primitive', name: 'int' },
+            optional: false,
+            varArgs: false,
+            kwArgs: false,
+          },
+          {
+            name: 'y',
+            type: { kind: 'primitive', name: 'int' },
+            optional: false,
+            varArgs: false,
+            kwArgs: false,
+          },
+        ],
+      } as any,
+      'math'
+    );
+    expect(code.typescript).toContain('export async function add');
+    expect(code.typescript).toContain('Add two numbers');
+    expect(code.typescript).toContain("getRuntimeBridge().call<number>('math', 'add'");
+    expect(code.typescript).toContain('createReturnValidator');
+  });
+
+  it('emits a null union member for X | None returns, not an accept-everything any', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'maybe_count',
+        signature: {
+          parameters: [],
+          returnType: {
+            kind: 'union',
+            types: [
+              { kind: 'primitive', name: 'int' },
+              { kind: 'primitive', name: 'None' },
+            ],
+          },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: {
+          kind: 'union',
+          types: [
+            { kind: 'primitive', name: 'int' },
+            { kind: 'primitive', name: 'None' },
+          ],
+        },
+        parameters: [],
+      } as any,
+      'maybe_mod'
+    );
+
+    expect(code.typescript).toContain('"type":"null"');
+    expect(code.typescript).not.toContain('"kind":"any"');
+  });
+
+  it('keeps a bare -> None return as a validation no-op', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'do_nothing',
+        signature: {
+          parameters: [],
+          returnType: { kind: 'primitive', name: 'None' },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: { kind: 'primitive', name: 'None' },
+        parameters: [],
+      } as any,
+      'maybe_mod'
+    );
+
+    expect(code.typescript).toContain('{"kind":"any"}');
+  });
+
+  it('serializes tuple types as TS tuples', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'pair',
+        signature: {
+          parameters: [],
+          returnType: {
+            kind: 'collection',
+            name: 'tuple',
+            itemTypes: [
+              { kind: 'primitive', name: 'int' },
+              { kind: 'primitive', name: 'str' },
+            ],
+          },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: {
+          kind: 'collection',
+          name: 'tuple',
+          itemTypes: [
+            { kind: 'primitive', name: 'int' },
+            { kind: 'primitive', name: 'str' },
+          ],
+        },
+        parameters: [],
+      } as any,
+      'math'
+    );
+    expect(code.typescript).toMatch(/Promise<\[number, string\]>/);
+  });
+
+  it('degrades undeclared generated type leaves to unknown and reports them', () => {
+    const degraded: string[] = [];
+    const honestGenerator = new CodeGenerator(undefined, {
+      onTypeDegrade: typeName => degraded.push(typeName),
+    });
+    const code = honestGenerator.generateModuleDefinition({
+      name: 'local_module',
+      functions: [
+        {
+          name: 'external',
+          signature: {
+            parameters: [],
+            returnType: { kind: 'custom', name: 'Remote', module: 'other' },
+            isAsync: false,
+            isGenerator: false,
+          },
+          decorators: [],
+          isAsync: false,
+          isGenerator: false,
+          returnType: { kind: 'custom', name: 'Remote', module: 'other' },
+          parameters: [],
+        },
+      ],
+      classes: [],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    });
+
+    expect(code.typescript).toContain('Promise<unknown>');
+    expect(code.typescript).not.toContain('Promise<Remote>');
+    expect(degraded).toEqual(['other.Remote']);
+  });
+
+  it('degrades iterator-protocol returns to unknown with a no-op validator', () => {
+    // A generator/iterator object can never cross the bridge (serialization
+    // rejects it loudly), so Generator<...> as a return type could never
+    // carry a value.
+    const degraded: string[] = [];
+    const honestGenerator = new CodeGenerator(undefined, {
+      onTypeDegrade: typeName => degraded.push(typeName),
+    });
+    const returnType = {
+      kind: 'generic',
+      name: 'Generator',
+      module: 'typing',
+      typeArgs: [
+        { kind: 'primitive', name: 'int' },
+        { kind: 'primitive', name: 'None' },
+        { kind: 'primitive', name: 'None' },
+      ],
+    };
+    const code = honestGenerator.generateModuleDefinition({
+      name: 'local_module',
+      functions: [
+        {
+          name: 'counting',
+          signature: { parameters: [], returnType, isAsync: false, isGenerator: true },
+          decorators: [],
+          isAsync: false,
+          isGenerator: true,
+          returnType,
+          parameters: [],
+        },
+      ],
+      classes: [],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    });
+
+    expect(code.typescript).toContain('Promise<unknown>');
+    expect(code.typescript).not.toContain('Generator<');
+    expect(code.typescript).toContain('{"kind":"any"}');
+    expect(degraded).toEqual(['typing.Generator']);
+  });
+
+  it('keeps Iterable returns as arrays — a decoded list satisfies them honestly', () => {
+    const degraded: string[] = [];
+    const honestGenerator = new CodeGenerator(undefined, {
+      onTypeDegrade: typeName => degraded.push(typeName),
+    });
+    const returnType = {
+      kind: 'generic',
+      name: 'Iterable',
+      module: 'typing',
+      typeArgs: [{ kind: 'primitive', name: 'int' }],
+    };
+    const code = honestGenerator.generateModuleDefinition({
+      name: 'local_module',
+      functions: [
+        {
+          name: 'values',
+          signature: { parameters: [], returnType, isAsync: false, isGenerator: false },
+          decorators: [],
+          isAsync: false,
+          isGenerator: false,
+          returnType,
+          parameters: [],
+        },
+      ],
+      classes: [],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    });
+
+    expect(code.typescript).toContain('Promise<Iterable<number>>');
+    expect(code.typescript).toContain(
+      '{"kind":"array","element":{"kind":"primitive","type":"number"}}'
+    );
+    expect(degraded).toEqual([]);
+  });
+
+  it('degrades qualified generic heads and module-colliding leaves', () => {
+    const degraded: string[] = [];
+    const honestGenerator = new CodeGenerator(undefined, {
+      onTypeDegrade: typeName => degraded.push(typeName),
+    });
+    const makeFunction = (name: string, returnType: any): any => ({
+      name,
+      signature: { parameters: [], returnType, isAsync: false, isGenerator: false },
+      decorators: [],
+      isAsync: false,
+      isGenerator: false,
+      returnType,
+      parameters: [],
+    });
+    const code = honestGenerator.generateModuleDefinition({
+      name: 'local_module',
+      functions: [
+        makeFunction('generic', {
+          kind: 'generic',
+          name: 'Remote',
+          module: 'other',
+          typeArgs: [{ kind: 'primitive', name: 'int' }],
+        }),
+        makeFunction('collision', { kind: 'custom', name: 'Point', module: 'external' }),
+        makeFunction('invalid', { kind: 'custom', name: 'bad-name', module: 'external' }),
+      ],
+      classes: [
+        {
+          name: 'Point',
+          bases: [],
+          methods: [],
+          properties: [],
+          decorators: [],
+        },
+      ],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    });
+
+    expect(code.typescript).not.toContain('Remote<number>');
+    expect(code.typescript).not.toContain('Promise<Point>');
+    expect(degraded).toEqual(['external.Point', 'other.Remote', 'external.bad-name']);
+  });
+
+  it('emits JSDoc with Annotated metadata when enabled', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'f',
+        signature: {
+          parameters: [
+            {
+              name: 'x',
+              type: {
+                kind: 'annotated',
+                base: { kind: 'primitive', name: 'int' },
+                metadata: ['min=0'],
+              },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+          ],
+          returnType: { kind: 'primitive', name: 'int' },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: 'Doc',
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: { kind: 'primitive', name: 'int' },
+        parameters: [
+          {
+            name: 'x',
+            type: {
+              kind: 'annotated',
+              base: { kind: 'primitive', name: 'int' },
+              metadata: ['min=0'],
+            },
+            optional: false,
+            varArgs: false,
+            kwArgs: false,
+          },
+        ],
+      } as any,
+      'm',
+      true
+    );
+    expect(code.typescript).toContain('@param arg0');
+  });
+
+  it('generates overloads for optional parameters and maps varargs/kwargs', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'f',
+        signature: {
+          parameters: [
+            {
+              name: 'x',
+              type: { kind: 'primitive', name: 'int' },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+            {
+              name: 'y',
+              type: { kind: 'primitive', name: 'int' },
+              optional: true,
+              varArgs: false,
+              kwArgs: false,
+            },
+            {
+              name: 'args',
+              type: { kind: 'primitive', name: 'int' },
+              optional: false,
+              varArgs: true,
+              kwArgs: false,
+            },
+            {
+              name: 'kwargs',
+              type: { kind: 'primitive', name: 'int' },
+              optional: false,
+              varArgs: false,
+              kwArgs: true,
+            },
+          ],
+          returnType: { kind: 'primitive', name: 'int' },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: { kind: 'primitive', name: 'int' },
+        parameters: [
+          {
+            name: 'x',
+            type: { kind: 'primitive', name: 'int' },
+            optional: false,
+            varArgs: false,
+            kwArgs: false,
+          },
+          {
+            name: 'y',
+            type: { kind: 'primitive', name: 'int' },
+            optional: true,
+            varArgs: false,
+            kwArgs: false,
+          },
+          {
+            name: 'args',
+            type: { kind: 'primitive', name: 'int' },
+            optional: false,
+            varArgs: true,
+            kwArgs: false,
+          },
+          {
+            name: 'kwargs',
+            type: { kind: 'primitive', name: 'int' },
+            optional: false,
+            varArgs: false,
+            kwArgs: true,
+          },
+        ],
+      } as any,
+      'm'
+    );
+    expect(code.typescript).not.toMatch(
+      /export function f\(x: number, args\?: unknown\[], kwargs\?: Record<string, unknown>\): Promise<number>;/
+    );
+    expect(code.typescript).toMatch(
+      /export async function f\(x: number, y\?: number, args\?: unknown\[], kwargs\?: Record<string, unknown>\): Promise<number>/
+    );
+  });
+
+  it('renders required keyword-only params in final kwargs object and avoids required-after-optional', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'f',
+        signature: {
+          parameters: [
+            {
+              name: 'a',
+              type: { kind: 'primitive', name: 'int' },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+            {
+              name: 'b',
+              type: { kind: 'primitive', name: 'int' },
+              optional: true,
+              varArgs: false,
+              kwArgs: false,
+            },
+            {
+              name: 'c',
+              type: { kind: 'primitive', name: 'int' },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+              keywordOnly: true,
+            },
+          ],
+          returnType: { kind: 'primitive', name: 'int' },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: { kind: 'primitive', name: 'int' },
+        parameters: [
+          {
+            name: 'a',
+            type: { kind: 'primitive', name: 'int' },
+            optional: false,
+            varArgs: false,
+            kwArgs: false,
+          },
+          {
+            name: 'b',
+            type: { kind: 'primitive', name: 'int' },
+            optional: true,
+            varArgs: false,
+            kwArgs: false,
+          },
+          {
+            name: 'c',
+            type: { kind: 'primitive', name: 'int' },
+            optional: false,
+            varArgs: false,
+            kwArgs: false,
+            keywordOnly: true,
+          },
+        ],
+      } as any,
+      'm'
+    );
+
+    // Overload allowing skipping optional positional `b` while requiring kwargs.
+    expect(code.typescript).toMatch(
+      /export function f\(a: number, kwargs: \{ "c": number; \}\): Promise<number>;/
+    );
+    // Overload where `b` is present must render it as required (no `?`) to keep the signature valid.
+    expect(code.typescript).toMatch(
+      /export function f\(a: number, b: number, kwargs: \{ "c": number; \}\): Promise<number>;/
+    );
+    // Implementation keeps kwargs optional but includes the correct object type.
+    expect(code.typescript).toMatch(
+      /export async function f\(a: number, b\?: number, kwargs\?: \{ "c": number; \}\): Promise<number>/
+    );
+  });
+
+  it('models *args as an array parameter when kwargs are present', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'g',
+        signature: {
+          parameters: [
+            {
+              name: 'args',
+              type: { kind: 'primitive', name: 'int' },
+              optional: false,
+              varArgs: true,
+              kwArgs: false,
+            },
+            {
+              name: 'c',
+              type: { kind: 'primitive', name: 'int' },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+              keywordOnly: true,
+            },
+          ],
+          returnType: { kind: 'primitive', name: 'int' },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: { kind: 'primitive', name: 'int' },
+        parameters: [
+          {
+            name: 'args',
+            type: { kind: 'primitive', name: 'int' },
+            optional: false,
+            varArgs: true,
+            kwArgs: false,
+          },
+          {
+            name: 'c',
+            type: { kind: 'primitive', name: 'int' },
+            optional: false,
+            varArgs: false,
+            kwArgs: false,
+            keywordOnly: true,
+          },
+        ],
+      } as any,
+      'm'
+    );
+
+    // Rest parameters can't precede kwargs; this should be an array param.
+    expect(code.typescript).not.toContain('...args: unknown[]');
+    // When `kwargs` is required in overloads, allow `undefined` as a placeholder for omitted varargs.
+    expect(code.typescript).toMatch(
+      /export function g\(args: unknown\[\]\s*\|\s*undefined, kwargs: \{ "c": number; \}\): Promise<number>;/
+    );
+    // Also allow omitting the varargs placeholder entirely.
+    expect(code.typescript).toMatch(
+      /export function g\(kwargs: \{ "c": number; \}\): Promise<number>;/
+    );
+    expect(code.typescript).toMatch(
+      /export async function g\(args\?: unknown\[], kwargs\?: \{ "c": number; \}\): Promise<number>/
+    );
+  });
+
+  it('requires kwargs in class wrappers when keyword-only params are required', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'C',
+        bases: [],
+        methods: [
+          {
+            name: '__init__',
+            signature: {
+              parameters: [],
+              returnType: { kind: 'primitive', name: 'None' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'None' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'c',
+                type: { kind: 'primitive', name: 'int' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+                keywordOnly: true,
+              },
+            ],
+          },
+          {
+            name: 'm',
+            signature: {
+              parameters: [],
+              returnType: { kind: 'primitive', name: 'int' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'int' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'k',
+                type: { kind: 'primitive', name: 'int' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+                keywordOnly: true,
+              },
+            ],
+          },
+        ],
+        properties: [],
+        docstring: undefined,
+        decorators: [],
+      } as any,
+      'm'
+    );
+
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.typescript).not.toContain('static create');
+    expect(code.typescript).not.toContain('async m');
+  });
+
+  it('generates constructor typing from __init__ and sorts members', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'C',
+        bases: [],
+        methods: [
+          {
+            name: '__init__',
+            signature: {
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+                {
+                  name: 'x',
+                  type: { kind: 'primitive', name: 'int' },
+                  optional: true,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+                {
+                  name: 'args',
+                  type: { kind: 'primitive', name: 'int' },
+                  optional: false,
+                  varArgs: true,
+                  kwArgs: false,
+                },
+              ],
+              returnType: { kind: 'primitive', name: 'None' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'None' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'x',
+                type: { kind: 'primitive', name: 'int' },
+                optional: true,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'args',
+                type: { kind: 'primitive', name: 'int' },
+                optional: false,
+                varArgs: true,
+                kwArgs: false,
+              },
+            ],
+          },
+          {
+            name: 'b',
+            signature: {
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+              returnType: { kind: 'primitive', name: 'int' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'int' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+          {
+            name: 'a',
+            signature: {
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+              returnType: { kind: 'primitive', name: 'int' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'int' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+        ],
+        properties: [],
+        docstring: undefined,
+        decorators: [],
+      } as any,
+      'm'
+    );
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.typescript).not.toContain('static async create');
+    expect(code.typescript).not.toContain('async a(');
+    expect(code.typescript).not.toContain('async b(');
+  });
+
+  it('emits TypedDict as a TS object type alias with required/optional keys', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'User',
+        bases: [],
+        methods: [],
+        properties: [
+          {
+            name: 'id',
+            type: { kind: 'primitive', name: 'int' },
+            readonly: false,
+            getter: true,
+            setter: false,
+          } as any,
+          {
+            name: 'name',
+            type: { kind: 'primitive', name: 'str' },
+            readonly: false,
+            getter: true,
+            setter: false,
+            optional: true,
+          } as any,
+        ],
+        docstring: undefined,
+        decorators: ['__typed_dict__'],
+      } as any,
+      'm'
+    );
+    expect(code.typescript).toContain('export type User =');
+    expect(code.typescript).toContain('id: number;');
+    expect(code.typescript).toContain('name?: string;');
+  });
+
+  it('emits generic function type parameters on overloads and declarations', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'coalesce',
+        signature: {
+          parameters: [
+            {
+              name: 'x',
+              type: { kind: 'typevar', name: 'T' },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+            {
+              name: 'y',
+              type: { kind: 'typevar', name: 'T' },
+              optional: true,
+              varArgs: false,
+              kwArgs: false,
+            },
+          ],
+          returnType: { kind: 'typevar', name: 'T' },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        typeParameters: [{ name: 'T', kind: 'typevar', variance: 'invariant' }],
+        returnType: { kind: 'typevar', name: 'T' },
+        parameters: [
+          {
+            name: 'x',
+            type: { kind: 'typevar', name: 'T' },
+            optional: false,
+            varArgs: false,
+            kwArgs: false,
+          },
+          {
+            name: 'y',
+            type: { kind: 'typevar', name: 'T' },
+            optional: true,
+            varArgs: false,
+            kwArgs: false,
+          },
+        ],
+      } as any,
+      'generic_module'
+    );
+
+    expect(code.typescript).toContain('export function coalesce<T>(x: T): Promise<T>;');
+    expect(code.typescript).toContain('export async function coalesce<T>(x: T, y?: T): Promise<T>');
+    expect(code.declaration).toContain('export function coalesce<T>(x: T): Promise<T>;');
+  });
+
+  it('generates protocol aliases without init helpers and preserves method generics', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Mapper',
+        bases: ['Protocol'],
+        methods: [
+          {
+            name: '__init__',
+            signature: {
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+              returnType: { kind: 'primitive', name: 'None' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'None' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+          {
+            name: 'map',
+            signature: {
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+                {
+                  name: 'x',
+                  type: { kind: 'typevar', name: 'U' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+              returnType: { kind: 'typevar', name: 'U' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            typeParameters: [{ name: 'U', kind: 'typevar', variance: 'invariant' }],
+            returnType: { kind: 'typevar', name: 'U' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'x',
+                type: { kind: 'typevar', name: 'U' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+        ],
+        properties: [],
+        docstring: undefined,
+        decorators: [],
+        kind: 'protocol',
+      } as any,
+      'protocol_module'
+    );
+
+    expect(code.typescript).toContain('export type Mapper =');
+    expect(code.typescript).toContain('map: <U>(x: U) => U;');
+    expect(code.typescript).not.toContain('__init__');
+    expect(code.typescript).not.toContain('NoInitOrReplaceInit');
+  });
+
+  it('includes @property accessors in protocol alias typings', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'HasArea',
+        bases: ['Protocol'],
+        methods: [],
+        properties: [],
+        accessors: [{ name: 'area', type: { kind: 'primitive', name: 'int' }, readOnly: true }],
+        docstring: undefined,
+        decorators: [],
+        kind: 'protocol',
+      } as any,
+      'protocol_module'
+    );
+
+    expect(code.typescript).toContain('export type HasArea =');
+    // Bridge-accessed @property → readonly Promise member, mirroring the
+    // concrete class's `get area(): Promise<number>`.
+    expect(code.typescript).toContain('readonly area: Promise<number>;');
+  });
+
+  it('emits generic classes and type aliases with safe fallbacks', () => {
+    const typeP = { name: 'P', kind: 'paramspec' } as const;
+    const typeT = { name: 'T', kind: 'typevar', variance: 'invariant' } as const;
+    const code = gen.generateModuleDefinition({
+      name: 'generic_module',
+      functions: [
+        {
+          name: 'forward',
+          signature: {
+            parameters: [
+              {
+                name: 'container',
+                type: {
+                  kind: 'generic',
+                  name: 'Container',
+                  module: 'generic_module',
+                  typeArgs: [{ kind: 'typevar', name: 'T' }],
+                },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+            returnType: {
+              kind: 'generic',
+              name: 'Container',
+              module: 'generic_module',
+              typeArgs: [{ kind: 'typevar', name: 'T' }],
+            },
+            isAsync: false,
+            isGenerator: false,
+          },
+          docstring: undefined,
+          decorators: [],
+          isAsync: false,
+          isGenerator: false,
+          typeParameters: [typeT],
+          returnType: {
+            kind: 'generic',
+            name: 'Container',
+            module: 'generic_module',
+            typeArgs: [{ kind: 'typevar', name: 'T' }],
+          },
+          parameters: [
+            {
+              name: 'container',
+              type: {
+                kind: 'generic',
+                name: 'Container',
+                module: 'generic_module',
+                typeArgs: [{ kind: 'typevar', name: 'T' }],
+              },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+          ],
+        },
+        {
+          name: 'accept_transform',
+          signature: {
+            parameters: [
+              {
+                name: 'transform',
+                type: {
+                  kind: 'generic',
+                  name: 'Transform',
+                  module: 'generic_module',
+                  typeArgs: [
+                    { kind: 'paramspec', name: 'P' },
+                    { kind: 'typevar', name: 'T' },
+                  ],
+                },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+            returnType: {
+              kind: 'generic',
+              name: 'Transform',
+              module: 'generic_module',
+              typeArgs: [
+                { kind: 'paramspec', name: 'P' },
+                { kind: 'typevar', name: 'T' },
+              ],
+            },
+            isAsync: false,
+            isGenerator: false,
+          },
+          docstring: undefined,
+          decorators: [],
+          isAsync: false,
+          isGenerator: false,
+          typeParameters: [typeP, typeT],
+          returnType: {
+            kind: 'generic',
+            name: 'Transform',
+            module: 'generic_module',
+            typeArgs: [
+              { kind: 'paramspec', name: 'P' },
+              { kind: 'typevar', name: 'T' },
+            ],
+          },
+          parameters: [
+            {
+              name: 'transform',
+              type: {
+                kind: 'generic',
+                name: 'Transform',
+                module: 'generic_module',
+                typeArgs: [
+                  { kind: 'paramspec', name: 'P' },
+                  { kind: 'typevar', name: 'T' },
+                ],
+              },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+          ],
+        },
+      ],
+      classes: [
+        {
+          name: 'Container',
+          bases: ['Generic'],
+          methods: [
+            {
+              name: '__init__',
+              signature: {
+                parameters: [
+                  {
+                    name: 'self',
+                    type: { kind: 'primitive', name: 'None' },
+                    optional: false,
+                    varArgs: false,
+                    kwArgs: false,
+                  },
+                  {
+                    name: 'value',
+                    type: { kind: 'typevar', name: 'T' },
+                    optional: false,
+                    varArgs: false,
+                    kwArgs: false,
+                  },
+                ],
+                returnType: { kind: 'primitive', name: 'None' },
+                isAsync: false,
+                isGenerator: false,
+              },
+              docstring: undefined,
+              decorators: [],
+              isAsync: false,
+              isGenerator: false,
+              returnType: { kind: 'primitive', name: 'None' },
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+                {
+                  name: 'value',
+                  type: { kind: 'typevar', name: 'T' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+            },
+            {
+              name: 'clone',
+              signature: {
+                parameters: [
+                  {
+                    name: 'self',
+                    type: { kind: 'primitive', name: 'None' },
+                    optional: false,
+                    varArgs: false,
+                    kwArgs: false,
+                  },
+                ],
+                returnType: {
+                  kind: 'generic',
+                  name: 'Container',
+                  module: 'generic_module',
+                  typeArgs: [{ kind: 'typevar', name: 'T' }],
+                },
+                isAsync: false,
+                isGenerator: false,
+              },
+              docstring: undefined,
+              decorators: [],
+              isAsync: false,
+              isGenerator: false,
+              returnType: {
+                kind: 'generic',
+                name: 'Container',
+                module: 'generic_module',
+                typeArgs: [{ kind: 'typevar', name: 'T' }],
+              },
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+            },
+            {
+              name: 'id',
+              signature: {
+                parameters: [
+                  {
+                    name: 'self',
+                    type: { kind: 'primitive', name: 'None' },
+                    optional: false,
+                    varArgs: false,
+                    kwArgs: false,
+                  },
+                  {
+                    name: 'x',
+                    type: { kind: 'typevar', name: 'U' },
+                    optional: false,
+                    varArgs: false,
+                    kwArgs: false,
+                  },
+                ],
+                returnType: {
+                  kind: 'collection',
+                  name: 'tuple',
+                  itemTypes: [
+                    { kind: 'typevar', name: 'T' },
+                    { kind: 'typevar', name: 'U' },
+                  ],
+                },
+                isAsync: false,
+                isGenerator: false,
+              },
+              docstring: undefined,
+              decorators: [],
+              isAsync: false,
+              isGenerator: false,
+              typeParameters: [{ name: 'U', kind: 'typevar', variance: 'invariant' }],
+              returnType: {
+                kind: 'collection',
+                name: 'tuple',
+                itemTypes: [
+                  { kind: 'typevar', name: 'T' },
+                  { kind: 'typevar', name: 'U' },
+                ],
+              },
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+                {
+                  name: 'x',
+                  type: { kind: 'typevar', name: 'U' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+            },
+          ],
+          properties: [],
+          docstring: undefined,
+          decorators: [],
+          typeParameters: [typeT],
+        },
+      ],
+      typeAliases: [
+        {
+          name: 'Pair',
+          type: {
+            kind: 'collection',
+            name: 'tuple',
+            itemTypes: [
+              { kind: 'typevar', name: 'T' },
+              { kind: 'typevar', name: 'T' },
+            ],
+          },
+          typeParameters: [typeT],
+        },
+        {
+          name: 'Transform',
+          type: {
+            kind: 'callable',
+            parameters: [],
+            parameterSpec: { kind: 'paramspec', name: 'P' },
+            returnType: { kind: 'typevar', name: 'T' },
+          },
+          typeParameters: [
+            { name: 'P', kind: 'paramspec' },
+            { name: 'T', kind: 'typevar', variance: 'invariant' },
+          ],
+        },
+        {
+          name: 'Variadic',
+          type: {
+            kind: 'collection',
+            name: 'tuple',
+            itemTypes: [
+              {
+                kind: 'unpack',
+                type: { kind: 'typevartuple', name: 'Ts' },
+              },
+            ],
+          },
+          typeParameters: [{ name: 'Ts', kind: 'typevartuple' }],
+        },
+      ],
+      imports: [],
+      exports: [],
+    } as any);
+
+    expect(code.typescript).toContain('export async function forward<T>(container: Container<T>)');
+    expect(code.typescript).toContain(
+      'export async function acceptTransform<P extends unknown[], T>(transform: Transform<P, T>): Promise<Transform<P, T>>'
+    );
+    expect(code.typescript).toContain('Promise<Container<T>>');
+    expect(code.typescript).toContain('export class Container<T>');
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.typescript).not.toContain('static async create');
+    expect(code.typescript).not.toContain('fromHandle');
+    expect(code.typescript).not.toContain('async clone');
+    expect(code.typescript).toContain('export type Pair<T> = [T, T]');
+    expect(code.typescript).toContain(
+      'export type Transform<P extends unknown[], T> = (...args: P) => T'
+    );
+    expect(code.typescript).toContain('export type Variadic = [unknown]');
+    expect(code.typescript).not.toContain('~T');
+    expect(code.typescript).not.toContain('~P');
+    expect(code.typescript).not.toContain('Unpack[');
+    expect(code.typescript).not.toMatch(/\bTs\b/);
+    expect(code.declaration).toContain('export type Pair<T> = [T, T]');
+    expect(code.declaration).toContain(
+      'export function acceptTransform<P extends unknown[], T>(transform: Transform<P, T>): Promise<Transform<P, T>>;'
+    );
+    expect(code.declaration).not.toContain('id<U>(x: U): Promise<[T, U]>;');
+    expect(code.declaration).not.toContain('getRuntimeBridge');
+  });
+
+  it('generates class wrapper', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Calculator',
+        bases: [],
+        methods: [
+          {
+            name: '__init__',
+            signature: {
+              parameters: [],
+              returnType: { kind: 'primitive', name: 'None' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'None' },
+            parameters: [],
+          },
+          {
+            name: 'add',
+            signature: {
+              parameters: [
+                {
+                  name: 'self',
+                  type: { kind: 'primitive', name: 'None' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+                {
+                  name: 'x',
+                  type: { kind: 'primitive', name: 'int' },
+                  optional: false,
+                  varArgs: false,
+                  kwArgs: false,
+                },
+              ],
+              returnType: { kind: 'primitive', name: 'int' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: 'Add',
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            returnType: { kind: 'primitive', name: 'int' },
+            parameters: [
+              {
+                name: 'self',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'x',
+                type: { kind: 'primitive', name: 'int' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+        ],
+        properties: [],
+        docstring: 'A calc',
+        decorators: [],
+      } as any,
+      'math'
+    );
+    expect(code.typescript).toContain('export class Calculator');
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.typescript).not.toContain('async add(');
+    expect(code.typescript).not.toContain('callMethod');
+  });
+
+  it('emits @classmethod and @staticmethod as static members invoked through the class', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Pet',
+        bases: [],
+        methods: [
+          {
+            name: 'create_dog',
+            signature: {
+              parameters: [],
+              returnType: { kind: 'custom', name: 'Pet' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            methodKind: 'class',
+            returnType: { kind: 'custom', name: 'Pet' },
+            parameters: [
+              {
+                name: 'cls',
+                type: { kind: 'primitive', name: 'None' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+              {
+                name: 'name',
+                type: { kind: 'primitive', name: 'str' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+          {
+            name: 'is_valid_name',
+            signature: {
+              parameters: [],
+              returnType: { kind: 'primitive', name: 'bool' },
+              isAsync: false,
+              isGenerator: false,
+            },
+            docstring: undefined,
+            decorators: [],
+            isAsync: false,
+            isGenerator: false,
+            methodKind: 'static',
+            returnType: { kind: 'primitive', name: 'bool' },
+            parameters: [
+              {
+                name: 'name',
+                type: { kind: 'primitive', name: 'str' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+          },
+        ],
+        properties: [],
+        docstring: undefined,
+        decorators: [],
+      } as any,
+      'pets'
+    );
+
+    // classmethod: static member, `cls` stripped, invoked through the class.
+    // The TS member name is escaped (camelCased) while the dotted RPC target
+    // (Class.method) keeps the raw Python names.
+    expect(code.typescript).toContain('static async createDog(name: string): Promise<Pet>');
+    expect(code.typescript).toContain(
+      "getRuntimeBridge().call<Pet>('pets', 'Pet.create_dog', __args"
+    );
+    // staticmethod: static member, no implicit first param, class-routed call.
+    expect(code.typescript).toContain('static async isValidName(name: string): Promise<boolean>');
+    expect(code.typescript).toContain(
+      "getRuntimeBridge().call<boolean>('pets', 'Pet.is_valid_name', __args"
+    );
+    // Must NOT route static/class members through the instance handle.
+    expect(code.typescript).not.toContain('callMethod');
+    // Declaration mirrors the static members.
+    expect(code.declaration).toContain('static isValidName(name: string): Promise<boolean>;');
+  });
+
+  it('omits @property / cached_property accessors with a value-function migration note', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Pet',
+        bases: [],
+        methods: [],
+        properties: [],
+        accessors: [
+          {
+            name: 'pet_name',
+            type: { kind: 'primitive', name: 'str' },
+            docstring: "Get pet's name.",
+            readOnly: true,
+            isCached: false,
+          },
+          {
+            name: 'expensive',
+            type: {
+              kind: 'collection',
+              name: 'list',
+              itemTypes: [{ kind: 'primitive', name: 'int' }],
+            },
+            docstring: undefined,
+            readOnly: true,
+            isCached: true,
+          },
+        ],
+        docstring: undefined,
+        decorators: [],
+      } as any,
+      'pets'
+    );
+
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.typescript).not.toContain('get petName');
+    expect(code.typescript).not.toContain('callMethod');
+    expect(code.declaration).not.toContain('get petName');
+  });
+
+  it('keeps the migration note when static methods survive but instance methods are dropped', () => {
+    const method = (name: string, methodKind?: string) => ({
+      name,
+      signature: {
+        parameters: [],
+        returnType: { kind: 'primitive', name: 'int' },
+        isAsync: false,
+        isGenerator: false,
+      },
+      docstring: undefined,
+      decorators: [],
+      isAsync: false,
+      isGenerator: false,
+      ...(methodKind ? { methodKind } : {}),
+      returnType: { kind: 'primitive', name: 'int' },
+      parameters: [],
+    });
+
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Mixed',
+        bases: [],
+        methods: [method('helper', 'static'), method('compute')],
+        properties: [],
+        docstring: undefined,
+        decorators: [],
+      } as any,
+      'mixed_mod'
+    );
+
+    expect(code.typescript).toContain('static async helper');
+    expect(code.typescript).not.toContain('compute(');
+    expect(code.typescript).toContain('Instance members are not generated in v0.9');
+    expect(code.declaration).toContain('Instance members are not generated in v0.9');
+  });
+
+  it('emits the same empty class for implicit and explicit instance methods', () => {
+    const base = {
+      name: 'Widget',
+      bases: [],
+      methods: [
+        {
+          name: 'tick',
+          signature: {
+            parameters: [],
+            returnType: { kind: 'primitive', name: 'None' },
+            isAsync: false,
+            isGenerator: false,
+          },
+          docstring: undefined,
+          decorators: [],
+          isAsync: false,
+          isGenerator: false,
+          returnType: { kind: 'primitive', name: 'None' },
+          parameters: [
+            {
+              name: 'self',
+              type: { kind: 'primitive', name: 'None' },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+          ],
+        },
+      ],
+      properties: [],
+      docstring: undefined,
+      decorators: [],
+    };
+    const withoutKind = gen.generateClassWrapper({ ...base } as any, 'm');
+    const withInstanceKind = gen.generateClassWrapper(
+      {
+        ...base,
+        methods: base.methods.map(m => ({ ...m, methodKind: 'instance' })),
+        accessors: [],
+      } as any,
+      'm'
+    );
+    // An explicit 'instance' methodKind and empty accessors must be byte-identical
+    // to the legacy (undefined) shape.
+    expect(withInstanceKind.typescript).toBe(withoutKind.typescript);
+    expect(withInstanceKind.declaration).toBe(withoutKind.declaration);
+  });
+
+  it('emits NamedTuple fields as an exact readonly tuple alias', () => {
+    const code = gen.generateClassWrapper(
+      {
+        name: 'Point',
+        bases: [],
+        methods: [],
+        properties: [
+          { name: 'x', type: { kind: 'primitive', name: 'float' }, readonly: true },
+          { name: 'y', type: { kind: 'primitive', name: 'float' }, readonly: true },
+        ],
+        docstring: undefined,
+        decorators: [],
+        kind: 'namedtuple',
+      } as any,
+      'geometry'
+    );
+
+    expect(code.typescript).toMatch(/^export type Point = readonly \[number, number\]$/m);
+    expect(code.declaration).toMatch(/^export type Point = readonly \[number, number\]$/m);
+  });
+
+  it('escapes reserved TypeScript names while preserving the Python RPC target', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'default',
+        signature: {
+          parameters: [],
+          returnType: { kind: 'primitive', name: 'str' },
+          isAsync: false,
+          isGenerator: false,
+        },
+        docstring: undefined,
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: { kind: 'primitive', name: 'str' },
+        parameters: [],
+      } as any,
+      'keywords'
+    );
+
+    expect(code.typescript).toMatch(/^export async function _default_\(\): Promise<string> \{$/m);
+    expect(code.typescript).toContain(
+      "getRuntimeBridge().call<string>('keywords', 'default', __args"
+    );
+  });
+});

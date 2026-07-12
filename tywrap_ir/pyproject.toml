@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tywrap-ir"
+version = "0.3.0"
+description = "Python IR extractor for tywrap: emits versioned JSON IR for Python modules"
+readme = "README.md"
+authors = [
+  { name = "tywrap contributors" }
+]
+maintainers = [
+  { name = "tywrap contributors" }
+]
+requires-python = ">=3.10"
+dependencies = []
+license = { text = "MIT" }
+keywords = ["tywrap", "typescript", "python", "bridge", "code-generation", "ast", "ir", "interop", "type-safe", "bindings", "ffi", "codegen"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Code Generators",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
+  "Topic :: Software Development :: Compilers",
+  "Topic :: Utilities",
+  "Environment :: Console",
+]
+
+[project.urls]
+Homepage = "https://github.com/bbopen/tywrap"
+Repository = "https://github.com/bbopen/tywrap"
+Documentation = "https://bbopen.github.io/tywrap"
+Issues = "https://github.com/bbopen/tywrap/issues"
+
+[project.scripts]
+tywrap-ir = "tywrap_ir.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tywrap_ir*"]

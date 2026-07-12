@@ -1,0 +1,871 @@
+/**
+ * Main tywrap API entry point
+ */
+
+import { CodeGenerator } from './core/generator.js';
+import { TypeMapper } from './core/mapper.js';
+import { parseAnnotationToPythonType } from './core/annotation-parser.js';
+import { createConfig } from './config/index.js';
+import type {
+  TywrapOptions,
+  PythonGenericParameter,
+  PythonFunction,
+  PythonModule as TSPythonModule,
+  PythonClass,
+  PythonTypeAlias,
+  Parameter,
+  PythonType,
+  PythonModuleConfig,
+  IrContract,
+} from './types/index.js';
+import { fsUtils, pathUtils, processUtils, isWindows } from './utils/runtime.js';
+import { globalCache } from './utils/cache.js';
+import { resolvePythonExecutable } from './utils/python.js';
+import { computeIrCacheFilename } from './utils/ir-cache.js';
+import { logger } from './utils/logger.js';
+
+const TYWRAP_IR_VERSION = '0.4.0';
+
+// Collect unknown typing constructs encountered during annotation parsing (per-generate run)
+let unknownTypeNamesCollector: Map<string, number> = new Map();
+function recordUnknown(name: string): void {
+  const prev = unknownTypeNamesCollector.get(name) ?? 0;
+  unknownTypeNamesCollector.set(name, prev + 1);
+}
+
+/**
+ * Main tywrap function
+ */
+interface TywrapInstance {
+  mapper: TypeMapper;
+  generator: CodeGenerator;
+  options: Partial<TywrapOptions>;
+}
+
+export async function tywrap(options: Partial<TywrapOptions> = {}): Promise<TywrapInstance> {
+  const mapper = new TypeMapper({ presets: options.types?.presets });
+  const generator = new CodeGenerator(mapper, {
+    onTypeDegrade: typeName => recordUnknown(`unresolvable generated type ${typeName}`),
+  });
+
+  globalCache.setDebug(options.debug ?? false);
+
+  return {
+    mapper,
+    generator,
+    options,
+  };
+}
+
+export interface GenerateRunOptions {
+  /**
+   * If true, do not write files; instead compare generated output to what's on disk.
+   * Intended for CI to ensure wrappers are checked in and up to date.
+   */
+  check?: boolean;
+}
+
+export interface GenerateFailure {
+  module: string;
+  code: 'ir-unavailable' | 'ir-version-mismatch' | 'contract-invalid';
+  message: string;
+}
+
+export interface GenerateResult {
+  written: string[];
+  warnings: string[];
+  failures: GenerateFailure[];
+  /**
+   * Only set when `GenerateRunOptions.check === true`.
+   * Lists files that are missing or differ from what would be generated.
+   */
+  outOfDate?: string[];
+}
+
+function normalizeForComparison(text: string): string {
+  // Avoid false positives from CRLF vs LF (e.g. Windows checkouts)
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function stableJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJson);
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, child]) => [key, stableJson(child)])
+    );
+  }
+  return value;
+}
+
+function serializeContract(ir: IrContract): string {
+  const contract = { ...ir };
+  delete contract.metadata;
+  return `${JSON.stringify(stableJson(contract), null, 2)}\n`;
+}
+
+function validateIrVersion(
+  ir: unknown,
+  source: string
+): { ir: IrContract | null; error?: string; code?: GenerateFailure['code'] } {
+  if (ir === null || typeof ir !== 'object' || Array.isArray(ir)) {
+    return { ir: null, code: 'contract-invalid', error: `${source} is not a JSON IR object.` };
+  }
+  const contract = ir as IrContract;
+  if (typeof contract.ir_version !== 'string') {
+    return {
+      ir: null,
+      code: 'contract-invalid',
+      error: `${source} is missing its string ir_version.`,
+    };
+  }
+  if (contract.ir_version !== TYWRAP_IR_VERSION) {
+    return {
+      ir: null,
+      code: 'ir-version-mismatch',
+      error: `IR version mismatch: TypeScript expects ${TYWRAP_IR_VERSION}, but ${source} declares ${contract.ir_version}. Regenerate the contract with a matching tywrap_ir.`,
+    };
+  }
+  if (typeof contract.module !== 'string' || contract.module.length === 0) {
+    return { ir: null, code: 'contract-invalid', error: `${source} is missing its module name.` };
+  }
+  const requiredArrays: ReadonlyArray<readonly [string, unknown]> = [
+    ['functions', contract.functions],
+    ['classes', contract.classes],
+    ['type_aliases', contract.type_aliases],
+  ];
+  for (const [field, value] of requiredArrays) {
+    if (!Array.isArray(value)) {
+      return {
+        ir: null,
+        code: 'contract-invalid',
+        error: `${source} is missing required array field ${field}.`,
+      };
+    }
+  }
+  return { ir: contract };
+}
+
+async function safeReadFile(path: string): Promise<string | null> {
+  try {
+    return await fsUtils.readFile(path);
+  } catch {
+    return null;
+  }
+}
+
+const CACHE_DIR = '.tywrap/cache';
+
+/**
+ * Resolve module IR via the Python extractor, consulting and (best-effort)
+ * populating the on-disk cache. Mirrors the original inline cache-then-fetch
+ * logic exactly: the cache is only read/written when caching is enabled, the
+ * filesystem is available, and we are not in check mode.
+ */
+async function fetchAndCacheIr(
+  moduleKey: string,
+  resolvedOptions: ReturnType<typeof createConfig>,
+  pythonPath: string,
+  cacheKey: string,
+  caching: boolean,
+  checkMode: boolean
+): Promise<{ ir: IrContract | null; error?: string; code?: GenerateFailure['code'] }> {
+  let ir: unknown | null = null;
+  let irError: string | undefined;
+  if (caching && fsUtils.isAvailable() && !checkMode) {
+    try {
+      const cached = await fsUtils.readFile(pathUtils.join(CACHE_DIR, cacheKey));
+      const cachedValidation = validateIrVersion(
+        JSON.parse(cached),
+        `Cached Python IR for ${moduleKey}`
+      );
+      ir = cachedValidation.ir;
+    } catch {
+      ir = null;
+    }
+  }
+  if (!ir) {
+    const fetchResult = await fetchPythonIr(moduleKey, pythonPath, {
+      timeoutMs: resolvedOptions.runtime?.node?.timeout,
+      pythonImportPath: resolvedOptions.pythonImportPath,
+    });
+    ir = fetchResult.ir;
+    irError = fetchResult.error;
+  }
+  if (!ir) {
+    return { ir: null, error: irError, code: 'ir-unavailable' };
+  }
+  const validated = validateIrVersion(ir, `Python IR for ${moduleKey}`);
+  if (!validated.ir) {
+    return {
+      ir: null,
+      error: irError ?? validated.error,
+      code: validated.code ?? 'ir-unavailable',
+    };
+  }
+  if (caching && fsUtils.isAvailable() && !checkMode) {
+    try {
+      await fsUtils.writeFile(pathUtils.join(CACHE_DIR, cacheKey), JSON.stringify(validated.ir));
+    } catch {}
+  }
+  return { ir: validated.ir };
+}
+
+async function readContractInput(
+  moduleKey: string,
+  contractInput: TywrapOptions['contractInput']
+): Promise<{ ir: IrContract | null; error?: string; code?: GenerateFailure['code'] }> {
+  const inputPath = typeof contractInput === 'string' ? contractInput : contractInput?.[moduleKey];
+  if (!inputPath) {
+    return {
+      ir: null,
+      code: 'contract-invalid',
+      error: `No contractInput path configured for module ${moduleKey}.`,
+    };
+  }
+  try {
+    const parsed = JSON.parse(await fsUtils.readFile(inputPath)) as unknown;
+    const validated = validateIrVersion(parsed, `Contract ${inputPath}`);
+    if (!validated.ir) {
+      return { ir: null, error: validated.error, code: validated.code };
+    }
+    if (validated.ir.module !== moduleKey) {
+      return {
+        ir: null,
+        code: 'contract-invalid',
+        error: `Contract ${inputPath} is for module ${validated.ir.module}, not ${moduleKey}.`,
+      };
+    }
+    return { ir: validated.ir };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ir: null,
+      code: 'contract-invalid',
+      error: `Failed to read contract ${inputPath}: ${message}`,
+    };
+  }
+}
+
+/**
+ * Apply module-level export filtering (functions/classes + excludes) in place.
+ * Pushes any filtering warnings onto the provided `warnings` array. Behavior is
+ * identical to the original inline block.
+ */
+function filterModuleExports(
+  moduleModel: TSPythonModule,
+  moduleConfig: PythonModuleConfig,
+  moduleKey: string,
+  warnings: string[]
+): void {
+  const builtInDefaultExcludes = new Set([
+    'dataclass',
+    'property',
+    'staticmethod',
+    'classmethod',
+    'abstractmethod',
+    'cached_property',
+  ]);
+
+  const excludeExact = new Set((moduleConfig.exclude ?? []).map(String));
+  const excludeRegexes: RegExp[] = [];
+  for (const pattern of moduleConfig.excludePatterns ?? []) {
+    try {
+      excludeRegexes.push(new RegExp(String(pattern)));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      warnings.push(
+        `Module ${moduleKey}: invalid excludePatterns regex "${String(pattern)}": ${message}`
+      );
+    }
+  }
+
+  const shouldExclude = (name: string, applyBuiltInDefaults: boolean): boolean => {
+    if (excludeExact.has(name)) {
+      return true;
+    }
+    if (excludeRegexes.some(r => r.test(name))) {
+      return true;
+    }
+    if (applyBuiltInDefaults && builtInDefaultExcludes.has(name)) {
+      return true;
+    }
+    return false;
+  };
+
+  if (Array.isArray(moduleConfig.functions)) {
+    const allow = new Set(moduleConfig.functions.map(String));
+    for (const requested of allow) {
+      if (!moduleModel.functions.some(f => f.name === requested)) {
+        warnings.push(`Module ${moduleKey}: configured function "${requested}" not found in IR`);
+      }
+    }
+    moduleModel.functions = moduleModel.functions.filter(
+      f => allow.has(f.name) && !shouldExclude(f.name, false)
+    );
+  } else {
+    moduleModel.functions = moduleModel.functions.filter(f => !shouldExclude(f.name, true));
+  }
+
+  if (Array.isArray(moduleConfig.classes)) {
+    const allow = new Set(moduleConfig.classes.map(String));
+    for (const requested of allow) {
+      if (!moduleModel.classes.some(c => c.name === requested)) {
+        warnings.push(`Module ${moduleKey}: configured class "${requested}" not found in IR`);
+      }
+    }
+    moduleModel.classes = moduleModel.classes.filter(
+      c => allow.has(c.name) && !shouldExclude(c.name, false)
+    );
+  } else {
+    moduleModel.classes = moduleModel.classes.filter(c => !shouldExclude(c.name, true));
+  }
+
+  moduleModel.typeAliases = (moduleModel.typeAliases ?? []).filter(
+    alias => !shouldExclude(alias.name, false)
+  );
+}
+
+/**
+ * Either compare the generated files against disk (check mode) or write them.
+ * Mutates `written`/`outOfDate` exactly as the original inline branches did.
+ */
+async function emitOrCompareFiles(
+  filesToEmit: Array<{ path: string; content: string }>,
+  checkMode: boolean,
+  written: string[],
+  outOfDate: string[]
+): Promise<void> {
+  if (checkMode) {
+    for (const file of filesToEmit) {
+      const existing = await safeReadFile(file.path);
+      if (existing === null) {
+        outOfDate.push(file.path);
+        continue;
+      }
+      if (normalizeForComparison(existing) !== normalizeForComparison(file.content)) {
+        outOfDate.push(file.path);
+      }
+    }
+  } else {
+    for (const file of filesToEmit) {
+      await fsUtils.writeFile(file.path, file.content);
+      written.push(file.path);
+    }
+  }
+}
+
+/**
+ * Emit the best-effort warning summary of unknown typing constructs collected
+ * for the current module, and (outside check mode) write the JSON report.
+ */
+async function reportUnknownTypes(
+  baseName: string,
+  unknownTypeNames: Map<string, number>,
+  checkMode: boolean,
+  warnings: string[]
+): Promise<void> {
+  if (unknownTypeNames.size === 0) {
+    return;
+  }
+  const entries = Array.from(unknownTypeNames.entries()).sort((a, b) => b[1] - a[1]);
+  const unkList = entries
+    .slice(0, 25)
+    .map(([n, c]) => `${n}:${c}`)
+    .join(', ');
+  warnings.push(
+    `Module ${baseName}: unknown typing constructs encountered: ${unkList}${entries.length > 25 ? '…' : ''}`
+  );
+  // Write JSON report
+  if (!checkMode) {
+    try {
+      const reportsDir = pathUtils.join('.tywrap', 'reports');
+      await fsUtils.writeFile(
+        pathUtils.join(reportsDir, `${baseName}.json`),
+        JSON.stringify({
+          module: baseName,
+          unknowns: Object.fromEntries(entries),
+          generatedAt: new Date().toISOString(),
+        })
+      );
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Generate TypeScript wrappers for configured Python modules.
+ * Minimal MVP implementation: resolves module file, analyzes, generates TS, writes to output.dir
+ */
+export async function generate(
+  options: Partial<TywrapOptions>,
+  runOptions: GenerateRunOptions = {}
+): Promise<GenerateResult> {
+  const checkMode = runOptions.check === true;
+  const resolvedOptions = createConfig(options);
+  const instance = await tywrap(resolvedOptions);
+  const written: string[] = [];
+  const outOfDate: string[] = [];
+  const warnings: string[] = [];
+  const failures: GenerateFailure[] = [];
+  const outputDir = resolvedOptions.output.dir;
+  const caching = resolvedOptions.performance.caching;
+  const pythonPath = await resolvePythonExecutable({
+    pythonPath: resolvedOptions.runtime?.node?.pythonPath,
+    virtualEnv: resolvedOptions.runtime?.node?.virtualEnv,
+  });
+
+  // Ensure directory exists (Node-only best-effort)
+  if (!checkMode) {
+    try {
+      const modFs = await import('fs/promises');
+      await modFs.mkdir(outputDir, { recursive: true });
+    } catch {
+      // ignore in non-node or if already exists
+    }
+  }
+
+  const modules = resolvedOptions.pythonModules ?? {};
+  for (const entry of Object.entries(modules)) {
+    const moduleKey = entry[0];
+    const moduleConfig = entry[1];
+    // reset collector for each module
+    unknownTypeNamesCollector = new Map();
+    // Resolve module IR via the Python extractor (with optional cache)
+    const cacheKey = await computeCacheKey(moduleKey, resolvedOptions);
+    const irResult = resolvedOptions.contractInput
+      ? await readContractInput(moduleKey, resolvedOptions.contractInput)
+      : await fetchAndCacheIr(moduleKey, resolvedOptions, pythonPath, cacheKey, caching, checkMode);
+    const { ir, error: irError } = irResult;
+    if (!ir) {
+      const message = `No IR produced for module ${moduleKey}${irError ? `: ${irError}` : ''}`;
+      warnings.push(message);
+      failures.push({
+        module: moduleKey,
+        code: irResult.code ?? 'ir-unavailable',
+        message,
+      });
+      continue;
+    }
+
+    const irWarnings = Array.isArray((ir as Record<string, unknown>).warnings)
+      ? ((ir as Record<string, unknown>).warnings as unknown[])
+      : [];
+    for (const warning of irWarnings) {
+      if (typeof warning !== 'string') {
+        continue;
+      }
+      // Only type-honesty degrades feed --fail-on-warn. Environment capability
+      // notices (e.g. typing.get_overloads missing on Python < 3.11) describe
+      // the analyzing interpreter, not the generated types, and must not fail
+      // an otherwise clean build.
+      if (warning.startsWith('Return annotation for ')) {
+        recordUnknown(`Python IR warning: ${warning}`);
+      } else {
+        logger.info(`Python IR notice: ${warning}`, { component: 'Generate' });
+      }
+    }
+
+    const moduleModel = transformIrToTsModel(ir);
+
+    // Apply module-level export filtering (functions/classes + excludes).
+    filterModuleExports(moduleModel, moduleConfig, moduleKey, warnings);
+
+    // Generate module code
+    const annotatedJSDoc = Boolean(resolvedOptions.output?.annotatedJSDoc);
+    const gen = instance.generator.generateModuleDefinition(moduleModel, annotatedJSDoc);
+
+    const baseName = moduleModel.name || 'module';
+    const filesToEmit: Array<{ path: string; content: string }> = [
+      { path: pathUtils.join(outputDir, `${baseName}.generated.ts`), content: gen.typescript },
+      {
+        path: pathUtils.join(outputDir, `${baseName}.contract.json`),
+        content: serializeContract(ir),
+      },
+    ];
+
+    // Optional .d.ts emission (header-only declarations mirroring exports)
+    if (resolvedOptions.output?.declaration) {
+      filesToEmit.push({
+        path: pathUtils.join(outputDir, `${baseName}.generated.d.ts`),
+        content: gen.declaration,
+      });
+    }
+
+    // Optional source map emission (placeholder mapping for now)
+    if (resolvedOptions.output?.sourceMap) {
+      filesToEmit.push({
+        path: pathUtils.join(outputDir, `${baseName}.generated.ts.map`),
+        content: renderSourceMapPlaceholder(moduleModel.name),
+      });
+    }
+
+    await emitOrCompareFiles(filesToEmit, checkMode, written, outOfDate);
+
+    // Emit warning summary of unknown typing constructs (best-effort)
+    await reportUnknownTypes(baseName, unknownTypeNamesCollector, checkMode, warnings);
+  }
+
+  if (checkMode) {
+    return { written: [], warnings, failures, outOfDate };
+  }
+
+  return { written, warnings, failures };
+}
+
+/**
+ * Run the IR extractor (`python <command...>`) and parse its JSON stdout.
+ *
+ * Returns the exec result alongside a parsed-IR outcome. On a zero exit code the
+ * stdout is JSON-parsed; on parse failure the supplied `parseErrorLabel` is used
+ * to build the error message. The caller is responsible for handling non-zero
+ * exit codes (e.g. the module-missing fallback), so a non-zero exit yields
+ * `ir: null` with no `error` set here.
+ */
+async function execAndParseIr(
+  pythonPath: string,
+  command: string[],
+  execOptions: { timeoutMs?: number; env?: Record<string, string> },
+  parseErrorLabel: 'tywrap_ir output' | 'tywrap_ir fallback output'
+): Promise<{
+  result: { code: number; stdout: string; stderr: string };
+  ir: unknown | null;
+  error?: string;
+}> {
+  const result = await processUtils.exec(pythonPath, command, execOptions);
+  if (result.code !== 0) {
+    return { result, ir: null };
+  }
+  try {
+    return { result, ir: JSON.parse(result.stdout) };
+  } catch {
+    return {
+      result,
+      ir: null,
+      error: `Failed to parse ${parseErrorLabel}. stderr: ${result.stderr.trim() || 'empty'}`,
+    };
+  }
+}
+
+/**
+ * Invoke the Python IR CLI to get JSON IR for a module.
+ */
+async function fetchPythonIr(
+  moduleName: string,
+  pythonPath: string,
+  options: { timeoutMs?: number; pythonImportPath?: string[] } = {}
+): Promise<{ ir: unknown | null; error?: string }> {
+  if (!processUtils.isAvailable()) {
+    return { ir: null, error: 'Subprocess operations not available in this runtime' };
+  }
+  const delimiter = isWindows() ? ';' : ':';
+  const extraPaths = (options.pythonImportPath ?? []).filter(Boolean);
+  const existingPyPath =
+    typeof process !== 'undefined' && typeof process.env === 'object' && process.env
+      ? process.env.PYTHONPATH
+      : undefined;
+  const mergedPyPath = [...extraPaths, ...(existingPyPath ? [existingPyPath] : [])]
+    .filter(Boolean)
+    .join(delimiter);
+  const env = mergedPyPath ? { PYTHONPATH: mergedPyPath } : undefined;
+  const execOptions = { timeoutMs: options.timeoutMs, env };
+  try {
+    const primary = await execAndParseIr(
+      pythonPath,
+      ['-m', 'tywrap_ir', '--module', moduleName, '--no-pretty'],
+      execOptions,
+      'tywrap_ir output'
+    );
+    if (primary.result.code === 0) {
+      return { ir: primary.ir, error: primary.error };
+    }
+
+    const stderrText = primary.result.stderr.trim();
+    const isTywrapIrMissing =
+      stderrText.includes('No module named') && stderrText.includes('tywrap_ir');
+    if (!isTywrapIrMissing) {
+      return { ir: null, error: `tywrap_ir failed. stderr: ${stderrText || 'empty'}` };
+    }
+
+    // Fallback to invoking local __main__.py (useful when running from the repo).
+    const localMain = pathUtils.join(process.cwd(), 'tywrap_ir', 'tywrap_ir', '__main__.py');
+    let localMainExists = false;
+    if (fsUtils.isAvailable()) {
+      try {
+        await fsUtils.readFile(localMain);
+        localMainExists = true;
+      } catch {
+        localMainExists = false;
+      }
+    }
+    if (!localMainExists) {
+      return {
+        ir: null,
+        error: `tywrap_ir not found on PYTHONPATH. stderr: ${stderrText || 'empty'}`,
+      };
+    }
+
+    const fallback = await execAndParseIr(
+      pythonPath,
+      [localMain, '--module', moduleName, '--no-pretty'],
+      execOptions,
+      'tywrap_ir fallback output'
+    );
+    if (fallback.result.code !== 0) {
+      return {
+        ir: null,
+        error: `tywrap_ir failed. stderr: ${fallback.result.stderr.trim() || stderrText || 'empty'}`,
+      };
+    }
+    return { ir: fallback.ir, error: fallback.error };
+  } catch (err) {
+    return { ir: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Convert JSON IR from Python into the internal TypeScript model used by the generator.
+ */
+function collectModuleTypeVarNames(obj: Record<string, unknown>): Set<string> {
+  const names = new Set<string>();
+  const constants = Array.isArray(obj.constants) ? (obj.constants as unknown[]) : [];
+
+  for (const constant of constants) {
+    const entry = constant as Record<string, unknown>;
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    if (!name) {
+      continue;
+    }
+
+    const valueRepr = typeof entry.value_repr === 'string' ? entry.value_repr.trim() : '';
+    if (/^~?[A-Za-z_][A-Za-z0-9_]*$/.test(valueRepr) && valueRepr.replace(/^~/, '') === name) {
+      names.add(name);
+      continue;
+    }
+
+    const annotation = typeof entry.annotation === 'string' ? entry.annotation.trim() : '';
+    if (/(^|\.)(TypeVar|ParamSpec|TypeVarTuple)(\[|\(|$)/.test(annotation)) {
+      names.add(name);
+    }
+  }
+
+  return names;
+}
+
+function transformIrToTsModel(ir: unknown): TSPythonModule {
+  const obj: Record<string, unknown> =
+    typeof ir === 'object' && ir !== null ? (ir as Record<string, unknown>) : {};
+  const functions = (obj.functions as unknown[]) ?? [];
+  const classes = (obj.classes as unknown[]) ?? [];
+  const aliases = (obj.type_aliases as unknown[]) ?? [];
+  const moduleTypeVarNames = collectModuleTypeVarNames(obj);
+  const parseType = (
+    annotation: unknown,
+    typeParameters: readonly PythonGenericParameter[] = []
+  ): PythonType =>
+    parseAnnotationToPythonType(annotation, {
+      onUnknownTypeName: recordUnknown,
+      knownTypeVarNames: moduleTypeVarNames,
+      typeParameters,
+    });
+  const mapTypeParameters = (value: Record<string, unknown>): PythonGenericParameter[] =>
+    Array.isArray(value.type_params)
+      ? (value.type_params as unknown[]).map(v => {
+          const param = (v ?? {}) as Record<string, unknown>;
+          return {
+            name: String(param.name ?? ''),
+            kind: String(param.kind ?? 'typevar') as PythonGenericParameter['kind'],
+            bound: param.bound ? parseType(param.bound) : undefined,
+            constraints: Array.isArray(param.constraints)
+              ? (param.constraints as unknown[]).map(item => parseType(item))
+              : undefined,
+            variance:
+              param.variance === 'covariant' ||
+              param.variance === 'contravariant' ||
+              param.variance === 'invariant'
+                ? param.variance
+                : undefined,
+          } satisfies PythonGenericParameter;
+        })
+      : [];
+  const mapParam = (
+    p: Record<string, unknown>,
+    typeParameters: readonly PythonGenericParameter[] = []
+  ): Parameter => ({
+    name: String(p.name ?? ''),
+    type: parseType(p.annotation, typeParameters),
+    optional: Boolean(p.default),
+    varArgs: p.kind === 'VAR_POSITIONAL',
+    kwArgs: p.kind === 'VAR_KEYWORD',
+    positionalOnly: p.kind === 'POSITIONAL_ONLY',
+    keywordOnly: p.kind === 'KEYWORD_ONLY',
+  });
+
+  const mapMethodKind = (value: unknown): PythonFunction['methodKind'] =>
+    value === 'class' || value === 'static' ? value : 'instance';
+
+  const mapFunc = (
+    f: Record<string, unknown>,
+    inheritedTypeParameters: readonly PythonGenericParameter[] = []
+  ): PythonFunction => {
+    const localTypeParameters = mapTypeParameters(f);
+    const annotationTypeParameters = [...inheritedTypeParameters, ...localTypeParameters];
+    return {
+      name: String(f.name ?? ''),
+      signature: {
+        parameters: Array.isArray(f.parameters)
+          ? (f.parameters as unknown[]).map(v =>
+              mapParam((v ?? {}) as Record<string, unknown>, annotationTypeParameters)
+            )
+          : [],
+        returnType: parseType(f.returns, annotationTypeParameters),
+        isAsync: Boolean(f.is_async),
+        isGenerator: Boolean(f.is_generator),
+      },
+      docstring: (f.docstring as string | undefined) ?? undefined,
+      decorators: [],
+      isAsync: Boolean(f.is_async),
+      isGenerator: Boolean(f.is_generator),
+      typeParameters: [...localTypeParameters],
+      returnType: parseType(f.returns, annotationTypeParameters),
+      parameters: Array.isArray(f.parameters)
+        ? (f.parameters as unknown[]).map(v =>
+            mapParam((v ?? {}) as Record<string, unknown>, annotationTypeParameters)
+          )
+        : [],
+      methodKind: mapMethodKind(f.method_kind),
+    };
+  };
+
+  const mapClass = (c: Record<string, unknown>): PythonClass => {
+    const classTypeParameters = mapTypeParameters(c);
+    return {
+      name: String(c.name ?? ''),
+      bases: Array.isArray(c.bases) ? (c.bases as string[]) : [],
+      methods: Array.isArray(c.methods)
+        ? (c.methods as unknown[]).map(v =>
+            mapFunc((v ?? {}) as Record<string, unknown>, classTypeParameters)
+          )
+        : [],
+      properties: Array.isArray(c.fields)
+        ? (c.fields as unknown[]).map(v => {
+            const p = (v ?? {}) as Record<string, unknown>;
+            return {
+              name: String(p.name ?? ''),
+              type: parseType(p.annotation, classTypeParameters),
+              readonly: false,
+              setter: false,
+              getter: true,
+              optional: Boolean(p.default),
+            };
+          })
+        : [],
+      accessors: Array.isArray(c.accessors)
+        ? (c.accessors as unknown[]).map(v => {
+            const a = (v ?? {}) as Record<string, unknown>;
+            return {
+              name: String(a.name ?? ''),
+              type: parseType(a.returns, classTypeParameters),
+              docstring: (a.docstring as string | undefined) ?? undefined,
+              readOnly: typeof a.read_only === 'boolean' ? a.read_only : undefined,
+              isCached: Boolean(a.is_cached),
+            };
+          })
+        : [],
+      docstring: (c.docstring as string | undefined) ?? undefined,
+      decorators: (c.typed_dict as boolean) ? ['__typed_dict__'] : [],
+      kind: (c.typed_dict as boolean)
+        ? 'typed_dict'
+        : (c.is_protocol as boolean)
+          ? 'protocol'
+          : (c.is_namedtuple as boolean)
+            ? 'namedtuple'
+            : (c.is_dataclass as boolean)
+              ? 'dataclass'
+              : (c.is_pydantic as boolean)
+                ? 'pydantic'
+                : 'class',
+      typeParameters: classTypeParameters,
+    };
+  };
+
+  const mapTypeAlias = (alias: Record<string, unknown>): PythonTypeAlias => {
+    const typeParameters = mapTypeParameters(alias);
+    return {
+      name: String(alias.name ?? ''),
+      type: parseType(alias.definition, typeParameters),
+      typeParameters,
+    };
+  };
+
+  const moduleModel: TSPythonModule = {
+    name: (obj.module as string) ?? 'module',
+    path: undefined,
+    version:
+      typeof (obj.metadata as Record<string, unknown> | undefined)?.package_version === 'string'
+        ? ((obj.metadata as Record<string, unknown> | undefined)?.package_version as string)
+        : undefined,
+    functions: functions.map(v => mapFunc((v ?? {}) as Record<string, unknown>)),
+    classes: classes.map(v => mapClass((v ?? {}) as Record<string, unknown>)),
+    typeAliases: aliases.map(v => mapTypeAlias((v ?? {}) as Record<string, unknown>)),
+    imports: [],
+    exports: [],
+  };
+  return moduleModel;
+}
+
+/**
+ * Compute a stable cache key filename for a module and options
+ */
+async function computeCacheKey(
+  moduleName: string,
+  options: Partial<TywrapOptions>
+): Promise<string> {
+  const modules = options.pythonModules ?? {};
+  const foundEntry = Object.entries(modules).find(([name]) => name === moduleName);
+  const moduleConfig = foundEntry ? foundEntry[1] : undefined;
+  const runtimePython = await resolvePythonExecutable({
+    pythonPath: options.runtime?.node?.pythonPath,
+    virtualEnv: options.runtime?.node?.virtualEnv,
+  });
+  const keyObject = {
+    module: moduleName,
+    moduleVersion: moduleConfig?.version ?? null,
+    irVersion: TYWRAP_IR_VERSION,
+    pythonImportPath: options.pythonImportPath ?? [],
+    runtime: {
+      pythonPath: runtimePython,
+      virtualEnv: options.runtime?.node?.virtualEnv ?? null,
+    },
+    output: {
+      format: options.output?.format ?? 'esm',
+      declaration: options.output?.declaration ?? false,
+      sourceMap: options.output?.sourceMap ?? false,
+    },
+    performance: {
+      caching: options.performance?.caching ?? false,
+      compression: options.performance?.compression ?? 'none',
+    },
+    typeHints: moduleConfig?.typeHints ?? 'strict',
+  } as const;
+  return await computeIrCacheFilename(keyObject);
+}
+
+/**
+ * Minimal source map placeholder (stable, empty mappings)
+ */
+function renderSourceMapPlaceholder(moduleName: string | undefined): string {
+  const safe = moduleName ?? 'module';
+  const map = {
+    version: 3,
+    file: `${safe}.generated.ts`,
+    sources: [],
+    names: [],
+    mappings: '',
+  } as const;
+  return JSON.stringify(map, null, 0);
+}

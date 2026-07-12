@@ -1,0 +1,992 @@
+from __future__ import annotations
+
+import ast
+import dataclasses as _dataclasses
+import functools
+import importlib
+import inspect
+import json
+import platform
+import re
+import sys
+import types
+import typing
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, List, Optional, get_type_hints
+
+try:
+    from importlib import metadata as importlib_metadata  # py3.8+
+except Exception:  # pragma: no cover
+    import importlib_metadata  # type: ignore
+
+# Single source of truth for the IR schema version. Defined in __init__ and
+# imported here so every default stays in lockstep. Safe from circular import:
+# IR_VERSION is bound in __init__ before it imports this module.
+from . import IR_VERSION
+
+
+@dataclass
+class IRTypeParam:
+    name: str
+    kind: str
+    bound: str | None = None
+    constraints: List[str] | None = None
+    variance: str | None = None
+
+
+@dataclass
+class IRParam:
+    name: str
+    kind: str
+    annotation: str | None
+    default: bool
+
+
+@dataclass
+class IRFunction:
+    name: str
+    qualname: str
+    docstring: Optional[str]
+    parameters: List[IRParam]
+    returns: Optional[str]
+    is_async: bool
+    is_generator: bool
+    type_params: List[IRTypeParam]
+    # 'instance' | 'class' | 'static'. Defaults to 'instance' so callers that
+    # construct IRFunction positionally (or omit the kwarg) keep working.
+    method_kind: str = "instance"
+    # @typing.overload signatures declared for this callable (Python 3.11+).
+    # Empty for non-overloaded callables and on interpreters without
+    # typing.get_overloads (3.10), where extraction degrades with a warning.
+    overloads: List["IROverload"] = _dataclasses.field(default_factory=list)
+
+
+@dataclass
+class IROverload:
+    """A single @typing.overload signature for a function or method."""
+
+    parameters: List[IRParam]
+    returns: Optional[str]
+
+
+@dataclass
+class IRAccessor:
+    """A @property or functools.cached_property exposed on a class.
+
+    Distinct from ``IRClass.fields`` (which model TypedDict/NamedTuple/dataclass
+    data shapes). Accessors are computed attributes backed by a getter.
+    """
+
+    name: str
+    returns: Optional[str]
+    docstring: Optional[str]
+    # True when there is no setter (read-only). None when undeterminable.
+    read_only: Optional[bool]
+    is_cached: bool
+
+
+@dataclass
+class IRClass:
+    name: str
+    qualname: str
+    docstring: Optional[str]
+    bases: List[str]
+    methods: List[IRFunction]
+    typed_dict: bool
+    total: Optional[bool]
+    fields: List[IRParam]
+    is_protocol: bool
+    is_namedtuple: bool
+    is_dataclass: bool
+    is_pydantic: bool
+    type_params: List[IRTypeParam]
+    accessors: List[IRAccessor] = _dataclasses.field(default_factory=list)
+
+
+@dataclass
+class IRConstant:
+    name: str
+    annotation: str | None
+    value_repr: str | None
+    is_final: bool
+
+
+@dataclass
+class IRTypeAlias:
+    name: str
+    definition: str
+    is_generic: bool
+    type_params: List[IRTypeParam]
+
+
+@dataclass
+class IRModule:
+    ir_version: str
+    module: str
+    functions: List[IRFunction]
+    classes: List[IRClass]
+    constants: List[IRConstant]
+    type_aliases: List[IRTypeAlias]
+    metadata: Dict[str, Any]
+    warnings: List[str]
+
+
+def _stringify_annotation(annotation: Any) -> Optional[str]:
+    if annotation is inspect._empty:  # type: ignore[attr-defined]
+        return None
+    try:
+        str_repr = str(annotation)
+        if str_repr.startswith("<class '") and str_repr.endswith("'>"):
+            class_path = str_repr[8:-2]
+            return class_path
+        return str_repr
+    except Exception:
+        return None
+
+
+def _param_kind_to_str(kind: inspect._ParameterKind) -> str:
+    mapping = {
+        inspect.Parameter.POSITIONAL_ONLY: "POSITIONAL_ONLY",
+        inspect.Parameter.POSITIONAL_OR_KEYWORD: "POSITIONAL_OR_KEYWORD",
+        inspect.Parameter.VAR_POSITIONAL: "VAR_POSITIONAL",
+        inspect.Parameter.KEYWORD_ONLY: "KEYWORD_ONLY",
+        inspect.Parameter.VAR_KEYWORD: "VAR_KEYWORD",
+    }
+    return mapping.get(kind, str(kind))
+
+
+def _type_param_kind(value: Any) -> str | None:
+    cls = type(value)
+    name = getattr(cls, "__name__", "")
+    module = getattr(cls, "__module__", "")
+    if module in {"typing", "typing_extensions"} and name in {"TypeVar", "ParamSpec", "TypeVarTuple"}:
+        return name.lower()
+    return None
+
+
+def _serialize_type_param(value: Any) -> IRTypeParam | None:
+    kind = _type_param_kind(value)
+    if kind is None:
+        return None
+
+    if kind == "typevar":
+        constraints = [_stringify_annotation(item) or str(item) for item in getattr(value, "__constraints__", ())] or None
+        variance = "invariant"
+        if getattr(value, "__covariant__", False):
+            variance = "covariant"
+        elif getattr(value, "__contravariant__", False):
+            variance = "contravariant"
+        bound_value = getattr(value, "__bound__", None)
+        return IRTypeParam(
+            name=str(getattr(value, "__name__", str(value)).replace("~", "")),
+            kind="typevar",
+            bound=_stringify_annotation(bound_value) if bound_value is not None else None,
+            constraints=constraints,
+            variance=variance,
+        )
+
+    if kind == "paramspec":
+        return IRTypeParam(
+            name=str(getattr(value, "__name__", str(value)).replace("~", "")),
+            kind="paramspec",
+        )
+
+    if kind == "typevartuple":
+        return IRTypeParam(
+            name=str(getattr(value, "__name__", str(value)).replace("~", "")),
+            kind="typevartuple",
+        )
+
+    return None
+
+
+def _append_type_param(value: Any, seen: set[str], out: List[IRTypeParam]) -> None:
+    param = _serialize_type_param(value)
+    if param is None:
+        return
+    key = _type_param_key(param)
+    if key in seen:
+        return
+    seen.add(key)
+    out.append(param)
+
+
+def _type_param_key(param: IRTypeParam) -> str:
+    return f"{param.kind}:{param.name}"
+
+
+def _append_declared_type_params(obj: Any, seen: set[str], out: List[IRTypeParam]) -> None:
+    for attr_name in ("__type_params__", "__parameters__"):
+        try:
+            params = getattr(obj, attr_name, ())
+        except Exception:
+            continue
+        for param in params or ():
+            _append_type_param(param, seen, out)
+
+
+def _collect_declared_type_params(obj: Any) -> List[IRTypeParam]:
+    seen: set[str] = set()
+    out: List[IRTypeParam] = []
+    _append_declared_type_params(obj, seen, out)
+    return out
+
+
+def _collect_type_params_from_annotation(
+    annotation: Any,
+    seen: set[str],
+    out: List[IRTypeParam],
+) -> None:
+    _append_type_param(annotation, seen, out)
+
+    try:
+        origin = typing.get_origin(annotation)
+    except Exception:
+        origin = None
+    if origin is not None:
+        _append_type_param(origin, seen, out)
+
+    try:
+        args = typing.get_args(annotation)
+    except Exception:
+        args = ()
+    for arg in args:
+        _collect_type_params_from_annotation(arg, seen, out)
+
+    text = _stringify_annotation(annotation) or ""
+    paramspec_match = text.split(".", 1)[0] if text.endswith((".args", ".kwargs")) else None
+    if paramspec_match:
+        inferred = IRTypeParam(name=paramspec_match.replace("~", ""), kind="paramspec")
+        key = _type_param_key(inferred)
+        if key not in seen:
+            seen.add(key)
+            out.append(inferred)
+
+
+def _collect_annotation_type_params(*annotations: Any) -> List[IRTypeParam]:
+    seen: set[str] = set()
+    out: List[IRTypeParam] = []
+    for annotation in annotations:
+        _collect_type_params_from_annotation(annotation, seen, out)
+    return out
+
+
+def _merge_type_params(*groups: List[IRTypeParam]) -> List[IRTypeParam]:
+    seen: set[str] = set()
+    out: List[IRTypeParam] = []
+    for group in groups:
+        for param in group:
+            key = _type_param_key(param)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(param)
+    return out
+
+
+def _collect_type_params_from_object_and_annotations(obj: Any, *annotations: Any) -> List[IRTypeParam]:
+    return _merge_type_params(
+        _collect_declared_type_params(obj),
+        _collect_annotation_type_params(*annotations),
+    )
+
+
+def _collect_scoped_type_params(
+    obj: Any,
+    *annotations: Any,
+    inherited_type_params: List[IRTypeParam] | None = None,
+) -> List[IRTypeParam]:
+    declared = _collect_declared_type_params(obj)
+    annotation_params = _collect_annotation_type_params(*annotations)
+    if not inherited_type_params:
+        return _merge_type_params(declared, annotation_params)
+
+    inherited_keys = {_type_param_key(param) for param in inherited_type_params}
+    scoped_annotation_params = [
+        param for param in annotation_params if _type_param_key(param) not in inherited_keys
+    ]
+    return _merge_type_params(declared, scoped_annotation_params)
+
+
+def _unwrap_type_alias_value(value: Any) -> Any:
+    if hasattr(value, "__supertype__"):
+        return value.__supertype__
+    type_alias_type = getattr(typing, "TypeAliasType", None)
+    if type_alias_type is None or not isinstance(value, type_alias_type):
+        return value
+    try:
+        return value.__value__
+    except Exception:
+        return value
+
+
+def _top_level_assigned_names(module: Any) -> set[str]:
+    try:
+        source = inspect.getsource(module)
+    except Exception:
+        return set()
+
+    try:
+        tree = ast.parse(source)
+    except Exception:
+        return set()
+
+    names: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign):
+            for target in stmt.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+        elif isinstance(stmt, ast.AnnAssign):
+            if isinstance(stmt.target, ast.Name):
+                names.add(stmt.target.id)
+        elif hasattr(ast, "TypeAlias") and isinstance(stmt, getattr(ast, "TypeAlias")):
+            name_node = getattr(stmt, "name", None)
+            if isinstance(name_node, ast.Name):
+                names.add(name_node.id)
+    return names
+
+
+def _is_type_alias_value(value: Any) -> bool:
+    if hasattr(value, "__supertype__"):
+        return True
+    if inspect.isfunction(value) or inspect.isbuiltin(value) or inspect.isclass(value) or inspect.ismodule(value):
+        return False
+    type_alias_type = getattr(typing, "TypeAliasType", None)
+    if type_alias_type is not None and isinstance(value, type_alias_type):
+        return True
+    if isinstance(value, types.GenericAlias):
+        return True
+    try:
+        if typing.get_origin(value) is not None:
+            return True
+    except Exception:
+        pass
+    return hasattr(value, "__parameters__") and bool(getattr(value, "__parameters__", ()))
+
+
+def _extract_constants(module: Any, module_name: str, include_private: bool) -> List[IRConstant]:
+    """Extract module-level constants and Final variables."""
+    constants: List[IRConstant] = []
+    annotations = getattr(module, "__annotations__", {})
+
+    for name in dir(module):
+        if not include_private and name.startswith("_"):
+            continue
+
+        try:
+            value = getattr(module, name)
+        except Exception:
+            continue
+
+        if inspect.isfunction(value) or inspect.isclass(value) or inspect.ismodule(value) or callable(value):
+            continue
+
+        is_constant = name.isupper() or name in annotations
+        if not is_constant:
+            continue
+
+        annotation = annotations.get(name)
+        annotation_str = _stringify_annotation(annotation) if annotation else None
+        is_final = bool(annotation_str and ("Final[" in annotation_str or annotation_str == "Final"))
+
+        try:
+            if isinstance(value, set):
+                value_repr = "set()" if not value else "{" + ", ".join(sorted(repr(item) for item in value)) + "}"
+            elif isinstance(value, frozenset):
+                inner = ", ".join(sorted(repr(item) for item in value))
+                value_repr = f"frozenset({{{inner}}})"
+            else:
+                value_repr = repr(value)
+            if len(value_repr) > 200:
+                value_repr = value_repr[:197] + "..."
+        except Exception:
+            value_repr = "<unrepresentable>"
+
+        constants.append(
+            IRConstant(
+                name=name,
+                annotation=annotation_str,
+                value_repr=value_repr,
+                is_final=is_final,
+            )
+        )
+
+    return constants
+
+
+def _extract_type_aliases(module: Any, module_name: str, include_private: bool) -> List[IRTypeAlias]:
+    """Extract top-level type aliases from module assignments."""
+    type_aliases: List[IRTypeAlias] = []
+    annotations = getattr(module, "__annotations__", {})
+    assigned_names = _top_level_assigned_names(module)
+    candidate_names = sorted(assigned_names | set(annotations.keys()))
+
+    for name in candidate_names:
+        if not include_private and name.startswith("_"):
+            continue
+
+        try:
+            value = getattr(module, name)
+        except Exception:
+            continue
+
+        annotation = annotations.get(name)
+        annotation_str = _stringify_annotation(annotation) if annotation is not None else None
+        is_type_alias_annotation = bool(annotation_str and "TypeAlias" in annotation_str)
+        if not _is_type_alias_value(value) and not is_type_alias_annotation:
+            continue
+
+        unwrapped_value = _unwrap_type_alias_value(value)
+        type_params = _collect_type_params_from_object_and_annotations(value, unwrapped_value)
+        definition = _stringify_annotation(unwrapped_value) or annotation_str or str(unwrapped_value)
+        type_aliases.append(
+            IRTypeAlias(
+                name=name,
+                definition=definition,
+                is_generic=bool(type_params),
+                type_params=type_params,
+            )
+        )
+
+    return type_aliases
+
+
+def _extract_function(
+    obj: Any,
+    qualname: str,
+    *,
+    include_type_params: bool = True,
+    inherited_type_params: List[IRTypeParam] | None = None,
+    display_name: str | None = None,
+    method_kind: str = "instance",
+) -> Optional[IRFunction]:
+    try:
+        sig = inspect.signature(obj)
+    except Exception:
+        return None
+
+    try:
+        hints = get_type_hints(obj, include_extras=True)
+    except Exception:
+        try:
+            hints = get_type_hints(obj)
+        except Exception:
+            hints = {}
+
+    params: List[IRParam] = []
+    annotations_for_params: List[Any] = []
+    for name, p in sig.parameters.items():
+        ann = hints.get(name, p.annotation)
+        annotations_for_params.append(ann)
+        params.append(
+            IRParam(
+                name=name,
+                kind=_param_kind_to_str(p.kind),
+                annotation=_stringify_annotation(ann),
+                default=(p.default is not inspect._empty),
+            )
+        )
+
+    returns = hints.get("return", sig.return_annotation)
+    is_async = inspect.iscoroutinefunction(obj) or inspect.isasyncgenfunction(obj)
+    # Async generators must be marked as generators so callers can distinguish
+    # them from plain coroutines.
+    is_generator = inspect.isgeneratorfunction(obj) or inspect.isasyncgenfunction(obj)
+    type_params = (
+        _collect_scoped_type_params(
+            obj,
+            *annotations_for_params,
+            returns,
+            inherited_type_params=inherited_type_params,
+        )
+        if include_type_params
+        else []
+    )
+
+    return IRFunction(
+        name=display_name or getattr(obj, "__name__", qualname.split(".")[-1]),
+        qualname=qualname,
+        docstring=inspect.getdoc(obj),
+        parameters=params,
+        returns=_stringify_annotation(returns),
+        is_async=is_async,
+        is_generator=is_generator,
+        type_params=type_params,
+        method_kind=method_kind,
+        overloads=_extract_overloads(obj),
+    )
+
+
+# Collects the once-per-process 3.10 overload-degradation notice so
+# extract_module_ir() can surface it through the structured IR ``warnings``
+# channel instead of a stderr RuntimeWarning.
+_pending_overload_warnings: List[str] = []
+_overload_warning_recorded = False
+
+
+def _extract_overloads(obj: Any) -> List[IROverload]:
+    """Capture @typing.overload signatures for ``obj`` (Python 3.11+).
+
+    On interpreters without ``typing.get_overloads`` (3.10 and earlier) this
+    degrades to an empty list and records a single structured IR warning
+    (drained by :func:`extract_module_ir`) rather than crashing.
+    """
+    get_overloads = getattr(typing, "get_overloads", None)
+    if get_overloads is None:
+        global _overload_warning_recorded
+        if not _overload_warning_recorded:
+            _overload_warning_recorded = True
+            _pending_overload_warnings.append(
+                "typing.get_overloads is unavailable (Python < 3.11); "
+                "@overload signatures will not be captured in the IR."
+            )
+        return []
+
+    try:
+        registered = get_overloads(obj)
+    except Exception:
+        return []
+
+    out: List[IROverload] = []
+    for ov in registered or ():
+        try:
+            sig = inspect.signature(ov)
+        except Exception:
+            continue
+        try:
+            hints = get_type_hints(ov, include_extras=True)
+        except Exception:
+            try:
+                hints = get_type_hints(ov)
+            except Exception:
+                hints = {}
+        params: List[IRParam] = []
+        for pname, p in sig.parameters.items():
+            ann = hints.get(pname, p.annotation)
+            params.append(
+                IRParam(
+                    name=pname,
+                    kind=_param_kind_to_str(p.kind),
+                    annotation=_stringify_annotation(ann),
+                    default=(p.default is not inspect._empty),  # type: ignore[attr-defined]
+                )
+            )
+        ret = hints.get("return", sig.return_annotation)
+        out.append(IROverload(parameters=params, returns=_stringify_annotation(ret)))
+    return out
+
+
+def _accessor_return_annotation(getter: Any) -> Optional[str]:
+    """Best-effort return annotation for a property/cached_property getter.
+
+    Resolves forward references via ``get_type_hints`` when possible and falls
+    back to the raw signature annotation. Never raises.
+    """
+    if getter is None:
+        return None
+    try:
+        hints = get_type_hints(getter, include_extras=True)
+    except Exception:
+        try:
+            hints = get_type_hints(getter)
+        except Exception:
+            hints = {}
+    if "return" in hints:
+        return _stringify_annotation(hints["return"])
+    try:
+        sig = inspect.signature(getter)
+    except Exception:
+        return None
+    if sig.return_annotation is inspect._empty:  # type: ignore[attr-defined]
+        return None
+    return _stringify_annotation(sig.return_annotation)
+
+
+def _build_accessor(name: str, obj: Any) -> Optional[IRAccessor]:
+    """Build an IRAccessor for a property or functools.cached_property.
+
+    Handles cached_property explicitly (its object is not callable and
+    ``inspect.signature`` raises on it) so nothing downstream blows up.
+    """
+    cached_property_type = getattr(functools, "cached_property", None)
+    if cached_property_type is not None and isinstance(obj, cached_property_type):
+        getter = getattr(obj, "func", None)
+        return IRAccessor(
+            name=name,
+            returns=_accessor_return_annotation(getter),
+            docstring=inspect.getdoc(getter) if getter is not None else None,
+            # cached_property installs a value on first access; it has no setter
+            # and is conceptually read-only from the caller's perspective.
+            read_only=True,
+            is_cached=True,
+        )
+
+    if isinstance(obj, property):
+        getter = obj.fget
+        return IRAccessor(
+            name=name,
+            returns=_accessor_return_annotation(getter),
+            docstring=inspect.getdoc(obj) or (inspect.getdoc(getter) if getter is not None else None),
+            read_only=obj.fset is None,
+            is_cached=False,
+        )
+
+    return None
+
+
+def _resolve_method_callable(kind: str, attr_obj: Any, cls: type, meth_name: str) -> Any:
+    """Resolve the callable to introspect for a classified class attribute.
+
+    - 'static method'/'class method': unwrap the descriptor to its underlying
+      function so the signature reflects the declared parameters (classmethods
+      keep ``cls``; staticmethods keep none).
+    - 'method': use the attribute object directly (a plain function for
+      Python-defined methods, a descriptor for C-defined ones), preserving the
+      pre-existing behavior where ``self`` appears in the parameter list.
+    """
+    if kind in ("static method", "class method"):
+        func = getattr(attr_obj, "__func__", None)
+        if func is not None:
+            return func
+        # Fall back to the bound attribute (still callable for introspection).
+        try:
+            return getattr(cls, meth_name)
+        except Exception:
+            return attr_obj
+    return attr_obj
+
+
+def _extract_class(cls: type, module_name: str, include_private: bool) -> Optional[IRClass]:
+    name = getattr(cls, "__name__", None)
+    if not name:
+        return None
+    if not include_private and name.startswith("_"):
+        return None
+
+    bases = [b.__name__ for b in getattr(cls, "__bases__", []) if hasattr(b, "__name__")]
+    class_type_params = _collect_type_params_from_object_and_annotations(cls)
+
+    methods: List[IRFunction] = []
+    accessors: List[IRAccessor] = []
+
+    # classify_class_attrs is the canonical classifier: it walks the MRO and
+    # labels every attribute as 'class method' | 'static method' | 'method' |
+    # 'property' | 'data', honoring descriptors, inheritance, and metaclasses.
+    # This captures @classmethod/@staticmethod/@property that the previous
+    # getmembers(predicate=isfunction|...) filter silently dropped/mislabeled.
+    try:
+        classified = inspect.classify_class_attrs(cls)
+    except Exception:
+        classified = []
+
+    cached_property_type = getattr(functools, "cached_property", None)
+    seen_accessors: set[str] = set()
+
+    for attr in classified:
+        meth_name = attr.name
+        kind = attr.kind
+        attr_obj = attr.object
+
+        if not include_private and meth_name.startswith("_") and meth_name != "__init__":
+            continue
+
+        # Accessors: @property and functools.cached_property. classify_class_attrs
+        # labels cached_property as kind='method' (its object is a descriptor),
+        # so we detect it by object type BEFORE any signature() call (which would
+        # raise on a cached_property instance).
+        is_cached = cached_property_type is not None and isinstance(attr_obj, cached_property_type)
+        if kind == "property" or isinstance(attr_obj, property) or is_cached:
+            accessor = _build_accessor(meth_name, attr_obj)
+            if accessor is not None and accessor.name not in seen_accessors:
+                seen_accessors.add(accessor.name)
+                accessors.append(accessor)
+            continue
+
+        if kind not in ("method", "class method", "static method"):
+            # 'data' attributes are handled by the field-extraction blocks below.
+            continue
+
+        if kind == "class method":
+            member_kind = "class"
+        elif kind == "static method":
+            member_kind = "static"
+        else:
+            member_kind = "instance"
+
+        target = _resolve_method_callable(kind, attr_obj, cls, meth_name)
+
+        fn = _extract_function(
+            target,
+            f"{module_name}.{cls.__name__}.{meth_name}",
+            inherited_type_params=class_type_params,
+            display_name=meth_name,
+            method_kind=member_kind,
+        )
+        if fn is not None:
+            methods.append(fn)
+
+    typed_dict = False
+    total: Optional[bool] = None
+    fields: List[IRParam] = []
+    try:
+        if hasattr(cls, "__annotations__") and hasattr(cls, "__total__"):
+            typed_dict = True
+            total = bool(getattr(cls, "__total__", True))
+            ann = (
+                get_type_hints(cls, include_extras=True)
+                if hasattr(typing, "get_origin")
+                else getattr(cls, "__annotations__", {})
+            )
+            # __optional_keys__ is the runtime's own answer and, unlike the
+            # class-level __total__ flag, is correct under inheritance: a
+            # total=False subclass keeps fields inherited from a total=True
+            # parent required.
+            optional_keys = getattr(cls, "__optional_keys__", None)
+            for fname, ftype in ann.items():
+                text = _stringify_annotation(ftype)
+                s = str(ftype)
+                if optional_keys is not None:
+                    optional_flag = fname in optional_keys
+                else:
+                    is_not_required = "NotRequired[" in s or "typing.NotRequired[" in s
+                    is_required = "Required[" in s or "typing.Required[" in s
+                    optional_flag = is_not_required or (not is_required and total is False)
+                fields.append(IRParam(name=fname, kind="FIELD", annotation=text, default=optional_flag))
+    except Exception:
+        pass
+
+    is_protocol = False
+    try:
+        for b in getattr(cls, "__mro__", []):
+            if getattr(b, "__name__", None) == "Protocol":
+                is_protocol = True
+                break
+    except Exception:
+        is_protocol = False
+
+    is_namedtuple = hasattr(cls, "_fields") and isinstance(getattr(cls, "_fields", None), (list, tuple))
+    if is_namedtuple and not fields:
+        try:
+            ann = (
+                get_type_hints(cls, include_extras=True)
+                if hasattr(typing, "get_origin")
+                else getattr(cls, "__annotations__", {})
+            )
+            for fname in getattr(cls, "_fields", []):
+                ftype = ann.get(fname, None)
+                fields.append(
+                    IRParam(
+                        name=str(fname),
+                        kind="FIELD",
+                        annotation=_stringify_annotation(ftype),
+                        default=False,
+                    )
+                )
+        except Exception:
+            pass
+
+    is_dataclass = False
+    try:
+        is_dataclass = _dataclasses.is_dataclass(cls)
+    except Exception:
+        is_dataclass = False
+    if is_dataclass and not fields:
+        try:
+            for f in _dataclasses.fields(cls):  # type: ignore[attr-defined]
+                defaulted = not (
+                    f.default is _dataclasses.MISSING and f.default_factory is _dataclasses.MISSING
+                )  # type: ignore[attr-defined]
+                fields.append(
+                    IRParam(
+                        name=f.name,
+                        kind="FIELD",
+                        annotation=_stringify_annotation(f.type),
+                        default=defaulted,
+                    )
+                )
+        except Exception:
+            pass
+
+    is_pydantic = False
+    try:
+        import pydantic
+
+        try:
+            base = pydantic.BaseModel  # type: ignore[attr-defined]
+        except Exception:
+            base = None
+        if base is not None:
+            try:
+                is_pydantic = issubclass(cls, base)
+            except Exception:
+                is_pydantic = False
+    except Exception:
+        is_pydantic = False
+    if is_pydantic and not fields:
+        try:
+            model_fields = getattr(cls, "model_fields", None)
+            if isinstance(model_fields, dict):
+                for fname, finfo in model_fields.items():
+                    ann = getattr(finfo, "annotation", None)
+                    required = getattr(finfo, "is_required", False)
+                    fields.append(
+                        IRParam(
+                            name=str(fname),
+                            kind="FIELD",
+                            annotation=_stringify_annotation(ann),
+                            default=(not required),
+                        )
+                    )
+            else:
+                __fields__ = getattr(cls, "__fields__", None)
+                if isinstance(__fields__, dict):
+                    for fname, finfo in __fields__.items():
+                        ann = getattr(finfo, "type_", None)
+                        required = getattr(finfo, "required", False)
+                        fields.append(
+                            IRParam(
+                                name=str(fname),
+                                kind="FIELD",
+                                annotation=_stringify_annotation(ann),
+                                default=(not required),
+                            )
+                        )
+        except Exception:
+            pass
+
+    return IRClass(
+        name=name,
+        qualname=f"{module_name}.{name}",
+        docstring=inspect.getdoc(cls) if getattr(cls, "__doc__", None) else None,
+        bases=bases,
+        methods=methods,
+        typed_dict=typed_dict,
+        total=total,
+        fields=fields,
+        is_protocol=is_protocol,
+        is_namedtuple=is_namedtuple,
+        is_dataclass=is_dataclass,
+        is_pydantic=is_pydantic,
+        type_params=class_type_params,
+        accessors=accessors,
+    )
+
+
+def _collect_metadata(module_name: str, ir_version: str) -> Dict[str, Any]:
+    py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    plat = platform.platform()
+
+    pkg_root = module_name.split(".")[0]
+    version: Optional[str]
+    try:
+        version = importlib_metadata.version(pkg_root)
+    except Exception:
+        try:
+            mod = importlib.import_module(pkg_root)
+            version = getattr(mod, "__version__", None)
+        except Exception:
+            version = None
+
+    cache_key = f"{module_name}@{version or 'unknown'}|py{py_version}|ir{ir_version}"
+    return {
+        "python_version": py_version,
+        "platform": plat,
+        "package": pkg_root,
+        "package_version": version,
+        "cache_key": cache_key,
+    }
+
+
+def extract_module_ir(
+    module_name: str,
+    *,
+    ir_version: str = IR_VERSION,
+    include_private: bool = False,
+) -> Dict[str, Any]:
+    module = importlib.import_module(module_name)
+
+    functions: List[IRFunction] = []
+    classes: List[IRClass] = []
+    warnings: List[str] = []
+
+    constants = _extract_constants(module, module_name, include_private)
+    type_aliases = _extract_type_aliases(module, module_name, include_private)
+
+    for name in dir(module):
+        try:
+            value = getattr(module, name)
+        except Exception:
+            continue
+        if not include_private and name.startswith("_"):
+            continue
+        if inspect.isfunction(value) or inspect.isbuiltin(value):
+            fn = _extract_function(value, f"{module_name}.{name}")
+            if fn is not None:
+                functions.append(fn)
+        if inspect.isclass(value) and getattr(value, "__module__", None) == module.__name__:
+            cls_ir = _extract_class(value, module_name, include_private)
+            if cls_ir is not None:
+                classes.append(cls_ir)
+
+    # Surface the deferred 3.10 overload-degradation notice (if any) through the
+    # structured warnings channel rather than stderr.
+    if _pending_overload_warnings:
+        warnings.extend(_pending_overload_warnings)
+        _pending_overload_warnings.clear()
+
+    # Class annotations were historically reduced to their leaf name (for
+    # example ``decimal.Decimal`` became ``Decimal``), making it impossible for
+    # the generator to tell a local declaration from an imported object. Keep the
+    # full path above and surface return annotations that cannot be resolved from
+    # this module as structured diagnostics. The TS generator turns these leaves
+    # into ``unknown`` unless it emits a declaration for them.
+    external_return_pattern = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)")
+    exempt_return_prefixes = ("typing.", "typing_extensions.", "collections.abc.", "builtins.")
+
+    def record_return_warning(fn: IRFunction) -> None:
+        if fn.returns is None:
+            warnings.append(f"Return annotation for {fn.qualname} is missing.")
+            return
+        for candidate in external_return_pattern.findall(fn.returns):
+            if candidate.startswith(exempt_return_prefixes) or candidate.startswith(f"{module_name}."):
+                continue
+            warnings.append(
+                f"Return annotation for {fn.qualname} resolves outside analyzed module: {candidate}."
+            )
+            break
+
+    for fn in functions:
+        record_return_warning(fn)
+    for cls in classes:
+        for method in cls.methods:
+            record_return_warning(method)
+        for accessor in cls.accessors:
+            if accessor.returns is None:
+                warnings.append(f"Return annotation for {cls.qualname}.{accessor.name} is missing.")
+
+    ir = IRModule(
+        ir_version=ir_version,
+        module=module_name,
+        functions=functions,
+        classes=classes,
+        constants=constants,
+        type_aliases=type_aliases,
+        metadata=_collect_metadata(module_name, ir_version),
+        warnings=warnings,
+    )
+    return asdict(ir)
+
+
+def emit_ir_json(
+    module_name: str,
+    *,
+    ir_version: str = IR_VERSION,
+    include_private: bool = False,
+    pretty: bool = True,
+) -> str:
+    return json.dumps(
+        extract_module_ir(module_name, ir_version=ir_version, include_private=include_private),
+        ensure_ascii=False,
+        indent=2 if pretty else None,
+    )

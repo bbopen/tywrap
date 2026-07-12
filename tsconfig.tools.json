@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./tools",
+    "outDir": "./dist/tools",
+    "allowJs": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": false,
+    "types": ["node"]
+  },
+  "include": ["tools/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test", "**/*.test.ts", "**/*.spec.ts"]
+}

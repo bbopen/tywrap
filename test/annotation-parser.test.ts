@@ -1,0 +1,71 @@
+import { describe, it, expect } from 'vitest';
+
+import { parseAnnotationToPythonType } from '../src/core/annotation-parser.js';
+
+describe('annotation parser', () => {
+  it('parses Literal strings containing commas', () => {
+    const t = parseAnnotationToPythonType('Literal["a,b"]');
+    expect(t.kind).toBe('literal');
+    expect((t as any).value).toBe('a,b');
+  });
+
+  it('parses Literal strings containing pipes', () => {
+    const t = parseAnnotationToPythonType('Literal["x|y"]');
+    expect(t.kind).toBe('literal');
+    expect((t as any).value).toBe('x|y');
+  });
+
+  it('parses Literal strings containing spaced pipes', () => {
+    const t = parseAnnotationToPythonType('Literal["a | b"]');
+    expect(t.kind).toBe('literal');
+    expect((t as any).value).toBe('a | b');
+  });
+
+  it('parses Union containing nested Literal with commas', () => {
+    const t = parseAnnotationToPythonType('Union[Literal["a,b"], str]');
+    expect(t.kind).toBe('union');
+    expect((t as any).types).toHaveLength(2);
+    expect((t as any).types[0].kind).toBe('literal');
+    expect((t as any).types[0].value).toBe('a,b');
+    expect((t as any).types[1].kind).toBe('primitive');
+    expect((t as any).types[1].name).toBe('str');
+  });
+
+  it('parses FrozenSet', () => {
+    const t = parseAnnotationToPythonType('FrozenSet[int]');
+    expect(t.kind).toBe('collection');
+    expect((t as any).name).toBe('frozenset');
+    expect((t as any).itemTypes).toHaveLength(1);
+    expect((t as any).itemTypes[0].kind).toBe('primitive');
+    expect((t as any).itemTypes[0].name).toBe('int');
+  });
+
+  it('parses Callable[..., R] as an ellipsis callable', () => {
+    const t = parseAnnotationToPythonType('Callable[..., int]');
+    expect(t.kind).toBe('callable');
+    expect((t as any).parameters).toHaveLength(1);
+    expect((t as any).parameters[0].kind).toBe('custom');
+    expect((t as any).parameters[0].name).toBe('...');
+  });
+
+  it('parses known ParamSpec argument packs', () => {
+    const t = parseAnnotationToPythonType('P.args', {
+      typeParameters: [{ name: 'P', kind: 'paramspec' }],
+    });
+    expect(t.kind).toBe('paramspec_args');
+    expect((t as any).name).toBe('P');
+  });
+
+  it('parses explicit ParamSpec argument packs without declared type parameters', () => {
+    const t = parseAnnotationToPythonType('~P.args');
+    expect(t.kind).toBe('paramspec_args');
+    expect((t as any).name).toBe('P');
+  });
+
+  it('does not treat arbitrary dotted names as ParamSpec packs', () => {
+    const t = parseAnnotationToPythonType('Request.args');
+    expect(t.kind).toBe('custom');
+    expect((t as any).name).toBe('args');
+    expect((t as any).module).toBe('Request');
+  });
+});
