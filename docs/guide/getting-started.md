@@ -118,6 +118,14 @@ async function example() {
 example().catch(console.error);
 ```
 
+## Runtime return validation
+
+Generated wrappers validate returns at runtime after decoding. If a Python
+implementation returns a value that does not match its annotation, tywrap throws
+`BridgeValidationError` with the wrapped call site and received shape. Fix the
+Python annotation or implementation; use `-> Any` only when that return is
+intentionally untyped.
+
 ## Custom Module Example
 
 Create a wrapper for a custom Python module:

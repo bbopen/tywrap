@@ -430,17 +430,28 @@ export class RpcClient extends DisposableBase {
     module: string,
     functionName: string,
     args: unknown[],
-    kwargs?: Record<string, unknown>
+    kwargs?: Record<string, unknown>,
+    validate?: (result: T) => void
   ): Promise<T> {
-    return this.sendMessageAsync<T>({
-      method: 'call',
-      params: {
-        module,
-        functionName,
-        args,
-        kwargs,
+    return this.sendMessageAsync<T>(
+      {
+        method: 'call',
+        params: {
+          module,
+          functionName,
+          args,
+          kwargs,
+        },
       },
-    });
+      validate
+        ? {
+            validate: result => {
+              validate(result);
+              return result;
+            },
+          }
+        : undefined
+    );
   }
 
   /**

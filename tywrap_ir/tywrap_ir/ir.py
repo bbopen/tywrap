@@ -738,12 +738,20 @@ def _extract_class(cls: type, module_name: str, include_private: bool) -> Option
                 if hasattr(typing, "get_origin")
                 else getattr(cls, "__annotations__", {})
             )
+            # __optional_keys__ is the runtime's own answer and, unlike the
+            # class-level __total__ flag, is correct under inheritance: a
+            # total=False subclass keeps fields inherited from a total=True
+            # parent required.
+            optional_keys = getattr(cls, "__optional_keys__", None)
             for fname, ftype in ann.items():
                 text = _stringify_annotation(ftype)
                 s = str(ftype)
-                is_not_required = "NotRequired[" in s or "typing.NotRequired[" in s
-                is_required = "Required[" in s or "typing.Required[" in s
-                optional_flag = is_not_required or (not is_required and total is False)
+                if optional_keys is not None:
+                    optional_flag = fname in optional_keys
+                else:
+                    is_not_required = "NotRequired[" in s or "typing.NotRequired[" in s
+                    is_required = "Required[" in s or "typing.Required[" in s
+                    optional_flag = is_not_required or (not is_required and total is False)
                 fields.append(IRParam(name=fname, kind="FIELD", annotation=text, default=optional_flag))
     except Exception:
         pass

@@ -36,6 +36,8 @@ interface GenericRenderContext {
   emittedParamSpecs: Set<string>;
 }
 
+type ReturnDefinitionNames = ReadonlySet<string>;
+
 export interface CodeGeneratorOptions {
   /** Reports a generated annotation that cannot be represented by emitted declarations. */
   onTypeDegrade?: (typeName: string) => void;
@@ -397,11 +399,164 @@ export class CodeGenerator {
     };
   }
 
+  /**
+   * Preserve Python provenance in generated return validators instead of
+   * reconstructing a checker from the final TypeScript spelling. In particular
+   * pandas/NumPy values retain their marker contract after Arrow decoding.
+   */
+  private returnSchema(type: PythonType, definitions: ReturnDefinitionNames = new Set()): unknown {
+    // A bare `-> None` return maps to TS void and validates nothing, but a
+    // NESTED None (union member, tuple element) is a real wire value — it
+    // decodes to null and must be checked as null, or a union containing it
+    // would carry an any-member and accept everything.
+    if (type.kind === 'primitive' && type.name === 'None') {
+      return { kind: 'any' };
+    }
+    const schema = (current: PythonType): unknown => {
+      switch (current.kind) {
+        case 'primitive':
+          return current.name === 'int' || current.name === 'float'
+            ? { kind: 'primitive', type: 'number' }
+            : current.name === 'str'
+              ? { kind: 'primitive', type: 'string' }
+              : current.name === 'bool'
+                ? { kind: 'primitive', type: 'boolean' }
+                : current.name === 'bytes'
+                  ? { kind: 'primitive', type: 'Uint8Array' }
+                  : current.name === 'None'
+                    ? { kind: 'primitive', type: 'null' }
+                    : { kind: 'any' };
+        case 'literal':
+          return { kind: 'literal', value: current.value };
+        case 'annotated':
+          return schema(current.base);
+        case 'final':
+        case 'classvar':
+          return schema(current.type);
+        case 'optional':
+          return {
+            kind: 'union',
+            options: [schema(current.type), { kind: 'primitive', type: 'null' }],
+          };
+        case 'union':
+          return { kind: 'union', options: current.types.map(schema) };
+        case 'collection': {
+          if (current.name === 'tuple') {
+            if (current.itemTypes[1]?.kind === 'custom' && current.itemTypes[1].name === '...') {
+              return {
+                kind: 'array',
+                element: schema(current.itemTypes[0] ?? { kind: 'custom', name: 'Any' }),
+              };
+            }
+            return { kind: 'tuple', elements: current.itemTypes.map(schema) };
+          }
+          if (current.name === 'dict') {
+            return {
+              kind: 'record',
+              values: schema(current.itemTypes[1] ?? { kind: 'custom', name: 'Any' }),
+            };
+          }
+          return {
+            kind: 'array',
+            element: schema(current.itemTypes[0] ?? { kind: 'custom', name: 'Any' }),
+          };
+        }
+        case 'generic': {
+          const leaf = current.name.split('.').at(-1) ?? current.name;
+          if (leaf === 'NDArray' || leaf === 'ndarray') {
+            return { kind: 'marker', marker: 'ndarray' };
+          }
+          if (
+            [
+              'list',
+              'List',
+              'Sequence',
+              'Iterable',
+              'Iterator',
+              'Generator',
+              'set',
+              'frozenset',
+            ].includes(leaf)
+          ) {
+            return {
+              kind: 'array',
+              element: schema(current.typeArgs[0] ?? { kind: 'custom', name: 'Any' }),
+            };
+          }
+          if (['dict', 'Dict', 'Mapping', 'MutableMapping'].includes(leaf)) {
+            return {
+              kind: 'record',
+              values: schema(current.typeArgs[1] ?? { kind: 'custom', name: 'Any' }),
+            };
+          }
+          return definitions.has(leaf) ? { kind: 'ref', name: leaf } : { kind: 'any' };
+        }
+        case 'custom': {
+          const leaf = current.name.split('.').at(-1) ?? current.name;
+          const full = `${current.module ?? ''}.${leaf}`;
+          if (leaf === 'None') {
+            return { kind: 'primitive', type: 'null' };
+          }
+          if (leaf === 'Any' || leaf === 'object' || leaf === 'NoReturn' || leaf === 'Never') {
+            return { kind: 'any' };
+          }
+          if (leaf === 'DataFrame' && (!current.module || current.module.startsWith('pandas'))) {
+            return { kind: 'marker', marker: 'dataframe' };
+          }
+          if (leaf === 'Series' && (!current.module || current.module.startsWith('pandas'))) {
+            return { kind: 'marker', marker: 'series' };
+          }
+          if (leaf === 'ndarray' || leaf === 'NDArray' || full.includes('numpy')) {
+            return { kind: 'marker', marker: 'ndarray' };
+          }
+          return definitions.has(leaf) ? { kind: 'ref', name: leaf } : { kind: 'any' };
+        }
+        case 'typevar':
+        case 'paramspec':
+        case 'paramspec_args':
+        case 'paramspec_kwargs':
+        case 'typevartuple':
+        case 'unpack':
+        case 'callable':
+          return { kind: 'any' };
+      }
+    };
+    return schema(type);
+  }
+
+  private returnDefinitions(module: PythonModule): ReturnDefinitionNames {
+    return new Set(
+      module.classes
+        .filter(cls => cls.kind === 'typed_dict' || cls.decorators.includes('__typed_dict__'))
+        .map(cls => cls.name)
+    );
+  }
+
+  private emitReturnDefinitions(module: PythonModule): string {
+    const definitions = this.returnDefinitions(module);
+    const entries = module.classes
+      .filter(cls => cls.kind === 'typed_dict' || cls.decorators.includes('__typed_dict__'))
+      .map(cls => {
+        const fields = Object.fromEntries(
+          cls.properties.map(property => [
+            property.name,
+            {
+              schema: this.returnSchema(property.type, definitions),
+              optional: property.optional === true,
+            },
+          ])
+        );
+        return [cls.name, { kind: 'record', fields }];
+      });
+    return `const __tywrapReturnDefinitions: Record<string, ReturnSchema> = ${JSON.stringify(Object.fromEntries(entries))};\n\n`;
+  }
+
   generateFunctionWrapper(
     func: PythonFunction,
     moduleName?: string,
     annotatedJSDoc = false,
-    localDeclaredNames: Set<string> = new Set()
+    localDeclaredNames: Set<string> = new Set(),
+    returnDefinitions: ReturnDefinitionNames = new Set()
   ): GeneratedCode {
     const jsdoc = this.generateJsDoc(
       func.docstring,
@@ -489,6 +644,8 @@ export class CodeGenerator {
     const returnType = this.typeToTsFromPython(func.returnType, genericContext, 'return');
     const fname = this.escapeIdentifier(func.name);
     const moduleId = moduleName ?? '__main__';
+    const validatorName = `__validate${this.escapeIdentifier(func.name, { preserveCase: true })}Result`;
+    const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.returnSchema(func.returnType, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n\n`;
 
     // Overloads: generate trailing optional parameter drop variants (exclude *args/**kwargs).
     // Why: Python APIs frequently have many optional tail params. TypeScript callers expect
@@ -577,10 +734,8 @@ export class CodeGenerator {
     const callPreludeLines = emitCallPrelude(callDescriptor, this.callEmitHelpers());
     const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
 
-    const ts = `${jsdoc}${overloadDecl}export async function ${fname}${typeParamDecl}(${paramDecl}): Promise<${returnType}> {
-${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.name}', __args${
-      hasKwArgs ? ', __kwargs' : ''
-    });
+    const ts = `${jsdoc}${returnValidator}${overloadDecl}export async function ${fname}${typeParamDecl}(${paramDecl}): Promise<${returnType}> {
+${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${moduleId}', '${func.name}', __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${validatorName});
 }
 `;
 
@@ -596,7 +751,8 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
     cls: PythonClass,
     moduleName?: string,
     _annotatedJSDoc = false,
-    localDeclaredNames: Set<string> = new Set()
+    localDeclaredNames: Set<string> = new Set(),
+    returnDefinitions: ReturnDefinitionNames = new Set()
   ): GeneratedCode {
     const moduleDeclaredNames = new Set(localDeclaredNames);
     moduleDeclaredNames.add(cls.name);
@@ -782,6 +938,8 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
           'return'
         );
         const mname = this.escapeIdentifier(method.name);
+        const validatorName = `__validate${this.escapeIdentifier(cls.name, { preserveCase: true })}${this.escapeIdentifier(method.name, { preserveCase: true })}Result`;
+        const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.returnSchema(method.returnType, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n\n`;
 
         const overloads: string[] = [];
         if (needsKwargsParam && requiredKwOnlyNames.length > 0) {
@@ -829,11 +987,9 @@ ${callPrelude}${guards}  return getRuntimeBridge().call('${moduleId}', '${func.n
         const guardLines = emitArgGuards(callDescriptor);
         const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
 
-        const callExpr = `getRuntimeBridge().call('${moduleId}', '${cls.name}.${method.name}', __args${
-          needsKwargsParam ? ', __kwargs' : ''
-        })`;
+        const callExpr = `getRuntimeBridge().call<${returnType}>('${moduleId}', '${cls.name}.${method.name}', __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${validatorName})`;
         methodBodies.push(`${overloadDecl}  ${staticPrefix}async ${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}> {
-${callPrelude}${guards}    return ${callExpr};
+    ${returnValidator}${callPrelude}${guards}    return ${callExpr};
   }`);
         methodDeclarations.push(
           `${overloadDecl}${overloads.length > 0 ? '' : `  ${staticPrefix}${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}>;\n`}`
@@ -913,10 +1069,26 @@ ${migrationNote}${declarationMethodsSection}
     ]);
     const functionResults = [...module.functions]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map(f => this.generateFunctionWrapper(f, module.name, annotatedJSDoc, localDeclaredNames));
+      .map(f =>
+        this.generateFunctionWrapper(
+          f,
+          module.name,
+          annotatedJSDoc,
+          localDeclaredNames,
+          this.returnDefinitions(module)
+        )
+      );
     const classResults = [...module.classes]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map(c => this.generateClassWrapper(c, module.name, annotatedJSDoc, localDeclaredNames));
+      .map(c =>
+        this.generateClassWrapper(
+          c,
+          module.name,
+          annotatedJSDoc,
+          localDeclaredNames,
+          this.returnDefinitions(module)
+        )
+      );
     const typeAliasResults = [...(module.typeAliases ?? [])]
       .sort((a, b) => a.name.localeCompare(b.name))
       .map(alias => this.generateTypeAlias(alias, module.name, localDeclaredNames));
@@ -932,7 +1104,9 @@ ${migrationNote}${declarationMethodsSection}
       return kind === 'class' && !c.decorators.includes('__typed_dict__');
     });
     const needsRuntime = module.functions.length > 0 || hasRuntimeClasses;
-    const bridgeDecl = needsRuntime ? `import { getRuntimeBridge } from 'tywrap/runtime';\n\n` : '';
+    const bridgeDecl = needsRuntime
+      ? `import { createReturnValidator, getRuntimeBridge, type ReturnSchema } from 'tywrap/runtime';\n\n${this.emitReturnDefinitions(module)}`
+      : '';
 
     const ts = `${`${header}${bridgeDecl}${functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd()}\n`;
     const declaration = `${`${declarationHeader}${functionResults

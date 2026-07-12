@@ -96,33 +96,41 @@ describe('pinned IR contracts', () => {
     }
   });
 
-  it('fails clearly when Python IR reports a different schema version', async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-ir-contract-version-'));
-    try {
-      const fakePython = join(tempDir, 'fake-python');
-      await writeFile(
-        fakePython,
-        '#!/bin/sh\nprintf \'{"ir_version":"0.3.0","module":"math"}\\n\'\n',
-        'utf8'
-      );
-      await chmod(fakePython, 0o755);
+  // Windows cannot run the fake-interpreter shim: extensionless sh scripts
+  // fail with ENOENT and .cmd files fail with EINVAL (Node's batch-file spawn
+  // mitigation; the production spawn rightly never sets shell:true). The
+  // version-check logic under test is platform-independent TypeScript and is
+  // exercised on the Linux and macOS matrix legs.
+  it.skipIf(process.platform === 'win32')(
+    'fails clearly when Python IR reports a different schema version',
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-ir-contract-version-'));
+      try {
+        const fakePython = join(tempDir, 'fake-python');
+        await writeFile(
+          fakePython,
+          '#!/bin/sh\nprintf \'{"ir_version":"0.3.0","module":"math"}\\n\'\n',
+          'utf8'
+        );
+        await chmod(fakePython, 0o755);
 
-      const result = await generate({
-        ...options(join(tempDir, 'generated')),
-        runtime: { node: { pythonPath: fakePython } },
-      });
-      expect(result.failures).toEqual([
-        expect.objectContaining({
-          code: 'ir-version-mismatch',
-          message: expect.stringContaining(
-            'TypeScript expects 0.4.0, but Python IR for math declares 0.3.0'
-          ),
-        }),
-      ]);
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
+        const result = await generate({
+          ...options(join(tempDir, 'generated')),
+          runtime: { node: { pythonPath: fakePython } },
+        });
+        expect(result.failures).toEqual([
+          expect.objectContaining({
+            code: 'ir-version-mismatch',
+            message: expect.stringContaining(
+              'TypeScript expects 0.4.0, but Python IR for math declares 0.3.0'
+            ),
+          }),
+        ]);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
   it('rejects same-version contracts with missing collection fields', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-ir-contract-shape-'));

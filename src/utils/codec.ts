@@ -9,6 +9,8 @@
  * Sklearn estimators: { "__tywrap__": "sklearn.estimator", "encoding": "json", ... }
  */
 
+import { tagDecodedShape } from '../runtime/validators.js';
+
 // Avoid hard dependency on apache-arrow types at compile time to keep install optional.
 export type ArrowTable = { readonly numCols?: number; readonly numRows?: number } & Record<
   string,
@@ -68,6 +70,7 @@ export type ValueEnvelope =
       readonly b64?: string; // when encoding=arrow
       readonly data?: unknown; // when encoding=json
       readonly shape?: readonly number[];
+      readonly dtype?: string | null;
     }
   | {
       readonly __tywrap__: 'scipy.sparse';
@@ -442,13 +445,16 @@ function decodeArrowOrJsonEnvelope<T>(
       throw new Error(`Invalid ${typeTag} envelope: missing b64`);
     }
     const bytes = fromBase64(b64);
-    return decodeArrow(bytes);
+    const decoded = decodeArrow(bytes);
+    return isPromiseLike(decoded)
+      ? decoded.then(item => tagDecodedShape(item, { marker: typeTag as 'dataframe' | 'series' }))
+      : tagDecodedShape(decoded, { marker: typeTag as 'dataframe' | 'series' });
   }
   if (encoding === 'json') {
     if (!('data' in value)) {
       throw new Error(`Invalid ${typeTag} envelope: missing data`);
     }
-    return value.data;
+    return tagDecodedShape(value.data, { marker: typeTag as 'dataframe' | 'series' });
   }
   throw new Error(`Invalid ${typeTag} envelope: unsupported encoding ${String(encoding)}`);
 }
@@ -463,6 +469,8 @@ const decodeNdarrayEnvelope: EnvelopeHandler = (value, decodeArrow) => {
   const encoding = value.encoding;
   const shapeValue = value.shape;
   const shape = isNumberArray(shapeValue) ? shapeValue : undefined;
+  const dtype = typeof value.dtype === 'string' ? value.dtype : undefined;
+  const metadata = { marker: 'ndarray' as const, dims: shape?.length, dtype };
 
   if (encoding === 'arrow') {
     const b64 = value.b64;
@@ -480,30 +488,30 @@ const decodeNdarrayEnvelope: EnvelopeHandler = (value, decodeArrow) => {
       return decoded.then(data => {
         const values = extractArrowValues(data);
         if (!values) {
-          return data; // Fallback: return raw data if extraction fails
+          return tagDecodedShape(data, metadata); // Fallback: keep provenance on raw data.
         }
         // Reshape scalars and multi-dimensional arrays, but not 1D
-        if (shape && shape.length !== 1) {
-          return reshapeArray(values, shape);
-        }
-        return values;
+        return tagDecodedShape(
+          shape && shape.length !== 1 ? reshapeArray(values, shape) : values,
+          metadata
+        );
       });
     }
     const values = extractArrowValues(decoded);
     if (!values) {
-      return decoded; // Fallback: return raw data if extraction fails
+      return tagDecodedShape(decoded, metadata); // Fallback: keep provenance on raw data.
     }
     // Reshape scalars and multi-dimensional arrays, but not 1D
-    if (shape && shape.length !== 1) {
-      return reshapeArray(values, shape);
-    }
-    return values;
+    return tagDecodedShape(
+      shape && shape.length !== 1 ? reshapeArray(values, shape) : values,
+      metadata
+    );
   }
   if (encoding === 'json') {
     if (!('data' in value)) {
       throw new Error('Invalid ndarray envelope: missing data');
     }
-    return value.data;
+    return tagDecodedShape(value.data, metadata);
   }
   throw new Error(`Invalid ndarray envelope: unsupported encoding ${String(encoding)}`);
 };

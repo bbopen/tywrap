@@ -43,10 +43,11 @@ export abstract class BasePythonBridge extends DisposableBase implements PythonR
     module: string,
     functionName: string,
     args: unknown[],
-    kwargs?: Record<string, unknown>
+    kwargs?: Record<string, unknown>,
+    validate?: (result: T) => void
   ): Promise<T> {
     await this.ensureReady();
-    return this.getRpcClient().call<T>(module, functionName, args, kwargs);
+    return this.getRpcClient().call<T>(module, functionName, args, kwargs, validate);
   }
 
   /**

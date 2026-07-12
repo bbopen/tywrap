@@ -502,7 +502,8 @@ export interface PythonRuntime {
     module: string,
     functionName: string,
     args: unknown[],
-    kwargs?: Record<string, unknown>
+    kwargs?: Record<string, unknown>,
+    validate?: (result: T) => void
   ): Promise<T>;
 }
 

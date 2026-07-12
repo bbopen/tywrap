@@ -21,6 +21,7 @@ export {
   BridgeError,
   BridgeCodecError,
   BridgeProtocolError,
+  BridgeValidationError,
   BridgeTimeoutError,
   BridgeDisposedError,
   BridgeExecutionError,
