@@ -2,7 +2,7 @@
 
 ## [0.9.0](https://github.com/bbopen/tywrap/compare/v0.8.0...v0.9.0) (2026-07-11)
 
-The honesty release — typed value-RPC, one job done well. 0.9.0 removes the stateful instance API whose handles silently broke under pooling, collapses the transport stack it no longer needs, and makes the generated types tell the truth: a type you see in a generated wrapper is now either backed by a declaration and a codec, or it is `unknown` — and what comes back over the wire is validated against it at runtime. Generated wrappers must be regenerated: the IR schema is now `0.4.0` on both sides, and a version mismatch fails generation with a clear message.
+Typed value-RPC, one job done well. 0.9.0 removes the stateful instance API whose handles silently broke under pooling, collapses the transport stack it no longer needs, and makes the generated types tell the truth: a type you see in a generated wrapper is now either backed by a declaration and a codec, or it is `unknown` — and what comes back over the wire is validated against it at runtime. Generated wrappers must be regenerated: the IR schema is now `0.4.0` on both sides, and a version mismatch fails generation with a clear message.
 
 ### Breaking
 

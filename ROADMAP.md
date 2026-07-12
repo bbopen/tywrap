@@ -8,7 +8,7 @@ The detailed technical appendix for the scientific data plane lives in
 
 ## Recently Shipped
 
-### v0.9.0: typed value-RPC — the honesty release
+### v0.9.0: typed value-RPC
 
 `v0.9.0` narrowed tywrap to one job done well: typed value-RPC between
 TypeScript and Python (roadmap #260–#270). The stateful instance API is gone
