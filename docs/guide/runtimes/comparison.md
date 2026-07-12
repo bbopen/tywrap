@@ -6,13 +6,13 @@ tywrap supports five runtime configurations. Choose based on your environment.
 
 | Feature                        | Node.js | Bun | Deno (experimental) |  Browser (Pyodide)   |    HTTP     |
 | ------------------------------ | :-----: | :-: | :-----------------: | :------------------: | :---------: |
-| Python subprocess              |   ✅    | ✅  |         ✅          |          ❌          |     ❌      |
-| Deno Deploy / serverless       |   ❌    | ❌  |         ❌          |          ✅          |     ✅      |
-| Apache Arrow transport         |   ✅    | ✅  |         ✅          |          ✅          |     ✅      |
-| Virtual environment support    |   ✅    | ✅  |         ✅          |          ❌          | Server-side |
-| Process pooling (experimental) |   ✅    | ✅  |         ✅          |          ❌          |     ❌      |
-| Development hot reload         |   ✅    | ❌  |         ❌          | Manual bridge reload |  External   |
-| Tested in CI                   |   ✅    | ✅  |    ❌ (untested)    |          ✅          |     ✅      |
+| Python subprocess              | yes    | yes | yes              | no                 | no        |
+| Deno Deploy / serverless       | no     | no  | no               | yes                | yes       |
+| Apache Arrow transport         | yes    | yes | yes              | yes                | yes       |
+| Virtual environment support    | yes    | yes | yes              | no                 | Server-side |
+| Process pooling (experimental) | yes    | yes | yes              | no                 | no        |
+| Development hot reload         | yes    | no  | no               | Manual bridge reload | External |
+| Tested in CI                   | yes    | yes | no (untested)    | yes                | yes       |
 
 ## Import Paths
 

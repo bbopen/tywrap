@@ -21,7 +21,7 @@ import { setRuntimeBridge } from 'tywrap/runtime';
 import * as math from './generated/math.generated.js';
 
 setRuntimeBridge(new NodeBridge({ pythonPath: 'python3' }));
-const result = await math.sqrt(16); // 4 — fully typed
+const result = await math.sqrt(16); // 4, typed from the Python annotation
 ```
 
 ## Development Hot Reload
@@ -44,6 +44,6 @@ Use `reloadNow()` for an explicit rebuild or `close()` to stop watching. Node
 gets full hot reload, Pyodide gets manual bridge replacement through
 `createBridgeReloader(...)`, and HTTP reload remains external to tywrap.
 
-> ⚠️ **Experimental** — APIs may change before v1.0.0. See [Releases](https://github.com/bbopen/tywrap/releases) for breaking changes.
+> Experimental: APIs may change before v1.0.0. See [Releases](https://github.com/bbopen/tywrap/releases) for breaking changes.
 
 > If tywrap saves you time, a ⭐ on [GitHub](https://github.com/bbopen/tywrap) helps others find it.
