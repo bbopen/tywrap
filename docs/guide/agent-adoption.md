@@ -120,8 +120,8 @@ or contracts differ; run `npx tywrap generate` and commit the result. See the
 
 | Error prefix or text | Fix |
 | --- | --- |
-| `IR extraction failed` or `ModuleNotFoundError` | Install the target Python module in the same interpreter named by `runtime.node.pythonPath`. For a local module, add its parent directory to `pythonImportPath`. |
-| `No IR produced for module` or `tywrap_ir failed.` | Run `pip install tywrap-ir` in that configured Python environment, then rerun generation. |
+| `No IR produced for module ... tywrap_ir failed.` with `ModuleNotFoundError` | Install the target Python module in the same interpreter named by `runtime.node.pythonPath`. For a local module, add its parent directory to `pythonImportPath`. |
+| `No IR produced for module` or `tywrap_ir not found on PYTHONPATH.` | Run `pip install tywrap-ir` in that configured Python environment, then rerun generation. |
 | `IR version mismatch:` or `ir-version-mismatch` | Upgrade `tywrap-ir` to match `tywrap`, then regenerate the contract. |
 | `contract-invalid` or `Contract ... is missing` | Replace the invalid or stale `contractInput` with a regenerated contract. |
 | `Generated wrappers are out of date:` | Run `npx tywrap generate`, review the wrapper and contract changes, and commit them. |

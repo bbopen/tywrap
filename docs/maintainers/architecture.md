@@ -40,8 +40,8 @@ promise resolves.
 
 `NodeBridge` starts `runtime/python_bridge.py` through the subprocess transport.
 Normal requests and responses are JSONL. When a request or response crosses the
-line ceiling, `src/runtime/frame-codec.ts` splits it into negotiated
-`tywrap-frame/1` frames. Reassembly remains bounded by the codec payload limit.
+line ceiling, `src/runtime/frame-codec.ts` splits it into `tywrap-frame/1`
+frames. Reassembly remains bounded by the codec payload limit.
 
 `PyodideBridge` runs the shared Python bridge core in WebAssembly. Its generated
 bootstrap source lives in `src/runtime/pyodide-bootstrap-core.generated.ts`; do
