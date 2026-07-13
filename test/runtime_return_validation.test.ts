@@ -7,6 +7,7 @@ import { HttpBridge } from '../src/runtime/http.js';
 import { NodeBridge } from '../src/runtime/node.js';
 import {
   createReturnValidator,
+  describeReceivedShape,
   tagDecodedShape,
   type ReturnSchema,
 } from '../src/runtime/validators.js';
@@ -93,6 +94,91 @@ describe('generated return validators', () => {
         'fixture.matrix'
       )(array)
     ).toThrow(BridgeValidationError);
+  });
+
+  it('checks scientific marker, dimension, and dtype provenance', () => {
+    const sparse = tagDecodedShape(
+      {},
+      {
+        marker: 'scipy.sparse',
+        dims: 2,
+        dtype: 'float64',
+      }
+    );
+    expect(
+      createReturnValidator(
+        { kind: 'marker', marker: 'scipy.sparse', dims: 2, dtype: 'float64' },
+        'fixture.sparse'
+      )(sparse)
+    ).toBe(sparse);
+    expect(() =>
+      createReturnValidator(
+        { kind: 'marker', marker: 'torch.tensor', dims: 2, dtype: 'float64' },
+        'fixture.sparse'
+      )(sparse)
+    ).toThrow(BridgeValidationError);
+    expect(() =>
+      createReturnValidator(
+        { kind: 'marker', marker: 'scipy.sparse', dims: 1, dtype: 'float64' },
+        'fixture.sparse'
+      )(sparse)
+    ).toThrow(BridgeValidationError);
+    expect(() =>
+      createReturnValidator(
+        { kind: 'marker', marker: 'scipy.sparse', dims: 2, dtype: 'int64' },
+        'fixture.sparse'
+      )(sparse)
+    ).toThrow(BridgeValidationError);
+
+    const tensor = tagDecodedShape(
+      {},
+      {
+        marker: 'torch.tensor',
+        dims: 1,
+        dtype: 'float32',
+      }
+    );
+    expect(
+      createReturnValidator(
+        { kind: 'marker', marker: 'torch.tensor', dims: 1, dtype: 'float32' },
+        'fixture.tensor'
+      )(tensor)
+    ).toBe(tensor);
+    expect(() =>
+      createReturnValidator(
+        { kind: 'marker', marker: 'torch.tensor', dims: 2, dtype: 'float32' },
+        'fixture.tensor'
+      )(tensor)
+    ).toThrow(BridgeValidationError);
+    expect(() =>
+      createReturnValidator(
+        { kind: 'marker', marker: 'torch.tensor', dims: 1, dtype: 'float64' },
+        'fixture.tensor'
+      )(tensor)
+    ).toThrow(BridgeValidationError);
+
+    const estimator = tagDecodedShape({}, { marker: 'sklearn.estimator' });
+    expect(
+      createReturnValidator(
+        { kind: 'marker', marker: 'sklearn.estimator' },
+        'fixture.estimator'
+      )(estimator)
+    ).toBe(estimator);
+    expect(() =>
+      createReturnValidator(
+        { kind: 'marker', marker: 'scipy.sparse' },
+        'fixture.estimator'
+      )(estimator)
+    ).toThrow(BridgeValidationError);
+  });
+
+  it('describes tagged ndarray arrays from provenance before their generic array shape', () => {
+    const array = tagDecodedShape([[1, 2]], {
+      marker: 'ndarray',
+      dims: 2,
+      dtype: 'float64',
+    });
+    expect(describeReceivedShape(array)).toBe('ndarray (2d, float64)');
   });
 
   it('terminates on a recursive forward reference', () => {

@@ -34,12 +34,29 @@ export type ReturnSchema =
     }
   | { kind: 'union'; options: ReturnSchema[] }
   | { kind: 'ref'; name: string }
-  | { kind: 'marker'; marker: 'dataframe' | 'series' | 'ndarray'; dims?: number; dtype?: string };
+  | {
+      kind: 'marker';
+      marker:
+        | 'dataframe'
+        | 'series'
+        | 'ndarray'
+        | 'scipy.sparse'
+        | 'torch.tensor'
+        | 'sklearn.estimator';
+      dims?: number;
+      dtype?: string;
+    };
 
 export type ReturnValidator<T = unknown> = (result: T) => T;
 
 export interface DecodedShapeMetadata {
-  marker: 'dataframe' | 'series' | 'ndarray';
+  marker:
+    | 'dataframe'
+    | 'series'
+    | 'ndarray'
+    | 'scipy.sparse'
+    | 'torch.tensor'
+    | 'sklearn.estimator';
   dims?: number;
   dtype?: string;
 }
@@ -66,13 +83,7 @@ export function describeReceivedShape(value: unknown): string {
   if (value === undefined) {
     return 'undefined';
   }
-  if (value instanceof Uint8Array) {
-    return `Uint8Array(${value.byteLength})`;
-  }
-  if (Array.isArray(value)) {
-    return `array(${value.length})`;
-  }
-  if (typeof value === 'object') {
+  if (isObjectLike(value)) {
     const marker = decodedShapeMetadata.get(value);
     if (marker) {
       const details = [marker.dims === undefined ? undefined : `${marker.dims}d`, marker.dtype]
@@ -80,6 +91,14 @@ export function describeReceivedShape(value: unknown): string {
         .join(', ');
       return `${marker.marker}${details ? ` (${details})` : ''}`;
     }
+  }
+  if (value instanceof Uint8Array) {
+    return `Uint8Array(${value.byteLength})`;
+  }
+  if (Array.isArray(value)) {
+    return `array(${value.length})`;
+  }
+  if (typeof value === 'object') {
     const name = (value as { constructor?: { name?: unknown } }).constructor?.name;
     return typeof name === 'string' && name !== 'Object' ? name : 'object';
   }
