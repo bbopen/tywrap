@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.10.0](https://github.com/bbopen/tywrap/compare/v0.9.0...v0.10.0) (2026-07-13)
+
+The scientific codec correctness release. Codec envelopes for numpy, pandas, scipy, torch, and sklearn now compose inside ordinary containers, validate what they claim, and refuse to serialize what they cannot preserve. Every behavior change in this release landed by flipping named rows in the menagerie truth table, and the pinned scientific CI job holds the line against library drift.
+
+### Breaking
+
+- **The ndarray JSON path stops lying (#308).** JSON ndarray envelopes now declare a canonical NumPy `dtype`, and the producer preflights the JSON domain: integers outside the JavaScript safe range, `datetime64`/`timedelta64`, big-endian dtypes, structured/object/string/complex arrays, and floats wider than 64 bits all reject with a conversion recipe instead of rounding, retyping, or erasing silently. `float16` stays supported and now declares itself. The Arrow path is unchanged.
+- **The pandas JSON path stops lying (#312).** The DataFrame/Series JSON producers reject non-default indexes, `MultiIndex`, duplicate column labels (including labels that collide only after JSON key coercion, such as `1` and `"1"`), categorical dtypes, and non-scalar object cells, each with a recipe. `None`/`pd.NA`/`pd.NaT` become `null`; float `NaN` and `Inf` reject loudly instead of conflating a value with missing data. Zero-column frames keep their row count. NumPy scalars in object columns normalize and keep working.
+- **Corrupt envelopes reject at decode (#306).** The JavaScript decoder validates `codecVersion: 1` envelopes instead of trusting them: shapes must be non-negative safe integers, declared dtypes must be present where the producer always emits them, JSON nesting and element counts must match the declared shape, Arrow extraction failures reject instead of returning empty arrays, Torch outer and nested shapes must agree exactly, and SciPy data must fit its declared dtype and 8/16/32-bit integer ranges. Scientific validation failures carry their own error text instead of being mislabeled as Arrow failures.
+- **The synchronous decode path rejects scientific envelopes.** Scientific values always travel the async path; the sync path now fails with guidance instead of leaking raw envelope objects.
+
+### Features
+
+- **Nested composition (#309, #311).** Dict, list, and tuple returns can carry DataFrames, Series, ndarrays, sparse matrices, tensors, and estimator metadata at any depth. Both sides walk containers iteratively with cycle detection and path-bearing errors (`result.items[3].matrix`), a producer depth bound of 900 (under CPython's own recursion ceiling, so failures are tywrap's clear error rather than a `RecursionError`), a decoder depth bound of 2048, and container-only traversal budgets that leave large payload data untouched. Multi-output shapes such as a dict of a DataFrame plus an ndarray round-trip typed.
+- **Runtime return validation covers all six markers (#307).** SciPy sparse, Torch tensor, and sklearn estimator returns now carry decoded provenance and validate against generated return schemas, the same way DataFrame, Series, and ndarray returns have since 0.9.0.
+- **Torch bfloat16 transports exactly (#310).** bfloat16 tensors upcast to float32, which is exact for every bfloat16 value, and the envelope records `sourceDtype: 'torch.bfloat16'`. Opt-in device copies record `sourceDevice`. The supported dtype matrix (float16/32/64, int8 through int64, uint8, bool) is pinned by tests.
+- **0-D arrays work on the Arrow path (#306).** Scalar ndarrays and scalar tensors round-trip instead of failing in `pa.array`.
+- **The menagerie is executable truth (#305).** 101 one-call rows, each a named test asserting honest round-trip, documented loss, or loud failure, run in CI against pinned numpy 2.3.5, pandas 3.0.2, pyarrow 24.0.0, scipy 1.16.3, scikit-learn 1.8.0, and CPU torch 2.10.0.
+- **Docs for agents and maintainers (#304, #315).** A deterministic adoption guide with expected output per step and a failure-signature table mapping exact error prefixes to fixes; a pipeline architecture reference; the menagerie discipline; a codec envelope reference; and a rewritten configuration guide that matches the real schema. The llms.txt index and bundle carry all of it.
+
+### Internal
+
+- Decode errors are typed (`ScientificDecodeError` with kind and marker) instead of being classified by message sniffing; the six-marker set is defined once; duplicated ndarray/tensor decode finishing and strict-versus-legacy field policies are extracted; Python JSON primitives share one safe-integer constant and key-coercion path (#314).
+- `tywrap-ir` is unchanged at `0.3.0` (IR schema `0.4.0`); generated wrappers from 0.9.0 remain compatible.
+
 ## [0.9.0](https://github.com/bbopen/tywrap/compare/v0.8.0...v0.9.0) (2026-07-11)
 
 Typed value-RPC, one job done well. 0.9.0 removes the stateful instance API whose handles silently broke under pooling, collapses the transport stack it no longer needs, and makes the generated types tell the truth: a type you see in a generated wrapper is now either backed by a declaration and a codec, or it is `unknown` — and what comes back over the wire is validated against it at runtime. Generated wrappers must be regenerated: the IR schema is now `0.4.0` on both sides, and a version mismatch fails generation with a clear message.
