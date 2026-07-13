@@ -1,10 +1,9 @@
 /**
- * #234 envelope-hardening: JS-side re-validation matrix.
+ * Scientific envelope JS-side re-validation matrix.
  *
- * These cover the cheap-but-worth-it second line of defense the codec decoders
- * added in 0.8.0: validate the scientific envelopes (scipy.sparse / torch.tensor
- * / sklearn.estimator) for internal consistency and reject clearly. The decoders
- * never reconstruct a Python object — they only validate and either pass the
+ * These cover the decoder's second line of defense for all six scientific
+ * envelopes. The checks validate internal consistency and reject clearly. The
+ * decoders never reconstruct a Python object. They only validate and either pass the
  * payload through or throw an actionable error.
  *
  * The Python side (runtime/tywrap_bridge_core.py) is the primary producer and is

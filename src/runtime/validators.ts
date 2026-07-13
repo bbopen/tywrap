@@ -1,4 +1,5 @@
 import { BridgeValidationError } from './errors.js';
+import type { ScientificMarker } from '../utils/codec.js';
 
 /**
  * Pure validation functions for runtime value checking.
@@ -36,13 +37,7 @@ export type ReturnSchema =
   | { kind: 'ref'; name: string }
   | {
       kind: 'marker';
-      marker:
-        | 'dataframe'
-        | 'series'
-        | 'ndarray'
-        | 'scipy.sparse'
-        | 'torch.tensor'
-        | 'sklearn.estimator';
+      marker: ScientificMarker;
       dims?: number;
       dtype?: string;
     };
@@ -50,13 +45,7 @@ export type ReturnSchema =
 export type ReturnValidator<T = unknown> = (result: T) => T;
 
 export interface DecodedShapeMetadata {
-  marker:
-    | 'dataframe'
-    | 'series'
-    | 'ndarray'
-    | 'scipy.sparse'
-    | 'torch.tensor'
-    | 'sklearn.estimator';
+  marker: ScientificMarker;
   dims?: number;
   dtype?: string;
 }
