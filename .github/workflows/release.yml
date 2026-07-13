@@ -24,7 +24,7 @@ jobs:
       publish_from_main: ${{ steps.detect.outputs.publish_from_main }}
       publish_existing_tag: ${{ steps.detect.outputs.publish_existing_tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -82,7 +82,7 @@ jobs:
       release_ready: ${{ steps.publish.outputs.release_ready }}
       tag_name: ${{ steps.publish.outputs.tag_name }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -143,7 +143,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: >-
             ${{
