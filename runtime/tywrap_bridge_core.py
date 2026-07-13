@@ -656,6 +656,8 @@ def serialize_torch_tensor(obj, *, force_json_markers, torch_allow_copy=False):
     import torch  # already importable: is_torch_tensor() gated the dispatch
 
     tensor = obj.detach()
+    source_device = None
+    source_dtype = None
 
     # Sparse tensors (COO/CSR/CSC/BSR/BSC -> any non-strided layout) have no dense
     # numpy representation without a densify step, which is not the round-trip this
@@ -703,6 +705,7 @@ def serialize_torch_tensor(obj, *, force_json_markers, torch_allow_copy=False):
             raise RuntimeError(
                 'Torch tensor is on a non-CPU device; set TYWRAP_TORCH_ALLOW_COPY=1 to allow CPU transfer'
             )
+        source_device = str(tensor.device)
         tensor = tensor.to('cpu')
     if hasattr(tensor, 'is_contiguous') and not tensor.is_contiguous():
         if not torch_allow_copy:
@@ -710,12 +713,15 @@ def serialize_torch_tensor(obj, *, force_json_markers, torch_allow_copy=False):
                 'Torch tensor is not contiguous; set TYWRAP_TORCH_ALLOW_COPY=1 to allow contiguous copy'
             )
         tensor = tensor.contiguous()
+    if tensor.dtype == torch.bfloat16:
+        source_dtype = str(tensor.dtype)
+        tensor = tensor.float()
     try:
         arr = tensor.numpy()
     except Exception as exc:
         raise RuntimeError('Failed to convert torch.Tensor to numpy') from exc
 
-    return {
+    envelope = {
         '__tywrap__': 'torch.tensor',
         'codecVersion': CODEC_VERSION,
         'encoding': 'ndarray',
@@ -724,6 +730,11 @@ def serialize_torch_tensor(obj, *, force_json_markers, torch_allow_copy=False):
         'dtype': str(tensor.dtype),
         'device': str(tensor.device),
     }
+    if source_dtype is not None:
+        envelope['sourceDtype'] = source_dtype
+    if source_device is not None:
+        envelope['sourceDevice'] = source_device
+    return envelope
 
 
 def serialize_sklearn_estimator(obj):

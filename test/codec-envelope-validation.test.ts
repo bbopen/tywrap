@@ -678,6 +678,62 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
       ).toThrow(/device must be a non-empty string/);
     });
 
+    it('preserves dtype and device provenance without changing transported metadata', () => {
+      const result = decodeValue({
+        __tywrap__: 'torch.tensor',
+        codecVersion: 1,
+        encoding: 'ndarray',
+        value: {
+          __tywrap__: 'ndarray',
+          codecVersion: 1,
+          encoding: 'json',
+          data: [1, -2.5, 3.140625],
+          shape: [3],
+          dtype: 'float32',
+        },
+        shape: [3],
+        dtype: 'torch.float32',
+        device: 'cpu',
+        sourceDtype: 'torch.bfloat16',
+        sourceDevice: 'cuda:0',
+      });
+
+      expect(result).toMatchObject({
+        data: [1, -2.5, 3.140625],
+        shape: [3],
+        dtype: 'torch.float32',
+        device: 'cpu',
+        sourceDtype: 'torch.bfloat16',
+        sourceDevice: 'cuda:0',
+      });
+    });
+
+    it.each([
+      ['sourceDtype', ''],
+      ['sourceDtype', 123],
+      ['sourceDevice', ''],
+      ['sourceDevice', false],
+    ] as const)('rejects invalid optional %s provenance', (field, invalidValue) => {
+      expect(() =>
+        decodeValue({
+          __tywrap__: 'torch.tensor',
+          codecVersion: 1,
+          encoding: 'ndarray',
+          value: {
+            __tywrap__: 'ndarray',
+            codecVersion: 1,
+            encoding: 'json',
+            data: [1],
+            shape: [1],
+            dtype: 'float32',
+          },
+          shape: [1],
+          dtype: 'torch.float32',
+          [field]: invalidValue,
+        })
+      ).toThrow(new RegExp(`${field} must be a non-empty string when provided`));
+    });
+
     it('rejects a nested value that is not an ndarray envelope', () => {
       expect(() =>
         decodeValue({
