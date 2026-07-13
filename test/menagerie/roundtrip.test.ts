@@ -56,7 +56,16 @@ function createBridge(row: CatalogueRow): NodeBridge {
 }
 
 interface ArrowTableLike {
-  schema?: { metadata?: Map<string, string> };
+  schema?: {
+    fields?: readonly { name: string; type: unknown }[];
+    metadata?: Map<string, string>;
+  };
+  getChildAt(index: number): {
+    data?: readonly { dictionary?: Iterable<unknown> }[];
+    isValid(index: number): boolean;
+    nullCount: number;
+    type?: { isOrdered?: boolean };
+  } | null;
   toArray(): unknown[];
 }
 
@@ -123,6 +132,36 @@ function assertResolvedValue(value: unknown, expected: CatalogueExpectation): vo
       const pandasMetadata = table.schema?.metadata?.get('pandas');
       for (const fragment of expected.pandasMetadataIncludes ?? []) {
         expect(pandasMetadata).toContain(fragment);
+      }
+      if (expected.pandasMetadataAbsent) {
+        expect(pandasMetadata).toBeUndefined();
+      }
+      if (expected.pandasIndexColumns) {
+        expect(JSON.parse(pandasMetadata ?? '{}').index_columns).toEqual(
+          expected.pandasIndexColumns
+        );
+      }
+      for (const [index, expectedField] of (expected.fields ?? []).entries()) {
+        const field = table.schema?.fields?.[index];
+        const vector = table.getChildAt(index);
+        expect(field?.name).toBe(expectedField.name);
+        expect(String(field?.type)).toBe(expectedField.type);
+        if (expectedField.nullCount !== undefined) {
+          expect(vector?.nullCount).toBe(expectedField.nullCount);
+        }
+        if (expectedField.validity) {
+          expect(expectedField.validity.map((_, row) => vector?.isValid(row))).toEqual(
+            expectedField.validity
+          );
+        }
+        if (expectedField.dictionaryValues) {
+          expect(Array.from(vector?.data?.[0]?.dictionary ?? [])).toEqual(
+            expectedField.dictionaryValues
+          );
+        }
+        if (expectedField.dictionaryOrdered !== undefined) {
+          expect(vector?.type?.isOrdered).toBe(expectedField.dictionaryOrdered);
+        }
       }
       return;
     }

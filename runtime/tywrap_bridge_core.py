@@ -521,11 +521,33 @@ def serialize_dataframe(obj, *, force_json_markers):
 
 
 def serialize_dataframe_json(obj):
-    """JSON fallback for DataFrame: records orientation."""
+    """JSON fallback for DataFrame values that JavaScript can represent safely."""
+    import pandas as pd  # type: ignore
+
+    _validate_pandas_json_index(obj.index, pd, 'DataFrame')
+    if not obj.columns.is_unique:
+        raise RuntimeError(
+            'JSON pandas.DataFrame encoding does not support duplicate column labels; '
+            'rename columns to unique labels before encoding'
+        )
+    for column, dtype in obj.dtypes.items():
+        if isinstance(dtype, pd.CategoricalDtype):
+            raise RuntimeError(
+                f'JSON pandas.DataFrame encoding does not support categorical dtype in '
+                f'column {column!r}; use Arrow encoding or convert explicitly '
+                "(e.g. .astype(str))"
+            )
     try:
         data = obj.to_dict(orient='records')
     except Exception as exc:
         raise RuntimeError('JSON fallback failed for pandas.DataFrame') from exc
+    for row_number, row in enumerate(data):
+        for column, value in row.items():
+            row[column] = _normalize_pandas_json_scalar(
+                value,
+                f'DataFrame cell at row {row_number}, column {column!r}',
+                pd,
+            )
     return {
         '__tywrap__': 'dataframe',
         'codecVersion': CODEC_VERSION,
@@ -567,14 +589,23 @@ def serialize_series(obj, *, force_json_markers):
 
 
 def serialize_series_json(obj):
-    """JSON fallback for Series (potentially lossy dtype/NA representation)."""
+    """JSON fallback for Series values that JavaScript can represent safely."""
+    import pandas as pd  # type: ignore
+
+    _validate_pandas_json_index(obj.index, pd, 'Series')
+    if isinstance(obj.dtype, pd.CategoricalDtype):
+        raise RuntimeError(
+            'JSON pandas.Series encoding does not support categorical dtype; use Arrow '
+            "encoding or convert explicitly (e.g. .astype(str))"
+        )
     try:
         data = obj.to_list()  # type: ignore
-    except Exception:
-        try:
-            data = obj.to_dict()  # type: ignore
-        except Exception as exc:
-            raise RuntimeError('JSON fallback failed for pandas.Series') from exc
+    except Exception as exc:
+        raise RuntimeError('JSON fallback failed for pandas.Series') from exc
+    data = [
+        _normalize_pandas_json_scalar(value, f'Series value at position {position}', pd)
+        for position, value in enumerate(data)
+    ]
     return {
         '__tywrap__': 'series',
         'codecVersion': CODEC_VERSION,
@@ -582,6 +613,56 @@ def serialize_series_json(obj):
         'data': data,
         'name': getattr(obj, 'name', None),
     }
+
+
+def _validate_pandas_json_index(index, pd, container_name):
+    """Reject index metadata that records/list-oriented JSON would discard."""
+    if isinstance(index, pd.MultiIndex):
+        raise RuntimeError(
+            f'JSON pandas.{container_name} encoding does not support MultiIndex; use Arrow '
+            'encoding or flatten the index explicitly with .reset_index()'
+        )
+    if not (
+        isinstance(index, pd.RangeIndex)
+        and index.start == 0
+        and index.step == 1
+        and index.stop == len(index)
+        and index.name is None
+    ):
+        raise RuntimeError(
+            f'JSON pandas.{container_name} encoding requires an unnamed RangeIndex starting '
+            'at 0 with step 1; use Arrow encoding or normalize explicitly with '
+            '.reset_index(drop=True)'
+        )
+
+
+def _normalize_pandas_json_scalar(value, location, pd):
+    """Normalize pandas nulls and reject values outside the plain JSON domain."""
+    if value is None or value is pd.NA or value is pd.NaT:
+        return None
+    if type(value) is bool:
+        return value
+    if type(value) is int:
+        js_safe_integer_max = 2**53 - 1
+        if value < -js_safe_integer_max or value > js_safe_integer_max:
+            raise RuntimeError(
+                f'JSON pandas encoding cannot safely represent {location} integer values '
+                'outside the JavaScript safe integer range; use Arrow encoding or '
+                "cast/encode explicitly (e.g. .astype('float64') or str)"
+            )
+        return value
+    if type(value) is float:
+        if math.isnan(value):
+            return None
+        if math.isfinite(value):
+            return value
+    if type(value) is str:
+        return value
+    raise RuntimeError(
+        f'JSON pandas encoding does not support {location} value of type '
+        f'{type(value).__name__}; use Arrow encoding or convert explicitly '
+        '(e.g. .astype(str))'
+    )
 
 
 def serialize_sparse_matrix(obj):

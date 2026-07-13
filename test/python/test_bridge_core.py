@@ -26,7 +26,9 @@ from tywrap_bridge_core import (  # noqa: E402
     dispatch_request,
     encode_value,
     serialize,
+    serialize_dataframe_json,
     serialize_ndarray_json,
+    serialize_series_json,
 )
 
 
@@ -452,3 +454,133 @@ def test_ndarray_json_rejects_lossy_dtypes(array, error_pattern: str) -> None:
 
     with pytest.raises(RuntimeError, match=error_pattern):
         serialize_ndarray_json(array(np))
+
+
+def test_dataframe_json_allows_values_only_and_normalizes_nulls() -> None:
+    pd = pytest.importorskip('pandas')
+
+    frame = pd.DataFrame(
+        {
+            'integer': pd.Series([1, pd.NA], dtype='Int64'),
+            'boolean': pd.Series([True, pd.NA], dtype='boolean'),
+            'text': pd.Series(['a', pd.NA], dtype='string[pyarrow]'),
+            'missing_time': [pd.NaT, pd.NaT],
+        }
+    )
+
+    envelope = serialize_dataframe_json(frame)
+
+    assert envelope['data'] == [
+        {'integer': 1, 'boolean': True, 'text': 'a', 'missing_time': None},
+        {'integer': None, 'boolean': None, 'text': None, 'missing_time': None},
+    ]
+
+
+def test_series_json_allows_values_only_and_normalizes_nulls() -> None:
+    pd = pytest.importorskip('pandas')
+
+    envelope = serialize_series_json(pd.Series([1, pd.NA], dtype='Int64', name='value'))
+
+    assert envelope['data'] == [1, None]
+    assert envelope['name'] == 'value'
+
+
+@pytest.mark.parametrize(
+    ('frame', 'expected'),
+    [
+        pytest.param(lambda pd: pd.DataFrame(), [], id='empty-frame'),
+        pytest.param(lambda pd: pd.DataFrame(index=pd.RangeIndex(2)), [], id='empty-columns'),
+        pytest.param(
+            lambda pd: pd.DataFrame({'value': [None, pd.NA]}),
+            [{'value': None}, {'value': None}],
+            id='all-null-column',
+        ),
+    ],
+)
+def test_dataframe_json_allows_empty_shapes_and_all_null_column(frame, expected) -> None:
+    pd = pytest.importorskip('pandas')
+
+    envelope = serialize_dataframe_json(frame(pd))
+
+    assert envelope['data'] == expected
+
+
+@pytest.mark.parametrize('producer', ['dataframe', 'series'])
+def test_pandas_json_rejects_nondefault_index(producer: str) -> None:
+    pd = pytest.importorskip('pandas')
+    value = (
+        pd.DataFrame({'value': [1]}, index=pd.RangeIndex(1, 2))
+        if producer == 'dataframe'
+        else pd.Series([1], index=pd.RangeIndex(1, 2))
+    )
+
+    with pytest.raises(RuntimeError, match=r'RangeIndex starting at 0.*reset_index\(drop=True\)'):
+        (serialize_dataframe_json if producer == 'dataframe' else serialize_series_json)(value)
+
+
+@pytest.mark.parametrize('producer', ['dataframe', 'series'])
+def test_pandas_json_rejects_multiindex(producer: str) -> None:
+    pd = pytest.importorskip('pandas')
+    index = pd.MultiIndex.from_tuples([('left', 1)], names=['side', 'number'])
+    value = (
+        pd.DataFrame({'value': [1]}, index=index)
+        if producer == 'dataframe'
+        else pd.Series([1], index=index)
+    )
+
+    with pytest.raises(RuntimeError, match=r'MultiIndex.*reset_index\(\)'):
+        (serialize_dataframe_json if producer == 'dataframe' else serialize_series_json)(value)
+
+
+def test_dataframe_json_rejects_duplicate_column_labels() -> None:
+    pd = pytest.importorskip('pandas')
+
+    with pytest.raises(RuntimeError, match='duplicate column labels.*unique labels'):
+        serialize_dataframe_json(pd.DataFrame([[1, 2]], columns=['value', 'value']))
+
+
+@pytest.mark.parametrize('producer', ['dataframe', 'series'])
+def test_pandas_json_rejects_categorical_dtype(producer: str) -> None:
+    pd = pytest.importorskip('pandas')
+    series = pd.Series(pd.Categorical(['a'], categories=['a', 'b'], ordered=True))
+    value = pd.DataFrame({'value': series}) if producer == 'dataframe' else series
+
+    with pytest.raises(RuntimeError, match=r'categorical dtype.*Arrow.*astype\(str\)'):
+        (serialize_dataframe_json if producer == 'dataframe' else serialize_series_json)(value)
+
+
+@pytest.mark.parametrize(
+    ('producer', 'series'),
+    [
+        pytest.param(
+            'dataframe',
+            lambda pd: pd.Series([pd.Timestamp('2024-01-01', tz='UTC')]),
+            id='dataframe-extension-timestamp',
+        ),
+        pytest.param(
+            'series',
+            lambda pd: pd.Series([object()], dtype=object),
+            id='series-object-cell',
+        ),
+    ],
+)
+def test_pandas_json_rejects_nonplain_cells(producer: str, series) -> None:
+    pd = pytest.importorskip('pandas')
+    value_series = series(pd)
+    value = pd.DataFrame({'value': value_series}) if producer == 'dataframe' else value_series
+
+    with pytest.raises(RuntimeError, match=r'value of type (Timestamp|object).*Arrow.*astype\(str\)'):
+        (serialize_dataframe_json if producer == 'dataframe' else serialize_series_json)(value)
+
+
+@pytest.mark.parametrize('producer', ['dataframe', 'series'])
+def test_pandas_json_rejects_unsafe_integers(producer: str) -> None:
+    pd = pytest.importorskip('pandas')
+    series = pd.Series([2**53], dtype=object)
+    value = pd.DataFrame({'value': series}) if producer == 'dataframe' else series
+
+    with pytest.raises(
+        RuntimeError,
+        match=r'outside the JavaScript safe integer range.*Arrow.*astype\(\'float64\'\).*str',
+    ):
+        (serialize_dataframe_json if producer == 'dataframe' else serialize_series_json)(value)

@@ -27,6 +27,16 @@ export type CatalogueExpectation =
       kind: 'table-rows';
       value: readonly object[];
       pandasMetadataIncludes?: readonly string[];
+      pandasMetadataAbsent?: boolean;
+      pandasIndexColumns?: readonly unknown[];
+      fields?: readonly {
+        name: string;
+        type: string;
+        nullCount?: number;
+        validity?: readonly boolean[];
+        dictionaryValues?: readonly unknown[];
+        dictionaryOrdered?: boolean;
+      }[];
     };
 
 export interface CatalogueRow {
@@ -422,6 +432,8 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
       kind: 'table-rows',
       value: [{ value: 1n }, { value: null }],
       pandasMetadataIncludes: ['"numpy_type": "Int64"'],
+      pandasIndexColumns: [{ kind: 'range', name: null, start: 0, stop: 2, step: 1 }],
+      fields: [{ name: 'value', type: 'Int64', nullCount: 1, validity: [true, false] }],
     },
   }),
   libraryRow({
@@ -429,9 +441,48 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'pandas_nullable_int64()',
     codec: 'json',
     requires: ['pandas'],
-    status: 'KNOWN_LIE',
-    currentBehavior: 'JSON preserves values but drops the nullable integer dtype.',
+    status: 'EXPECTED_OK',
+    currentBehavior:
+      'Values-only JSON preserves nullable integer values and normalizes pd.NA to null.',
     expected: equal([{ value: 1 }, { value: null }]),
+  }),
+  libraryRow({
+    id: 'pandas-series-arrow-current-truth',
+    call: 'pandas_named_series()',
+    codec: 'arrow',
+    requires: ['pandas', 'pyarrow'],
+    status: 'EXPECTED_OK',
+    currentBehavior:
+      'Series Arrow output is table-like: values survive, while its name and RangeIndex metadata do not.',
+    expected: {
+      kind: 'table-rows',
+      value: [{ value: 1n }, { value: null }],
+      pandasMetadataAbsent: true,
+      fields: [{ name: 'value', type: 'Int64', nullCount: 1, validity: [true, false] }],
+    },
+  }),
+  libraryRow({
+    id: 'pandas-nullable-boolean-arrow',
+    call: 'pandas_nullable_boolean()',
+    codec: 'arrow',
+    requires: ['pandas', 'pyarrow'],
+    status: 'EXPECTED_OK',
+    currentBehavior: 'Arrow preserves nullable boolean values and their null bitmap.',
+    expected: {
+      kind: 'table-rows',
+      value: [{ value: true }, { value: null }, { value: false }],
+      pandasMetadataIncludes: ['"numpy_type": "boolean"'],
+      fields: [{ name: 'value', type: 'Bool', nullCount: 1, validity: [true, false, true] }],
+    },
+  }),
+  libraryRow({
+    id: 'pandas-nullable-boolean-json',
+    call: 'pandas_nullable_boolean()',
+    codec: 'json',
+    requires: ['pandas'],
+    status: 'EXPECTED_OK',
+    currentBehavior: 'Values-only JSON preserves booleans and normalizes pd.NA to null.',
+    expected: equal([{ value: true }, { value: null }, { value: false }]),
   }),
   libraryRow({
     id: 'pandas-categorical-arrow',
@@ -443,7 +494,18 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     expected: {
       kind: 'table-rows',
       value: [{ value: 'a' }, { value: 'b' }, { value: 'a' }],
-      pandasMetadataIncludes: ['"pandas_type": "categorical"'],
+      pandasMetadataIncludes: [
+        '"pandas_type": "categorical"',
+        '"num_categories": 3, "ordered": true',
+      ],
+      fields: [
+        {
+          name: 'value',
+          type: 'Dictionary<Int8, LargeUtf8>',
+          dictionaryValues: ['unused', 'b', 'a'],
+          dictionaryOrdered: true,
+        },
+      ],
     },
   }),
   libraryRow({
@@ -451,9 +513,9 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'pandas_categorical()',
     codec: 'json',
     requires: ['pandas'],
-    status: 'KNOWN_LIE',
-    currentBehavior: 'JSON preserves values but drops categorical dtype information.',
-    expected: equal([{ value: 'a' }, { value: 'b' }, { value: 'a' }]),
+    status: 'LOUD_FAIL',
+    currentBehavior: 'JSON rejects categorical dtype instead of dropping its vocabulary and order.',
+    expected: error(/categorical dtype.*Arrow.*astype\(str\)/i),
   }),
   libraryRow({
     id: 'pandas-pyarrow-string-arrow',
@@ -467,6 +529,7 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
       kind: 'table-rows',
       value: [{ value: 'a' }, { value: null }],
       pandasMetadataIncludes: ['"numpy_type": "string"'],
+      fields: [{ name: 'value', type: 'LargeUtf8', nullCount: 1, validity: [true, false] }],
     },
   }),
   libraryRow({
@@ -475,8 +538,8 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     codec: 'json',
     requires: ['pandas', 'pyarrow'],
     featureProbe: 'import pandas as pd; pd.Series(["a"], dtype="string[pyarrow]"); print("1")',
-    status: 'KNOWN_LIE',
-    currentBehavior: 'JSON preserves values but drops the Arrow-backed string dtype.',
+    status: 'EXPECTED_OK',
+    currentBehavior: 'Values-only JSON preserves strings and normalizes pd.NA to null.',
     expected: equal([{ value: 'a' }, { value: null }]),
   }),
   libraryRow({
@@ -490,6 +553,7 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
       kind: 'table-rows',
       value: [{ when: 1704164645000 }],
       pandasMetadataIncludes: ['"timezone": "UTC"'],
+      fields: [{ name: 'when', type: 'Timestamp<MICROSECOND, UTC>' }],
     },
   }),
   libraryRow({
@@ -497,9 +561,10 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'pandas_timezone_aware()',
     codec: 'json',
     requires: ['pandas'],
-    status: 'KNOWN_LIE',
-    currentBehavior: 'JSON delivers an ISO string but loses timestamp dtype and timezone schema.',
-    expected: equal([{ when: '2024-01-02T03:04:05+00:00' }]),
+    status: 'LOUD_FAIL',
+    currentBehavior:
+      'JSON rejects timezone-aware Timestamp cells instead of dropping their dtype schema.',
+    expected: error(/value of type Timestamp.*Arrow.*astype\(str\)/i),
   }),
   libraryRow({
     id: 'pandas-multiindex-arrow',
@@ -519,9 +584,9 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'pandas_multiindex()',
     codec: 'json',
     requires: ['pandas'],
-    status: 'KNOWN_LIE',
-    currentBehavior: 'Records-oriented JSON drops the MultiIndex.',
-    expected: equal([{ value: 3 }]),
+    status: 'LOUD_FAIL',
+    currentBehavior: 'JSON rejects MultiIndex instead of silently dropping its levels.',
+    expected: error(/MultiIndex.*Arrow.*reset_index\(\)/i),
   }),
   libraryRow({
     id: 'pandas-duplicate-labels-arrow',
@@ -537,9 +602,10 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'pandas_duplicate_labels()',
     codec: 'json',
     requires: ['pandas'],
-    status: 'KNOWN_LIE',
-    currentBehavior: 'Records-oriented JSON silently retains only the last duplicate label.',
-    expected: equal([{ value: 2 }]),
+    status: 'LOUD_FAIL',
+    currentBehavior:
+      'JSON rejects duplicate column labels instead of silently retaining the last value.',
+    expected: error(/duplicate column labels.*unique labels/i),
   }),
   libraryRow({
     id: 'pandas-empty-frame',
@@ -559,8 +625,8 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'pandas_empty_frame()',
     codec: 'json',
     requires: ['pandas'],
-    status: 'KNOWN_LIE',
-    currentBehavior: 'Records-oriented JSON loses the empty DataFrame schema.',
+    status: 'EXPECTED_OK',
+    currentBehavior: 'The documented values-only JSON case permits an empty DataFrame.',
     expected: equal([]),
   }),
   libraryRow({
