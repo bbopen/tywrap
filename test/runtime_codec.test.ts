@@ -479,6 +479,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
           format: 'csr',
           shape: [2, 2],
           data: [1, 2],
+          dtype: 'int64',
           // missing indices + indptr
         })
       ).rejects.toThrow('csr/csc requires indices and indptr');
@@ -492,6 +493,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
           shape: [2, 2],
           data: [1, 2],
           row: [0, 1],
+          dtype: 'int64',
           // missing col
         })
       ).rejects.toThrow('coo requires row and col');

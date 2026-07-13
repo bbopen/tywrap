@@ -32,7 +32,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
       });
 
       expect(() => decodeValue(make(undefined))).toThrow(
-        'Invalid ndarray envelope: shape at path shape must be a list of non-negative safe integers; declared shape undefined and dtype undefined, actual count unknown, actual type undefined'
+        /Invalid ndarray envelope: shape at path shape.*declared shape undefined.*actual type undefined/
       );
       expect(() => decodeValue(make([-1]))).toThrow(/shape\[0\]=-1.*declared shape \[-1\]/);
       expect(() => decodeValue(make([1.5]))).toThrow(/shape\[0\]=1.5.*actual type number/);
@@ -55,7 +55,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           dtype: 'int64',
         })
       ).toThrow(
-        'Invalid ndarray envelope: data at path data[1] has length 1, expected 2 for declared shape [2,2] and dtype "int64"; declared count 4, actual count 3, actual type array(length=1)'
+        /Invalid ndarray envelope: data at path data\[1\].*length 1, expected 2.*declared count 4, actual count 3/
       );
 
       expect(() =>
@@ -65,8 +65,42 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           encoding: 'json',
           data: [7],
           shape: [],
+          dtype: 'int64',
         })
       ).toThrow(/data at path data exceeds nesting depth 0.*actual count 1/);
+    });
+
+    it('allows array-valued leaves for non-numeric JSON arrays', () => {
+      const data = [[['nested', 'object-leaf']]];
+      expect(
+        decodeValue({
+          __tywrap__: 'ndarray',
+          codecVersion: 1,
+          encoding: 'json',
+          data,
+          shape: [1],
+        })
+      ).toEqual(data);
+      expect(
+        decodeValue({
+          __tywrap__: 'ndarray',
+          codecVersion: 1,
+          encoding: 'json',
+          data,
+          shape: [1],
+          dtype: "[('value', '<i4')]",
+        })
+      ).toEqual(data);
+      expect(
+        decodeValue({
+          __tywrap__: 'ndarray',
+          codecVersion: 1,
+          encoding: 'json',
+          data,
+          shape: [1],
+          dtype: 'object',
+        })
+      ).toEqual(data);
     });
 
     it('requires Arrow dtype and rejects truncated base64 before decoding', () => {
@@ -92,7 +126,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
             dtype: 'uint8',
           })
         ).toThrow(
-          'Invalid ndarray envelope: b64 at path b64 must be canonical base64; declared shape [1] and dtype "uint8"; actual count unknown, actual type string with length 3'
+          /Invalid ndarray envelope: b64 at path b64 must be well-formed base64.*shape \[1\].*dtype "uint8".*length 3/
         );
       } finally {
         clearArrowDecoder();
@@ -219,6 +253,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           data,
           indices,
           indptr,
+          dtype: 'int64',
         })
       ).toMatchObject({ format: 'csr' });
     });
@@ -234,6 +269,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           data: [1, 2, 3],
           indices: [0, 1],
           indptr: [0, 1, 2],
+          dtype: 'int64',
         })
       ).toThrow(/indices\/data lengths must match/);
     });
@@ -249,6 +285,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           data: [1, 2],
           indices: [0, 1],
           indptr: [0, 1], // should be length 3
+          dtype: 'int64',
         })
       ).toThrow(/indptr length must be 3 \(rows\+1\)/);
     });
@@ -263,6 +300,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
         data: [1, 2],
         indices: [0, 1],
         indptr,
+        dtype: 'int64',
       });
       // pointer out of [0, data.length]
       expect(() => decodeValue(make([0, 99, 2]))).toThrow(/out of range/);
@@ -289,6 +327,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
       });
       expect(() => decodeValue(make([-1, 2]))).toThrow(/non-negative integer/);
       expect(() => decodeValue(make([1.5, 2]))).toThrow(/non-negative integer/);
+      expect(() => decodeValue(make([Number.MAX_SAFE_INTEGER + 1, 2]))).toThrow(/safe range/);
     });
 
     it('rejects CSC indptr of the wrong length (must be cols+1)', () => {
@@ -302,6 +341,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           data: [1, 2],
           indices: [0, 1],
           indptr: [0, 1, 2, 3], // should be cols+1 = 3
+          dtype: 'int64',
         })
       ).toThrow(/indptr length must be 3 \(cols\+1\)/);
     });
@@ -317,6 +357,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           data: [1, 2],
           indices: [0, 5], // 5 >= cols(2)
           indptr: [0, 1, 2],
+          dtype: 'int64',
         })
       ).toThrow(/indices\[1\]=5 is out of range \[0, 2\)/);
     });
@@ -332,6 +373,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           data: [1, 2],
           indices: [0, 1.5],
           indptr: [0, 1, 2],
+          dtype: 'int64',
         })
       ).toThrow(/indices\[1\] must be an integer/);
     });
@@ -347,6 +389,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           data: [1, 2],
           row: [0],
           col: [0, 1],
+          dtype: 'int64',
         })
       ).toThrow(/coo row\/col\/data lengths must match/);
 
@@ -360,6 +403,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           data: [1, 2],
           row: [0, 9], // 9 >= rows(2)
           col: [0, 1],
+          dtype: 'int64',
         })
       ).toThrow(/row\[1\]=9 is out of range \[0, 2\)/);
     });
@@ -408,6 +452,44 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
       expect(() => decodeValue(make([Number.NaN], 'float64'))).toThrow(
         'Invalid scipy.sparse envelope: data[0] at path data[0] must be finite for declared shape [1,1] and dtype "float64"; actual count 1, actual type number with value NaN'
       );
+    });
+
+    it('requires v1 dtype and bounds 8/16/32-bit integer data', () => {
+      const make = (data: number[], dtype?: string): ValueEnvelope => ({
+        __tywrap__: 'scipy.sparse',
+        codecVersion: 1,
+        encoding: 'json',
+        format: 'csr',
+        shape: [1, 1],
+        data,
+        indices: [0],
+        indptr: [0, 1],
+        ...(dtype === undefined ? {} : { dtype }),
+      });
+      expect(() => decodeValue(make([1]))).toThrow(
+        /scipy\.sparse envelope: dtype at path dtype.*required/
+      );
+      expect(() => decodeValue(make([-1], 'uint8'))).toThrow(/data\[0\].*dtype "uint8".*value -1/);
+      expect(() => decodeValue(make([999], 'uint8'))).toThrow(
+        /data\[0\].*dtype "uint8".*value 999/
+      );
+      expect(() => decodeValue(make([128], 'int8'))).toThrow(/data\[0\].*dtype "int8".*value 128/);
+      expect(() => decodeValue(make([32_768], 'int16'))).toThrow(
+        /data\[0\].*dtype "int16".*value 32768/
+      );
+      expect(() => decodeValue(make([2 ** 31], 'int32'))).toThrow(
+        /data\[0\].*dtype "int32".*value 2147483648/
+      );
+      expect(() => decodeValue(make([65_536], 'uint16'))).toThrow(
+        /data\[0\].*dtype "uint16".*value 65536/
+      );
+      expect(() => decodeValue(make([2 ** 32], 'uint32'))).toThrow(
+        /data\[0\].*dtype "uint32".*value 4294967296/
+      );
+      expect(decodeValue(make([255], 'uint8'))).toMatchObject({ data: [255] });
+      expect(decodeValue(make([Number.MAX_SAFE_INTEGER + 1], 'int64'))).toMatchObject({
+        data: [Number.MAX_SAFE_INTEGER + 1],
+      });
     });
   });
 
@@ -507,10 +589,14 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           shape: [1],
         },
         shape: [1],
+        dtype: 'float32',
       };
       expect(() => decodeValue({ ...base, dtype: '' })).toThrow(/dtype at path dtype.*non-empty/);
       expect(() => decodeValue({ ...base, value: { ...base.value, dtype: '' } })).toThrow(
         /value\.dtype at path value\.dtype.*non-empty/
+      );
+      expect(() => decodeValue({ ...base, dtype: undefined })).toThrow(
+        /torch\.tensor envelope: dtype at path dtype.*required/
       );
     });
 

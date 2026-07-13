@@ -654,7 +654,11 @@ export class BridgeCodec {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       const marker = scientificMarkerFrom(result, errorMessage);
-      const genuineArrowError = errorMessage.startsWith('Arrow decode failed:');
+      const genuineArrowError =
+        errorMessage.startsWith('Arrow decode failed:') ||
+        errorMessage.startsWith(
+          'Received an Arrow-encoded payload but no Arrow decoder is available.'
+        );
       throw new BridgeCodecError(
         genuineArrowError
           ? `Arrow decoding failed: ${errorMessage}`

@@ -237,7 +237,7 @@ const STRICT_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za
 function fromBase64(b64: string, marker?: string, context?: string): Uint8Array {
   if (marker && !STRICT_BASE64_PATTERN.test(b64)) {
     throw new Error(
-      `Invalid ${marker} envelope: b64 at path b64 must be canonical base64; ` +
+      `Invalid ${marker} envelope: b64 at path b64 must be well-formed base64; ` +
         `${context ? `${context}; ` : ''}actual count unknown, actual type string with length ${b64.length}`
     );
   }
@@ -447,7 +447,7 @@ function actualType(value: unknown): string {
 
 function assertShape(
   shapeValue: unknown,
-  marker: 'ndarray' | 'torch.tensor',
+  marker: 'ndarray' | 'torch.tensor' | 'scipy.sparse',
   field = 'shape',
   dtype?: unknown
 ): number[] {
@@ -504,10 +504,11 @@ function assertJsonMatchesShape(
   dtype: string | undefined
 ): void {
   const declaredCount = shapeProduct(shape);
-  const actualCount = countJsonLeaves(data);
+  const strictLeaves = /^(?:bool|u?int\d*|float\d*)$/.test(dtype ?? '');
+  const actualCount = strictLeaves ? countJsonLeaves(data) : undefined;
   const visit = (value: unknown, depth: number, path: string): void => {
     if (depth === shape.length) {
-      if (Array.isArray(value)) {
+      if (strictLeaves && Array.isArray(value)) {
         throw new Error(
           `Invalid ndarray envelope: data at path ${path} exceeds nesting depth ` +
             `${shape.length} for declared shape ${JSON.stringify(shape)} and dtype ` +
@@ -520,7 +521,7 @@ function assertJsonMatchesShape(
       throw new Error(
         `Invalid ndarray envelope: data at path ${path} must be an array at depth ${depth} ` +
           `for declared shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}; ` +
-          `actual count ${actualCount}, actual type ${actualType(value)}`
+          `actual count ${actualCount ?? 'unknown'}, actual type ${actualType(value)}`
       );
     }
     const expectedLength = shape[depth] as number;
@@ -528,13 +529,20 @@ function assertJsonMatchesShape(
       throw new Error(
         `Invalid ndarray envelope: data at path ${path} has length ${value.length}, expected ` +
           `${expectedLength} for declared shape ${JSON.stringify(shape)} and dtype ` +
-          `${JSON.stringify(dtype)}; declared count ${declaredCount}, actual count ${actualCount}, ` +
+          `${JSON.stringify(dtype)}; declared count ${declaredCount}, actual count ${actualCount ?? 'unknown'}, ` +
           `actual type ${actualType(value)}`
       );
     }
     value.forEach((item, index) => visit(item, depth + 1, `${path}[${index}]`));
   };
   visit(data, 0, 'data');
+  if (strictLeaves && actualCount !== declaredCount) {
+    throw new Error(
+      `Invalid ndarray envelope: data at path data has leaf count ${actualCount}, expected ` +
+        `${declaredCount} for declared shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}; ` +
+        `actual type ${actualType(data)}`
+    );
+  }
 }
 
 function assertArrowCount(
@@ -742,9 +750,22 @@ function assertIndexArrayInRange(arr: readonly unknown[], bound: number, label: 
 
 function assertSparseDataDomain(
   data: readonly unknown[],
-  dtype: string | undefined,
+  dtype: string,
   shape: readonly number[]
 ): void {
+  const expectsBoolean = dtype === 'bool' || dtype === 'bool_';
+  const integerMatch = /^(u?int)(\d*)$/.exec(dtype);
+  const expectsInteger = integerMatch !== null;
+  const expectsFloat = /^float\d*$/.test(dtype);
+  const width = integerMatch?.[2] ? Number(integerMatch[2]) : undefined;
+  const unsignedInteger = integerMatch?.[1] === 'uint';
+  let integerMin: number | undefined;
+  let integerMax: number | undefined;
+  if (width === 8 || width === 16 || width === 32) {
+    integerMin = unsignedInteger ? 0 : -(2 ** (width - 1));
+    integerMax = unsignedInteger ? 2 ** width - 1 : 2 ** (width - 1) - 1;
+  }
+
   for (let i = 0; i < data.length; i += 1) {
     const item = data[i];
     if (typeof item === 'number' && !Number.isFinite(item)) {
@@ -754,13 +775,13 @@ function assertSparseDataDomain(
           `actual count ${data.length}, actual type number with value ${String(item)}`
       );
     }
-    const expectsBoolean = dtype === 'bool' || dtype === 'bool_';
-    const expectsInteger = dtype !== undefined && /^(?:u?int)\d*$/.test(dtype);
-    const expectsFloat = dtype !== undefined && /^float\d*$/.test(dtype);
     const valid = expectsBoolean
       ? typeof item === 'boolean'
       : expectsInteger
-        ? typeof item === 'number' && Number.isInteger(item)
+        ? typeof item === 'number' &&
+          Number.isInteger(item) &&
+          (integerMin === undefined || item >= integerMin) &&
+          (integerMax === undefined || item <= integerMax)
         : expectsFloat
           ? typeof item === 'number'
           : true;
@@ -783,7 +804,10 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
   if (format !== 'csr' && format !== 'csc' && format !== 'coo') {
     throw new Error(`Invalid scipy.sparse envelope: unsupported format ${String(format)}`);
   }
-  const shape = value.shape;
+  const strictV1 = isStrictV1Envelope(value);
+  const shape = strictV1
+    ? assertShape(value.shape, 'scipy.sparse', 'shape', value.dtype)
+    : value.shape;
   if (
     !Array.isArray(shape) ||
     shape.length !== 2 ||
@@ -802,15 +826,20 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
   if (!Array.isArray(data)) {
     throw new Error('Invalid scipy.sparse envelope: data must be an array');
   }
-  const strictV1 = isStrictV1Envelope(value);
   const dtypeValue = value.dtype;
   const dtype = strictV1
     ? assertOptionalNonEmptyDtype(dtypeValue, 'scipy.sparse', 'dtype', shape)
     : typeof dtypeValue === 'string'
       ? dtypeValue
       : undefined;
+  if (strictV1 && dtype === undefined) {
+    throw new Error(
+      `Invalid scipy.sparse envelope: dtype at path dtype is required for declared shape ` +
+        `${JSON.stringify(shape)}; actual count ${data.length}, actual type undefined`
+    );
+  }
   if (strictV1) {
-    assertSparseDataDomain(data, dtype, shape);
+    assertSparseDataDomain(data, dtype as string, shape);
   }
 
   if (format === 'coo') {
@@ -962,6 +991,12 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
     : typeof dtypeValue === 'string'
       ? dtypeValue
       : undefined;
+  if (strictV1 && dtype === undefined) {
+    throw new Error(
+      `Invalid torch.tensor envelope: dtype at path dtype is required for declared shape ` +
+        `${JSON.stringify(shape)}; actual count ${shapeProduct(shape as number[])}, actual type undefined`
+    );
+  }
   if (strictV1 && 'dtype' in nested) {
     assertOptionalNonEmptyDtype(nested.dtype, 'torch.tensor', 'value.dtype', nestedShape);
   }

@@ -12,7 +12,11 @@ import {
   BridgeProtocolError,
   BridgeExecutionError,
 } from '../src/runtime/errors.js';
-import { clearArrowDecoder, registerArrowDecoder } from '../src/utils/codec.js';
+import {
+  _setLazyArrowLoaderForTesting,
+  clearArrowDecoder,
+  registerArrowDecoder,
+} from '../src/utils/codec.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CODEC OPTIONS DEFAULTS
@@ -609,6 +613,30 @@ describe('decodeResponseAsync - Arrow Integration', () => {
     try {
       await expect(codec.decodeResponseAsync(payload)).rejects.toThrow(
         'Arrow decoding failed: Arrow decode failed: truncated IPC stream'
+      );
+    } finally {
+      clearArrowDecoder();
+    }
+  });
+
+  it('keeps Arrow wording when the optional decoder is unavailable', async () => {
+    clearArrowDecoder();
+    _setLazyArrowLoaderForTesting(() => {
+      throw new Error('apache-arrow unavailable in test');
+    });
+    const payload = JSON.stringify({
+      id: 1,
+      protocol: 'tywrap/1',
+      result: {
+        __tywrap__: 'dataframe',
+        codecVersion: 1,
+        encoding: 'arrow',
+        b64: 'AAAA',
+      },
+    });
+    try {
+      await expect(codec.decodeResponseAsync(payload)).rejects.toThrow(
+        /Arrow decoding failed: Received an Arrow-encoded payload.*no Arrow decoder is available/
       );
     } finally {
       clearArrowDecoder();
