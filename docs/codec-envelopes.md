@@ -78,8 +78,10 @@ The target is `torch.Tensor`. CPU tensors work by default. Schema sketch:
   "codecVersion": 1,
   "encoding": "ndarray",
   "shape": [ ... ],
-  "dtype": "float32",
+  "dtype": "torch.float32",
   "device": "cpu" | "cuda:0" | ...,
+  "sourceDtype": "torch.bfloat16", // optional; original dtype before conversion
+  "sourceDevice": "cuda:0",       // optional; original device before CPU copy
 
   // Nested ndarray envelope:
   "value": {
@@ -92,6 +94,9 @@ The target is `torch.Tensor`. CPU tensors work by default. Schema sketch:
   }
 }
 ```
+
+`torch.bfloat16` tensors are upcast exactly to `torch.float32` for transport,
+with the original dtype recorded in `sourceDtype`.
 
 Set `TYWRAP_TORCH_ALLOW_COPY=1` only when the CPU transfer or contiguous copy
 is acceptable for the call.
