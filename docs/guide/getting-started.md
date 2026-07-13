@@ -321,7 +321,7 @@ and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).
 1. Set `"caching": true` to reuse generation IR across rebuilds.
 2. Limit `functions` and `classes` when a wrapper needs only part of a module.
 
-`batching` and `compression` are accepted config fields in 0.9.0, but no current
+`batching` and `compression` are accepted config fields in 0.10.0, but no current
 generator or runtime code applies them.
 
 ```json

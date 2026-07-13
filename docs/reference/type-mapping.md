@@ -187,7 +187,7 @@ Generates TypeScript shaped like:
 export type Pair<T> = [T, T];
 export type Transform<P extends unknown[], T> = (...args: P) => T;
 export class Container<T> {
-  // NOTE: Instance members are not generated in v0.9; migrate this API to value-returning module functions.
+  // NOTE: Instance members are not generated in v0.10; migrate this API to value-returning module functions.
 }
 ```
 
