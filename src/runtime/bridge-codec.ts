@@ -87,6 +87,26 @@ function buildPath(basePath: string, key: string | number): string {
   return typeof key === 'number' ? `${basePath}[${key}]` : `${basePath}.${key}`;
 }
 
+const SCIENTIFIC_MARKERS = new Set([
+  'dataframe',
+  'series',
+  'ndarray',
+  'scipy.sparse',
+  'torch.tensor',
+  'sklearn.estimator',
+]);
+
+function scientificMarkerFrom(value: unknown, errorMessage: string): string | undefined {
+  const match = /^(?:Invalid|Unsupported) ([a-z.]+) envelope/.exec(errorMessage);
+  if (match?.[1] && SCIENTIFIC_MARKERS.has(match[1])) {
+    return match[1];
+  }
+  if (isPlainObject(value) && typeof value.__tywrap__ === 'string') {
+    return SCIENTIFIC_MARKERS.has(value.__tywrap__) ? value.__tywrap__ : undefined;
+  }
+  return undefined;
+}
+
 /**
  * Validate request-only restrictions in one traversal.
  *
@@ -633,10 +653,21 @@ export class BridgeCodec {
       decoded = await decodeArrowValue(result);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      throw new BridgeCodecError(`Arrow decoding failed: ${errorMessage}`, {
-        codecPhase: 'decode',
-        valueType: 'arrow',
-      });
+      const marker = scientificMarkerFrom(result, errorMessage);
+      const genuineArrowError =
+        errorMessage.startsWith('Arrow decode failed:') ||
+        errorMessage.startsWith(
+          'Received an Arrow-encoded payload but no Arrow decoder is available.'
+        );
+      throw new BridgeCodecError(
+        genuineArrowError
+          ? `Arrow decoding failed: ${errorMessage}`
+          : `Scientific envelope decoding failed (${marker ?? 'unknown'}): ${errorMessage}`,
+        {
+          codecPhase: 'decode',
+          valueType: genuineArrowError ? 'arrow' : (marker ?? 'scientific-envelope'),
+        }
+      );
     }
 
     // Post-decode validation for special floats if enabled

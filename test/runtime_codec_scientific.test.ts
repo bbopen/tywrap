@@ -224,6 +224,19 @@ describeNodeOnly('Torch opt-in copy (#234)', () => {
  */
 describeNodeOnly('ndarray Flatten+Reshape', () => {
   it.skipIf(!NUMPY_ARROW_OK)(
+    'round-trips a 0-D ndarray as a scalar over Arrow',
+    async () => {
+      const bridge = new NodeBridge({ scriptPath, pythonPath, timeoutMs: bridgeTimeoutMs });
+      try {
+        expect(await bridge.call<number>('numpy', 'array', [42])).toBe(42);
+      } finally {
+        await bridge.dispose();
+      }
+    },
+    scientificTimeoutMs
+  );
+
+  it.skipIf(!NUMPY_ARROW_OK)(
     'handles 1D arrays (no reshape needed)',
     async () => {
       const bridge = new NodeBridge({
