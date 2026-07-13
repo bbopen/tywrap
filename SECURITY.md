@@ -2,12 +2,11 @@
 
 ## Bridge trust model
 
-The tywrap Python bridge imports modules, reads attributes from them, and calls
-the modules and attributes named by its caller. It does **not** sandbox the
-Python code it runs. Treat every module and attribute exposed through the bridge
-as trusted code.
+The tywrap Python bridge imports whatever modules its caller names, then reads
+and calls attributes on them. None of this is sandboxed, so treat every module
+and attribute exposed through the bridge as trusted code.
 
-Two environment-variable controls bound that surface:
+Use these environment variables to bound that surface:
 
 - `TYWRAP_ALLOWED_MODULES` is an import allowlist. Set it to a non-empty, comma-
   and/or whitespace-separated list of allowed module names to limit imports to
@@ -15,7 +14,7 @@ Two environment-variable controls bound that surface:
 - Underscore-prefixed attributes are blocked by default. Set
   `TYWRAP_ALLOW_PRIVATE_ATTRS=1` only to opt out for trusted code.
 
-No HTTP server or server-side HTTP transport ships with tywrap. `HttpBridge`
+tywrap includes no HTTP server or server-side HTTP transport. `HttpBridge`
 only connects to a server that you run and secure.
 
 ## Network exposure

@@ -172,8 +172,7 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    numpy: { 
-      runtime: 'node' as const,  // Correct type
+    numpy: {
       typeHints: 'strict' as const
     }
   },
@@ -217,7 +216,7 @@ pip list
 ```
 
 ### Type Generation Errors
-**Error**: Type analysis failures or incorrect types generated
+**Error**: type analysis failures or incorrect types generated
 
 **Solutions**:
 ```json
@@ -279,7 +278,7 @@ try {
 ### Protocol Errors
 **Error**: `Protocol error from Python bridge`
 
-**Cause**: The Python process printed to stdout or returned malformed JSON.
+**Cause**: the Python process printed to stdout or returned malformed JSON.
 
 **Solutions**:
 - Remove `print()` statements or logging to stdout in Python code.
@@ -287,9 +286,10 @@ try {
 - Verify custom bridge scripts follow the JSON line protocol.
 
 ### Memory Issues
-**Error**: Out of memory errors or process crashes
 
-**Solutions**:
+**Error**: out of memory errors or process crashes
+
+**Solutions**
 Large payloads and highly parallel native libraries are the usual causes. Tune
 the bridge and the host process separately:
 
@@ -319,7 +319,7 @@ top      # General
 ```
 
 ### Import Errors
-**Error**: Import failures in generated TypeScript code
+**Error**: import failures in generated TypeScript code
 
 **Solutions**:
 ```typescript
@@ -397,9 +397,9 @@ npm install typescript@latest
 ```
 
 ### Build Tool Issues
-**Error**: Vite, Webpack, or other bundler integration problems
+**Error**: bundler integration problems in Vite, Webpack, or another tool
 
-**Vite Solutions**:
+**Vite fixes**
 ```typescript
 // vite.config.ts
 export default defineConfig({
@@ -589,7 +589,7 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' }
+    math: { typeHints: 'strict' }
   },
   output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false }
 });
@@ -600,10 +600,10 @@ npx tywrap generate
 ```
 
 ### Community Resources
-- **GitHub Issues**: [Report bugs](https://github.com/bbopen/tywrap/issues)
-- **Discussions**: [Ask questions](https://github.com/bbopen/tywrap/discussions)
-- **Discord**: [Real-time help](https://discord.gg/tywrap)
-- **Stack Overflow**: Tag your questions with `tywrap`
+- GitHub Issues: [report bugs](https://github.com/bbopen/tywrap/issues)
+- Discussions: [ask questions](https://github.com/bbopen/tywrap/discussions)
+- Discord: [real-time help](https://discord.gg/tywrap)
+- Stack Overflow: tag your questions with `tywrap`
 
 ---
 

@@ -22,7 +22,7 @@ setRuntimeBridge(new NodeBridge({
 }));
 ```
 
-> **Note:** Both `'tywrap/node'` and `'tywrap'` work on Bun. Use `'tywrap/node'` for smaller bundles via tree-shaking.
+Both `'tywrap/node'` and `'tywrap'` work on Bun. Use `'tywrap/node'` for smaller bundles through tree-shaking.
 
 ## Configuration Options
 
@@ -33,13 +33,13 @@ Key options:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `pythonPath` | auto-detect | Path to `python3` executable |
-| `virtualEnv` | — | Path to virtual environment directory |
+| `virtualEnv` | not set | Path to virtual environment directory |
 | `timeoutMs` | `30000` | Request timeout in milliseconds |
 | `inheritProcessEnv` | `false` | Set `true` to pass full `process.env` to subprocess |
 
 ## bunfig.toml
 
-tywrap ships with a `bunfig.toml` for build and run settings:
+The repository's `bunfig.toml` contains these build and run settings:
 
 ```toml
 [build]
@@ -80,8 +80,8 @@ The same `TYWRAP_*` env vars work under Bun. See the [environment variables refe
 
 ## Troubleshooting
 
-**`python3: command not found`** — Set `pythonPath` explicitly or ensure Python is on `PATH`.
+`python3: command not found`: set `pythonPath` explicitly or ensure Python is on `PATH`.
 
-**Subprocess times out** — Increase `timeoutMs`. Verify `pip install tywrap-ir` ran in the correct environment.
+For a subprocess timeout, increase `timeoutMs`. Verify `pip install tywrap-ir` ran in the correct environment.
 
-See the [Node.js troubleshooting guide](./node) for additional patterns — all apply equally to Bun.
+The [Node.js troubleshooting guide](./node) has more patterns that also apply to Bun.

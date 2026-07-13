@@ -13,7 +13,7 @@ The Node.js runtime:
 - **High Performance** - Direct process communication with minimal overhead
 - **Full Feature Support** - Supports all tywrap features and Python libraries
 - **Development Friendly** - Excellent debugging and error reporting
-- **Production Ready** - Battle-tested with proper error handling and timeouts
+- **Failure handling** - Reports Python errors and enforces configured timeouts
 
 ## Bridge Selection
 
@@ -151,7 +151,7 @@ const bridge = new NodeBridge({
 | ------------------------- | ---------------------------------------- | --------------- | --------------------------------------------------------------------------------------- |
 | `pythonPath`              | `string`                                 | auto-detect     | Path to the Python executable                                                           |
 | `scriptPath`              | `string`                                 | built-in bridge | Custom `python_bridge.py` path                                                          |
-| `virtualEnv`              | `string`                                 | —               | Virtual environment root                                                                |
+| `virtualEnv`              | `string`                                 | not set         | Virtual environment root                                                                |
 | `cwd`                     | `string`                                 | `process.cwd()` | Working directory for the subprocess                                                    |
 | `timeoutMs`               | `number`                                 | `30000`         | Per-call timeout                                                                        |
 | `queueTimeoutMs`          | `number`                                 | `30000`         | Queue timeout when the pool is saturated                                                |
@@ -160,7 +160,7 @@ const bridge = new NodeBridge({
 | `maxConcurrentPerProcess` | `number`                                 | `1`             | Concurrent requests per serial Python worker; use more worker processes for concurrency |
 | `inheritProcessEnv`       | `boolean`                                | `false`         | Pass the full parent environment through                                                |
 | `env`                     | `Record<string, string \| undefined>`    | `{}`            | Extra subprocess env vars                                                               |
-| `codec`                   | `CodecOptions`                           | —               | Codec validation and byte handling                                                      |
+| `codec`                   | `CodecOptions`                           | not set         | Codec validation and byte handling                                                      |
 | `warmupCommands`          | `Array<{ module, functionName, args? }>` | `[]`            | Commands to run when each worker starts                                                 |
 
 Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
@@ -273,7 +273,8 @@ export TYWRAP_CODEC_FALLBACK=json
 
 ### Payload Size Limit
 
-The subprocess bridge writes a single JSONL response per call. To prevent
+The subprocess bridge writes one JSONL response per call; a response larger
+than the line ceiling is split with `tywrap-frame/1` chunking. To prevent
 oversized payloads:
 
 ```bash

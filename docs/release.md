@@ -7,12 +7,12 @@ workflow. There is one path: bump the version on a branch, merge to `main`, and 
 workflow tags, releases, and publishes.
 
 1. On a release branch, bump the version and update the changelog:
-   - `package.json` — the new `version`
-   - `CHANGELOG.md` — add a `## [X.Y.Z](…compare/vPREV...vX.Y.Z) (DATE)` section
+   - `package.json`: the new `version`
+   - `CHANGELOG.md`: add a `## [X.Y.Z](…compare/vPREV...vX.Y.Z) (DATE)` section
      (the workflow extracts the GitHub release notes from this exact header)
-   - `src/version.ts` — regenerate with `npm run build:version` (single-sourced
+   - `src/version.ts`: regenerate with `npm run build:version` (single-sourced
      from `package.json`)
-   - `package-lock.json` — refresh if dependencies changed
+   - `package-lock.json`: refresh if dependencies changed
 
 2. Run the release gate:
    ```sh
@@ -24,7 +24,7 @@ workflow tags, releases, and publishes.
    matching `CHANGELOG.md` section and no existing tag, then tags `vX.Y.Z`,
    creates the GitHub release from that changelog section, and publishes to npm.
 
-4. npm publishing uses npm trusted publishing (OIDC) from GitHub Actions — keep
+4. npm publishing uses npm trusted publishing (OIDC) from GitHub Actions. Keep
    the package connected to this repository as a trusted publisher, and do not
    add a publish token to the workflow. The publish job validates on Node 22,
    then switches to Node 24 for the final `npm publish --provenance` step so npm

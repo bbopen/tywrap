@@ -13,7 +13,7 @@ TypeScript bindings for Python libraries, with precise types for fully
 annotated, in-module, serializable Python returns and fallbacks where tywrap
 cannot resolve a type.
 
-> **⚠️ Experimental** — APIs may change before v1.0.0. See the
+> Experimental: APIs may change before v1.0.0. See the
 > [releases page](https://github.com/bbopen/tywrap/releases) for breaking
 > changes.
 
@@ -38,11 +38,11 @@ cannot resolve a type.
 
 | Feature                         | tywrap    | pythonia  | node-calls-python | pymport   |
 | ------------------------------- | --------- | --------- | ----------------- | --------- |
-| Auto-generated TypeScript types | ✅        | ❌        | ❌                | ❌        |
-| Browser / WASM (Pyodide)        | ✅        | ❌        | ❌                | ❌        |
-| numpy / pandas type mappings    | ✅        | ❌        | ❌                | ❌        |
+| Auto-generated TypeScript types | yes       | no       | no               | no       |
+| Browser / WASM (Pyodide)        | yes       | no       | no               | no       |
+| numpy / pandas type mappings    | yes       | no       | no               | no       |
 | Node.js + Bun + Deno            | All three | Node only | Node only         | Node only |
-| Apache Arrow binary transport   | ✅        | ❌        | ❌                | ❌        |
+| Apache Arrow binary transport   | yes       | no       | no               | no       |
 
 ## Requirements
 
@@ -72,9 +72,9 @@ For CI (or to verify a dependency upgrade didn’t change the generated surface)
 npx tywrap generate --check
 ```
 
-For local Node development, `tywrap/dev` gives you real hot reload: watch local
-Python package trees, regenerate wrappers, and swap the active bridge while
-keeping the last known good state if regeneration fails.
+For local Node development, `tywrap/dev` watches local Python package trees and
+regenerates wrappers. It swaps the active bridge only after a successful
+generation, so a failed regeneration leaves the previous state in place.
 
 ```typescript
 import { NodeBridge } from 'tywrap/node';
@@ -118,11 +118,11 @@ to keep the subprocess environment minimal. Set `inheritProcessEnv: true` if you
 need the full environment.
 
 A request or response larger than the JSONL line ceiling (`maxLineLength`) is
-split into `tywrap-frame/1` frames and reassembled — NodeBridge negotiates this
+split into `tywrap-frame/1` frames and reassembled. NodeBridge negotiates this
 by default, so large payloads aren't limited to one line. Chunking engages only
 above the frame ceiling, and reassembly is bounded by the codec payload cap, so
 a payload larger than that cap fails loud rather than buffering without limit.
-Raise `codec.maxPayloadBytes` to carry genuinely large results. You can still
+Raise `codec.maxPayloadBytes` to carry large results. You can still
 bound JSONL traffic explicitly with `TYWRAP_CODEC_MAX_BYTES` (responses) and
 `TYWRAP_REQUEST_MAX_BYTES` (requests). See the
 [transport framing](https://bbopen.github.io/tywrap/transport-framing) and
@@ -150,9 +150,9 @@ const session = await startNodeWatchSession({
   bridge replacement
 - **HTTP**: restart or redeploy the remote server outside tywrap
 
-The Node watch session manages local package trees, refreshes nested directory
-watchers when package layouts change, and keeps the last known good generated
-output and bridge active if regeneration returns structured failures.
+The Node watch session manages local package trees and refreshes nested
+directory watchers when package layouts change. Structured generation failures
+leave the last known good generated output and bridge active.
 
 ### Browser (Pyodide)
 
