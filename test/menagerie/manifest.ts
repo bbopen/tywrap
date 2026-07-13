@@ -256,9 +256,9 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'numpy_zero_dimensional()',
     codec: 'arrow',
     requires: ['numpy', 'pyarrow'],
-    status: 'LOUD_FAIL',
-    currentBehavior: 'Arrow cannot construct an array from a 0-D ndarray.',
-    expected: error(/Arrow encoding failed for ndarray/i),
+    status: 'EXPECTED_OK',
+    currentBehavior: 'The producer flattens 0-D arrays, so Arrow delivers the scalar.',
+    expected: equal(7),
   }),
   libraryRow({
     id: 'numpy-0d-json',
@@ -679,9 +679,12 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     id: 'torch-scalar',
     call: 'torch_scalar()',
     requires: ['torch', 'pyarrow'],
-    status: 'LOUD_FAIL',
-    currentBehavior: 'The nested 0-D ndarray fails on the Arrow path.',
-    expected: error(/Arrow encoding failed for ndarray/i),
+    status: 'EXPECTED_OK',
+    currentBehavior: 'The nested 0-D ndarray flattens for Arrow, so the scalar tensor round-trips.',
+    expected: {
+      kind: 'match',
+      value: { data: 7, shape: [], dtype: 'torch.int64', device: 'cpu' },
+    },
   }),
   libraryRow({
     id: 'torch-bfloat16',
