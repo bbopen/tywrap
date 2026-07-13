@@ -525,10 +525,15 @@ def serialize_dataframe_json(obj):
     import pandas as pd  # type: ignore
 
     _validate_pandas_json_index(obj.index, pd, 'DataFrame')
-    if not obj.columns.is_unique:
+    json_columns = [_pandas_json_object_key(column) for column in obj.columns]
+    supported_json_columns = [column for column in json_columns if column is not None]
+    if not obj.columns.is_unique or len(set(supported_json_columns)) != len(
+        supported_json_columns
+    ):
         raise RuntimeError(
-            'JSON pandas.DataFrame encoding does not support duplicate column labels; '
-            'rename columns to unique labels before encoding'
+            'JSON pandas.DataFrame encoding requires column labels to remain unique after '
+            'JSON object-key coercion; rename columns or make them distinct before applying '
+            '.columns.astype(str)'
         )
     for column, dtype in obj.dtypes.items():
         if isinstance(dtype, pd.CategoricalDtype):
@@ -538,7 +543,11 @@ def serialize_dataframe_json(obj):
                 "(e.g. .astype(str))"
             )
     try:
-        data = obj.to_dict(orient='records')
+        data = (
+            [{} for _ in range(len(obj.index))]
+            if len(obj.columns) == 0
+            else obj.to_dict(orient='records')
+        )
     except Exception as exc:
         raise RuntimeError('JSON fallback failed for pandas.DataFrame') from exc
     for row_number, row in enumerate(data):
@@ -636,8 +645,20 @@ def _validate_pandas_json_index(index, pd, container_name):
         )
 
 
+def _pandas_json_object_key(value):
+    """Return json.dumps' object-key spelling, or None for unsupported keys."""
+    try:
+        encoded = json.dumps({value: None})
+    except (TypeError, ValueError):
+        return None
+    return next(iter(json.loads(encoded)))
+
+
 def _normalize_pandas_json_scalar(value, location, pd):
     """Normalize pandas nulls and reject values outside the plain JSON domain."""
+    np = sys.modules.get('numpy')
+    if np is not None and isinstance(value, np.generic):
+        value = value.item()
     if value is None or value is pd.NA or value is pd.NaT:
         return None
     if type(value) is bool:
@@ -652,10 +673,13 @@ def _normalize_pandas_json_scalar(value, location, pd):
             )
         return value
     if type(value) is float:
-        if math.isnan(value):
-            return None
-        if math.isfinite(value):
-            return value
+        if not math.isfinite(value):
+            raise RuntimeError(
+                f'JSON pandas encoding cannot represent non-finite {location} float values '
+                '(NaN or Infinity); use .fillna(...) for intentional missing values or '
+                'Arrow encoding'
+            )
+        return value
     if type(value) is str:
         return value
     raise RuntimeError(

@@ -465,14 +465,21 @@ def test_dataframe_json_allows_values_only_and_normalizes_nulls() -> None:
             'boolean': pd.Series([True, pd.NA], dtype='boolean'),
             'text': pd.Series(['a', pd.NA], dtype='string[pyarrow]'),
             'missing_time': [pd.NaT, pd.NaT],
+            'none': pd.Series([None, None], dtype=object),
         }
     )
 
     envelope = serialize_dataframe_json(frame)
 
     assert envelope['data'] == [
-        {'integer': 1, 'boolean': True, 'text': 'a', 'missing_time': None},
-        {'integer': None, 'boolean': None, 'text': None, 'missing_time': None},
+        {'integer': 1, 'boolean': True, 'text': 'a', 'missing_time': None, 'none': None},
+        {
+            'integer': None,
+            'boolean': None,
+            'text': None,
+            'missing_time': None,
+            'none': None,
+        },
     ]
 
 
@@ -489,7 +496,9 @@ def test_series_json_allows_values_only_and_normalizes_nulls() -> None:
     ('frame', 'expected'),
     [
         pytest.param(lambda pd: pd.DataFrame(), [], id='empty-frame'),
-        pytest.param(lambda pd: pd.DataFrame(index=pd.RangeIndex(2)), [], id='empty-columns'),
+        pytest.param(
+            lambda pd: pd.DataFrame(index=pd.RangeIndex(2)), [{}, {}], id='empty-columns'
+        ),
         pytest.param(
             lambda pd: pd.DataFrame({'value': [None, pd.NA]}),
             [{'value': None}, {'value': None}],
@@ -535,8 +544,30 @@ def test_pandas_json_rejects_multiindex(producer: str) -> None:
 def test_dataframe_json_rejects_duplicate_column_labels() -> None:
     pd = pytest.importorskip('pandas')
 
-    with pytest.raises(RuntimeError, match='duplicate column labels.*unique labels'):
+    with pytest.raises(
+        RuntimeError, match=r'unique after JSON object-key coercion.*astype\(str\)'
+    ):
         serialize_dataframe_json(pd.DataFrame([[1, 2]], columns=['value', 'value']))
+
+
+@pytest.mark.parametrize(
+    'columns',
+    [
+        pytest.param([1, '1'], id='integer'),
+        pytest.param([True, 'true'], id='true'),
+        pytest.param([False, 'false'], id='false'),
+        pytest.param([None, 'null'], id='null'),
+    ],
+)
+def test_dataframe_json_rejects_column_labels_that_collide_as_json_keys(columns) -> None:
+    pd = pytest.importorskip('pandas')
+
+    with pytest.raises(
+        RuntimeError, match=r'unique after JSON object-key coercion.*astype\(str\)'
+    ):
+        serialize_dataframe_json(
+            pd.DataFrame([[1, 2]], columns=pd.Index(columns, dtype=object))
+        )
 
 
 @pytest.mark.parametrize('producer', ['dataframe', 'series'])
@@ -584,3 +615,46 @@ def test_pandas_json_rejects_unsafe_integers(producer: str) -> None:
         match=r'outside the JavaScript safe integer range.*Arrow.*astype\(\'float64\'\).*str',
     ):
         (serialize_dataframe_json if producer == 'dataframe' else serialize_series_json)(value)
+
+
+@pytest.mark.parametrize('producer', ['dataframe', 'series'])
+@pytest.mark.parametrize('value', [float('nan'), float('inf'), float('-inf')])
+def test_pandas_json_rejects_nonfinite_floats(producer: str, value: float) -> None:
+    pd = pytest.importorskip('pandas')
+    series = pd.Series([value], dtype='float64')
+    pandas_value = pd.DataFrame({'value': series}) if producer == 'dataframe' else series
+
+    with pytest.raises(
+        RuntimeError,
+        match=r'non-finite.*NaN or Infinity.*fillna\(\.\.\.\).*Arrow encoding',
+    ):
+        (serialize_dataframe_json if producer == 'dataframe' else serialize_series_json)(
+            pandas_value
+        )
+
+
+def test_dataframe_json_normalizes_json_safe_numpy_scalars_in_object_columns() -> None:
+    np = pytest.importorskip('numpy')
+    pd = pytest.importorskip('pandas')
+    frame = pd.DataFrame(
+        {
+            'integer': pd.Series([np.int64(7)], dtype=object),
+            'boolean': pd.Series([np.bool_(True)], dtype=object),
+            'text': pd.Series([np.str_('value')], dtype=object),
+            'float': pd.Series([np.float64(1.25)], dtype=object),
+        }
+    )
+
+    assert serialize_dataframe_json(frame)['data'] == [
+        {'integer': 7, 'boolean': True, 'text': 'value', 'float': 1.25}
+    ]
+
+
+def test_dataframe_json_rejects_unsafe_numpy_integer_in_object_column() -> None:
+    np = pytest.importorskip('numpy')
+    pd = pytest.importorskip('pandas')
+
+    with pytest.raises(RuntimeError, match='outside the JavaScript safe integer range'):
+        serialize_dataframe_json(
+            pd.DataFrame({'value': pd.Series([np.int64(2**53)], dtype=object)})
+        )

@@ -451,7 +451,7 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'pandas_named_series()',
     codec: 'arrow',
     requires: ['pandas', 'pyarrow'],
-    status: 'EXPECTED_OK',
+    status: 'KNOWN_LIE',
     currentBehavior:
       'Series Arrow output is table-like: values survive, while its name and RangeIndex metadata do not.',
     expected: {
@@ -460,6 +460,7 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
       pandasMetadataAbsent: true,
       fields: [{ name: 'value', type: 'Int64', nullCount: 1, validity: [true, false] }],
     },
+    expectedFix: 'Preserve the Series name and RangeIndex metadata through Arrow decoding.',
   }),
   libraryRow({
     id: 'pandas-nullable-boolean-arrow',
@@ -605,7 +606,7 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     status: 'LOUD_FAIL',
     currentBehavior:
       'JSON rejects duplicate column labels instead of silently retaining the last value.',
-    expected: error(/duplicate column labels.*unique labels/i),
+    expected: error(/column labels.*unique after JSON object-key coercion.*astype\(str\)/i),
   }),
   libraryRow({
     id: 'pandas-empty-frame',
