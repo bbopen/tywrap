@@ -1,12 +1,21 @@
 /**
  * useThreeScene — Vue composable that builds and animates the tywrap hero 3D scene.
  *
- * Reimagined with a high-end, cinematic procedural particle network
- * inspired by the "Hermes 4" glowing graph aesthetic representing
- * Python-to-TypeScript data flow.
+ * "The Impossible Wrap": an original sculpture of the tywrap idea. A machined
+ * graphite triangle (the rigid TypeScript structure) has a port bored through
+ * each beam, and an amber python threads itself through all three, head
+ * emerging toward the viewer. Sapphire type-current pulses circulate along the
+ * frame. Concept inspired by classic impossible-triangle snake illusions; all
+ * geometry, materials, and animation here are original and generated in code —
+ * the repo ships no model or texture binaries.
+ *
+ * The snake's skin is ~5k individually placed, overlapping scale plates
+ * (InstancedMesh, matrices baked once at startup) over a dark under-body tube,
+ * lit by a generated room environment for PBR reflections.
  */
 
 import * as THREE from 'three'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import {
   EffectComposer,
   EffectPass,
@@ -33,118 +42,6 @@ export interface ThreeSceneReturn {
   onScroll: (scrollY: number) => void
 }
 
-// ---------------------------------------------------------------------------
-// Simplex Noise 3D GLSL
-// ---------------------------------------------------------------------------
-const snoise3D = `
-// GLSL textureless classic 3D noise "cnoise",
-// with an RSL-style periodic variant "pnoise".
-// Author:  Stefan Gustavson (stefan.gustavson@liu.se)
-// Version: 2011-08-22
-vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
-vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
-float snoise(vec3 v){ 
-  const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
-  const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
-  vec3 i  = floor(v + dot(v, C.yyy) );
-  vec3 x0 = v - i + dot(i, C.xxx) ;
-  vec3 g = step(x0.yzx, x0.xyz);
-  vec3 l = 1.0 - g;
-  vec3 i1 = min( g.xyz, l.zxy );
-  vec3 i2 = max( g.xyz, l.zxy );
-  vec3 x1 = x0 - i1 + 1.0 * C.xxx;
-  vec3 x2 = x0 - i2 + 2.0 * C.xxx;
-  vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;
-  i = mod(i, 289.0 ); 
-  vec4 p = permute( permute( permute( 
-             i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
-           + i.y + vec4(0.0, i1.y, i2.y, 1.0 )) 
-           + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
-  float n_ = 1.0/7.0;
-  vec3  ns = n_ * D.wyz - D.xzx;
-  vec4 j = p - 49.0 * floor(p * ns.z *ns.z);
-  vec4 x_ = floor(j * ns.z);
-  vec4 y_ = floor(j - 7.0 * x_ );
-  vec4 x = x_ *ns.x + ns.yyyy;
-  vec4 y = y_ *ns.x + ns.yyyy;
-  vec4 h = 1.0 - abs(x) - abs(y);
-  vec4 b0 = vec4( x.xy, y.xy );
-  vec4 b1 = vec4( x.zw, y.zw );
-  vec4 s0 = floor(b0)*2.0 + 1.0;
-  vec4 s1 = floor(b1)*2.0 + 1.0;
-  vec4 sh = -step(h, vec4(0.0));
-  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
-  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
-  vec3 p0 = vec3(a0.xy,h.x);
-  vec3 p1 = vec3(a0.zw,h.y);
-  vec3 p2 = vec3(a1.xy,h.z);
-  vec3 p3 = vec3(a1.zw,h.w);
-  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
-  p0 *= norm.x;
-  p1 *= norm.y;
-  p2 *= norm.z;
-  p3 *= norm.w;
-  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
-  m = m * m;
-  return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), 
-                                dot(p2,x2), dot(p3,x3) ) );
-}
-`
-
-const particlesVertexShader = `
-uniform float uTime;
-uniform float uScrollCurrent;
-
-attribute float aSize;
-attribute vec3 aColor;
-
-varying vec3 vColor;
-varying float vAlpha;
-
-${snoise3D}
-
-void main() {
-  vColor = aColor;
-  vec3 pos = position;
-
-  // Fluid curling motion using fbm
-  float noise1 = snoise(vec3(pos.x * 0.2, pos.y * 0.2, uTime * 0.2));
-  float noise2 = snoise(vec3(pos.y * 0.2, pos.z * 0.2, uTime * 0.25));
-  float noise3 = snoise(vec3(pos.z * 0.2, pos.x * 0.2, uTime * 0.3));
-
-  // The core pulses and shifts organically
-  pos.x += noise1 * 2.0;
-  pos.y += noise2 * 2.0;
-  pos.z += noise3 * 2.0;
-  
-  // Parallax / Scroll effect: pull the cloud up as we scroll down
-  pos.y += uScrollCurrent * 0.005;
-
-  vec4 viewPosition = viewMatrix * modelMatrix * vec4(pos, 1.0);
-  gl_Position = projectionMatrix * viewPosition;
-
-  // Massively increase point size for visibility and glow
-  gl_PointSize = aSize * (800.0 / -viewPosition.z);
-
-  // Twinkling organic pulse
-  vAlpha = 0.5 + 0.5 * snoise(vec3(pos.x * 0.5, pos.y * 0.5, uTime * 1.5));
-}
-`
-
-const particlesFragmentShader = `
-varying vec3 vColor;
-varying float vAlpha;
-
-void main() {
-  float dist = length(gl_PointCoord - vec2(0.5));
-  if(dist > 0.5) discard;
-  
-  // Soft, additive smoke/plasma blur
-  float strength = pow(1.0 - (dist * 2.0), 1.5);
-  gl_FragColor = vec4(vColor, strength * vAlpha * 0.6);
-}
-`
-
 export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   const { canvas, width, height } = options
 
@@ -156,7 +53,6 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   let lastFrameMs: number | null = null
 
   const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000)
-  // Shift right so the mass is on the right of the screen
   camera.position.set(0, 0, 25)
 
   const mouse = new THREE.Vector2()
@@ -172,167 +68,464 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   const dpr = Math.min(Math.max(1, window.devicePixelRatio), 2)
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: false,
+    antialias: true,
     alpha: false,
     powerPreference: 'high-performance',
   })
-  // Pitch black for high contrast Hermes 4 look
   renderer.setClearColor(new THREE.Color('#020205'), 1)
   renderer.setPixelRatio(dpr)
   renderer.setSize(width, height)
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.5
+  renderer.toneMappingExposure = 1.1
+
+  // Generated room environment: PBR reflections with no HDR asset shipped.
+  const pmrem = new THREE.PMREMGenerator(renderer)
+  const envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+  scene.environment = envTexture
 
   const composer = new EffectComposer(renderer, {
     frameBufferType: THREE.HalfFloatType,
   })
   composer.addPass(new RenderPass(scene, camera))
-
   const bloomEffect = new BloomEffect({
-    luminanceThreshold: 0.1,
+    luminanceThreshold: 0.55,
     mipmapBlur: true,
-    intensity: 4.0, // HUGE bloom for plasma look
+    intensity: 0.9,
   })
-  const vignetteEffect = new VignetteEffect({
-    eskil: false,
-    offset: 0.3,
-    darkness: 0.9,
-  })
+  const vignetteEffect = new VignetteEffect({ eskil: false, offset: 0.3, darkness: 0.85 })
   composer.addPass(new EffectPass(camera, bloomEffect, vignetteEffect))
 
+  // Everything lives in one group parked on the right half of the frame.
   const coreGroup = new THREE.Group()
-  // Move the core to the right half of the screen
-  coreGroup.position.x = 8
+  const CORE_X = 4.8
+  const CORE_SCALE = 0.62
+  coreGroup.position.set(CORE_X, -0.4, 0)
+  coreGroup.scale.setScalar(CORE_SCALE)
   scene.add(coreGroup)
 
-  // --- Massive Plasma Core Particles ---
-  // Reduce particle count on mobile / low-end devices to avoid frame drops
+  const disposables: Array<{ dispose: () => void }> = []
+  function track<T extends { dispose: () => void }>(obj: T): T {
+    disposables.push(obj)
+    return obj
+  }
+
+  // ---------------------------------------------------------------------------
+  // Triangle frame: three beams, each with a circular port the snake threads.
+  // ---------------------------------------------------------------------------
+  const TRI_R = 6.2 // circumradius of the triangle's corner centers
+  const BEAM_W = 1.7 // beam cross-section width (in triangle plane)
+  const BEAM_D = 1.7 // beam depth (out of plane)
+  const HOLE_R = 1.02
+
+  const graphite = track(new THREE.MeshStandardMaterial({
+    color: 0x2b2e36,
+    metalness: 0.85,
+    roughness: 0.38,
+  }))
+  const grommetMat = track(new THREE.MeshStandardMaterial({
+    color: 0x0b1e3d,
+    metalness: 0.6,
+    roughness: 0.3,
+    emissive: 0x1d4ed8,
+    emissiveIntensity: 1.1,
+  }))
+
+  const corners: THREE.Vector3[] = []
+  for (let i = 0; i < 3; i++) {
+    const a = Math.PI / 2 + (i * 2 * Math.PI) / 3
+    corners.push(new THREE.Vector3(Math.cos(a) * TRI_R, Math.sin(a) * TRI_R, 0))
+  }
+
+  const holeCenters: THREE.Vector3[] = []
+  const frameGroup = new THREE.Group()
+  coreGroup.add(frameGroup)
+
+  for (let i = 0; i < 3; i++) {
+    const a = corners[i]
+    const b = corners[(i + 1) % 3]
+    const mid = a.clone().add(b).multiplyScalar(0.5)
+    holeCenters.push(mid.clone())
+    const len = a.distanceTo(b)
+
+    // Beam: extruded rectangle with a circular hole at its center.
+    const shape = new THREE.Shape()
+    shape.moveTo(-len / 2, -BEAM_W / 2)
+    shape.lineTo(len / 2, -BEAM_W / 2)
+    shape.lineTo(len / 2, BEAM_W / 2)
+    shape.lineTo(-len / 2, BEAM_W / 2)
+    shape.closePath()
+    const hole = new THREE.Path()
+    hole.absarc(0, 0, HOLE_R * 0.86, 0, Math.PI * 2, true)
+    shape.holes.push(hole)
+
+    const beamGeo = track(new THREE.ExtrudeGeometry(shape, {
+      depth: BEAM_D,
+      bevelEnabled: true,
+      bevelThickness: 0.07,
+      bevelSize: 0.07,
+      bevelSegments: 2,
+      curveSegments: 40,
+    }))
+    const beam = new THREE.Mesh(beamGeo, graphite)
+    const dir = b.clone().sub(a)
+    beam.position.copy(mid)
+    beam.position.z = -BEAM_D / 2
+    beam.rotation.z = Math.atan2(dir.y, dir.x)
+    frameGroup.add(beam)
+
+    // Corner joint: a machined puck, rotation-agnostic.
+    const jointGeo = track(new THREE.CylinderGeometry(BEAM_W * 0.78, BEAM_W * 0.78, BEAM_D * 1.12, 32))
+    const joint = new THREE.Mesh(jointGeo, graphite)
+    joint.position.copy(a)
+    joint.rotation.x = Math.PI / 2
+    frameGroup.add(joint)
+
+    // Sapphire grommet rims on both faces of each port.
+    for (const zSide of [-1, 1]) {
+      const grommetGeo = track(new THREE.TorusGeometry(HOLE_R * 0.88, 0.09, 16, 48))
+      const grommet = new THREE.Mesh(grommetGeo, grommetMat)
+      grommet.position.copy(mid)
+      grommet.position.z = (BEAM_D / 2) * zSide
+      frameGroup.add(grommet)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Serpent path: a closed loop threading all three ports, weaving front/back.
+  // ---------------------------------------------------------------------------
+  const OUT_R = 8.4 // how far the coils swing outside the triangle
+  const pathPoints: THREE.Vector3[] = []
+  for (let i = 0; i < 3; i++) {
+    const mid = holeCenters[i]
+    const outDir = mid.clone().normalize()
+    const side = new THREE.Vector3(-outDir.y, outDir.x, 0)
+    const zSign = i % 2 === 0 ? 1 : -1
+    // Approach, cross the port perpendicular to the beam, exit the other side.
+    pathPoints.push(mid.clone().addScaledVector(side, -2.4).setZ(2.0 * zSign))
+    pathPoints.push(mid.clone().setZ(1.15 * zSign))
+    pathPoints.push(mid.clone().setZ(-1.15 * zSign))
+    if (i === 1) {
+      // The head lives on this exit: swing low into the open space below the
+      // feature panel, leaning toward the camera.
+      pathPoints.push(mid.clone().addScaledVector(side, 2.4).add(new THREE.Vector3(0, -2.1, 0)).setZ(2.4))
+    } else {
+      pathPoints.push(mid.clone().addScaledVector(side, 2.4).setZ(-2.0 * zSign))
+    }
+    pathPoints.push(outDir.clone().multiplyScalar(OUT_R).addScaledVector(side, 3.2).setZ(-0.9 * zSign))
+  }
+  const spine = new THREE.CatmullRomCurve3(pathPoints, true, 'centripetal', 0.85)
+
+  // The snake occupies a window of the closed loop; head and tail taper inside
+  // it. The window is chosen so the head emerges from the upper-left port into
+  // the open gap beside the text and the tail trails off an outer coil.
+  const SNAKE_START = 0.545
+  const SNAKE_END = 1.465 // wraps past 1.0; sampled mod 1; head exits the bottom port toward the viewer
+  const BODY_R = 0.62
+  const wrapU = (u: number) => ((u % 1) + 1) % 1
+
+  function bodyRadius(u: number): number {
+    if (u < SNAKE_START || u > SNAKE_END) return 0
+    const t = (u - SNAKE_START) / (SNAKE_END - SNAKE_START)
+    let r = BODY_R
+    r *= Math.min(1, Math.pow(t / 0.28, 0.8)) // tail taper (long)
+    const headT = Math.min(1, (1 - t) / 0.05) // neck: taper to a stub the skull covers
+    r *= 0.55 + 0.45 * Math.pow(headT, 0.7)
+    return r
+  }
+
+  // Under-body: a dark tube so gaps between scale plates never show background.
   const isMobile = width < 768
-  const PARTICLE_COUNT = isMobile ? 5000 : 15000
-  const positions = new Float32Array(PARTICLE_COUNT * 3)
-  const colors = new Float32Array(PARTICLE_COUNT * 3)
-  const sizes = new Float32Array(PARTICLE_COUNT)
-
-  // Tywrap branding: Amber to Blue, with green accents
-  const colorAmber = new THREE.Color(0xf59e0b)
-  const colorSapphire = new THREE.Color(0x3b82f6)
-  const colorNeonGreen = new THREE.Color(0x10b981)
-
-  for (let i = 0; i < PARTICLE_COUNT; i++) {
-    // Generate particles in a dense sphere / elliptical core
-    const radius = Math.pow(Math.random(), 2.0) * 12 // Denser at center
-    const theta = Math.random() * Math.PI * 2
-    const phi = Math.acos((Math.random() * 2) - 1)
-    
-    const x = radius * Math.sin(phi) * Math.cos(theta) * 1.5 // stretch X
-    const y = radius * Math.sin(phi) * Math.sin(theta)
-    const z = radius * Math.cos(phi) * 0.5 // compress Z
-
-    positions[i * 3 + 0] = x
-    positions[i * 3 + 1] = y
-    positions[i * 3 + 2] = z
-
-    let c: THREE.Color
-    const rand = Math.random()
-    if (rand < 0.4) c = colorSapphire.clone()
-    else if (rand < 0.8) c = colorAmber.clone()
-    else c = colorNeonGreen.clone()
-
-    // Blend them together based on position
-    if (x > 0) c.lerp(colorSapphire, 0.5)
-    else c.lerp(colorAmber, 0.5)
-
-    colors[i * 3 + 0] = c.r
-    colors[i * 3 + 1] = c.g
-    colors[i * 3 + 2] = c.b
-
-    // Dynamic sizes: core is dense with small particles, outer is large wisps
-    sizes[i] = Math.random() * 4.0 + 1.0 
-  }
-
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3))
-  geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1))
-
-  const material = new THREE.ShaderMaterial({
-    vertexShader: particlesVertexShader,
-    fragmentShader: particlesFragmentShader,
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.NormalBlending,
-    uniforms: {
-      uTime: { value: 0 },
-      uScrollCurrent: { value: 0 }
+  const TUBE_SEG = isMobile ? 400 : 800
+  const underBodyMat = track(new THREE.MeshStandardMaterial({
+    color: 0x2a1808,
+    metalness: 0.0,
+    roughness: 0.75,
+  }))
+  class SnakeCurve extends THREE.Curve<THREE.Vector3> {
+    getPoint(t: number): THREE.Vector3 {
+      const u = SNAKE_START + t * (SNAKE_END - SNAKE_START)
+      return spine.getPointAt(wrapU(u))
     }
-  })
-
-  const particlesMesh = new THREE.Points(geometry, material)
-  coreGroup.add(particlesMesh)
-
-  // --- Core Glowing Nodes (Larger accent points) ---
-  const nodeGeometry = new THREE.SphereGeometry(0.5, 32, 32) // significantly smaller
-  const nodeMaterial = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.5, // decreased opacity
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  })
-  
-  const nodes = new THREE.InstancedMesh(nodeGeometry, nodeMaterial, 7)
-  const dummy = new THREE.Object3D()
-  for(let i=0; i<7; i++) {
-    dummy.position.set(
-      (Math.random() - 0.5) * 15,
-      (Math.random() - 0.5) * 10,
-      (Math.random() - 0.5) * 10
-    );
-    const s = Math.random() * 1.5 + 0.5;
-    dummy.scale.set(s,s,s)
-    dummy.updateMatrix()
-    nodes.setMatrixAt(i, dummy.matrix)
-    
-    // Extinguish base colors with multiplier
-    let nodeCol = i % 2 === 0 ? colorSapphire.clone() : colorAmber.clone();
-    nodes.setColorAt(i, nodeCol) // Removed harsh multiplier
   }
-  nodes.instanceMatrix.needsUpdate = true
-  if (nodes.instanceColor) nodes.instanceColor.needsUpdate = true
-  coreGroup.add(nodes)
-
-  // --- Neural Edges (Axons / Light Streams) ---
-  const lineCount = 40
-  const linesGroup = new THREE.Group()
-  coreGroup.add(linesGroup)
-  
-  const lineMaterials: THREE.MeshBasicMaterial[] = []
-
-  for(let i=0; i<lineCount; i++) {
-    const points = []
-    // Random path from center extending outward
-    let currentPt = new THREE.Vector3((Math.random()-0.5)*2, (Math.random()-0.5)*2, (Math.random()-0.5)*2)
-    for(let step=0; step<15; step++) {
-      points.push(currentPt.clone())
-      // Wander outward
-      const wander = new THREE.Vector3((Math.random()-0.5)*3, (Math.random()-0.5)*3, (Math.random()-0.5)*3)
-      currentPt.add(wander).add(currentPt.clone().normalize().multiplyScalar(1.5))
+  const underGeo = track(new THREE.TubeGeometry(new SnakeCurve(), TUBE_SEG, BODY_R * 0.9, 14, false))
+  // Taper the under-body by scaling rings toward the ends.
+  {
+    const pos = underGeo.attributes.position as THREE.BufferAttribute
+    const rings = TUBE_SEG + 1
+    const radial = 14 + 1
+    const center = new THREE.Vector3()
+    for (let i = 0; i < rings; i++) {
+      const t = i / TUBE_SEG
+      const u = SNAKE_START + t * (SNAKE_END - SNAKE_START)
+      const scale = bodyRadius(u) / BODY_R
+      spine.getPointAt(wrapU(u), center)
+      for (let j = 0; j < radial; j++) {
+        const k = i * radial + j
+        const x = pos.getX(k), y = pos.getY(k), z = pos.getZ(k)
+        pos.setXYZ(k, center.x + (x - center.x) * scale, center.y + (y - center.y) * scale, center.z + (z - center.z) * scale)
+      }
     }
-    const curve = new THREE.CatmullRomCurve3(points)
-    const tubeGeo = new THREE.TubeGeometry(curve, 64, 0.05, 8, false)
-    
-    const mat = new THREE.MeshBasicMaterial({
-      color: i % 2 === 0 ? 0x3b82f6 : 0x10b981,
-      transparent: true,
-      opacity: 0.6,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
-    lineMaterials.push(mat)
-    linesGroup.add(new THREE.Mesh(tubeGeo, mat))
+    pos.needsUpdate = true
+    underGeo.computeVertexNormals()
+  }
+  const underBody = new THREE.Mesh(underGeo, underBodyMat)
+  coreGroup.add(underBody)
+
+  // ---------------------------------------------------------------------------
+  // Scale plates: staggered rings of overlapping elliptical domes, baked once.
+  // ---------------------------------------------------------------------------
+  const frames = spine.computeFrenetFrames(2048, true)
+  function frameAt(uRaw: number) {
+    const u = wrapU(uRaw)
+    const idx = Math.min(2047, Math.max(0, Math.round(u * 2048))) % 2048
+    return {
+      p: spine.getPointAt(u),
+      t: frames.tangents[idx],
+      n: frames.normals[idx],
+      b: frames.binormals[idx],
+    }
   }
 
-  // --- Animation loop ---
+  const SCALE_LEN = 0.34 // along the body
+  const loopLen = spine.getLength()
+  const RING_COUNT = Math.floor((loopLen * (SNAKE_END - SNAKE_START)) / (SCALE_LEN * 0.5))
+
+  // Elliptical dome plate, long axis +x, dome +y, thin.
+  const plateGeo = track(new THREE.SphereGeometry(1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2))
+  plateGeo.scale(SCALE_LEN * 0.62, 0.075, SCALE_LEN * 0.46)
+
+  const scaleMat = track(new THREE.MeshStandardMaterial({
+    color: 0xd08a2e,
+    metalness: 0.15,
+    roughness: 0.42,
+  }))
+
+  const placements: Array<{ u: number; angle: number; r: number }> = []
+  for (let ring = 0; ring < RING_COUNT; ring++) {
+    const t = ring / RING_COUNT
+    const u = SNAKE_START + t * (SNAKE_END - SNAKE_START)
+    const r = bodyRadius(u)
+    if (r < 0.03) continue
+    const circumference = 2 * Math.PI * r
+    const count = Math.max(4, Math.round(circumference / (SCALE_LEN * 0.46)))
+    const offset = (ring % 2) * 0.5
+    for (let s = 0; s < count; s++) {
+      placements.push({ u, angle: ((s + offset) / count) * Math.PI * 2, r })
+    }
+  }
+
+  const scales = new THREE.InstancedMesh(plateGeo, scaleMat, placements.length)
+  scales.instanceMatrix.setUsage(THREE.StaticDrawUsage)
+  const color = new THREE.Color()
+  const m = new THREE.Matrix4()
+  const pos = new THREE.Vector3()
+  const outward = new THREE.Vector3()
+  const along = new THREE.Vector3()
+  const side = new THREE.Vector3()
+  const quat = new THREE.Quaternion()
+  const basis = new THREE.Matrix4()
+  const scl = new THREE.Vector3()
+  for (let i = 0; i < placements.length; i++) {
+    const { u, angle, r } = placements[i]
+    const f = frameAt(u)
+    outward.copy(f.n).multiplyScalar(Math.cos(angle)).addScaledVector(f.b, Math.sin(angle)).normalize()
+    pos.copy(f.p).addScaledVector(outward, r * 0.98)
+    along.copy(f.t).normalize()
+    side.crossVectors(along, outward).normalize()
+    along.crossVectors(outward, side).normalize() // re-orthogonalize
+    // Tilt each plate backward (toward the tail) so rows imbricate.
+    const tilt = new THREE.Quaternion().setFromAxisAngle(side, -0.5)
+    basis.makeBasis(along, outward, side)
+    quat.setFromRotationMatrix(basis).multiply(tilt)
+    // Plates shrink with the body so the tail tip stays shingled.
+    const jitter = (0.9 + Math.random() * 0.25) * Math.max(0.4, Math.sqrt(r / BODY_R))
+    scl.setScalar(jitter)
+    m.compose(pos, quat, scl)
+    scales.setMatrixAt(i, m)
+    // Ball-python patterning: dark chestnut saddles over amber ground, with a
+    // pale cream belly. Saddle bands drift and vary in width along the body.
+    const saddleWave =
+      Math.sin(u * 145.0) * 0.6 +
+      Math.sin(u * 47.0 + 1.7) * 0.3 +
+      Math.sin(u * 301.0 + 0.6) * 0.25
+    const inSaddle = saddleWave > 0.28
+    const isBelly = outward.y < -0.62
+    if (isBelly) {
+      color.setHSL(0.09 + Math.random() * 0.02, 0.30 + Math.random() * 0.1, 0.62 + Math.random() * 0.1)
+    } else if (inSaddle) {
+      color.setHSL(0.05 + Math.random() * 0.02, 0.62 + Math.random() * 0.1, 0.13 + Math.random() * 0.07)
+    } else {
+      color.setHSL(0.075 + Math.random() * 0.025, 0.74 + Math.random() * 0.12, 0.40 + Math.random() * 0.14)
+    }
+    scales.setColorAt(i, color)
+  }
+  scales.instanceMatrix.needsUpdate = true
+  if (scales.instanceColor) scales.instanceColor.needsUpdate = true
+  coreGroup.add(scales)
+
+  // ---------------------------------------------------------------------------
+  // Head: flattened wedge + brow scales + eyes + flicking tongue.
+  // ---------------------------------------------------------------------------
+  const headGroup = new THREE.Group()
+  coreGroup.add(headGroup)
+  {
+    const f = frameAt(SNAKE_END)
+    headGroup.position.copy(f.p)
+    coreGroup.updateMatrixWorld(true)
+    // Face a point just left of the camera: a watchful 3/4 view.
+    headGroup.lookAt(new THREE.Vector3(-2, 0.5, 24))
+  }
+  const headMat = track(new THREE.MeshStandardMaterial({
+    color: 0xb9771f,
+    metalness: 0.12,
+    roughness: 0.55,
+  }))
+  const skullGeo = track(new THREE.SphereGeometry(0.88, 24, 18))
+  skullGeo.scale(1.0, 0.58, 1.42)
+  const skull = new THREE.Mesh(skullGeo, headMat)
+  skull.position.z = 0.62
+  headGroup.add(skull)
+  const snoutGeo = track(new THREE.SphereGeometry(0.52, 20, 14))
+  snoutGeo.scale(0.82, 0.48, 1.3)
+  const snout = new THREE.Mesh(snoutGeo, headMat)
+  snout.position.set(0, -0.08, 1.55)
+  headGroup.add(snout)
+
+  const eyeMat = track(new THREE.MeshStandardMaterial({
+    color: 0xf5e18a,
+    roughness: 0.15,
+    metalness: 0.1,
+    emissive: 0x8a6a10,
+    emissiveIntensity: 0.35,
+  }))
+  const pupilMat = track(new THREE.MeshBasicMaterial({ color: 0x0a0a0a }))
+  const eyeGeo = track(new THREE.SphereGeometry(0.175, 16, 16))
+  const pupilGeo = track(new THREE.SphereGeometry(0.095, 12, 12))
+  const browGeo = track(new THREE.SphereGeometry(0.22, 14, 10))
+  for (const sideSign of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeo, eyeMat)
+    eye.position.set(0.52 * sideSign, 0.22, 1.05)
+    headGroup.add(eye)
+    const pupil = new THREE.Mesh(pupilGeo, pupilMat)
+    pupil.scale.set(0.4, 1, 0.9) // vertical slit
+    pupil.position.set(0.6 * sideSign, 0.23, 1.12)
+    headGroup.add(pupil)
+    const brow = new THREE.Mesh(browGeo, headMat)
+    brow.scale.set(1.0, 0.35, 1.2)
+    brow.position.set(0.5 * sideSign, 0.34, 1.0)
+    headGroup.add(brow)
+  }
+
+  // Shingle the skull with mini scale plates so the head matches the body.
+  {
+    const HEAD_PLATES = 90
+    const a = 0.88, b = 0.88 * 0.58, c = 0.88 * 1.42
+    const headScales = new THREE.InstancedMesh(plateGeo, scaleMat, HEAD_PLATES)
+    headScales.instanceMatrix.setUsage(THREE.StaticDrawUsage)
+    const dir = new THREE.Vector3()
+    const nrm = new THREE.Vector3()
+    const fwd = new THREE.Vector3()
+    const sde = new THREE.Vector3()
+    const golden = Math.PI * (3 - Math.sqrt(5))
+    let placed = 0
+    for (let i = 0; i < 300 && placed < HEAD_PLATES; i++) {
+      const y = 1 - (i / 299) * 2
+      const rad = Math.sqrt(1 - y * y)
+      const th = golden * i
+      dir.set(Math.cos(th) * rad, y, Math.sin(th) * rad)
+      if (dir.y < -0.15) continue // belly side of the skull stays smooth
+      const t = 1 / Math.sqrt((dir.x / a) ** 2 + (dir.y / b) ** 2 + (dir.z / c) ** 2)
+      pos.copy(dir).multiplyScalar(t)
+      nrm.set(dir.x / (a * a), dir.y / (b * b), dir.z / (c * c)).normalize()
+      fwd.set(0, 0, 1).addScaledVector(nrm, -nrm.z).normalize()
+      sde.crossVectors(fwd, nrm).normalize()
+      fwd.crossVectors(nrm, sde).normalize()
+      basis.makeBasis(fwd, nrm, sde)
+      quat.setFromRotationMatrix(basis).multiply(new THREE.Quaternion().setFromAxisAngle(sde, 0.35))
+      scl.setScalar(0.5 + Math.random() * 0.15)
+      m.compose(pos.add(skull.position), quat, scl)
+      headScales.setMatrixAt(placed, m)
+      const chestnut = Math.random() < 0.25
+      color.setHSL(chestnut ? 0.05 : 0.08, chestnut ? 0.6 : 0.68, chestnut ? 0.16 : 0.42 + Math.random() * 0.1)
+      headScales.setColorAt(placed, color)
+      placed++
+    }
+    headScales.count = placed
+    headScales.instanceMatrix.needsUpdate = true
+    if (headScales.instanceColor) headScales.instanceColor.needsUpdate = true
+    headGroup.add(headScales)
+    disposables.push({ dispose: () => headScales.dispose() })
+  }
+
+  // Tongue: two thin cylinders in a V, animated flick.
+  const tongueGroup = new THREE.Group()
+  tongueGroup.position.set(0, -0.12, 1.72)
+  headGroup.add(tongueGroup)
+  const tongueMat = track(new THREE.MeshStandardMaterial({ color: 0xb3123a, roughness: 0.4 }))
+  const tongueGeo = track(new THREE.CylinderGeometry(0.022, 0.014, 0.7, 6))
+  for (const sideSign of [-1, 1]) {
+    const fork = new THREE.Mesh(tongueGeo, tongueMat)
+    fork.position.set(0.045 * sideSign, 0, 0.36)
+    fork.rotation.x = Math.PI / 2
+    fork.rotation.z = -0.16 * sideSign
+    tongueGroup.add(fork)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Type current: bright pulses circulating along the triangle frame edges.
+  // ---------------------------------------------------------------------------
+  const pulseMat = track(new THREE.MeshBasicMaterial({ color: 0x7fb2ff }))
+  const pulseGeo = track(new THREE.SphereGeometry(0.1, 12, 12))
+  const PULSES = 6
+  const pulses: THREE.Mesh[] = []
+  const trianglePath = new THREE.CatmullRomCurve3(
+    corners.map(c => c.clone().setZ(BEAM_D * 0.52)),
+    true, 'catmullrom', 0.02,
+  )
+  for (let i = 0; i < PULSES; i++) {
+    const p = new THREE.Mesh(pulseGeo, pulseMat)
+    frameGroup.add(p)
+    pulses.push(p)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Ambient dust for depth.
+  // ---------------------------------------------------------------------------
+  const DUST_COUNT = isMobile ? 350 : 800
+  const dustGeo = track(new THREE.BufferGeometry())
+  const dustPos = new Float32Array(DUST_COUNT * 3)
+  for (let i = 0; i < DUST_COUNT; i++) {
+    dustPos[i * 3 + 0] = (Math.random() - 0.5) * 46
+    dustPos[i * 3 + 1] = (Math.random() - 0.5) * 30
+    dustPos[i * 3 + 2] = -8 - Math.random() * 18
+  }
+  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3))
+  const dustMat = track(new THREE.PointsMaterial({
+    color: 0x33415e,
+    size: 0.09,
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false,
+  }))
+  const dust = new THREE.Points(dustGeo, dustMat)
+  scene.add(dust)
+
+  // Key light for warm highlights on the scales (env map handles fill).
+  const keyLight = new THREE.DirectionalLight(0xffe0b0, 1.6)
+  keyLight.position.set(-14, 12, 18)
+  scene.add(keyLight)
+  const rimLight = new THREE.DirectionalLight(0x4f7fdf, 1.1)
+  rimLight.position.set(16, -6, -12)
+  scene.add(rimLight)
+  // Warm fill so the tail and lower coils don't sink into black.
+  const fillLight = new THREE.PointLight(0xff9a3c, 60, 40, 2)
+  fillLight.position.set(3, -7, 9)
+  scene.add(fillLight)
+
+  // ---------------------------------------------------------------------------
+  // Animation loop
+  // ---------------------------------------------------------------------------
   let rafId: number | null = null
   let started = false
 
@@ -343,30 +536,35 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     lastFrameMs = nowMs
 
     scrollState.current += (scrollState.target - scrollState.current) * 0.05
-
-    // Smooth mouse tracking
     mouse.x += (targetMouse.x - mouse.x) * 0.05
     mouse.y += (targetMouse.y - mouse.y) * 0.05
 
-    // Update uniforms
-    material.uniforms.uTime.value = elapsed
-    material.uniforms.uScrollCurrent.value = scrollState.current
-    
-    // Smooth camera parallax + Scroll offset
-    
-    // Core group gently rotates
-    coreGroup.rotation.y = elapsed * 0.1
-    coreGroup.rotation.x = Math.sin(elapsed * 0.2) * 0.1
-    coreGroup.rotation.z = Math.cos(elapsed * 0.1) * 0.05
-    
-    // Parallax on core
-    coreGroup.position.x = 8 + mouse.x * 2.0
-    coreGroup.position.y = mouse.y * 2.0 - (scrollState.current * 0.01)
+    // Slow presentational oscillation plus mouse parallax.
+    coreGroup.rotation.y = Math.sin(elapsed * 0.16) * 0.22 + mouse.x * 0.1
+    coreGroup.rotation.x = Math.sin(elapsed * 0.11) * 0.07 + mouse.y * -0.06
+    coreGroup.position.y = Math.sin(elapsed * 0.4) * 0.15 - scrollState.current * 0.01
 
-    // Pulse the line opacities
-    lineMaterials.forEach((mat, i) => {
-      mat.opacity = 0.3 + 0.3 * Math.sin(elapsed * 2.0 + i)
-    })
+    // Breathing: the whole serpent swells almost imperceptibly.
+    const breath = 1 + Math.sin(elapsed * 1.1) * 0.006
+    coreGroup.scale.setScalar(breath)
+
+    // Type-current pulses race around the frame.
+    for (let i = 0; i < PULSES; i++) {
+      const t = (elapsed * 0.06 + i / PULSES) % 1
+      trianglePath.getPointAt(t, pulses[i].position)
+      const flicker = 0.7 + 0.3 * Math.sin(elapsed * 7 + i * 2.4)
+      pulses[i].scale.setScalar(flicker)
+    }
+
+    // Tongue flick: brief dart every few seconds.
+    const cycle = elapsed % 5.5
+    const flick = cycle < 0.5 ? Math.sin((cycle / 0.5) * Math.PI) : 0
+    tongueGroup.scale.z = 0.1 + flick
+    tongueGroup.visible = flick > 0.05
+
+    // Head micro-motion: a slow, watchful sway.
+    headGroup.rotation.y = Math.sin(elapsed * 0.5) * 0.08
+    headGroup.rotation.x = Math.sin(elapsed * 0.35) * 0.05
 
     composer.render()
   }
@@ -394,21 +592,10 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   function dispose() {
     if (rafId !== null) cancelAnimationFrame(rafId)
     window.removeEventListener('mousemove', onMouseMove)
-
-    // Dispose all scene resources
-    geometry.dispose()
-    material.dispose()
-    nodeGeometry.dispose()
-    nodeMaterial.dispose()
-
-    // Dispose tube geometries and materials
-    linesGroup.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        obj.geometry.dispose()
-        ;(obj.material as THREE.Material).dispose()
-      }
-    })
-
+    for (const d of disposables) d.dispose()
+    scales.dispose()
+    envTexture.dispose()
+    pmrem.dispose()
     composer.dispose()
     renderer.dispose()
   }
@@ -422,4 +609,3 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
 
   return { scene, camera, renderer, start, pause, resume, dispose, resize, onScroll }
 }
-
