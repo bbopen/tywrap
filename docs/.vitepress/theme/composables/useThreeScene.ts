@@ -26,6 +26,8 @@ export interface ThreeSceneReturn {
   camera: THREE.PerspectiveCamera
   renderer: THREE.WebGLRenderer
   start: () => void
+  pause: () => void
+  resume: () => void
   dispose: () => void
   resize: (w: number, h: number) => void
   onScroll: (scrollY: number) => void
@@ -147,7 +149,11 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   const { canvas, width, height } = options
 
   const scene = new THREE.Scene()
-  const clock = new THREE.Clock()
+
+  // Manual frame timing instead of THREE.Clock (deprecated). Accumulating only
+  // while the loop runs keeps the scene from jumping after a pause.
+  let elapsed = 0
+  let lastFrameMs: number | null = null
 
   const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000)
   // Shift right so the mass is on the right of the screen
@@ -332,7 +338,9 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
 
   function animate() {
     rafId = requestAnimationFrame(animate)
-    const elapsed = clock.getElapsedTime()
+    const nowMs = performance.now()
+    if (lastFrameMs !== null) elapsed += (nowMs - lastFrameMs) / 1000
+    lastFrameMs = nowMs
 
     scrollState.current += (scrollState.target - scrollState.current) * 0.05
 
@@ -367,7 +375,19 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     if (started) return
     started = true
     window.addEventListener('mousemove', onMouseMove)
-    clock.start()
+    animate()
+  }
+
+  function pause() {
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId)
+      rafId = null
+    }
+    lastFrameMs = null
+  }
+
+  function resume() {
+    if (!started || rafId !== null) return
     animate()
   }
 
@@ -400,6 +420,6 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     composer.setSize(w, h)
   }
 
-  return { scene, camera, renderer, start, dispose, resize, onScroll }
+  return { scene, camera, renderer, start, pause, resume, dispose, resize, onScroll }
 }
 

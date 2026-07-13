@@ -5,15 +5,33 @@ import { useThreeScene, type ThreeSceneReturn } from '../composables/useThreeSce
 
 const { site } = useData()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+const overlayRef = ref<HTMLDivElement | null>(null)
 let threeScene: ThreeSceneReturn | null = null
 let scrollTicking = false
 let scrollRafId: number | null = null
+let motionQuery: MediaQueryList | null = null
 
 const features = [
-  { icon: '🔒', title: 'Full Type Safety', details: 'TypeScript definitions generated directly from Python source analysis via AST — no manual type writing.' },
-  { icon: '🌐', title: 'Multi-Runtime', details: 'One API across Node.js, Bun, Deno (subprocess), and browsers (Pyodide WebAssembly).' },
-  { icon: '⚡', title: 'Rich Data Types', details: 'First-class support for numpy, pandas, scipy, torch, and sklearn with Apache Arrow binary transport.' },
-  { icon: '🛠', title: 'Zero-Config CLI', details: 'Run <code>npx tywrap generate</code> and get production-ready TypeScript wrappers with a single command.' }
+  {
+    title: 'Call the scientific stack from TypeScript',
+    details:
+      'numpy, pandas, scipy, torch, and sklearn results arrive typed, over Apache Arrow with JSON fallback.',
+  },
+  {
+    title: 'Generate, don’t hand-write',
+    details:
+      'npx tywrap generate reads annotated Python source and emits TypeScript wrappers with real signatures.',
+  },
+  {
+    title: 'Same wrapper, four runtimes',
+    details:
+      'Node, Bun, and Deno subprocess bridges, Pyodide in the browser, or a remote HTTP server.',
+  },
+  {
+    title: 'A boundary that won’t lie',
+    details:
+      'Values that can’t be preserved fail loudly with a named error and a recipe, never a silently wrong result.',
+  },
 ]
 
 function getBase(): string {
@@ -21,6 +39,7 @@ function getBase(): string {
 }
 
 const copied = ref(false)
+const copyFailed = ref(false)
 let copyTimeout: number | null = null
 
 async function copyPrompt() {
@@ -28,54 +47,96 @@ async function copyPrompt() {
     const response = await fetch(getBase() + 'llms-full.txt')
     if (!response.ok) throw new Error('Failed to fetch llms-full.txt')
     const text = await response.text()
-    
+
     await navigator.clipboard.writeText(text)
-    
+
     copied.value = true
-    if (copyTimeout !== null) window.clearTimeout(copyTimeout)
-    copyTimeout = window.setTimeout(() => {
-      copied.value = false
-      copyTimeout = null
-    }, 2500)
+    copyFailed.value = false
   } catch (err) {
     console.error('Failed to copy prompt: ', err)
+    copied.value = false
+    copyFailed.value = true
   }
+  if (copyTimeout !== null) window.clearTimeout(copyTimeout)
+  copyTimeout = window.setTimeout(() => {
+    copied.value = false
+    copyFailed.value = false
+    copyTimeout = null
+  }, 2500)
+}
+
+// Fade the fixed canvas and overlay out as the hero scrolls away so the
+// animation never bleeds under the docs content below.
+function applyScrollEffects(scrollY: number) {
+  threeScene?.onScroll(scrollY)
+  const fadeEnd = Math.max(1, window.innerHeight * 0.85)
+  const opacity = Math.max(0, 1 - scrollY / fadeEnd).toFixed(3)
+  if (canvasRef.value) canvasRef.value.style.opacity = opacity
+  if (overlayRef.value) overlayRef.value.style.opacity = opacity
 }
 
 // Ensure the scroll event is throttled by requestAnimationFrame
 function onScroll() {
-  if (!scrollTicking && threeScene && threeScene.onScroll) {
+  if (!scrollTicking) {
     scrollTicking = true
     scrollRafId = window.requestAnimationFrame(() => {
       scrollRafId = null
       scrollTicking = false
-      threeScene?.onScroll(window.scrollY)
+      applyScrollEffects(window.scrollY)
     })
   }
 }
 
-const prefersReducedMotion = () =>
-  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+function setupScene() {
+  if (threeScene || !canvasRef.value) return
+  canvasRef.value.style.display = ''
+  if (overlayRef.value) overlayRef.value.style.display = ''
+  threeScene = useThreeScene({
+    canvas: canvasRef.value,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  })
+  applyScrollEffects(window.scrollY)
+  threeScene.start()
+}
+
+function teardownScene() {
+  if (threeScene) {
+    threeScene.dispose()
+    threeScene = null
+  }
+  // An undrawn canvas is a stray dark box; hide it and the overlay entirely.
+  if (canvasRef.value) canvasRef.value.style.display = 'none'
+  if (overlayRef.value) overlayRef.value.style.display = 'none'
+}
+
+// React to prefers-reduced-motion changes mid-session, not just at mount.
+function onMotionPreferenceChange(event: MediaQueryListEvent) {
+  if (event.matches) teardownScene()
+  else setupScene()
+}
+
+// Stop rendering entirely while the tab is hidden.
+function onVisibilityChange() {
+  if (!threeScene) return
+  if (document.hidden) threeScene.pause()
+  else threeScene.resume()
+}
 
 onMounted(() => {
   if (!canvasRef.value) return
 
-  // Skip all canvas animation when the user prefers reduced motion
-  if (prefersReducedMotion()) return
-
-  const w = window.innerWidth
-  const h = window.innerHeight
-
-  threeScene = useThreeScene({
-    canvas: canvasRef.value,
-    width: w,
-    height: h,
-  })
-  threeScene.onScroll(window.scrollY)
-  threeScene.start()
-
+  motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+  motionQuery.addEventListener('change', onMotionPreferenceChange)
   window.addEventListener('resize', onResize)
   window.addEventListener('scroll', onScroll, { passive: true })
+  document.addEventListener('visibilitychange', onVisibilityChange)
+
+  if (motionQuery.matches) {
+    teardownScene()
+    return
+  }
+  setupScene()
 })
 
 function onResize() {
@@ -93,8 +154,11 @@ onBeforeUnmount(() => {
     scrollRafId = null
   }
   scrollTicking = false
+  motionQuery?.removeEventListener('change', onMotionPreferenceChange)
+  motionQuery = null
   window.removeEventListener('resize', onResize)
   window.removeEventListener('scroll', onScroll)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (threeScene) {
     threeScene.dispose()
     threeScene = null
@@ -106,51 +170,52 @@ onBeforeUnmount(() => {
   <!-- Fixed Background Canvas -->
   <canvas ref="canvasRef" class="hero-canvas" aria-hidden="true" />
   <!-- Gradient overlay to ensure text legibility -->
-  <div class="hero-overlay" aria-hidden="true" />
+  <div ref="overlayRef" class="hero-overlay" aria-hidden="true" />
 
   <!-- Interactive Content Container -->
   <section class="hero-section" aria-label="tywrap hero — wrap Python in TypeScript safety">
     <div class="hero-content">
       <h1 class="hero-headline fade-up">
-        Wrap Python in <br />
-        <span class="hero-gradient-text">TypeScript Safety</span>
+        Wrap Python in <br class="headline-break" />
+        TypeScript Safety
       </h1>
 
       <p class="hero-subtitle fade-up delay-1">
-        Seamlessly integrate the unmatched computational power of Python's elite ecosystem—like PyTorch, SciPy, pandas, and NumPy—directly within your TypeScript applications, fully protected by a robust type system.
+        Generate TypeScript bindings from annotated Python source and call
+        numpy, pandas, torch, and scipy from Node, Bun, Deno, or the browser.
+        The types come from the Python code itself.
       </p>
 
       <div class="hero-actions fade-up delay-2">
         <div class="copy-agent-block">
           <p class="copy-instruction">Copy this into your coding agent to get started in one shot:</p>
-          
-          <button class="prompt-copy-container" @click="copyPrompt" :class="{ 'copied': copied }" aria-label="Copy full LLM prompt">
+
+          <button class="prompt-copy-container" @click="copyPrompt" :class="{ 'copied': copied, 'copy-failed': copyFailed }" aria-label="Copy full LLM prompt">
             <span class="prompt-text">
-              <span class="prompt-prefix">❯</span>
+              <span class="prompt-prefix" aria-hidden="true">❯</span>
               <span class="prompt-url">https://bbopen.github.io/tywrap/llms-full.txt</span>
             </span>
             <span class="copy-icon-wrapper">
               <span class="copied-label" v-if="copied">Copied!</span>
-              <svg v-if="!copied" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span class="copied-label" v-else-if="copyFailed">Copy failed</span>
+              <svg v-if="!copied && !copyFailed" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <svg v-else-if="copied" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
             </span>
           </button>
+          <span class="sr-only" role="status">{{ copied ? 'Copied to clipboard' : copyFailed ? 'Copy failed. Open the URL in a browser instead.' : '' }}</span>
 
           <a :href="getBase() + 'reference/api/'" class="link-secondary">
-            View full documentation <span class="arrow">→</span>
+            View full documentation <span class="arrow" aria-hidden="true">→</span>
           </a>
         </div>
       </div>
     </div>
 
-    <!-- Right Column: Extracted Features -->
+    <!-- Right Column: Feature List -->
     <div class="hero-features fade-up delay-3">
-      <div v-for="(feature, idx) in features" :key="idx" class="feature-card">
-        <div class="feature-icon">{{ feature.icon }}</div>
-        <div class="feature-text">
-          <h3 class="feature-title">{{ feature.title }}</h3>
-          <p class="feature-details" v-html="feature.details"></p>
-        </div>
+      <div v-for="feature in features" :key="feature.title" class="feature-row">
+        <p class="feature-title">{{ feature.title }}</p>
+        <p class="feature-details">{{ feature.details }}</p>
       </div>
     </div>
   </section>
@@ -176,10 +241,17 @@ onBeforeUnmount(() => {
   left: 0;
   width: 100vw;
   height: 100vh;
-  /* Darken the left side to ensure the text pops */
-  background: linear-gradient(to right, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.4) 40%, transparent 100%);
+  /* Portrait: the text column spans the full width, so darken uniformly */
+  background: rgba(0, 0, 0, 0.7);
   z-index: -1;
   pointer-events: none;
+}
+
+@media (min-width: 1024px) {
+  .hero-overlay {
+    /* Wide: darken the left side where the text lives, let the scene breathe right */
+    background: linear-gradient(to right, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.4) 40%, transparent 100%);
+  }
 }
 
 .hero-section {
@@ -223,29 +295,20 @@ onBeforeUnmount(() => {
   line-height: 1.1;
   color: #ffffff;
   margin-bottom: 2rem;
+  text-wrap: balance;
   text-shadow: 0 0 40px rgba(0, 0, 0, 0.9), 0 4px 10px rgba(0, 0, 0, 0.5);
+}
+
+.headline-break {
+  display: none;
 }
 
 @media (min-width: 768px) {
   .hero-headline {
     font-size: 5rem;
   }
-}
-
-.hero-gradient-text {
-  background: linear-gradient(to right, #60a5fa, #c084fc, #10b981, #f59e0b);
-  background-size: 300% auto;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-stroke: 1px rgba(255, 255, 255, 0.2);
-  color: transparent;
-  text-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
-  animation: shimmer 8s linear infinite;
-}
-
-@keyframes shimmer {
-  to {
-    background-position: 300% center;
+  .headline-break {
+    display: inline;
   }
 }
 
@@ -254,6 +317,7 @@ onBeforeUnmount(() => {
   color: #d1d5db;
   margin-bottom: 3rem;
   line-height: 1.7;
+  max-width: 38rem;
   text-shadow: 0 0 30px rgba(0, 0, 0, 0.8), 0 2px 4px rgba(0, 0, 0, 0.8);
   font-weight: 500;
 }
@@ -284,10 +348,11 @@ onBeforeUnmount(() => {
 
 .copy-instruction {
   font-size: 0.95rem;
-  color: #9ca3af;
+  color: #e5e7eb;
   font-family: var(--vp-font-family-mono);
   margin: 0;
   letter-spacing: -0.01em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
 .prompt-copy-container {
@@ -297,22 +362,20 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: 32rem;
   padding: 1rem 1.25rem;
-  background: rgba(15, 15, 15, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(5, 5, 8, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 0.75rem;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   cursor: pointer;
-  transition: all 0.2s ease;
-  color: #d1d5db;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  color: #e5e7eb;
   font-family: var(--vp-font-family-mono);
   font-size: 0.95rem;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
 }
 
 .prompt-copy-container:hover {
-  background: rgba(25, 25, 25, 0.8);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(15, 15, 20, 0.96);
+  border-color: rgba(255, 255, 255, 0.25);
   transform: translateY(-2px);
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
 }
@@ -322,10 +385,22 @@ onBeforeUnmount(() => {
   box-shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.4);
 }
 
+.prompt-copy-container:focus-visible,
+.link-secondary:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 3px;
+}
+
 .prompt-copy-container.copied {
-  background: rgba(16, 185, 129, 0.15);
-  border-color: rgba(16, 185, 129, 0.4);
-  color: #10b981;
+  background: rgba(6, 47, 34, 0.95);
+  border-color: rgba(52, 211, 153, 0.55);
+  color: #6ee7b7;
+}
+
+.prompt-copy-container.copy-failed {
+  background: rgba(60, 12, 12, 0.95);
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #fca5a5;
 }
 
 .prompt-text {
@@ -348,11 +423,20 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
+@media (max-width: 640px) {
+  .prompt-url {
+    white-space: normal;
+    word-break: break-all;
+    overflow: visible;
+    font-size: 0.85rem;
+  }
+}
+
 .copy-icon-wrapper {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: #9ca3af;
+  color: #b6bcc8;
   flex-shrink: 0;
   margin-left: 1rem;
   transition: color 0.2s ease;
@@ -363,7 +447,11 @@ onBeforeUnmount(() => {
 }
 
 .prompt-copy-container.copied .copy-icon-wrapper {
-  color: #10b981;
+  color: #6ee7b7;
+}
+
+.prompt-copy-container.copy-failed .copy-icon-wrapper {
+  color: #fca5a5;
 }
 
 .copied-label {
@@ -372,17 +460,31 @@ onBeforeUnmount(() => {
   animation: fadeIn 0.3s ease;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Secondary Link */
 .link-secondary {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
   font-size: 0.95rem;
-  color: #9ca3af;
+  color: #c2c8d4;
   text-decoration: none;
   font-weight: 500;
   transition: color 0.2s ease;
   margin-top: 0.25rem;
+  padding: 0.5rem 0;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
 .link-secondary:hover {
@@ -404,11 +506,15 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
   margin-top: 3rem;
   width: 100%;
   max-width: 28rem;
   flex-shrink: 0;
+  background: rgba(5, 5, 8, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
 @media (min-width: 1024px) {
@@ -418,44 +524,20 @@ onBeforeUnmount(() => {
   }
 }
 
-.feature-card {
-  display: flex;
-  align-items: flex-start;
-  background: rgba(15, 15, 15, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1rem;
-  padding: 1.25rem;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+.feature-row {
+  padding: 1.15rem 1.4rem;
 }
 
-.feature-card:hover {
-  background: rgba(25, 25, 25, 0.85);
-  transform: translateX(-4px);
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-.feature-icon {
-  font-size: 1.5rem;
-  margin-right: 1.25rem;
-  background: rgba(255, 255, 255, 0.05);
-  padding: 0.5rem;
-  border-radius: 0.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.feature-text {
-  flex: 1;
+.feature-row + .feature-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .feature-title {
-  color: #fff;
+  color: #ffffff;
   font-size: 1rem;
   font-weight: 600;
-  margin: 0 0 0.5rem 0;
-  line-height: 1.2;
+  margin: 0 0 0.35rem 0;
+  line-height: 1.3;
 }
 
 .feature-details {
@@ -463,15 +545,6 @@ onBeforeUnmount(() => {
   font-size: 0.9rem;
   margin: 0;
   line-height: 1.6;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-}
-
-.feature-details :deep(code) {
-  background: rgba(255, 255, 255, 0.1);
-  padding: 0.1rem 0.3rem;
-  border-radius: 4px;
-  font-family: var(--vp-font-family-mono);
-  font-size: 0.8em;
 }
 
 @keyframes fadeIn {
@@ -514,8 +587,9 @@ onBeforeUnmount(() => {
   .fade-up {
     animation: none;
   }
-  .hero-gradient-text {
-    animation: none;
+  .prompt-copy-container,
+  .link-secondary .arrow {
+    transition: none;
   }
 }
 </style>
