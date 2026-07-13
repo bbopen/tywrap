@@ -9,16 +9,16 @@ network round-trip.
 This descriptor is deliberately separate from the bridge `meta` report
 (`BridgeInfo`, fetched via `RpcClient.getBridgeInfo()`):
 
-- The **transport descriptor** is authoritative for transport-level flags — what
+- The **transport descriptor** is authoritative for transport-level flags: what
   bytes the channel moves and how it frames them. It does not depend on
   lifecycle state, so it is safe to read before `init()` and after `dispose()`.
-- The **`BridgeInfo` meta report** is authoritative for the _Python environment_
-  — which optional libraries (`arrowAvailable`, `scipyAvailable`,
+- The **`BridgeInfo` meta report** is authoritative for the _Python environment_,
+  including which optional libraries (`arrowAvailable`, `scipyAvailable`,
   `torchAvailable`, `sklearnAvailable`) happen to be importable in the running
   interpreter.
 
-When you need both questions answered — "can this transport carry Arrow **and**
-does this Python have pyarrow?" — consult both: the transport descriptor for the
+To ask whether a transport can carry Arrow and whether Python has pyarrow,
+consult both: the transport descriptor for the
 channel, `BridgeInfo` for library availability.
 
 ## `TransportCapabilities`
@@ -42,13 +42,13 @@ interface TransportCapabilities {
 | `HttpTransport`              | `http`       | `true`          | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`         |
 | `PyodideTransport` (WASM)    | `pyodide`    | `false`         | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`         |
 
-`SubprocessTransport.supportsChunking` is always `true`. The npm package ships
+`SubprocessTransport.supportsChunking` is always `true`. The npm package includes
 the JS and Python framing peers together, so no runtime negotiation is needed.
-Chunking is subprocess-only; HTTP and Pyodide have no JSONL line ceiling. See
+Chunking is subprocess-only. HTTP and Pyodide have no JSONL line ceiling. See
 [Transport framing](./transport-framing.md).
 
 `PooledTransport` (the multi-process Node path) reports the capabilities of the
-worker transport it distributes across — in practice `SubprocessTransport`. Its
+worker transport it distributes across, which is `SubprocessTransport` in practice. Its
 `capabilities()` is a **static** descriptor read from an un-initialized probe
 worker built by the same factory. Each leased worker always uses
 `tywrap-frame/1`, and chunked traffic through a lease reassembles correctly.
@@ -62,7 +62,7 @@ the wire.
 
 - **subprocess / http**: `true`. The channel can move Arrow bytes. Whether Arrow
   is actually _used_ for a given response still depends on the Python side
-  (`BridgeInfo.arrowAvailable`) and the `TYWRAP_CODEC_FALLBACK` setting — those
+  (`BridgeInfo.arrowAvailable`) and the `TYWRAP_CODEC_FALLBACK` setting. Those
   are runtime/codec concerns, not transport-level ones.
 - **pyodide**: `false`. pyarrow is unavailable in WASM, so the Pyodide bootstrap
   forces JSON markers (`force_json_markers=True`) and reports
@@ -71,7 +71,7 @@ the wire.
 ### `supportsBinary`
 
 Whether the transport can carry arbitrary binary data (e.g. Python `bytes`).
-`true` on all current backends — binary rides through base64 `bytes` envelopes.
+It is `true` on all current backends. Binary rides through base64 `bytes` envelopes.
 
 ### `supportsChunking` and `supportsStreaming`
 
@@ -82,20 +82,20 @@ so a payload can exceed the JSONL line ceiling. The capability is statically
 [Transport framing](./transport-framing.md) for the wire format.
 
 `supportsStreaming` (incremental results for a single request) is `false` on
-every backend; it is not implemented as of 0.9.0.
+every backend. It is not implemented as of 0.9.0.
 
 ### `maxFrameBytes`
 
 Maximum size, in bytes, of a single wire frame the transport itself will accept.
 `Number.POSITIVE_INFINITY` means the transport imposes no frame ceiling of its
-own (a higher layer — e.g. the codec's payload limit, default 10 MB — may still
+own. A higher layer, such as the codec's default 10 MB payload limit, may still
 cap the size).
 
 - **subprocess**: the JSONL line-length limit (`maxLineLength`, default
   `100 * 1024 * 1024` = 100 MB). A response line larger than this raises a
   protocol error.
 - **http**: `Number.POSITIVE_INFINITY`. The whole response body is read in one
-  shot; the transport imposes no frame limit.
+  shot. The transport imposes no frame limit.
 - **pyodide**: `Number.POSITIVE_INFINITY`. Calls are in-memory string passing
   with no framing.
 

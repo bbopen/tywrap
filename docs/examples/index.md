@@ -11,8 +11,8 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
-    collections: { runtime: 'node', typeHints: 'strict' },
+    math: { typeHints: 'strict' },
+    collections: { typeHints: 'strict' },
   },
   output: {
     dir: './generated',

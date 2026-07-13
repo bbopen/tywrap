@@ -4,16 +4,16 @@ tywrap's Deno subprocess support is experimental and untested in CI. It uses the
 same `NodeBridge` as Node.js, and Deno requires the `npm:` prefix for npm
 imports.
 
-## ⚠️ Deno Deploy Limitation
+## Deno Deploy limitation
 
 **Deno Deploy does NOT support subprocess execution.** Because `NodeBridge`
 spawns a Python subprocess, it cannot run in Deno Deploy.
 
 **Alternatives for Deno Deploy:**
 
-- Use [`PyodideBridge`](/guide/runtimes/browser) — runs Python in-browser via
+- Use [`PyodideBridge`](/guide/runtimes/browser), which runs Python in-browser via
   WebAssembly (no subprocess)
-- Use [`HttpBridge`](/guide/runtimes/http) — connects to a remote Python server
+- Use [`HttpBridge`](/guide/runtimes/http), which connects to a remote Python server
   over HTTP
 
 ## Installation
@@ -63,7 +63,7 @@ deno check src/index.ts
 
 ## Configuration Options
 
-See the [Node.js guide](./node) for the full `NodeBridgeOptions` reference — all
+See the [Node.js guide](./node) for the full `NodeBridgeOptions` reference. All
 options work identically in Deno.
 
 ## When to Use Each Bridge in Deno
@@ -81,10 +81,10 @@ The same `TYWRAP_*` env vars work under Deno. See the
 
 ## Troubleshooting
 
-**`PermissionDenied: Requires run access to "python3"`** — Add
+`PermissionDenied: Requires run access to "python3"`: add
 `--allow-run=python3` to your `deno run` command.
 
-**`NotSupported: Subprocess access is not allowed`** — You are running in Deno
+`NotSupported: Subprocess access is not allowed`: you are running in Deno
 Deploy. Switch to [`PyodideBridge`](/guide/runtimes/browser) or
 [`HttpBridge`](/guide/runtimes/http).
 

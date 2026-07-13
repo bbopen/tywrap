@@ -27,7 +27,7 @@ import { setRuntimeBridge } from 'tywrap/runtime';
 import * as math from './generated/math.generated.js';
 
 setRuntimeBridge(new NodeBridge({ pythonPath: 'python3' }));
-const result = await math.sqrt(16); // 4 — fully typed
+const result = await math.sqrt(16); // 4, typed from the Python annotation
 ```
 
 ## Development Hot Reload
@@ -50,7 +50,7 @@ Use `reloadNow()` for an explicit rebuild or `close()` to stop watching. Node
 gets full hot reload, Pyodide gets manual bridge replacement through
 `createBridgeReloader(...)`, and HTTP reload remains external to tywrap.
 
-> ⚠️ **Experimental** — APIs may change before v1.0.0. See [Releases](https://github.com/bbopen/tywrap/releases) for breaking changes.
+> Experimental: APIs may change before v1.0.0. See [Releases](https://github.com/bbopen/tywrap/releases) for breaking changes.
 
 > If tywrap saves you time, a ⭐ on [GitHub](https://github.com/bbopen/tywrap) helps others find it.
 
@@ -110,7 +110,6 @@ import { defineConfig } from 'tywrap';
 export default defineConfig({
   pythonModules: {
     math: {
-      runtime: 'node',
       typeHints: 'strict',
     },
   },
@@ -180,9 +179,9 @@ example().catch(console.error);
 ## Runtime return validation
 
 Generated wrappers validate returns at runtime after decoding. If a Python
-implementation returns a value that does not match its annotation, tywrap throws
+function returns a value that does not match its annotation, tywrap throws
 `BridgeValidationError` with the wrapped call site and received shape. Fix the
-Python annotation or implementation; use `-> Any` only when that return is
+Python annotation or function. Use `-> Any` only when that return is
 intentionally untyped.
 
 ## Custom Module Example
@@ -361,9 +360,9 @@ For Pyodide, use `createBridgeReloader(...)` from `tywrap/dev` for manual bridge
 replacement. For HTTP, restart or redeploy the remote server outside tywrap.
 
 `startNodeWatchSession(...)` watches local package directories as directory
-trees, refreshes those trees when nested directories change, and keeps the last
-known good wrappers and bridge live if a reload produces structured generation
-failures. See [Watch & Reload](https://bbopen.github.io/tywrap/guide/dev-reload.md) for the reload lifecycle events
+trees and refreshes them when nested directories change. A structured generation
+failure leaves the last known good wrappers and bridge live. See
+[Watch & Reload](https://bbopen.github.io/tywrap/guide/dev-reload.md) for the reload lifecycle events
 and the full failure / recovery contract.
 
 ### Build Integration
@@ -378,24 +377,24 @@ and `tywrap:check` scripts to `package.json` (disable with `--no-scripts`).
 
 ## Performance Tips
 
-1. **Enable Caching**: Set `"caching": true` for faster rebuilds
-2. **Use Batching**: Set `"batching": true` for multiple modules
-3. **Smart Compression**: Use `"compression": "auto"` for optimal size
-4. **Selective Imports**: Specify only needed functions/classes
+1. Set `"caching": true` to reuse generation IR across rebuilds.
+2. Limit `functions` and `classes` when a wrapper needs only part of a module.
+
+`batching` and `compression` are accepted config fields in 0.9.0, but no current
+generator or runtime code applies them.
 
 ```json
 {
   "pythonModules": {
     "numpy": {
-      "runtime": "node",
       "functions": ["array", "zeros", "ones"],
       "classes": ["ndarray"]
     }
   },
   "performance": {
     "caching": true,
-    "batching": true,
-    "compression": "auto"
+    "batching": false,
+    "compression": "none"
   }
 }
 ```
@@ -459,586 +458,218 @@ const [sinValue, cosValue, tanValue] = await Promise.all([
 ---
 
 <!-- Source: docs/guide/configuration.md -->
-# Configuration Guide
-
-Complete configuration reference covering all options from basic setup to
-advanced optimization.
-
-## Top-Level Fields
-
-| Field              | Description                                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `pythonModules`    | Mapping of module names to wrapper configuration                                                                         |
-| `pythonImportPath` | Extra directories to prepend to `PYTHONPATH` during IR generation (useful for local modules not installed into your env) |
-| `output`           | Output directory, module format and artifact options                                                                     |
-| `runtime`          | Settings for Node, Pyodide or HTTP runtimes                                                                              |
-| `performance`      | Caching and optimization controls                                                                                        |
-| `types`            | Type mapping presets and customization                                                                                   |
-
-## Configuration File Formats
-
-tywrap supports multiple configuration formats:
-
-- **TypeScript**: `tywrap.config.ts` (recommended)
-- **JavaScript**: `tywrap.config.js`
-- **JSON**: `tywrap.config.json`
-- **Programmatic**: Direct API calls
-
-When `--config` is omitted, the CLI searches for `tywrap.config.ts`, `.mts`,
-`.js`, `.mjs`, `.cjs`, and `.json` in that order.
-
-### Basic JSON Configuration
-
-```json
-{
-  "pythonModules": {
-    "module_name": { "runtime": "node", "typeHints": "strict" }
-  },
-  "output": { "dir": "./generated", "format": "esm" },
-  "runtime": {},
-  "performance": { "caching": true }
-}
-```
-
-### TypeScript Configuration
-
-```typescript
-// tywrap.config.ts
-import { defineConfig } from 'tywrap';
-
-export default defineConfig({
-  pythonImportPath: ['./python', './vendor'],
-  pythonModules: {
-    numpy: {
-      version: '1.24.0',
-      runtime: 'pyodide',
-      functions: ['array', 'zeros', 'ones'],
-      typeHints: 'strict',
-    },
-    pandas: {
-      runtime: 'node',
-      alias: 'pd',
-    },
-  },
-  output: {
-    dir: './src/generated',
-    format: 'esm',
-    declaration: true,
-    sourceMap: true,
-  },
-  performance: {
-    caching: true,
-    batching: true,
-    compression: 'auto',
-  },
-});
-```
-
-## Local Modules and `pythonImportPath`
-
-If you're wrapping local modules/packages that are not installed into your
-Python environment, add one or more directories to `pythonImportPath`. tywrap
-will prepend these entries to `PYTHONPATH` when running the `tywrap_ir`
-subprocess. Existing `PYTHONPATH` (if set) is preserved.
-
-Notes:
-
-- Paths are passed through as provided (use absolute paths or paths relative to
-  where you run the CLI).
-- This affects IR discovery/import, not your runtime bridge configuration.
-
-## Python Modules Configuration
-
-### Basic Module Setup
-
-```json
-{
-  "pythonModules": {
-    "math": {
-      "runtime": "node",
-      "typeHints": "strict"
-    }
-  }
-}
-```
-
-### Advanced Module Configuration
-
-```json
-{
-  "pythonModules": {
-    "numpy": {
-      "version": "1.24.0",
-      "runtime": "pyodide",
-      "functions": ["array", "zeros", "ones", "eye"],
-      "classes": ["ndarray", "matrix"],
-      "alias": "np",
-      "typeHints": "strict"
-    },
-    "./custom_module.py": {
-      "runtime": "node",
-      "typeHints": "loose"
-    }
-  }
-}
-```
-
-### Module Options
-
-| Option            | Type                                      | Default     | Description                            |
-| ----------------- | ----------------------------------------- | ----------- | -------------------------------------- |
-| `runtime`         | `'node' \| 'pyodide' \| 'http' \| 'auto'` | `'auto'`    | Runtime environment                    |
-| `version`         | `string`                                  | Latest      | Specific package version               |
-| `functions`       | `string[]`                                | All         | Specific functions to wrap             |
-| `classes`         | `string[]`                                | All         | Specific classes to wrap               |
-| `exclude`         | `string[]`                                | `[]`        | Exclude specific exports by exact name |
-| `excludePatterns` | `string[]`                                | `[]`        | Exclude exports by regex pattern       |
-| `alias`           | `string`                                  | Module name | Import alias in generated code         |
-| `typeHints`       | `'strict' \| 'loose' \| 'ignore'`         | `'strict'`  | Type hint processing                   |
-
-When `functions`/`classes` are not explicitly configured for a module, tywrap
-applies a small default exclude list to avoid generating wrappers for common
-decorator helpers: `dataclass`, `property`, `staticmethod`, `classmethod`,
-`abstractmethod`, `cached_property`.
-
-## Output Configuration
-
-### Format Options
-
-```json
-{
-  "output": {
-    "dir": "./generated",
-    "format": "esm",
-    "declaration": true,
-    "sourceMap": true,
-    "annotatedJSDoc": true
-  }
-}
-```
-
-### Output Options
-
-| Option           | Type                       | Default         | Description                       |
-| ---------------- | -------------------------- | --------------- | --------------------------------- |
-| `dir`            | `string`                   | `'./generated'` | Output directory                  |
-| `format`         | `'esm' \| 'cjs' \| 'both'` | `'esm'`         | Module format                     |
-| `declaration`    | `boolean`                  | `false`         | Generate matching `.d.ts` files, including preserved simple generics when representable |
-| `sourceMap`      | `boolean`                  | `false`         | Generate source maps              |
-| `annotatedJSDoc` | `boolean`                  | `false`         | Include type annotations in JSDoc |
-
-## Runtime Configuration
-
-These fields are part of the typed config surface. Today the CLI uses
-`runtime.node.pythonPath`, `runtime.node.virtualEnv`, and `runtime.node.timeout`
-during IR extraction. Your application still creates `NodeBridge`,
-`PyodideBridge`, or `HttpBridge` itself at runtime.
-
-### Node.js Runtime
-
-```json
-{
-  "runtime": {
-    "node": {
-      "pythonPath": "/usr/local/bin/python3",
-      "virtualEnv": "./venv",
-      "timeout": 30000
-    }
-  }
-}
-```
-
-### Pyodide Runtime (Browser)
-
-```json
-{
-  "runtime": {
-    "pyodide": {
-      "indexURL": "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/",
-      "packages": ["numpy", "scipy", "matplotlib"]
-    }
-  }
-}
-```
-
-### HTTP Runtime
-
-```json
-{
-  "runtime": {
-    "http": {
-      "baseURL": "https://api.example.com/python",
-      "timeout": 10000,
-      "headers": {
-        "Authorization": "Bearer your-token",
-        "Content-Type": "application/json"
-      }
-    }
-  }
-}
-```
-
-### Runtime Options
-
-#### Node.js Options
-
-| Option       | Type     | Default     | Description               |
-| ------------ | -------- | ----------- | ------------------------- |
-| `pythonPath` | `string` | `'python3'` | Path to Python executable |
-| `virtualEnv` | `string` | -           | Virtual environment path  |
-| `timeout`    | `number` | `30000`     | Subprocess timeout (ms)   |
-
-#### Pyodide Options
-
-| Option     | Type       | Default | Description            |
-| ---------- | ---------- | ------- | ---------------------- |
-| `indexURL` | `string`   | CDN URL | Pyodide package index  |
-| `packages` | `string[]` | `[]`    | Pre-installed packages |
-
-#### HTTP Options
-
-| Option    | Type                     | Default  | Description          |
-| --------- | ------------------------ | -------- | -------------------- |
-| `baseURL` | `string`                 | Required | API base URL         |
-| `timeout` | `number`                 | `10000`  | Request timeout (ms) |
-| `headers` | `Record<string, string>` | `{}`     | HTTP headers         |
-
-## Performance Configuration
-
-### Caching and Optimization
-
-```json
-{
-  "performance": {
-    "caching": true,
-    "batching": true,
-    "compression": "auto"
-  }
-}
-```
-
-## Type Mapping Configuration
-
-Use presets to opt into richer mappings for common ecosystems.
-
-```json
-{
-  "types": {
-    "presets": ["stdlib", "pandas"]
-  }
-}
-```
-
-### Type Mapping Options
-
-| Option    | Type                                                                                   | Default | Description                                   |
-| --------- | -------------------------------------------------------------------------------------- | ------- | --------------------------------------------- |
-| `presets` | `('numpy' \| 'pandas' \| 'pydantic' \| 'stdlib' \| 'scipy' \| 'torch' \| 'sklearn')[]` | `[]`    | Enable opt-in mappings for specific libraries |
-
-`stdlib` maps common Python stdlib types (datetime, UUID, Decimal, Path) to
-JSON-friendly primitives.  
-`pandas` maps `DataFrame` and `Series` to record-shaped unions. `scipy` maps
-sparse matrix classes (csr/csc/coo) to structured sparse objects.  
-`torch` maps `Tensor` to a structured tensor object.  
-`sklearn` maps `BaseEstimator` to estimator metadata objects.
-
-### Performance Options
-
-| Option        | Type                                     | Default  | Description               |
-| ------------- | ---------------------------------------- | -------- | ------------------------- |
-| `caching`     | `boolean`                                | `false`  | Enable IR caching         |
-| `batching`    | `boolean`                                | `false`  | Batch multiple operations |
-| `compression` | `'auto' \| 'gzip' \| 'brotli' \| 'none'` | `'none'` | Output compression        |
-
-## Development Hot Reload Helpers
-
-Development hot reload is no longer configured inside `tywrap.config.*`.
-
-Use `tywrap/dev` instead:
-
-```typescript
-import { createBridgeReloader, startNodeWatchSession } from 'tywrap/dev';
-```
-
-Support matrix:
-
-- **Node**: `startNodeWatchSession(...)` watches local modules, regenerates
-  wrappers, and swaps the active bridge.
-- **Node bridge config**: `createBridge(config)` receives the fully resolved
-  config for that reload cycle, so runtime setting changes can flow into the
-  next bridge instance.
-- **Node watch trees**: directory-valued package roots and `extraWatchPaths`
-  are watched as directory trees, with `__pycache__`, `.pytest_cache`,
-  `.mypy_cache`, and `.ruff_cache` ignored.
-- **Strict reloads**: if regeneration returns structured failures, tywrap keeps
-  the last known good generated output and bridge in place.
-- **Pyodide**: `createBridgeReloader(...)` provides manual bridge replacement
-  only.
-- **HTTP**: reload is external to tywrap because tywrap does not own the remote
-  server lifecycle.
-
-If an older config still contains `development` or `pythonModules[*].watch`,
-tywrap now throws a migration error that points to `tywrap/dev`.
-
-## Extension Hooks
-
-tywrap supports a lightweight plugin system that allows hooking into the
-generation lifecycle:
-
-- `beforeGeneration(options)` – invoked before code generation begins.
-- `afterGeneration(result)` – called after generation completes.
-- `transformPythonType(type)` – modify analyzed Python types.
-- `transformTypescriptCode(code)` – post-process generated TypeScript.
-
-Hooks are optional; implement only what your plugin needs.
-
-## Environment Variables
-
-Most tywrap behavior is configured in `tywrap.config.*` or when you construct a
-runtime bridge in application code. The supported `TYWRAP_*` environment
-variables are mostly codec guardrails, logging, and repo test knobs:
-
-```bash
-export TYWRAP_CODEC_FALLBACK="json"
-export TYWRAP_CODEC_MAX_BYTES="10485760"   # Max response payload size (bytes)
-export TYWRAP_REQUEST_MAX_BYTES="1048576"  # Max request payload size (bytes)
-export TYWRAP_TORCH_ALLOW_COPY="1"
-export TYWRAP_LOG_LEVEL="INFO"
-export TYWRAP_LOG_JSON="1"
-```
-
-Repo tests and benchmarks also use additional `TYWRAP_*` variables such as
-`TYWRAP_PERF_BUDGETS`.
-
-Python executable and virtual environment selection are not configured through
-environment variables today. Set them in `tywrap.config.*` or on the bridge:
+# Configuration
+
+A `tywrap.config.ts` file configures wrapper generation. Use `defineConfig()`
+for editor completion, or use JSON, JavaScript, or TypeScript. Without
+`--config`, the CLI looks for `tywrap.config.ts`, `.mts`, `.js`, `.mjs`, `.cjs`,
+then `.json`.
 
 ```ts
 import { defineConfig } from 'tywrap';
 
 export default defineConfig({
+  pythonModules: {
+    math: { typeHints: 'strict' },
+    numpy: {
+      functions: ['array', 'zeros', 'ones'],
+      alias: 'np',
+      typeHints: 'strict',
+    },
+  },
+  pythonImportPath: ['./python'],
+  output: {
+    dir: './src/generated',
+    format: 'esm',
+    declaration: true,
+    sourceMap: false,
+    annotatedJSDoc: true,
+  },
   runtime: {
     node: {
-      pythonPath: '/usr/local/bin/python3',
-      virtualEnv: './venv',
+      pythonPath: 'python3',
       timeout: 30000,
     },
   },
+  performance: {
+    caching: true,
+    batching: false,
+    compression: 'none',
+  },
+  types: {
+    presets: ['stdlib'],
+  },
 });
 ```
 
-See [Environment Variables](https://bbopen.github.io/tywrap/reference/env-vars) for the full implemented list.
+## Top-level fields
 
-## Advanced Configuration Patterns
+| Field | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `pythonModules` | `Record<string, PythonModuleConfig>` | `{}` | Modules to analyze and generate. |
+| `pythonImportPath` | `string[]` | `[]` | Directories prepended to `PYTHONPATH` for discovery and IR extraction. |
+| `contractInput` | `string \| Record<string, string>` | unset | A pinned contract file, or one path per module, used instead of starting Python. |
+| `output` | `OutputConfig` | See below | Generated file location and format. |
+| `runtime` | `RuntimeConfig` | Node settings | Runtime-related settings. Generation reads the Node settings. |
+| `performance` | `PerformanceConfig` | See below | Generation cache controls and accepted compatibility settings. |
+| `types` | `TypeMappingConfig` | `{ presets: [] }` | Extra mappings for supported library types. |
+| `debug` | `boolean` | `false` | Enables debug logging. |
 
-### Multi-Environment Setup
+Unknown top-level fields fail validation. The loader also validates the value
+types for the documented sections.
 
-```typescript
-// tywrap.config.ts
-import { defineConfig } from 'tywrap';
+## Modules
 
-const isDev = process.env.NODE_ENV === 'development';
+Each `pythonModules` key is the Python module name passed to the IR extractor.
+For local modules, add their parent directory to `pythonImportPath`.
 
+```ts
 export default defineConfig({
   pythonModules: {
-    numpy: {
-      runtime: isDev ? 'node' : 'pyodide',
-      typeHints: isDev ? 'loose' : 'strict',
+    'my_package.statistics': {
+      functions: ['mean', 'percentile'],
+      classes: ['Summary'],
+      exclude: ['internal_helper'],
+      excludePatterns: ['^experimental_'],
+      alias: 'stats',
+      typeHints: 'strict',
     },
   },
-  output: {
-    dir: isDev ? './dev-generated' : './dist/generated',
-    sourceMap: isDev,
-  },
+  pythonImportPath: ['./python'],
 });
 ```
 
-### Monorepo Configuration
+| Field | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `version` | `string` | unset | Version value recorded in the IR cache key. |
+| `functions` | `string[]` | all exports | Limits generated module functions. |
+| `classes` | `string[]` | all exports | Limits generated classes. |
+| `exclude` | `string[]` | `[]` | Excludes exact export names after selection. |
+| `excludePatterns` | `string[]` | `[]` | Excludes exports matching JavaScript regular-expression source. Invalid patterns produce a generation warning. |
+| `alias` | `string` | module name | Sets the generated module alias. |
+| `typeHints` | `'strict' \| 'loose' \| 'ignore'` | `'strict'` at generation | Accepted for configuration compatibility and included in the IR cache key. It does not currently change analysis or emitted types. |
 
-```typescript
-// packages/core/tywrap.config.ts
-export default defineConfig({
-  pythonModules: {
-    numpy: { runtime: 'node' },
-    scipy: { runtime: 'node' },
-  },
-  output: {
-    dir: './src/generated',
-    format: 'esm',
-  },
-});
+The former per-module `runtime` field is not part of new configurations. Set
+runtime options under the top-level `runtime` field.
 
-// packages/web/tywrap.config.ts
-export default defineConfig({
-  pythonModules: {
-    numpy: { runtime: 'pyodide' },
-    matplotlib: { runtime: 'pyodide' },
-  },
-  output: {
-    dir: './src/generated',
-    format: 'esm',
-  },
-  runtime: {
-    pyodide: {
-      packages: ['numpy', 'matplotlib'],
-    },
-  },
-});
-```
+## Output
 
-### Conditional Module Loading
-
-```typescript
-export default defineConfig({
-  pythonModules: {
-    // Core modules - always included
-    math: { runtime: 'auto' },
-
-    // Optional modules - only if available
-    ...(process.env.INCLUDE_ML && {
-      sklearn: { runtime: 'node', typeHints: 'loose' },
-      torch: { runtime: 'node', classes: ['Tensor'] },
-    }),
-
-    // Local-only modules
-    ...(process.env.NODE_ENV === 'development' && {
-      debug_utils: { runtime: 'node' },
-    }),
-  },
-});
-```
-
-## Configuration Validation
-
-tywrap validates your configuration at build time:
-
-```typescript
-// Invalid configuration will show helpful errors
-{
-  "pythonModules": {
-    "numpy": {
-      "runtime": "invalid", // ❌ Error: Invalid runtime
-      "typeHints": "maybe"  // ❌ Error: Invalid typeHints value
-    }
-  },
-  "output": {
-    "format": "umd" // ❌ Error: UMD format not supported
-  }
+```ts
+output: {
+  dir: './generated',
+  format: 'both',
+  declaration: true,
+  sourceMap: false,
+  annotatedJSDoc: true,
 }
 ```
 
-## Configuration Merging
+| Field | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `dir` | `string` | `'./generated'` | Output directory. |
+| `format` | `'esm' \| 'cjs' \| 'both'` | `'esm'` | Generated module format. |
+| `declaration` | `boolean` | `false` | Writes a matching `.generated.d.ts` file. |
+| `sourceMap` | `boolean` | `false` | Writes a `.generated.ts.map` file. |
+| `annotatedJSDoc` | `boolean` | `false` | Adds source annotation strings to generated function JSDoc. |
 
-Configurations are merged in this order:
+Generation also writes `<module>.contract.json` beside each generated wrapper.
+The contract is byte-stable and lets `generate --check` detect contract drift.
 
-1. Default values
-2. Configuration file
-3. CLI flags or programmatic overrides
+## Runtime settings
+
+The configuration loader accepts Node, Pyodide, and HTTP settings. During
+generation, the CLI reads `runtime.node.pythonPath` and
+`runtime.node.virtualEnv` to run the Python IR extractor. Create `NodeBridge`,
+`PyodideBridge`, or `HttpBridge` in application code for runtime calls.
+
+```ts
+runtime: {
+  node: {
+    pythonPath: 'python3',
+    virtualEnv: './.venv',
+    timeout: 30000,
+  },
+  pyodide: {
+    indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
+    packages: ['numpy'],
+  },
+  http: {
+    baseURL: 'https://api.example.com/python',
+    timeout: 10000,
+    headers: { Authorization: 'Bearer token' },
+  },
+}
+```
+
+| Section | Fields | Notes |
+| --- | --- | --- |
+| `runtime.node` | `pythonPath?: string`, `virtualEnv?: string`, `timeout?: number` | Defaults to the platform Python command and a 30,000 ms timeout. |
+| `runtime.pyodide` | `indexURL?: string`, `packages?: string[]` | Stored and type-checked by the configuration loader. |
+| `runtime.http` | `baseURL: string`, `timeout?: number`, `headers?: Record<string, string>` | `baseURL` must be a non-empty string. |
+
+## Performance settings
+
+```ts
+performance: {
+  caching: true,
+  batching: false,
+  compression: 'none',
+}
+```
+
+| Field | Type | Default | Current effect |
+| --- | --- | --- | --- |
+| `caching` | `boolean` | `false` | Reuses cached Python IR during generation. It does not cache function call results. |
+| `batching` | `boolean` | `false` | Validated and retained in the resolved config, but no current generator or runtime code reads it. |
+| `compression` | `'auto' \| 'gzip' \| 'brotli' \| 'none'` | `'none'` | Validated and included in the IR cache key, but no current generator or runtime code performs compression for it. |
+
+## Type presets
+
+Use `types.presets` to enable mappings for supported third-party annotations.
+
+```ts
+types: {
+  presets: ['stdlib', 'pandas', 'scipy'],
+}
+```
+
+Accepted presets are `numpy`, `pandas`, `pydantic`, `stdlib`, `scipy`, `torch`,
+and `sklearn`. `numpy` is accepted as a no-op in 0.9.0. The other presets map
+the library types implemented by the generator, such as `DataFrame`, sparse
+matrix classes, `Tensor`, and `BaseEstimator`.
+
+## Pinned contracts
+
+Use `contractInput` to generate from a saved IR contract without starting a
+Python process. A single path applies to every configured module. A record
+selects an input path for each module.
+
+```ts
+export default defineConfig({
+  pythonModules: {
+    math: { typeHints: 'strict' },
+  },
+  contractInput: {
+    math: './generated/math.contract.json',
+  },
+});
+```
+
+Contracts must declare IR version `0.4.0`. Generation reports the mismatch
+when the contract version does not match the TypeScript generator.
+
+## Configuration checks
+
+Use `generate --check` in CI after committing generated wrappers and their
+contracts. It compares the generated TypeScript, declaration files when
+enabled, source maps when enabled, and contract files without writing them.
 
 ```bash
-# CLI overrides take highest precedence
-tywrap generate --output-dir ./custom --format cjs
+npx tywrap generate --check
 ```
 
-## Best Practices
-
-### 1. Environment-Specific Configs
-
-```typescript
-// Use different configs per environment
-const config = {
-  local: './tywrap.dev.config.ts',
-  production: './tywrap.prod.config.ts',
-  test: './tywrap.test.config.ts',
-};
-```
-
-### 2. Module Organization
-
-```json
-{
-  "pythonModules": {
-    // Group related modules
-    "numpy": { "runtime": "pyodide" },
-    "scipy": { "runtime": "pyodide" },
-    "matplotlib": { "runtime": "pyodide" },
-
-    // Separate custom modules
-    "./utils/math_helpers.py": { "runtime": "node" },
-    "./utils/data_processing.py": { "runtime": "node" }
-  }
-}
-```
-
-### 3. Performance Optimization
-
-```json
-{
-  "performance": {
-    "caching": true, // Always enable in CI/CD
-    "batching": true, // For multiple modules
-    "compression": "auto" // Let tywrap decide
-  }
-}
-```
-
-### 4. Type Safety
-
-```json
-{
-  "pythonModules": {
-    "well_typed_module": { "typeHints": "strict" },
-    "legacy_module": { "typeHints": "loose" },
-    "untyped_module": { "typeHints": "ignore" }
-  }
-}
-```
-
-## Troubleshooting Configuration
-
-### Common Issues
-
-**Module not found**:
-
-```bash
-# Check Python path
-python3 -c "import sys; print(sys.path)"
-
-# Verify module installation
-python3 -c "import your_module; print(your_module.__file__)"
-```
-
-**Type generation errors**:
-
-```json
-{
-  "pythonModules": {
-    "problematic_module": {
-      "typeHints": "loose", // Relax type checking
-      "functions": ["specific_function"] // Limit scope
-    }
-  }
-}
-```
-
-**Performance issues**:
-
-```json
-{
-  "performance": {
-    "caching": true, // Enable caching
-    "compression": "none" // Disable compression
-  }
-}
-```
-
-For more troubleshooting, see [Troubleshooting Guide](https://bbopen.github.io/tywrap/troubleshooting/).
-
-## Next Steps
-
-- [Runtime Guides](https://bbopen.github.io/tywrap/guide/runtimes/node) - Platform-specific configuration
-- [Examples](https://bbopen.github.io/tywrap/examples/) - Configuration examples
-- [API Reference](https://bbopen.github.io/tywrap/reference/api/) - Complete API documentation
+See the [CLI reference](https://bbopen.github.io/tywrap/reference/cli) for command-line overrides and exit
+codes.
 
 ---
 
@@ -1051,13 +682,13 @@ tywrap supports five runtime configurations. Choose based on your environment.
 
 | Feature                        | Node.js | Bun | Deno (experimental) |  Browser (Pyodide)   |    HTTP     |
 | ------------------------------ | :-----: | :-: | :-----------------: | :------------------: | :---------: |
-| Python subprocess              |   ✅    | ✅  |         ✅          |          ❌          |     ❌      |
-| Deno Deploy / serverless       |   ❌    | ❌  |         ❌          |          ✅          |     ✅      |
-| Apache Arrow transport         |   ✅    | ✅  |         ✅          |          ✅          |     ✅      |
-| Virtual environment support    |   ✅    | ✅  |         ✅          |          ❌          | Server-side |
-| Process pooling (experimental) |   ✅    | ✅  |         ✅          |          ❌          |     ❌      |
-| Development hot reload         |   ✅    | ❌  |         ❌          | Manual bridge reload |  External   |
-| Tested in CI                   |   ✅    | ✅  |    ❌ (untested)    |          ✅          |     ✅      |
+| Python subprocess              | yes    | yes | yes              | no                 | no        |
+| Deno Deploy / serverless       | no     | no  | no               | yes                | yes       |
+| Apache Arrow transport         | yes    | yes | yes              | no (JSON only)     | yes       |
+| Virtual environment support    | yes    | yes | yes              | no                 | Server-side |
+| Process pooling (experimental) | yes    | yes | yes              | no                 | no        |
+| Development hot reload         | yes    | no  | no               | Manual bridge reload | External |
+| Tested in CI                   | yes    | yes | no (untested)    | yes                | yes       |
 
 ## Import Paths
 
@@ -1108,7 +739,7 @@ The Node.js runtime:
 - **High Performance** - Direct process communication with minimal overhead
 - **Full Feature Support** - Supports all tywrap features and Python libraries
 - **Development Friendly** - Excellent debugging and error reporting
-- **Production Ready** - Battle-tested with proper error handling and timeouts
+- **Failure handling** - Reports Python errors and enforces configured timeouts
 
 ## Bridge Selection
 
@@ -1246,7 +877,7 @@ const bridge = new NodeBridge({
 | ------------------------- | ---------------------------------------- | --------------- | --------------------------------------------------------------------------------------- |
 | `pythonPath`              | `string`                                 | auto-detect     | Path to the Python executable                                                           |
 | `scriptPath`              | `string`                                 | built-in bridge | Custom `python_bridge.py` path                                                          |
-| `virtualEnv`              | `string`                                 | —               | Virtual environment root                                                                |
+| `virtualEnv`              | `string`                                 | not set         | Virtual environment root                                                                |
 | `cwd`                     | `string`                                 | `process.cwd()` | Working directory for the subprocess                                                    |
 | `timeoutMs`               | `number`                                 | `30000`         | Per-call timeout                                                                        |
 | `queueTimeoutMs`          | `number`                                 | `30000`         | Queue timeout when the pool is saturated                                                |
@@ -1255,7 +886,7 @@ const bridge = new NodeBridge({
 | `maxConcurrentPerProcess` | `number`                                 | `1`             | Concurrent requests per serial Python worker; use more worker processes for concurrency |
 | `inheritProcessEnv`       | `boolean`                                | `false`         | Pass the full parent environment through                                                |
 | `env`                     | `Record<string, string \| undefined>`    | `{}`            | Extra subprocess env vars                                                               |
-| `codec`                   | `CodecOptions`                           | —               | Codec validation and byte handling                                                      |
+| `codec`                   | `CodecOptions`                           | not set         | Codec validation and byte handling                                                      |
 | `warmupCommands`          | `Array<{ module, functionName, args? }>` | `[]`            | Commands to run when each worker starts                                                 |
 
 Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
@@ -1368,7 +999,8 @@ export TYWRAP_CODEC_FALLBACK=json
 
 ### Payload Size Limit
 
-The subprocess bridge writes a single JSONL response per call. To prevent
+The subprocess bridge writes one JSONL response per call; a response larger
+than the line ceiling is split with `tywrap-frame/1` chunking. To prevent
 oversized payloads:
 
 ```bash
@@ -1788,7 +1420,7 @@ setRuntimeBridge(new NodeBridge({
 }));
 ```
 
-> **Note:** Both `'tywrap/node'` and `'tywrap'` work on Bun. Use `'tywrap/node'` for smaller bundles via tree-shaking.
+Both `'tywrap/node'` and `'tywrap'` work on Bun. Use `'tywrap/node'` for smaller bundles through tree-shaking.
 
 ## Configuration Options
 
@@ -1799,13 +1431,13 @@ Key options:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `pythonPath` | auto-detect | Path to `python3` executable |
-| `virtualEnv` | — | Path to virtual environment directory |
+| `virtualEnv` | not set | Path to virtual environment directory |
 | `timeoutMs` | `30000` | Request timeout in milliseconds |
 | `inheritProcessEnv` | `false` | Set `true` to pass full `process.env` to subprocess |
 
 ## bunfig.toml
 
-tywrap ships with a `bunfig.toml` for build and run settings:
+The repository's `bunfig.toml` contains these build and run settings:
 
 ```toml
 [build]
@@ -1846,11 +1478,11 @@ The same `TYWRAP_*` env vars work under Bun. See the [environment variables refe
 
 ## Troubleshooting
 
-**`python3: command not found`** — Set `pythonPath` explicitly or ensure Python is on `PATH`.
+`python3: command not found`: set `pythonPath` explicitly or ensure Python is on `PATH`.
 
-**Subprocess times out** — Increase `timeoutMs`. Verify `pip install tywrap-ir` ran in the correct environment.
+For a subprocess timeout, increase `timeoutMs`. Verify `pip install tywrap-ir` ran in the correct environment.
 
-See the [Node.js troubleshooting guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for additional patterns — all apply equally to Bun.
+The [Node.js troubleshooting guide](https://bbopen.github.io/tywrap/guide/runtimes/node) has more patterns that also apply to Bun.
 
 ---
 
@@ -1861,16 +1493,16 @@ tywrap's Deno subprocess support is experimental and untested in CI. It uses the
 same `NodeBridge` as Node.js, and Deno requires the `npm:` prefix for npm
 imports.
 
-## ⚠️ Deno Deploy Limitation
+## Deno Deploy limitation
 
 **Deno Deploy does NOT support subprocess execution.** Because `NodeBridge`
 spawns a Python subprocess, it cannot run in Deno Deploy.
 
 **Alternatives for Deno Deploy:**
 
-- Use [`PyodideBridge`](https://bbopen.github.io/tywrap/guide/runtimes/browser) — runs Python in-browser via
+- Use [`PyodideBridge`](https://bbopen.github.io/tywrap/guide/runtimes/browser), which runs Python in-browser via
   WebAssembly (no subprocess)
-- Use [`HttpBridge`](https://bbopen.github.io/tywrap/guide/runtimes/http) — connects to a remote Python server
+- Use [`HttpBridge`](https://bbopen.github.io/tywrap/guide/runtimes/http), which connects to a remote Python server
   over HTTP
 
 ## Installation
@@ -1920,7 +1552,7 @@ deno check src/index.ts
 
 ## Configuration Options
 
-See the [Node.js guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for the full `NodeBridgeOptions` reference — all
+See the [Node.js guide](https://bbopen.github.io/tywrap/guide/runtimes/node) for the full `NodeBridgeOptions` reference. All
 options work identically in Deno.
 
 ## When to Use Each Bridge in Deno
@@ -1938,10 +1570,10 @@ The same `TYWRAP_*` env vars work under Deno. See the
 
 ## Troubleshooting
 
-**`PermissionDenied: Requires run access to "python3"`** — Add
+`PermissionDenied: Requires run access to "python3"`: add
 `--allow-run=python3` to your `deno run` command.
 
-**`NotSupported: Subprocess access is not allowed`** — You are running in Deno
+`NotSupported: Subprocess access is not allowed`: you are running in Deno
 Deploy. Switch to [`PyodideBridge`](https://bbopen.github.io/tywrap/guide/runtimes/browser) or
 [`HttpBridge`](https://bbopen.github.io/tywrap/guide/runtimes/http).
 
@@ -2033,7 +1665,7 @@ Run `tywrap generate` during your build and load Pyodide at runtime (CDN or self
 # HTTP Bridge Guide
 
 `HttpBridge` connects to a Python server over HTTP. Use it when Python must run
-separately — including Deno Deploy, serverless environments, or distributed
+separately, including Deno Deploy, serverless environments, or distributed
 architectures.
 
 ## When to Use HttpBridge
@@ -2070,7 +1702,7 @@ setRuntimeBridge(
 
 | Option      | Required | Default | Description                                |
 | ----------- | -------- | ------- | ------------------------------------------ |
-| `baseURL`   | Yes      | —       | Base URL of the Python bridge server       |
+| `baseURL`   | Yes      | none    | Base URL of the Python bridge server       |
 | `headers`   | No       | `{}`    | Additional HTTP headers (auth, CORS, etc.) |
 | `timeoutMs` | No       | `30000` | Request timeout in milliseconds            |
 | `codec`     | No       | Arrow   | Codec options                              |
@@ -2078,11 +1710,11 @@ setRuntimeBridge(
 ## Running the Python Server
 
 `HttpBridge` expects a server that accepts POST requests with JSON/Arrow
-payloads. You must implement or deploy a compatible server endpoint. The
-protocol is stateless — each call is an independent POST request.
+payloads. You must provide a compatible server endpoint. Each call is an
+independent POST request because the protocol is stateless.
 
-> **Note:** tywrap does not ship an HTTP server. See the
-> [API reference](https://bbopen.github.io/tywrap/reference/api/) for the expected request/response format.
+tywrap does not include an HTTP server. See the [API reference](https://bbopen.github.io/tywrap/reference/api/)
+for the expected request and response format.
 
 ## Apache Arrow
 
@@ -2115,25 +1747,24 @@ See the [environment variables reference](https://bbopen.github.io/tywrap/refere
 <!-- Source: docs/guide/dev-reload.md -->
 # Watch & Reload (Failure / Recovery Contract)
 
-`tywrap/dev` provides development-time wrapper regeneration plus runtime bridge
-replacement. It does **not** provide application-level hot module reloading — it
-keeps your generated wrappers and the active Python bridge in sync with your
-Python sources while your process stays up.
+`tywrap/dev` regenerates wrappers and replaces the runtime bridge during
+development. Application-level hot module reloading remains the application's
+job. The helper keeps generated wrappers and the active Python bridge in sync
+with Python sources while the process stays up.
 
-This page documents the reload **lifecycle** and, in particular, the
-**failure / recovery contract**: what happens when a reload fails, and what stays
-live so your app keeps working.
+This page documents the reload lifecycle and failure behavior: what happens when
+a reload fails, and what stays live so your app keeps working.
 
 > Reload is configured in code through `tywrap/dev`, never in `tywrap.config.*`.
 > The legacy `development` block and `pythonModules.<module>.watch` fields were
-> removed in 0.4.0; using them now raises an explicit migration error.
+> removed in 0.4.0. Using them now raises an explicit migration error.
 
 ## The two entry points
 
 | Helper | Use it for |
 | --- | --- |
-| `startNodeWatchSession(...)` | Node-only. Watches your config file and local Python sources, regenerates wrappers, and swaps the active bridge in place. |
-| `createBridgeReloader(...)` | Cross-runtime manual primitive (e.g. Pyodide). You call `reload()` yourself; there is no filesystem watcher. |
+| `startNodeWatchSession(...)` | Node-only. Watches the config and local Python sources. After regenerating wrappers, it swaps the active bridge in place. |
+| `createBridgeReloader(...)` | Cross-runtime manual primitive (e.g. Pyodide). You call `reload()` yourself. It has no filesystem watcher. |
 
 ```typescript
 import { startNodeWatchSession } from 'tywrap/dev';
@@ -2158,7 +1789,7 @@ await session.close();
 `createBridge` receives the **freshly resolved config for that reload cycle**, so
 config edits (e.g. a changed `timeout`) are picked up on the next reload. By
 default the newly created bridge is published to the global runtime registry, so
-existing generated wrappers transparently route through the swapped bridge — no
+existing generated wrappers transparently route through the swapped bridge. No
 imports change and the process never restarts.
 
 ## Reload lifecycle events
@@ -2169,7 +1800,7 @@ order for a successful cycle:
 | Event | Meaning |
 | --- | --- |
 | `watchPaths` | The set of paths the session is currently watching (config file, resolved Python package trees, and `extraWatchPaths`). Re-emitted whenever the watched set changes. |
-| `change` | A watched path changed (`manual: false`) — a reload has been scheduled. |
+| `change` | A watched path changed (`manual: false`), so a reload has been scheduled. |
 | `reload-start` | A reload cycle began (`manual: true` for `reloadNow()` / initial startup). |
 | `reload-success` | Regeneration and bridge swap completed. Carries `written` (relative paths of the generated files now on disk) and `warnings`. |
 | `reload-error` | The reload failed. Carries the underlying `error: Error`. |
@@ -2188,7 +1819,7 @@ finishes before the next one starts, and rapid edits are debounced
 
 ## Failure / recovery contract
 
-If **any** step of a reload throws, the session does **not** tear down. The
+If any step of a reload throws, the session stays up. The
 last-known-good state stays live:
 
 - The **previously generated wrappers remain on disk unchanged.** Staging happens
@@ -2196,17 +1827,17 @@ last-known-good state stays live:
   succeeds. If promotion itself fails partway, the previous file contents are
   restored.
 - The **previously active bridge stays active** in the runtime registry and is
-  **not disposed.** A bridge that was warmed for the failed reload is disposed
+  not disposed. A bridge that was warmed for the failed reload is disposed
   instead, so you never leak the half-prepared one.
 - A structured `reload-error` event is emitted with the underlying `Error`, and
   the failing call (`reloadNow()` or the debounced auto-reload) resolves to
   `false`. The session keeps watching and will attempt the next reload normally.
 
-Two distinct failure sources surface the same way:
+Generation and bridge construction failures surface through the same event:
 
 | Source | What the `error` looks like |
 | --- | --- |
-| **Generation failure** (a watched module's IR can't be produced — e.g. a syntax error). This is the `GenerateFailure` path. | `error.message` begins with `Generation failed for N module(s):` followed by per-module detail. |
+| **Generation failure** (a watched module's IR can't be produced, such as after a syntax error). This is the `GenerateFailure` path. | `error.message` begins with `Generation failed for N module(s):` followed by per-module detail. |
 | **Bridge construction failure** (your `createBridge` throws). | The error your factory threw, propagated verbatim. |
 
 ```typescript
@@ -2228,7 +1859,7 @@ const session = await startNodeWatchSession({
 > **Startup is the exception.** There is no last-known-good state on the very
 > first reload, so if the *initial* `startNodeWatchSession(...)` setup fails, the
 > promise rejects (watchers are closed and any partial bridge disposed). After a
-> successful start, every subsequent failure is recoverable as described above.
+> successful start, subsequent failures keep the last known good state live.
 
 ## Other notes
 
@@ -2239,7 +1870,7 @@ const session = await startNodeWatchSession({
   generation does not retrigger itself.
 - For Pyodide use `createBridgeReloader(...)` and drive `reload()` from your own
   trigger. For the HTTP runtime, reload by restarting/redeploying the remote
-  server — that is external to tywrap.
+  server. That reload is external to tywrap.
 
 ---
 
@@ -2279,14 +1910,14 @@ npx tywrap init --format json --modules math,numpy
 | `--config`, `-c`                      | Path for the new config file                           |
 | `--format ts\|json`                   | Output format for the starter config                   |
 | `--modules`                           | Comma-separated Python modules to seed into the config |
-| `--runtime node\|pyodide\|http\|auto` | Runtime to use for seeded module entries               |
+| `--runtime node\|pyodide\|http\|auto` | Accepted for compatibility. Set the active runtime under top-level `runtime` in the generated config. |
 | `--output-dir`                        | Generated wrapper directory in the starter config      |
 | `--force`                             | Overwrite an existing config file                      |
 | `--scripts`, `--no-scripts`           | Add or skip recommended `package.json` scripts         |
 
 ## `tywrap generate`
 
-Loads config, resolves Python IR, and writes generated wrapper files.
+Reads config and writes generated wrapper files from Python IR.
 
 When `--config` is omitted, the CLI searches in this order:
 
@@ -2310,7 +1941,7 @@ npx tywrap generate --modules math,statistics --runtime node
 | ------------------------------------- | ------------------------------------------------------------------- |
 | `--config`, `-c`                      | Config file path                                                    |
 | `--modules`                           | Comma-separated Python modules to wrap                              |
-| `--runtime node\|pyodide\|http\|auto` | Runtime to use when `--modules` is provided                         |
+| `--runtime node\|pyodide\|http\|auto` | Accepted for compatibility. Set the active runtime under top-level `runtime` in the config. |
 | `--python`                            | Python executable path override                                     |
 | `--output-dir`                        | Override `output.dir`                                               |
 | `--format esm\|cjs\|both`             | Override `output.format`                                            |
@@ -2326,6 +1957,17 @@ npx tywrap generate --modules math,statistics --runtime node
 
 `--check` is for CI and upgrade verification. It does not write files.
 
+A normal generation writes `<module>.contract.json` beside the generated
+wrapper. Check mode compares against it without writing.
+The contract is byte-stable across machines and Python processes. `--check`
+compares that file as well as generated TypeScript, declaration files, and source
+maps when those outputs are enabled, so it also reports contract drift.
+
+Set `contractInput` in the config to regenerate from a pinned contract without
+starting Python. The TypeScript generator and the Python extractor use IR
+version `0.4.0`. Generation fails with a version-mismatch error that names the
+expected and received versions when they differ.
+
 ```bash
 npx tywrap generate --check
 ```
@@ -2336,7 +1978,7 @@ Exit codes:
 - `2`: generation succeeded but warnings were present and `--fail-on-warn` was
   set
 - `3`: generated files are out of date
-- `1`: general failure, such as missing config, import failure, or write error
+- `1`: general failure, including missing config or import failure
 
 Typical CI step:
 
@@ -2352,8 +1994,8 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
-    numpy: { runtime: 'node', typeHints: 'strict', alias: 'np' },
+    math: { typeHints: 'strict' },
+    numpy: { typeHints: 'strict', alias: 'np' },
   },
   output: {
     dir: './generated',
@@ -2678,6 +2320,165 @@ export async function summarize(
 
 ---
 
+<!-- Source: docs/codec-envelopes.md -->
+# Scientific Codec Envelopes
+
+tywrap serializes supported SciPy, Torch, and Sklearn values with versioned
+envelopes. The Python bridge produces them and the JavaScript codec validates
+them before exposing decoded values to an application.
+
+## Support and failures
+
+### SciPy sparse matrices
+
+| Case | Behavior |
+| --- | --- |
+| Supported | `csr`, `csc`, and `coo` matrices with integer, floating-point, or boolean dtypes. Empty matrices and any two-dimensional shape work. The dtype and shape are preserved. |
+| Python rejection | Other formats, including `dia`, `bsr`, and `lil`, fail with the supported formats in the error. Complex dtypes fail rather than being coerced. |
+| JavaScript validation | The decoder rejects an invalid `indptr` length, mismatched index and data lengths, non-integer or out-of-range indexes, and a shape that does not contain two items. |
+
+### Torch tensors
+
+| Case | Behavior |
+| --- | --- |
+| Supported | CPU, contiguous, strided tensors with integer or floating-point dtypes. Scalars and tensors of any dimension use an ndarray envelope. Shape, dtype, and device metadata are preserved. |
+| Opt-in copy | Non-CPU tensors and non-contiguous layouts fail unless `TYWRAP_TORCH_ALLOW_COPY=1`. With that setting, the bridge creates a CPU, contiguous copy. |
+| Python rejection | Sparse layouts, quantized tensors, `meta` tensors, and complex dtypes always fail. `TYWRAP_TORCH_ALLOW_COPY` does not change those cases. |
+| JavaScript validation | The decoder rejects negative or non-integer dimensions, a nested ndarray shape that disagrees with the outer shape, an empty device string, and a non-ndarray nested value. |
+
+### Sklearn estimators
+
+| Case | Behavior |
+| --- | --- |
+| Supported | Metadata only: `className`, `module`, `version`, and `get_params(deep=False)` when every parameter is plain JSON. |
+| Python rejection | A callable, nested estimator, NumPy array, non-finite number, or other non-JSON parameter fails with the parameter name. |
+| JavaScript validation | The decoder requires `params` to be a plain JSON object and rejects functions, symbols, bigints, class instances, and non-finite numbers within it. |
+| Excluded | The envelope never contains `pickle` or `joblib` data. |
+
+## Envelope conventions
+
+Every scientific envelope has these fields:
+
+- `__tywrap__` identifies the envelope type.
+- `codecVersion` is `1`. Decoders treat a missing version as legacy version `0`.
+- `encoding` identifies the payload representation.
+
+### SciPy sparse
+
+Supported targets are `scipy.sparse.csr_matrix`, `csc_matrix`, and
+`coo_matrix`. The block below is a schema sketch, not a literal payload:
+
+```jsonc
+{
+  "__tywrap__": "scipy.sparse",
+  "codecVersion": 1,
+  "encoding": "json",
+  "format": "csr" | "csc" | "coo",
+  "dtype": "float64",
+  "shape": [rows, cols],
+  "data": [ ... ],
+
+  // csr/csc only:
+  "indices": [ ... ],
+  "indptr": [ ... ],
+
+  // coo only:
+  "row": [ ... ],
+  "col": [ ... ]
+}
+```
+
+There is no dense fallback. Convert a matrix explicitly before returning it if
+your consumer needs a dense value.
+
+### Torch tensor
+
+The target is `torch.Tensor`. CPU tensors work by default. Schema sketch:
+
+```jsonc
+{
+  "__tywrap__": "torch.tensor",
+  "codecVersion": 1,
+  "encoding": "ndarray",
+  "shape": [ ... ],
+  "dtype": "float32",
+  "device": "cpu" | "cuda:0" | ...,
+
+  // Nested ndarray envelope:
+  "value": {
+    "__tywrap__": "ndarray",
+    "codecVersion": 1,
+    "encoding": "arrow" | "json",
+    "b64": "...",        // when encoding="arrow"
+    "data": [ ... ],     // when encoding="json"
+    "shape": [ ... ]
+  }
+}
+```
+
+Set `TYWRAP_TORCH_ALLOW_COPY=1` only when the CPU transfer or contiguous copy
+is acceptable for the call.
+
+### Sklearn estimator
+
+Sklearn prediction and score values use the existing NumPy and pandas codecs.
+An estimator itself can use this metadata envelope (schema sketch):
+
+```jsonc
+{
+  "__tywrap__": "sklearn.estimator",
+  "codecVersion": 1,
+  "encoding": "json",
+  "className": "LinearRegression",
+  "module": "sklearn.linear_model._base",
+  "version": "1.4.2",
+  "params": { ... }
+}
+```
+
+## Arrow and JSON
+
+Arrow is the default encoding for ndarrays, DataFrames, and Series when both
+sides support it: the Python bridge needs `pyarrow` (reported as
+`arrowAvailable` in `BridgeInfo`) and the JavaScript runtime needs the optional
+`apache-arrow` peer dependency. The Pyodide transport is JSON-only because
+pyarrow is not available in WASM.
+
+If an Arrow payload arrives without the dependency, decoding fails with an
+installation hint. Set `TYWRAP_CODEC_FALLBACK=json` on the Python side when a
+JSON fallback is acceptable. JSON fallback is lossy for dtype and missing-value
+fidelity.
+
+## Size limits and transport framing
+
+`TYWRAP_CODEC_MAX_BYTES` limits the serialized response size emitted by the
+Python bridge. It accepts a byte count in UTF-8. A response that exceeds the
+limit fails instead of changing encoding.
+
+Subprocess messages larger than one JSONL line use the `tywrap-frame/1`
+framing protocol. See [Transport framing](https://bbopen.github.io/tywrap/transport-framing.md) for its size
+limits, negotiation history, and backend support.
+
+## Feature detection
+
+The bridge `meta` response reports `scipyAvailable`, `torchAvailable`, and
+`sklearnAvailable`. Each field says whether the matching Python package is
+importable in that bridge environment.
+
+## Runtime return validation
+
+Generated module functions and static methods validate decoded results before
+their promises resolve. A result that does not match its declared return type
+throws `BridgeValidationError` with the declared type, received shape, and call
+site.
+
+Columnar values retain their decoded provenance. Validation checks the envelope
+marker, dimensions, and dtype for DataFrame, Series, and ndarray returns
+without walking Arrow data. Returns declared as `unknown`, `void`, or `Any` do
+not receive a runtime check.
+
+---
+
 <!-- Source: docs/transport-capabilities.md -->
 # Transport capability matrix
 
@@ -2690,16 +2491,16 @@ network round-trip.
 This descriptor is deliberately separate from the bridge `meta` report
 (`BridgeInfo`, fetched via `RpcClient.getBridgeInfo()`):
 
-- The **transport descriptor** is authoritative for transport-level flags — what
+- The **transport descriptor** is authoritative for transport-level flags: what
   bytes the channel moves and how it frames them. It does not depend on
   lifecycle state, so it is safe to read before `init()` and after `dispose()`.
-- The **`BridgeInfo` meta report** is authoritative for the _Python environment_
-  — which optional libraries (`arrowAvailable`, `scipyAvailable`,
+- The **`BridgeInfo` meta report** is authoritative for the _Python environment_,
+  including which optional libraries (`arrowAvailable`, `scipyAvailable`,
   `torchAvailable`, `sklearnAvailable`) happen to be importable in the running
   interpreter.
 
-When you need both questions answered — "can this transport carry Arrow **and**
-does this Python have pyarrow?" — consult both: the transport descriptor for the
+To ask whether a transport can carry Arrow and whether Python has pyarrow,
+consult both: the transport descriptor for the
 channel, `BridgeInfo` for library availability.
 
 ## `TransportCapabilities`
@@ -2723,13 +2524,13 @@ interface TransportCapabilities {
 | `HttpTransport`              | `http`       | `true`          | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`         |
 | `PyodideTransport` (WASM)    | `pyodide`    | `false`         | `true`           | `false`                    | `false`             | `Number.POSITIVE_INFINITY`         |
 
-`SubprocessTransport.supportsChunking` is always `true`. The npm package ships
+`SubprocessTransport.supportsChunking` is always `true`. The npm package includes
 the JS and Python framing peers together, so no runtime negotiation is needed.
-Chunking is subprocess-only; HTTP and Pyodide have no JSONL line ceiling. See
+Chunking is subprocess-only. HTTP and Pyodide have no JSONL line ceiling. See
 [Transport framing](https://bbopen.github.io/tywrap/transport-framing.md).
 
 `PooledTransport` (the multi-process Node path) reports the capabilities of the
-worker transport it distributes across — in practice `SubprocessTransport`. Its
+worker transport it distributes across, which is `SubprocessTransport` in practice. Its
 `capabilities()` is a **static** descriptor read from an un-initialized probe
 worker built by the same factory. Each leased worker always uses
 `tywrap-frame/1`, and chunked traffic through a lease reassembles correctly.
@@ -2743,7 +2544,7 @@ the wire.
 
 - **subprocess / http**: `true`. The channel can move Arrow bytes. Whether Arrow
   is actually _used_ for a given response still depends on the Python side
-  (`BridgeInfo.arrowAvailable`) and the `TYWRAP_CODEC_FALLBACK` setting — those
+  (`BridgeInfo.arrowAvailable`) and the `TYWRAP_CODEC_FALLBACK` setting. Those
   are runtime/codec concerns, not transport-level ones.
 - **pyodide**: `false`. pyarrow is unavailable in WASM, so the Pyodide bootstrap
   forces JSON markers (`force_json_markers=True`) and reports
@@ -2752,7 +2553,7 @@ the wire.
 ### `supportsBinary`
 
 Whether the transport can carry arbitrary binary data (e.g. Python `bytes`).
-`true` on all current backends — binary rides through base64 `bytes` envelopes.
+It is `true` on all current backends. Binary rides through base64 `bytes` envelopes.
 
 ### `supportsChunking` and `supportsStreaming`
 
@@ -2763,20 +2564,20 @@ so a payload can exceed the JSONL line ceiling. The capability is statically
 [Transport framing](https://bbopen.github.io/tywrap/transport-framing.md) for the wire format.
 
 `supportsStreaming` (incremental results for a single request) is `false` on
-every backend; it is not implemented as of 0.9.0.
+every backend. It is not implemented as of 0.9.0.
 
 ### `maxFrameBytes`
 
 Maximum size, in bytes, of a single wire frame the transport itself will accept.
 `Number.POSITIVE_INFINITY` means the transport imposes no frame ceiling of its
-own (a higher layer — e.g. the codec's payload limit, default 10 MB — may still
+own. A higher layer, such as the codec's default 10 MB payload limit, may still
 cap the size).
 
 - **subprocess**: the JSONL line-length limit (`maxLineLength`, default
   `100 * 1024 * 1024` = 100 MB). A response line larger than this raises a
   protocol error.
 - **http**: `Number.POSITIVE_INFINITY`. The whole response body is read in one
-  shot; the transport imposes no frame limit.
+  shot. The transport imposes no frame limit.
 - **pyodide**: `Number.POSITIVE_INFINITY`. Calls are in-memory string passing
   with no framing.
 
@@ -2810,7 +2611,7 @@ This document is the spec. The wire contract and fragment/reassembly machinery
 are always enabled for the subprocess backend: the TS side fragments/reassembles
 in `src/runtime/subprocess-transport.ts` (with the pure codec in
 `src/runtime/frame-codec.ts`), and the Python side does the same in
-`runtime/python_bridge.py`. Chunking composes with the worker pool — each leased
+`runtime/python_bridge.py`. Chunking composes with the worker pool. Each leased
 worker uses the same packaged codec and a chunked request or response routed
 through a `PooledTransport` lease reassembles correctly (see
 [the capability matrix](https://bbopen.github.io/tywrap/transport-capabilities.md)).
@@ -2818,14 +2619,14 @@ through a `PooledTransport` lease reassembles correctly (see
 ## Scope: subprocess only
 
 `tywrap-frame/1` is **subprocess-only** as of 0.9.0. The subprocess transport is
-the only backend with a real frame ceiling — the JSONL line-length limit. The
+the only backend with a real frame ceiling, the JSONL line-length limit. The
 other backends stay single-frame and keep `supportsChunking: false`:
 
 - **HTTP** has no line ceiling, but still buffers a whole response via
   `response.text()`; chunking there is a later optimization, not a correctness
   requirement.
 - **Pyodide** is in-memory (`maxFrameBytes: Number.POSITIVE_INFINITY`,
-  JSON-only); there is no wire to fragment.
+  JSON-only). There is no wire to fragment.
 
 `supportsStreaming` stays `false` on every backend as of 0.9.0.
 
@@ -2838,11 +2639,11 @@ frames. Both sides fragment and reassemble:
 - TypeScript: `src/runtime/subprocess-transport.ts`.
 - Python: the read/write loop in `runtime/python_bridge.py`.
 
-`runtime/tywrap_bridge_core.py` (dispatch + serializers) stays oblivious — it
+`runtime/tywrap_bridge_core.py` (dispatch + serializers) stays oblivious. It
 produces and consumes complete logical JSON messages.
 
-The logical RPC protocol stays `tywrap/1`; `tywrap-frame/1` is a separate
-framing protocol below it. The npm package ships both sides, so version-skew
+The logical RPC protocol stays `tywrap/1`. `tywrap-frame/1` is a separate
+framing protocol below it. The npm package includes both sides, so version-skew
 negotiation would add states without providing compatibility.
 
 ## Frame envelope
@@ -2867,13 +2668,13 @@ JSON message:
 
 | Field              | Meaning                                                                         |
 | ------------------ | ------------------------------------------------------------------------------- |
-| `__tywrap_frame__` | `"chunk"` (data frame) or `"error"` (framing-layer error, no more data frames). |
-| `frameProtocol`    | Must equal `tywrap-frame/1` (`FRAME_PROTOCOL_ID`); any other value is rejected. |
-| `stream`           | `"request"` (JS → Python) or `"response"` (Python → JS).                        |
+| `__tywrap_frame__` | `"chunk"` (data frame) or `"error"` (framing-layer error that ends the stream). |
+| `frameProtocol`    | Must equal `tywrap-frame/1` (`FRAME_PROTOCOL_ID`). Any other value is rejected. |
+| `stream`           | `"request"` (JS to Python) or `"response"` (Python to JS).                     |
 | `id`               | RPC correlation id, shared with the logical `ProtocolMessage.id`.               |
 | `seq`              | Zero-based frame index within the stream.                                       |
-| `total`            | Total frame count for the stream; repeated on every frame.                      |
-| `totalBytes`       | Byte length of the complete reassembled message; repeated on every frame.       |
+| `total`            | Total frame count for the stream, repeated on every frame.                       |
+| `totalBytes`       | Byte length of the complete reassembled message, repeated on every frame.        |
 | `encoding`         | Per-frame payload encoding: `"utf8-slice"` (chosen) or `"utf8-base64"`.         |
 | `data`             | This frame's slice of the logical message, encoded per `encoding`.              |
 
@@ -2888,11 +2689,11 @@ the trailing number, the same pattern as `TYWRAP_PROTOCOL_VERSION`).
 The chunked payload is the bytes of a complete, valid-UTF-8 JSON message. Two
 candidates were considered:
 
-- **`utf8-base64`** — base64-encode the UTF-8 bytes of each chunk. Safe for
+- **`utf8-base64`:** base64-encode the UTF-8 bytes of each chunk. Safe for
   arbitrary byte split points, but inflates the wire by ~33% and forces a full
-  base64 decode plus a separate bytes buffer per frame — a memory amplification
-  (string + UTF-8 bytes + base64) flagged as a real risk in the design review.
-- **`utf8-slice`** (chosen) — because the payload is already valid UTF-8, split
+  base64 decode plus a separate bytes buffer per frame. Holding the string,
+  UTF-8 bytes, and base64 form at once multiplies memory use.
+- **`utf8-slice`** (chosen). Because the payload is already valid UTF-8, split
   it on **UTF-8 codepoint boundaries** and embed the raw string slice directly.
   Reassembly is plain concatenation of the slices; the result is the original
   JSON string verbatim. No base64, no ~33% inflation, no extra decode pass, and
@@ -2900,7 +2701,7 @@ candidates were considered:
 
 **Rationale.** `utf8-slice` is strictly cheaper on both wire size and memory for
 the one payload shape we ever chunk (a JSON message), and the only thing
-`utf8-base64` buys — tolerance for splitting mid-codepoint — is unnecessary when
+`utf8-base64` buys, tolerance for splitting mid-codepoint, is unnecessary when
 the sender controls the split points and splits on codepoint boundaries by
 construction. The codepoint-boundary rule is a sender obligation: a frame's
 `data` MUST NOT split a multi-byte UTF-8 sequence, so the receiver can decode
@@ -2922,13 +2723,13 @@ use (e.g. a non-text payload), but tywrap does not emit it as of 0.9.0.
 - `seq` is zero-based and dense: a complete stream has exactly one frame for
   each `seq` in `[0, total)`.
 - `total` and `totalBytes` are repeated on every frame and MUST be identical
-  across all frames of a stream; a mismatch is a framing error.
+  across all frames of a stream. A mismatch is a framing error.
 
 After the receiver has all `total` frames for an `id`, it validates **before**
 decoding:
 
 1. `frameProtocol === FRAME_PROTOCOL_ID` on every frame.
-2. No duplicate `seq`; the full `[0, total)` range is present exactly once.
+2. No duplicate `seq`. The full `[0, total)` range is present exactly once.
 3. The number of frames equals `total`.
 4. The concatenated payload's UTF-8 byte length equals `totalBytes` exactly.
 5. The concatenated payload decodes as strict UTF-8.
@@ -2943,15 +2744,15 @@ fails explicitly.
 ### Resource bounds
 
 Chunking removes the per-line stdout ceiling, so the reassembler enforces its
-own bounds — a buggy or oversized peer cannot grow memory without limit:
+own bounds, so a buggy or oversized peer cannot grow memory without limit:
 
 - **Logical payload cap.** The response reassembler is constructed with
   `maxReassemblyBytes` (default 10 MiB, matching the codec's `maxPayloadBytes`;
   `NodeBridge` sets it from the configured `codec.maxPayloadBytes`). A stream
-  whose **declared** `totalBytes` — or **accumulated** bytes — exceeds the cap
+  whose declared `totalBytes` or accumulated bytes exceeds the cap
   fails loud (`FRAME_PAYLOAD_TOO_LARGE`) on the first offending frame rather
   than buffering the whole payload. To carry a payload larger than 10 MiB you
-  raise the codec cap; NodeBridge moves both together. The frame ceiling only
+  raise the codec cap. NodeBridge moves both together. The frame ceiling only
   controls wire fragmentation and is not a second logical payload limit.
   (Requests are already bounded by the codec's `encodeRequest` cap on the
   sending side, so the Python request reassembler relies on the post-reassembly
@@ -2967,9 +2768,9 @@ own bounds — a buggy or oversized peer cannot grow memory without limit:
 `SubprocessTransport` always accepts and emits `tywrap-frame/1`. It passes its
 configured `maxLineLength` to the packaged Python bridge as a private process
 argument, and both sides use that value as the per-frame data ceiling. Small
-messages remain one JSONL line; messages over the ceiling are framed.
+messages remain one JSONL line. Messages over the ceiling are framed.
 
-### Validator changes that land in W1
+### Meta validation
 
 The same pass relaxes two over-strict `meta` checks so the honest per-backend
 identities validate:
@@ -2982,15 +2783,15 @@ identities validate:
   `pyodide`; HTTP uses the subprocess server and so reports `python-subprocess`.
   Honest per-backend HTTP reporting is a possible follow-up, but accepting the
   union now is safe and backward compatible.)
-- `pid` accepts a positive integer **or** `null`. Subprocess reports a real OS
-  pid; in-WASM Pyodide (and HTTP) have no local process and report `null`.
+- `pid` accepts a positive integer or `null`. Subprocess reports a real OS
+  pid. In-WASM Pyodide (and HTTP) have no local process and report `null`.
 
 ## Backpressure
 
 The TS side needs a per-logical-request write mutex so one request's frames are
 written contiguously to stdin (reuse the existing `writeToStdin` drain
-primitive); interleaving two requests' frames would corrupt both streams. Python
-writes and flushes one frame at a time; the OS pipe provides backpressure.
+primitive). Interleaving two requests' frames would corrupt both streams. Python
+writes and flushes one frame at a time. The OS pipe provides backpressure.
 
 ## Timeout, abort, and late-frame discard
 
@@ -3014,15 +2815,15 @@ response-read + reassembly. On timeout or abort:
 - **Framing failures** emit `__tywrap_frame__: "error"` where the sender can
   still write (so the receiver learns the stream is aborted rather than waiting
   for frames that will never come).
-- **Unrecoverable framing corruption** — a malformed frame, a duplicate `seq`, a
+- **Unrecoverable framing corruption:** a malformed frame, a duplicate `seq`, a
   `totalBytes` mismatch, an unknown `frameProtocol`, or non-frame stdout
-  pollution — rejects the pending `id` and marks the subprocess for restart,
+  pollution rejects the pending `id` and marks the subprocess for restart,
   because the stdout stream can no longer be trusted to be frame-aligned.
 
 ## See also
 
-- [Transport capability matrix](https://bbopen.github.io/tywrap/transport-capabilities.md) — backend framing support.
-- [Environment variables](https://bbopen.github.io/tywrap/reference/env-vars.md) — logical payload size guards.
+- [Transport capability matrix](https://bbopen.github.io/tywrap/transport-capabilities.md) for backend framing support.
+- [Environment variables](https://bbopen.github.io/tywrap/reference/env-vars.md) for logical payload size guards.
 
 ---
 
@@ -3042,14 +2843,14 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
+    math: { typeHints: 'strict' },
   },
 });
 ```
 
 ### `resolveConfig(options?)`
 
-Loads a config file, merges defaults, and applies overrides.
+Loads a config file and merges it with defaults plus overrides.
 
 ```ts
 import { resolveConfig } from 'tywrap';
@@ -3069,7 +2870,7 @@ import { generate } from 'tywrap';
 
 await generate({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
+    math: { typeHints: 'strict' },
   },
   output: {
     dir: './generated',
@@ -3163,7 +2964,7 @@ const info = await bridge.getBridgeInfo({ refresh: true });
 | ------------------------- | --------------- | --------------------------------------------------------------------------------------- |
 | `pythonPath`              | auto-detect     | Python executable                                                                       |
 | `scriptPath`              | built-in bridge | Custom `python_bridge.py`                                                               |
-| `virtualEnv`              | —               | Virtual environment root                                                                |
+| `virtualEnv`              | not set         | Virtual environment root                                                                |
 | `cwd`                     | `process.cwd()` | Subprocess working directory                                                            |
 | `timeoutMs`               | `30000`         | Per-call timeout                                                                        |
 | `queueTimeoutMs`          | `30000`         | Wait time when the worker pool is saturated                                             |
@@ -3172,7 +2973,7 @@ const info = await bridge.getBridgeInfo({ refresh: true });
 | `maxConcurrentPerProcess` | `1`             | Concurrent requests per serial Python worker; use more worker processes for concurrency |
 | `inheritProcessEnv`       | `false`         | Pass full parent env through                                                            |
 | `env`                     | `{}`            | Extra subprocess env vars                                                               |
-| `codec`                   | —               | `CodecOptions` for validation and byte handling                                         |
+| `codec`                   | not set         | `CodecOptions` for validation and byte handling                                         |
 | `warmupCommands`          | `[]`            | Per-worker startup calls                                                                |
 
 Deprecated compatibility fields still exist on the interface: `maxIdleTime`,
@@ -3197,7 +2998,7 @@ const bridge = new PyodideBridge({
 | `indexURL`  | Pyodide CDN | Package index URL            |
 | `packages`  | `[]`        | Packages to load during init |
 | `timeoutMs` | `30000`     | Default operation timeout    |
-| `codec`     | —           | `CodecOptions`               |
+| `codec`     | not set     | `CodecOptions`               |
 
 ### `HttpBridge`
 
@@ -3218,7 +3019,7 @@ const bridge = new HttpBridge({
 | `baseURL`   | required | Server endpoint URL     |
 | `headers`   | `{}`     | Extra request headers   |
 | `timeoutMs` | `30000`  | Default request timeout |
-| `codec`     | —        | `CodecOptions`          |
+| `codec`     | not set  | `CodecOptions`          |
 
 ## HTTP Server Contract
 
@@ -3349,8 +3150,8 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
-    collections: { runtime: 'node', typeHints: 'strict' },
+    math: { typeHints: 'strict' },
+    collections: { typeHints: 'strict' },
   },
   output: {
     dir: './generated',
@@ -3592,8 +3393,7 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    numpy: { 
-      runtime: 'node' as const,  // Correct type
+    numpy: {
       typeHints: 'strict' as const
     }
   },
@@ -3637,7 +3437,7 @@ pip list
 ```
 
 ### Type Generation Errors
-**Error**: Type analysis failures or incorrect types generated
+**Error**: type analysis failures or incorrect types generated
 
 **Solutions**:
 ```json
@@ -3699,7 +3499,7 @@ try {
 ### Protocol Errors
 **Error**: `Protocol error from Python bridge`
 
-**Cause**: The Python process printed to stdout or returned malformed JSON.
+**Cause**: the Python process printed to stdout or returned malformed JSON.
 
 **Solutions**:
 - Remove `print()` statements or logging to stdout in Python code.
@@ -3707,9 +3507,10 @@ try {
 - Verify custom bridge scripts follow the JSON line protocol.
 
 ### Memory Issues
-**Error**: Out of memory errors or process crashes
 
-**Solutions**:
+**Error**: out of memory errors or process crashes
+
+**Solutions**
 Large payloads and highly parallel native libraries are the usual causes. Tune
 the bridge and the host process separately:
 
@@ -3739,7 +3540,7 @@ top      # General
 ```
 
 ### Import Errors
-**Error**: Import failures in generated TypeScript code
+**Error**: import failures in generated TypeScript code
 
 **Solutions**:
 ```typescript
@@ -3817,9 +3618,9 @@ npm install typescript@latest
 ```
 
 ### Build Tool Issues
-**Error**: Vite, Webpack, or other bundler integration problems
+**Error**: bundler integration problems in Vite, Webpack, or another tool
 
-**Vite Solutions**:
+**Vite fixes**
 ```typescript
 // vite.config.ts
 export default defineConfig({
@@ -4009,7 +3810,7 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' }
+    math: { typeHints: 'strict' }
   },
   output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false }
 });
@@ -4020,10 +3821,10 @@ npx tywrap generate
 ```
 
 ### Community Resources
-- **GitHub Issues**: [Report bugs](https://github.com/bbopen/tywrap/issues)
-- **Discussions**: [Ask questions](https://github.com/bbopen/tywrap/discussions)
-- **Discord**: [Real-time help](https://discord.gg/tywrap)
-- **Stack Overflow**: Tag your questions with `tywrap`
+- GitHub Issues: [report bugs](https://github.com/bbopen/tywrap/issues)
+- Discussions: [ask questions](https://github.com/bbopen/tywrap/discussions)
+- Discord: [real-time help](https://discord.gg/tywrap)
+- Stack Overflow: tag your questions with `tywrap`
 
 ---
 
