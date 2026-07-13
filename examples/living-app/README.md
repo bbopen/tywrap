@@ -6,9 +6,10 @@ This is a small but non-trivial “living example” that exercises tywrap end-t
 - Python uses `pandas` + `numpy` for data work and `pydantic` for config validation
 - Rich results (e.g. `pandas.DataFrame`) come back via Arrow IPC and are decoded in Node with `apache-arrow` (auto-registered by `NodeBridge`)
 
-## What it does
+## Overview
 
-The example generates two synthetic CSV datasets (“baseline” and “current”), profiles them, and produces a simple drift report.
+The example creates two synthetic CSV datasets: “baseline” and “current”. It
+profiles them and returns a simple drift report.
 
 ## Setup (fresh checkout)
 

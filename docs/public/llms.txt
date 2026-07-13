@@ -11,6 +11,7 @@
 ## Docs
 
 - [Getting Started](https://bbopen.github.io/tywrap/guide/getting-started): Installation, quick start, first wrapper
+- [Agent Adoption](https://bbopen.github.io/tywrap/guide/agent-adoption): Deterministic project-adoption recipe for coding agents
 - [Configuration](https://bbopen.github.io/tywrap/guide/configuration): tywrap.config.ts / .json, all options
 - [Runtime Comparison](https://bbopen.github.io/tywrap/guide/runtimes/comparison): Which bridge to use and when
 - [Node.js Runtime](https://bbopen.github.io/tywrap/guide/runtimes/node): NodeBridge setup, virtual envs, pooling, large-payload chunking

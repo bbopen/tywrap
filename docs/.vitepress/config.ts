@@ -27,6 +27,7 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Getting Started', link: '/guide/getting-started' },
+          { text: 'Agent Adoption', link: '/guide/agent-adoption' },
           { text: 'Configuration', link: '/guide/configuration' },
           { text: 'Watch & Reload', link: '/guide/dev-reload' },
           {
@@ -51,6 +52,13 @@ export default defineConfig({
           { text: 'Type Mapping', link: '/reference/type-mapping' },
           { text: 'Scientific Codec Envelopes', link: '/codec-envelopes' },
           { text: 'API', link: '/reference/api/' },
+        ],
+      },
+      {
+        text: 'Maintainers',
+        items: [
+          { text: 'Architecture', link: '/maintainers/architecture' },
+          { text: 'Menagerie Discipline', link: '/maintainers/menagerie' },
         ],
       },
       {
