@@ -58,7 +58,8 @@ from pathlib import Path, PurePath
 PROTOCOL = 'tywrap/1'
 PROTOCOL_VERSION = 1
 CODEC_VERSION = 1
-MAX_SERIALIZE_DEPTH = 2048
+MAX_SERIALIZE_DEPTH = 900
+MAX_SERIALIZE_NODES = 1_000_000
 _SERIALIZE_PATH_IDENTIFIER = re.compile(r'^[A-Za-z_$][\w$]*$', re.ASCII)
 
 
@@ -827,6 +828,14 @@ def _check_serialize_depth(depth, path):
         )
 
 
+def _check_serialize_nodes(nodes, path):
+    if nodes > MAX_SERIALIZE_NODES:
+        raise RuntimeError(
+            f'Scientific envelope serialization maximum visited nodes '
+            f'{MAX_SERIALIZE_NODES} exceeded at {path}'
+        )
+
+
 def _serialize_scientific(obj, *, force_json_markers, torch_allow_copy, depth, path):
     """Serialize a supported scientific value, or return _NO_SCIENTIFIC."""
     package = type(obj).__module__.split('.', 1)[0]
@@ -878,6 +887,31 @@ def _invalid_key_path(base, key):
     return f'{base}[{key!r}]'
 
 
+def _needs_serialize_visit(value):
+    """Return whether value needs container or scientific traversal work."""
+    if type(value) in (type(None), bool, int, float, str):
+        return False
+    if type(value) in (dict, list, tuple):
+        return True
+    package = type(value).__module__.split('.', 1)[0]
+    if package in ('numpy', 'pandas', 'scipy', 'torch'):
+        return True
+    return 'sklearn.base' in sys.modules and is_sklearn_estimator(value)
+
+
+def _serialize_leaf(value):
+    """Apply non-container conversions without allocating a traversal frame."""
+    if type(value) in (type(None), bool, int, float, str):
+        return value
+    pydantic_value = serialize_pydantic(value)
+    if pydantic_value is not _NO_PYDANTIC:
+        return pydantic_value
+    stdlib_value = serialize_stdlib(value)
+    if stdlib_value is not None:
+        return stdlib_value
+    return value
+
+
 def serialize(obj, *, force_json_markers, torch_allow_copy=False):
     """
     Top-level result serializer.
@@ -893,16 +927,51 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
     root = [None]
     active_ids = set()
     stack = [('visit', obj, 0, 'result', root, 0)]
+    visited_nodes = 0
 
     # Repeated aliases have value semantics and are intentionally serialized twice.
     while stack:
-        action, current, depth, path, parent, key = stack.pop()
-        if action == 'exit':
-            active_ids.remove(id(current))
+        frame = stack.pop()
+        action = frame[0]
+        if action == 'dict':
+            _, current, depth, path, parent, key, output, iterator = frame
+            try:
+                item_key, item = next(iterator)
+            except StopIteration:
+                active_ids.remove(id(current))
+                parent[key] = output
+                continue
+            stack.append(frame)
+            if not (isinstance(item_key, (str, int, float, bool)) or item_key is None):
+                invalid_path = _invalid_key_path(path, item_key)
+                raise TypeError(
+                    f'keys must be str, int, float, bool or None, not '
+                    f'{type(item_key).__name__} at {invalid_path}'
+                )
+            child_key = next(iter(json.loads(json.dumps({item_key: None}))))
+            child_path = _serialize_path(path, child_key)
+            if _needs_serialize_visit(item):
+                stack.append(('visit', item, depth + 1, child_path, output, item_key))
+            else:
+                output[item_key] = _serialize_leaf(item)
             continue
-        if action == 'tuple':
-            parent[key] = tuple(current)
+        if action == 'sequence':
+            _, current, depth, path, parent, key, output, index = frame
+            if index == len(output):
+                active_ids.remove(id(current))
+                parent[key] = output if type(current) is list else tuple(output)
+                continue
+            stack.append(('sequence', current, depth, path, parent, key, output, index + 1))
+            item = current[index]
+            if _needs_serialize_visit(item):
+                stack.append(
+                    ('visit', item, depth + 1, _serialize_path(path, index), output, index)
+                )
+            else:
+                output[index] = _serialize_leaf(item)
             continue
+
+        _, current, depth, path, parent, key = frame
         try:
             scientific = _serialize_scientific(
                 current,
@@ -916,49 +985,48 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
                 raise
             raise RuntimeError(f'Scientific value serialization failed at {path}: {exc}') from exc
         if scientific is not _NO_SCIENTIFIC:
+            # Recognized envelopes are terminal containers to the JS decoder.
+            visited_nodes += 1
+            _check_serialize_nodes(visited_nodes, path)
+            if scientific.get('__tywrap__') == 'torch.tensor':
+                nested_path = _serialize_path(path, 'value')
+                try:
+                    visited_nodes += 1
+                    _check_serialize_nodes(visited_nodes, nested_path)
+                except Exception as exc:
+                    if path == 'result':
+                        raise
+                    raise RuntimeError(
+                        f'Scientific value serialization failed at {path}: {exc}'
+                    ) from exc
             parent[key] = scientific
             continue
 
         container_type = type(current)
         if container_type in (dict, list, tuple):
             _check_serialize_depth(depth, path)
+            visited_nodes += 1
+            _check_serialize_nodes(visited_nodes, path)
             current_id = id(current)
             if current_id in active_ids:
                 raise RuntimeError(f'Circular reference detected at {path}')
             active_ids.add(current_id)
-            stack.append(('exit', current, depth, path, parent, key))
 
             if container_type is dict:
                 output = {}
                 parent[key] = output
-                items = list(current.items())
-                for item_key, item in reversed(items):
-                    if not (
-                        isinstance(item_key, (str, int, float, bool)) or item_key is None
-                    ):
-                        invalid_path = _invalid_key_path(path, item_key)
-                        raise TypeError(
-                            f'keys must be str, int, float, bool or None, not '
-                            f'{type(item_key).__name__} at {invalid_path}'
-                        )
-                    child_key = next(iter(json.loads(json.dumps({item_key: None}))))
-                    stack.append(
-                        ('visit', item, depth + 1, _serialize_path(path, child_key), output, item_key)
-                    )
+                stack.append(
+                    ('dict', current, depth, path, parent, key, output, iter(current.items()))
+                )
                 continue
 
             output = [None] * len(current)
             if container_type is list:
                 parent[key] = output
-            else:
-                stack.append(('tuple', output, depth, path, parent, key))
-            for index in range(len(current) - 1, -1, -1):
-                stack.append(
-                    ('visit', current[index], depth + 1, _serialize_path(path, index), output, index)
-                )
+            stack.append(('sequence', current, depth, path, parent, key, output, 0))
             continue
 
-        parent[key] = current
+        parent[key] = _serialize_leaf(current)
 
     return root[0]
 
@@ -1082,12 +1150,10 @@ def encode_value(value, *, allow_nan):
         # ("...not JSON compliant: nan"), but 3.10/3.11 emit only the canonical
         # "Out of range float values are not JSON compliant". Match that phrase too
         # so the typed error message is stable across versions.
+        nonfinite_token = re.search(r'(^|[^a-z])(nan|inf|infinity)([^a-z]|$)', error_msg)
         if (
-            'nan' in error_msg
-            or 'infinity' in error_msg
-            or 'inf' in error_msg
-            or 'out of range float' in error_msg
-        ):
+            not allow_nan and 'out of range float values are not json compliant' in error_msg
+        ) or nonfinite_token:
             raise CodecError('Cannot serialize NaN - NaN/Infinity not allowed in JSON') from exc
         raise CodecError(f'JSON encoding failed: {exc}') from exc
     except TypeError as exc:
