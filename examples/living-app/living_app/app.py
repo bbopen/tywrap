@@ -364,4 +364,11 @@ def top_users_by_spend(path: str, top_n: int = 10) -> pd.DataFrame:
     cols = [c for c in cols if c in df.columns]
     if "spend_usd_last_7d" not in df.columns:
         return df[cols].head(top_n)
-    return df[cols].sort_values("spend_usd_last_7d", ascending=False).head(top_n)
+    # The JSON codec requires a default RangeIndex; sort_values().head() keeps
+    # the original row labels, so drop them.
+    return (
+        df[cols]
+        .sort_values("spend_usd_last_7d", ascending=False)
+        .head(top_n)
+        .reset_index(drop=True)
+    )
