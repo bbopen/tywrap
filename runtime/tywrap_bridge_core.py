@@ -397,9 +397,98 @@ def serialize_ndarray(obj, *, force_json_markers):
 
 
 def serialize_ndarray_json(obj):
-    """JSON fallback for ndarray (larger payloads, potential dtype loss)."""
+    """JSON fallback for ndarray values that JavaScript can represent safely."""
+    dtype = obj.dtype
+    dtype_label = str(dtype)
+
+    if not dtype.isnative:
+        raise RuntimeError(
+            f'JSON ndarray encoding does not support big-endian dtype={dtype_label}; '
+            "convert to native byte order with byteswap().view(newbyteorder('='))"
+        )
+
+    if dtype.kind in ('i', 'u'):
+        # JSON numbers become JavaScript Number values. Scan only on this explicit
+        # fallback path and reject before tolist() can silently round an integer.
+        js_safe_integer_max = 2**53 - 1
+        if obj.size and (
+            (obj < -js_safe_integer_max).any() or (obj > js_safe_integer_max).any()
+        ):
+            raise RuntimeError(
+                f'JSON ndarray encoding cannot safely represent dtype={dtype_label} values '
+                'outside the JavaScript safe integer range; use Arrow encoding or '
+                "cast/encode explicitly (e.g. .astype('float64') or str)"
+            )
+    elif dtype.kind == 'M':
+        raise RuntimeError(
+            f'JSON ndarray encoding does not support dtype={dtype_label}; use Arrow encoding '
+            "or convert explicitly (e.g. .astype('datetime64[ms]').astype(str) or int with "
+            'declared unit)'
+        )
+    elif dtype.kind == 'm':
+        raise RuntimeError(
+            f'JSON ndarray encoding does not support dtype={dtype_label}; use Arrow encoding '
+            "or convert explicitly (e.g. .astype('timedelta64[ms]').astype(str) or int with "
+            'declared unit)'
+        )
+    elif dtype.kind == 'V':
+        if dtype.fields is not None:
+            raise RuntimeError(
+                f'JSON ndarray encoding does not support structured dtype={dtype_label}; '
+                'encode each named field explicitly (e.g. as a plain JSON object)'
+            )
+        raise RuntimeError(
+            f'JSON ndarray encoding does not support void dtype={dtype_label}; convert the '
+            "raw bytes explicitly (e.g. .view('uint8'))"
+        )
+    elif dtype.kind == 'O':
+        raise RuntimeError(
+            f'JSON ndarray encoding does not support object dtype={dtype_label}; cast to a '
+            'concrete numeric dtype or encode elements explicitly as plain JSON'
+        )
+    elif dtype.kind == 'S':
+        raise RuntimeError(
+            f'JSON ndarray encoding does not support byte-string dtype={dtype_label}; '
+            'decode elements and return a plain JSON list explicitly'
+        )
+    elif dtype.kind == 'U':
+        raise RuntimeError(
+            f'JSON ndarray encoding does not support unicode dtype={dtype_label}; convert '
+            'explicitly to plain JSON strings with .tolist()'
+        )
+    elif dtype.kind == 'c':
+        raise RuntimeError(
+            f'JSON ndarray encoding does not support complex dtype={dtype_label}; encode '
+            '.real and .imag arrays explicitly'
+        )
+    elif dtype.kind not in ('b', 'f'):
+        raise RuntimeError(
+            f'JSON ndarray encoding does not support dtype={dtype_label}; cast to bool, '
+            'integer, or float dtype, or encode values explicitly as plain JSON'
+        )
+
     try:
-        data = obj.tolist()
+        if dtype.kind == 'f':
+            import numpy as np
+
+            if dtype.itemsize > np.dtype(np.float64).itemsize:
+                finite_outside_number_range = np.isfinite(obj) & (
+                    (obj > sys.float_info.max) | (obj < -sys.float_info.max)
+                )
+                if finite_outside_number_range.any():
+                    raise RuntimeError(
+                        f'JSON ndarray encoding cannot convert finite dtype={dtype_label} '
+                        'values outside the JavaScript Number range; scale into the float64 '
+                        'range or encode explicitly (e.g. str)'
+                    )
+            # np.longdouble.tolist() retains np.longdouble scalar leaves, which the
+            # JSON encoder cannot reduce to native JSON numbers. The declared dtype
+            # records the source width while float64 supplies JSON-native leaves.
+            data = obj.astype(np.float64, copy=True).tolist()
+        else:
+            data = obj.tolist()
+    except RuntimeError:
+        raise
     except Exception as exc:
         raise RuntimeError('JSON fallback failed for ndarray') from exc
     return {
@@ -408,6 +497,7 @@ def serialize_ndarray_json(obj):
         'encoding': 'json',
         'data': data,
         'shape': getattr(obj, 'shape', None),
+        'dtype': dtype.name,
     }
 
 

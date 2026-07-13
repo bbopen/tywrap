@@ -108,6 +108,12 @@ def numpy_structured() -> object:
     return np.array([(1, 2.5)], dtype=[("left", "i4"), ("right", "f4")])
 
 
+def numpy_object() -> object:
+    import numpy as np
+
+    return np.array([{"key": "value"}], dtype=object)
+
+
 def numpy_empty() -> object:
     import numpy as np
 

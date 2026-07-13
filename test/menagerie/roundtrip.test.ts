@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NodeBridge } from '../../src/runtime/node.js';
+import { createReturnValidator } from '../../src/runtime/validators.js';
 import { isNodejs } from '../../src/utils/runtime.js';
 import {
   hasPythonModule,
@@ -83,6 +84,13 @@ function tableRows(value: ArrowTableLike): unknown[] {
 function assertResolvedValue(value: unknown, expected: CatalogueExpectation): void {
   switch (expected.kind) {
     case 'equal':
+      expect(value).toEqual(expected.value);
+      return;
+    case 'ndarray':
+      createReturnValidator(
+        { kind: 'marker', marker: 'ndarray', dtype: expected.dtype },
+        'menagerie.ndarray'
+      )(value);
       expect(value).toEqual(expected.value);
       return;
     case 'length':
