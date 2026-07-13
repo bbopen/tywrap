@@ -10,7 +10,11 @@
 
 import { BridgeCodecError, BridgeProtocolError, BridgeExecutionError } from './errors.js';
 import { containsSpecialFloat } from './validators.js';
-import { decodeValueAsync as decodeArrowValue } from '../utils/codec.js';
+import {
+  decodeValueAsync as decodeScientificValue,
+  isScientificMarker,
+  ScientificDecodeError,
+} from '../utils/codec.js';
 import { PROTOCOL_ID } from './transport.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -91,26 +95,6 @@ function buildPath(basePath: string, key: string | number): string {
   return typeof key === 'number' ? `${basePath}[${key}]` : `${basePath}.${key}`;
 }
 
-const SCIENTIFIC_MARKERS = new Set([
-  'dataframe',
-  'series',
-  'ndarray',
-  'scipy.sparse',
-  'torch.tensor',
-  'sklearn.estimator',
-]);
-
-function scientificMarkerFrom(value: unknown, errorMessage: string): string | undefined {
-  const match = /^(?:Invalid|Unsupported) ([a-z.]+) envelope/.exec(errorMessage);
-  if (match?.[1] && SCIENTIFIC_MARKERS.has(match[1])) {
-    return match[1];
-  }
-  if (isPlainObject(value) && typeof value.__tywrap__ === 'string') {
-    return SCIENTIFIC_MARKERS.has(value.__tywrap__) ? value.__tywrap__ : undefined;
-  }
-  return undefined;
-}
-
 function containsScientificEnvelope(value: unknown): boolean {
   const pending: unknown[] = [value];
   while (pending.length > 0) {
@@ -125,7 +109,7 @@ function containsScientificEnvelope(value: unknown): boolean {
       continue;
     }
     if (typeof current.__tywrap__ === 'string') {
-      return SCIENTIFIC_MARKERS.has(current.__tywrap__);
+      return isScientificMarker(current.__tywrap__);
     }
     for (const item of Object.values(current)) {
       pending.push(item);
@@ -669,8 +653,8 @@ export class BridgeCodec {
   }
 
   /**
-   * Async version that applies Arrow decoders.
-   * Use this when the response may contain encoded DataFrames or ndarrays.
+   * Async version that decodes scientific envelopes.
+   * Use this when the response may contain encoded scientific values.
    *
    * @param payload - The JSON string received from Python
    * @returns Decoded and validated result with Arrow decoding applied
@@ -681,25 +665,31 @@ export class BridgeCodec {
   async decodeResponseAsync<T>(payload: string): Promise<T> {
     const result = this.parseResponseResult(payload);
 
-    // Apply Arrow decoding to the result
+    // Decode scientific envelopes in the result.
     let decoded: unknown;
     try {
-      decoded = await decodeArrowValue(result);
+      decoded = await decodeScientificValue(result);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      const marker = scientificMarkerFrom(result, errorMessage);
-      const genuineArrowError =
-        errorMessage.startsWith('Arrow decode failed:') ||
-        errorMessage.startsWith(
-          'Received an Arrow-encoded payload but no Arrow decoder is available.'
-        );
+      const decodeError = err instanceof ScientificDecodeError ? err : undefined;
+      const marker =
+        decodeError?.marker ??
+        (isPlainObject(result) && isScientificMarker(result.__tywrap__)
+          ? result.__tywrap__
+          : 'unknown');
+      const genuineArrowError = decodeError?.kind === 'arrow';
+      const valueType = genuineArrowError
+        ? 'arrow'
+        : marker === 'unknown'
+          ? 'scientific-envelope'
+          : marker;
       throw new BridgeCodecError(
         genuineArrowError
           ? `Arrow decoding failed: ${errorMessage}`
-          : `Scientific envelope decoding failed (${marker ?? 'unknown'}): ${errorMessage}`,
+          : `Scientific envelope decoding failed (${marker}): ${errorMessage}`,
         {
           codecPhase: 'decode',
-          valueType: genuineArrowError ? 'arrow' : (marker ?? 'scientific-envelope'),
+          valueType,
         }
       );
     }

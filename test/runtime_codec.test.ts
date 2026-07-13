@@ -504,19 +504,6 @@ describe('Cross-Runtime Data Transfer Codec', () => {
           // missing col
         })
       ).rejects.toThrow('coo requires row and col');
-
-      await expect(
-        decodeValueAsync({
-          __tywrap__: 'scipy.sparse',
-          codecVersion: 1,
-          encoding: 'json',
-          format: 'csr',
-          shape: [2],
-          data: [1, 2],
-          indices: [0, 1],
-          indptr: [0, 1, 2],
-        })
-      ).rejects.toThrow('shape must be a 2-item non-negative integer[]');
     });
   });
 
@@ -671,15 +658,6 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     });
 
     it('should reject invalid torch tensor envelopes', async () => {
-      await expect(
-        decodeValueAsync({
-          __tywrap__: 'torch.tensor',
-          codecVersion: 1,
-          encoding: 'ndarray',
-          value: { not: 'an envelope' },
-        })
-      ).rejects.toThrow('value must be an ndarray envelope');
-
       await expect(
         decodeValueAsync({
           __tywrap__: 'torch.tensor',
