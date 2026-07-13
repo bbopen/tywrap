@@ -59,7 +59,7 @@ console.log(await sin(pi / 4));
 
 ## Value-returning APIs
 
-v0.9 generated wrappers do not keep live Python class instances. Expose an
+v0.10 generated wrappers do not keep live Python class instances. Expose an
 operation as a value-returning module function instead:
 
 ```ts

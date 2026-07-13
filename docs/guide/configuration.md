@@ -174,7 +174,7 @@ types: {
 ```
 
 Accepted presets are `numpy`, `pandas`, `pydantic`, `stdlib`, `scipy`, `torch`,
-and `sklearn`. `numpy` is accepted as a no-op in 0.9.0. The other presets map
+and `sklearn`. `numpy` is accepted as a no-op in 0.10.0. The other presets map
 the library types implemented by the generator, such as `DataFrame`, sparse
 matrix classes, `Tensor`, and `BaseEstimator`.
 
