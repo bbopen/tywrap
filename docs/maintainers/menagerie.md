@@ -19,7 +19,7 @@ Optional-library tests add cases that require installed scientific packages.
 | Status | Meaning | Obligation |
 | --- | --- | --- |
 | `EXPECTED_OK` | The call preserves the stated result. | Assert the exact value or declared structural expectation. |
-| `KNOWN_LIE` | The current transport resolves but loses stated semantics. | Record the observed result and an `expectedFix`. Do not describe the behavior as lossless. |
+| `KNOWN_LIE` | The current transport resolves but loses stated semantics. | Record the observed result, and an `expectedFix` when a fix direction exists. Do not describe the behavior as lossless. |
 | `LOUD_FAIL` | The call must reject at the bridge boundary. | Supply an error expectation. The test checks that error rows and this status stay aligned. |
 
 `KNOWN_LIE` is documentation of a measured limitation, not a passing result to

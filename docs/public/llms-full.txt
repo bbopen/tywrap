@@ -501,22 +501,22 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { typeHints: 'strict' },
+    "math": { typeHints: 'strict' },
   },
   output: {
     dir: './generated',
     format: 'esm',
     declaration: false,
-    sourceMap: false,
+    sourceMap: false
   },
   runtime: {
     node: {
-      pythonPath: 'python3',
-    },
+      pythonPath: 'python3'
+    }
   },
   types: {
-    presets: ['stdlib'],
-  },
+    presets: ['stdlib']
+  }
 });
 ```
 
@@ -530,10 +530,14 @@ npx tywrap generate
 Expected output for one module:
 
 ```text
-Generated: 2 files from 1 modules (warnings: 0).
+Generated: 2 files from 1 modules (warnings: 1).
 - generated/math.generated.ts
 - generated/math.contract.json
 ```
+
+A nonzero warning count is normal for C modules such as `math`: functions
+without Python return annotations degrade to `unknown` and the warning names
+them. Generation still succeeds.
 
 The wrapper is `<module>.generated.ts`. The pinned extractor output is
 `<module>.contract.json`. Import the compiled wrapper, set the bridge once,
@@ -3338,9 +3342,9 @@ the declared return schema.
 ## IR and generated contracts
 
 `generate()` in `src/tywrap.ts` invokes `python -m tywrap_ir --module <name>`.
-It validates the returned object before passing it to `CodeGenerator`. The
-generator writes `<module>.generated.ts` and the stable
-`<module>.contract.json` file beside it. The contract omits extractor metadata,
+It validates the returned object before passing it to `CodeGenerator`, which
+produces the wrapper source; `src/tywrap.ts` then writes
+`<module>.generated.ts` and the stable `<module>.contract.json` beside it. The contract omits extractor metadata,
 sorts object keys, and records the pinned IR representation.
 
 `contractInput` changes the source of IR. Instead of starting Python, generation
@@ -3379,10 +3383,11 @@ The marker set is `ndarray`, `dataframe`, `series`, `scipy.sparse`,
 `torch.tensor`, and `sklearn.estimator`. `src/utils/codec.ts` is the matching
 decoder and validates each envelope before decoding it.
 
-Arrow is the default for scientific arrays and pandas tabular values when
-Python has pyarrow and JavaScript has an Arrow decoder. JSON fallback is
-explicit through `TYWRAP_CODEC_FALLBACK=json`; it has narrower, documented
-domains. Pandas JSON values require an unnamed zero-based
+The Python producer selects Arrow for scientific arrays and pandas tabular
+values whenever pyarrow is importable, and the JavaScript side never falls
+back on its own: an Arrow envelope arriving without an Arrow decoder throws
+with an installation hint. Choosing JSON is an explicit Python-side decision
+through `TYWRAP_CODEC_FALLBACK=json`, with narrower, documented domains. Pandas JSON values require an unnamed zero-based
 `RangeIndex`, and unsupported dtypes fail with a conversion recipe.
 
 Nested arrays and plain objects can contain envelopes. The producer permits a
@@ -3443,7 +3448,7 @@ Optional-library tests add cases that require installed scientific packages.
 | Status | Meaning | Obligation |
 | --- | --- | --- |
 | `EXPECTED_OK` | The call preserves the stated result. | Assert the exact value or declared structural expectation. |
-| `KNOWN_LIE` | The current transport resolves but loses stated semantics. | Record the observed result and an `expectedFix`. Do not describe the behavior as lossless. |
+| `KNOWN_LIE` | The current transport resolves but loses stated semantics. | Record the observed result, and an `expectedFix` when a fix direction exists. Do not describe the behavior as lossless. |
 | `LOUD_FAIL` | The call must reject at the bridge boundary. | Supply an error expectation. The test checks that error rows and this status stay aligned. |
 
 `KNOWN_LIE` is documentation of a measured limitation, not a passing result to

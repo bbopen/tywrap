@@ -20,9 +20,9 @@ the declared return schema.
 ## IR and generated contracts
 
 `generate()` in `src/tywrap.ts` invokes `python -m tywrap_ir --module <name>`.
-It validates the returned object before passing it to `CodeGenerator`. The
-generator writes `<module>.generated.ts` and the stable
-`<module>.contract.json` file beside it. The contract omits extractor metadata,
+It validates the returned object before passing it to `CodeGenerator`, which
+produces the wrapper source; `src/tywrap.ts` then writes
+`<module>.generated.ts` and the stable `<module>.contract.json` beside it. The contract omits extractor metadata,
 sorts object keys, and records the pinned IR representation.
 
 `contractInput` changes the source of IR. Instead of starting Python, generation
@@ -61,10 +61,11 @@ The marker set is `ndarray`, `dataframe`, `series`, `scipy.sparse`,
 `torch.tensor`, and `sklearn.estimator`. `src/utils/codec.ts` is the matching
 decoder and validates each envelope before decoding it.
 
-Arrow is the default for scientific arrays and pandas tabular values when
-Python has pyarrow and JavaScript has an Arrow decoder. JSON fallback is
-explicit through `TYWRAP_CODEC_FALLBACK=json`; it has narrower, documented
-domains. Pandas JSON values require an unnamed zero-based
+The Python producer selects Arrow for scientific arrays and pandas tabular
+values whenever pyarrow is importable, and the JavaScript side never falls
+back on its own: an Arrow envelope arriving without an Arrow decoder throws
+with an installation hint. Choosing JSON is an explicit Python-side decision
+through `TYWRAP_CODEC_FALLBACK=json`, with narrower, documented domains. Pandas JSON values require an unnamed zero-based
 `RangeIndex`, and unsupported dtypes fail with a conversion recipe.
 
 Nested arrays and plain objects can contain envelopes. The producer permits a

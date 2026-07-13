@@ -41,22 +41,22 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { typeHints: 'strict' },
+    "math": { typeHints: 'strict' },
   },
   output: {
     dir: './generated',
     format: 'esm',
     declaration: false,
-    sourceMap: false,
+    sourceMap: false
   },
   runtime: {
     node: {
-      pythonPath: 'python3',
-    },
+      pythonPath: 'python3'
+    }
   },
   types: {
-    presets: ['stdlib'],
-  },
+    presets: ['stdlib']
+  }
 });
 ```
 
@@ -70,10 +70,14 @@ npx tywrap generate
 Expected output for one module:
 
 ```text
-Generated: 2 files from 1 modules (warnings: 0).
+Generated: 2 files from 1 modules (warnings: 1).
 - generated/math.generated.ts
 - generated/math.contract.json
 ```
+
+A nonzero warning count is normal for C modules such as `math`: functions
+without Python return annotations degrade to `unknown` and the warning names
+them. Generation still succeeds.
 
 The wrapper is `<module>.generated.ts`. The pinned extractor output is
 `<module>.contract.json`. Import the compiled wrapper, set the bridge once,
