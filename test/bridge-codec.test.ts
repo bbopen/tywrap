@@ -12,6 +12,7 @@ import {
   BridgeProtocolError,
   BridgeExecutionError,
 } from '../src/runtime/errors.js';
+import { clearArrowDecoder, registerArrowDecoder } from '../src/utils/codec.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CODEC OPTIONS DEFAULTS
@@ -573,6 +574,45 @@ describe('decodeResponseAsync - Arrow Integration', () => {
     const payload = JSON.stringify({ simple: 'data' });
     const result = await codec.decodeResponseAsync<{ simple: string }>(payload);
     expect(result).toEqual({ simple: 'data' });
+  });
+
+  it('labels v1 scientific-envelope validation failures without Arrow wording', async () => {
+    const payload = JSON.stringify({
+      id: 1,
+      protocol: 'tywrap/1',
+      result: {
+        __tywrap__: 'ndarray',
+        codecVersion: 1,
+        encoding: 'json',
+        data: [1],
+      },
+    });
+    await expect(codec.decodeResponseAsync(payload)).rejects.toThrow(
+      'Scientific envelope decoding failed (ndarray): Invalid ndarray envelope: shape at path shape must be a list of non-negative safe integers; declared shape undefined and dtype undefined, actual count unknown, actual type undefined'
+    );
+  });
+
+  it('keeps Arrow wording for genuine IPC decoder failures', async () => {
+    registerArrowDecoder(() => {
+      throw new Error('truncated IPC stream');
+    });
+    const payload = JSON.stringify({
+      id: 1,
+      protocol: 'tywrap/1',
+      result: {
+        __tywrap__: 'dataframe',
+        codecVersion: 1,
+        encoding: 'arrow',
+        b64: 'AAAA',
+      },
+    });
+    try {
+      await expect(codec.decodeResponseAsync(payload)).rejects.toThrow(
+        'Arrow decoding failed: Arrow decode failed: truncated IPC stream'
+      );
+    } finally {
+      clearArrowDecoder();
+    }
   });
 
   it('respects maxPayloadBytes', async () => {

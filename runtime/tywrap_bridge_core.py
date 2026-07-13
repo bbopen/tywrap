@@ -376,7 +376,7 @@ def serialize_ndarray(obj, *, force_json_markers):
         ) from exc
     try:
         original_shape = list(obj.shape) if hasattr(obj, 'shape') else None
-        flat = obj.flatten() if hasattr(obj, 'ndim') and obj.ndim > 1 else obj
+        flat = obj.flatten() if hasattr(obj, 'ndim') and obj.ndim != 1 else obj
         arr = pa.array(flat)
         table = pa.Table.from_arrays([arr], names=['value'])
         sink = pa.BufferOutputStream()

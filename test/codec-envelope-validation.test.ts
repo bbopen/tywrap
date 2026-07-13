@@ -13,9 +13,133 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { decodeValue, type ValueEnvelope } from '../src/utils/codec.js';
+import {
+  clearArrowDecoder,
+  decodeValue,
+  registerArrowDecoder,
+  type ValueEnvelope,
+} from '../src/utils/codec.js';
 
 describe('#234 codec envelope re-validation (JS decoder)', () => {
+  describe('ndarray v1', () => {
+    it('rejects missing and invalid shape dimensions with field-level detail', () => {
+      const make = (shape: unknown): unknown => ({
+        __tywrap__: 'ndarray',
+        codecVersion: 1,
+        encoding: 'json',
+        data: [1],
+        ...(shape === undefined ? {} : { shape }),
+      });
+
+      expect(() => decodeValue(make(undefined))).toThrow(
+        'Invalid ndarray envelope: shape at path shape must be a list of non-negative safe integers; declared shape undefined and dtype undefined, actual count unknown, actual type undefined'
+      );
+      expect(() => decodeValue(make([-1]))).toThrow(/shape\[0\]=-1.*declared shape \[-1\]/);
+      expect(() => decodeValue(make([1.5]))).toThrow(/shape\[0\]=1.5.*actual type number/);
+      expect(() => decodeValue(make([Number.POSITIVE_INFINITY]))).toThrow(
+        /shape\[0\]=Infinity.*actual type number\(Infinity\)/
+      );
+      expect(() => decodeValue(make([Number.MAX_SAFE_INTEGER + 1]))).toThrow(
+        /shape\[0\]=9007199254740992.*within the safe range/
+      );
+    });
+
+    it('rejects JSON nesting and leaf-count mismatches', () => {
+      expect(() =>
+        decodeValue({
+          __tywrap__: 'ndarray',
+          codecVersion: 1,
+          encoding: 'json',
+          data: [[1, 2], [3]],
+          shape: [2, 2],
+          dtype: 'int64',
+        })
+      ).toThrow(
+        'Invalid ndarray envelope: data at path data[1] has length 1, expected 2 for declared shape [2,2] and dtype "int64"; declared count 4, actual count 3, actual type array(length=1)'
+      );
+
+      expect(() =>
+        decodeValue({
+          __tywrap__: 'ndarray',
+          codecVersion: 1,
+          encoding: 'json',
+          data: [7],
+          shape: [],
+        })
+      ).toThrow(/data at path data exceeds nesting depth 0.*actual count 1/);
+    });
+
+    it('requires Arrow dtype and rejects truncated base64 before decoding', () => {
+      registerArrowDecoder(() => [1]);
+      try {
+        expect(() =>
+          decodeValue({
+            __tywrap__: 'ndarray',
+            codecVersion: 1,
+            encoding: 'arrow',
+            b64: 'AAAA',
+            shape: [1],
+          })
+        ).toThrow(/dtype at path dtype is required for Arrow encoding.*declared shape \[1\]/);
+
+        expect(() =>
+          decodeValue({
+            __tywrap__: 'ndarray',
+            codecVersion: 1,
+            encoding: 'arrow',
+            b64: 'AQI',
+            shape: [1],
+            dtype: 'uint8',
+          })
+        ).toThrow(
+          'Invalid ndarray envelope: b64 at path b64 must be canonical base64; declared shape [1] and dtype "uint8"; actual count unknown, actual type string with length 3'
+        );
+      } finally {
+        clearArrowDecoder();
+      }
+    });
+
+    it('rejects Arrow element-count mismatch and extraction failure', () => {
+      registerArrowDecoder(() => [1, 2]);
+      try {
+        expect(() =>
+          decodeValue({
+            __tywrap__: 'ndarray',
+            codecVersion: 1,
+            encoding: 'arrow',
+            b64: 'AAAA',
+            shape: [3],
+            dtype: 'int64',
+          })
+        ).toThrow(/element count 2, expected 3.*declared shape \[3\].*dtype "int64"/);
+      } finally {
+        clearArrowDecoder();
+      }
+
+      registerArrowDecoder(() => ({ numRows: 1 }));
+      try {
+        expect(() =>
+          decodeValue({
+            __tywrap__: 'ndarray',
+            codecVersion: 1,
+            encoding: 'arrow',
+            b64: 'AAAA',
+            shape: [1],
+            dtype: 'int64',
+          })
+        ).toThrow(/could not extract Arrow values.*actual count unknown, actual type object/);
+      } finally {
+        clearArrowDecoder();
+      }
+    });
+
+    it('keeps missing-codecVersion envelopes legacy tolerant', () => {
+      expect(
+        decodeValue({ __tywrap__: 'ndarray', encoding: 'json', data: [1, 2] } as ValueEnvelope)
+      ).toEqual([1, 2]);
+    });
+  });
+
   describe('scipy.sparse', () => {
     it('accepts supported CSR / CSC / COO envelopes (int/float/bool/empty)', () => {
       // CSR int
@@ -265,6 +389,26 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
         })
       ).toThrow(/shape must be a 2-item non-negative integer\[\]/);
     });
+
+    it('rejects data outside the declared dtype domain and non-finite values', () => {
+      const make = (data: unknown[], dtype: string): ValueEnvelope => ({
+        __tywrap__: 'scipy.sparse',
+        codecVersion: 1,
+        encoding: 'json',
+        format: 'csr',
+        shape: [1, 1],
+        data,
+        indices: [0],
+        indptr: [0, 1],
+        dtype,
+      });
+      expect(() => decodeValue(make([1.5], 'int64'))).toThrow(
+        'Invalid scipy.sparse envelope: data[0] at path data[0] is incompatible with declared shape [1,1] and dtype "int64"; actual count 1, actual type number with value 1.5'
+      );
+      expect(() => decodeValue(make([Number.NaN], 'float64'))).toThrow(
+        'Invalid scipy.sparse envelope: data[0] at path data[0] must be finite for declared shape [1,1] and dtype "float64"; actual count 1, actual type number with value NaN'
+      );
+    });
   });
 
   describe('torch.tensor', () => {
@@ -329,6 +473,45 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           device: 'cpu',
         })
       ).toThrow(/disagrees with nested ndarray shape/);
+    });
+
+    it('rejects equal-product but differently shaped tensor/ndarray metadata', () => {
+      expect(() =>
+        decodeValue({
+          __tywrap__: 'torch.tensor',
+          codecVersion: 1,
+          encoding: 'ndarray',
+          value: {
+            __tywrap__: 'ndarray',
+            codecVersion: 1,
+            encoding: 'json',
+            data: [[1, 2, 3, 4]],
+            shape: [1, 4],
+          },
+          shape: [2, 2],
+          dtype: 'float32',
+        })
+      ).toThrow(/exact shapes are required.*actual counts 4 and 4/);
+    });
+
+    it('rejects empty outer and nested dtype fields when present', () => {
+      const base = {
+        __tywrap__: 'torch.tensor' as const,
+        codecVersion: 1,
+        encoding: 'ndarray' as const,
+        value: {
+          __tywrap__: 'ndarray' as const,
+          codecVersion: 1,
+          encoding: 'json' as const,
+          data: [1],
+          shape: [1],
+        },
+        shape: [1],
+      };
+      expect(() => decodeValue({ ...base, dtype: '' })).toThrow(/dtype at path dtype.*non-empty/);
+      expect(() => decodeValue({ ...base, value: { ...base.value, dtype: '' } })).toThrow(
+        /value\.dtype at path value\.dtype.*non-empty/
+      );
     });
 
     it('rejects a negative / non-integer shape dimension', () => {
@@ -469,6 +652,29 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           params: 'not-an-object',
         } as unknown as ValueEnvelope)
       ).toThrow(/expected className\/module strings \+ params object/);
+    });
+
+    it('rejects empty className and module metadata', () => {
+      expect(() =>
+        decodeValue({
+          __tywrap__: 'sklearn.estimator',
+          codecVersion: 1,
+          encoding: 'json',
+          className: '',
+          module: 'sklearn.base',
+          params: {},
+        })
+      ).toThrow(/className at path className.*declared class ""/);
+      expect(() =>
+        decodeValue({
+          __tywrap__: 'sklearn.estimator',
+          codecVersion: 1,
+          encoding: 'json',
+          className: 'Estimator',
+          module: '',
+          params: {},
+        })
+      ).toThrow(/module at path module.*declared module ""/);
     });
   });
 });

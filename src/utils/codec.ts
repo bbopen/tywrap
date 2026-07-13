@@ -232,7 +232,15 @@ function isNumberArray(value: unknown): value is number[] {
   return Array.isArray(value) && value.every(item => typeof item === 'number');
 }
 
-function fromBase64(b64: string): Uint8Array {
+const STRICT_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+function fromBase64(b64: string, marker?: string, context?: string): Uint8Array {
+  if (marker && !STRICT_BASE64_PATTERN.test(b64)) {
+    throw new Error(
+      `Invalid ${marker} envelope: b64 at path b64 must be canonical base64; ` +
+        `${context ? `${context}; ` : ''}actual count unknown, actual type string with length ${b64.length}`
+    );
+  }
   if (typeof Buffer !== 'undefined') {
     const buf = Buffer.from(b64, 'base64');
     return new Uint8Array(buf.buffer, buf.byteOffset, buf.length);
@@ -312,7 +320,7 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
  * @param arr - Typed array or plain array
  * @returns Plain JavaScript array with values converted (BigInt → Number where safe)
  */
-function typedArrayToPlain(arr: unknown): unknown[] {
+function typedArrayToPlain(arr: unknown): unknown[] | null {
   if (Array.isArray(arr)) {
     return arr;
   }
@@ -333,8 +341,7 @@ function typedArrayToPlain(arr: unknown): unknown[] {
   if (arr !== null && arr !== undefined && typeof arr === 'object' && Symbol.iterator in arr) {
     return Array.from(arr as Iterable<unknown>);
   }
-  // Non-iterable: return empty array (shouldn't happen with valid Arrow data)
-  return [];
+  return null;
 }
 
 /**
@@ -356,6 +363,30 @@ function extractArrowValues(data: unknown): unknown[] | null {
     }
   }
   return null;
+}
+
+function extractNdarrayArrowValues(
+  data: unknown,
+  shape: readonly number[] | undefined,
+  dtype: string | undefined
+): unknown[] {
+  try {
+    const values = extractArrowValues(data);
+    if (values) {
+      return values;
+    }
+  } catch (error) {
+    throw new Error(
+      `Invalid ndarray envelope: b64 decoded data extraction failed at path b64 for declared ` +
+        `shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}; actual count unknown, ` +
+        `actual type ${actualType(data)} (${error instanceof Error ? error.message : String(error)})`
+    );
+  }
+  throw new Error(
+    `Invalid ndarray envelope: b64 decoded data at path b64 could not extract Arrow values ` +
+      `for declared shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}; ` +
+      `actual count unknown, actual type ${actualType(data)}`
+  );
 }
 
 /**
@@ -396,6 +427,130 @@ function reshapeArray(flat: unknown[], shape: readonly number[]): unknown {
 
 // Why: decoding needs to reject incompatible envelopes before we attempt to interpret payloads.
 const CODEC_VERSION = 1;
+
+function isStrictV1Envelope(envelope: { codecVersion?: unknown }): boolean {
+  return envelope.codecVersion === CODEC_VERSION;
+}
+
+function actualType(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `array(length=${value.length})`;
+  }
+  if (value === null) {
+    return 'null';
+  }
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    return `number(${String(value)})`;
+  }
+  return typeof value;
+}
+
+function assertShape(
+  shapeValue: unknown,
+  marker: 'ndarray' | 'torch.tensor',
+  field = 'shape',
+  dtype?: unknown
+): number[] {
+  if (!Array.isArray(shapeValue)) {
+    throw new Error(
+      `Invalid ${marker} envelope: ${field} at path ${field} must be a list of ` +
+        `non-negative safe integers; declared shape ${String(shapeValue)} and dtype ` +
+        `${JSON.stringify(dtype)}, actual count unknown, actual type ${actualType(shapeValue)}`
+    );
+  }
+  for (let i = 0; i < shapeValue.length; i += 1) {
+    const dim = shapeValue[i];
+    if (typeof dim !== 'number' || !Number.isSafeInteger(dim) || dim < 0) {
+      throw new Error(
+        `Invalid ${marker} envelope: ${field}[${i}]=${String(dim)} must be a non-negative integer ` +
+          `within the safe range for declared shape ${JSON.stringify(shapeValue)}; ` +
+          `declared dtype ${JSON.stringify(dtype)}, actual count unknown, ` +
+          `actual type ${actualType(dim)} with value ${String(dim)}`
+      );
+    }
+  }
+  return shapeValue as number[];
+}
+
+function assertOptionalNonEmptyDtype(
+  value: unknown,
+  marker: 'ndarray' | 'torch.tensor' | 'scipy.sparse',
+  field = 'dtype',
+  shape?: unknown
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(
+      `Invalid ${marker} envelope: ${field} at path ${field} must be a non-empty string; ` +
+        `declared shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(value)}, ` +
+        `actual count unknown, actual type ${actualType(value)}`
+    );
+  }
+  return value;
+}
+
+function countJsonLeaves(value: unknown): number {
+  if (!Array.isArray(value)) {
+    return 1;
+  }
+  return value.reduce((count, item) => count + countJsonLeaves(item), 0);
+}
+
+function assertJsonMatchesShape(
+  data: unknown,
+  shape: readonly number[],
+  dtype: string | undefined
+): void {
+  const declaredCount = shapeProduct(shape);
+  const actualCount = countJsonLeaves(data);
+  const visit = (value: unknown, depth: number, path: string): void => {
+    if (depth === shape.length) {
+      if (Array.isArray(value)) {
+        throw new Error(
+          `Invalid ndarray envelope: data at path ${path} exceeds nesting depth ` +
+            `${shape.length} for declared shape ${JSON.stringify(shape)} and dtype ` +
+            `${JSON.stringify(dtype)}; actual count ${actualCount}, actual type ${actualType(value)}`
+        );
+      }
+      return;
+    }
+    if (!Array.isArray(value)) {
+      throw new Error(
+        `Invalid ndarray envelope: data at path ${path} must be an array at depth ${depth} ` +
+          `for declared shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}; ` +
+          `actual count ${actualCount}, actual type ${actualType(value)}`
+      );
+    }
+    const expectedLength = shape[depth] as number;
+    if (value.length !== expectedLength) {
+      throw new Error(
+        `Invalid ndarray envelope: data at path ${path} has length ${value.length}, expected ` +
+          `${expectedLength} for declared shape ${JSON.stringify(shape)} and dtype ` +
+          `${JSON.stringify(dtype)}; declared count ${declaredCount}, actual count ${actualCount}, ` +
+          `actual type ${actualType(value)}`
+      );
+    }
+    value.forEach((item, index) => visit(item, depth + 1, `${path}[${index}]`));
+  };
+  visit(data, 0, 'data');
+}
+
+function assertArrowCount(
+  values: readonly unknown[],
+  shape: readonly number[],
+  dtype: string
+): void {
+  const expected = shapeProduct(shape);
+  if (values.length !== expected) {
+    throw new Error(
+      `Invalid ndarray envelope: b64 decoded data at path b64 has element count ${values.length}, ` +
+        `expected ${expected} for declared shape ${JSON.stringify(shape)} and dtype ` +
+        `${JSON.stringify(dtype)}; actual type array(length=${values.length})`
+    );
+  }
+}
 
 function assertCodecVersion(envelope: { codecVersion?: unknown }, typeTag: string): void {
   if (!('codecVersion' in envelope)) {
@@ -444,7 +599,7 @@ function decodeArrowOrJsonEnvelope<T>(
     if (typeof b64 !== 'string') {
       throw new Error(`Invalid ${typeTag} envelope: missing b64`);
     }
-    const bytes = fromBase64(b64);
+    const bytes = fromBase64(b64, isStrictV1Envelope(value) ? typeTag : undefined);
     const decoded = decodeArrow(bytes);
     return isPromiseLike(decoded)
       ? decoded.then(item => tagDecodedShape(item, { marker: typeTag as 'dataframe' | 'series' }))
@@ -467,17 +622,42 @@ const decodeSeriesEnvelope: EnvelopeHandler = (value, decodeArrow) =>
 
 const decodeNdarrayEnvelope: EnvelopeHandler = (value, decodeArrow) => {
   const encoding = value.encoding;
-  const shapeValue = value.shape;
-  const shape = isNumberArray(shapeValue) ? shapeValue : undefined;
-  const dtype = typeof value.dtype === 'string' ? value.dtype : undefined;
+  const strictV1 = isStrictV1Envelope(value);
+  const shape = strictV1
+    ? assertShape(value.shape, 'ndarray', 'shape', value.dtype)
+    : isNumberArray(value.shape)
+      ? value.shape
+      : undefined;
+  const dtype = strictV1
+    ? assertOptionalNonEmptyDtype(value.dtype, 'ndarray', 'dtype', shape)
+    : typeof value.dtype === 'string'
+      ? value.dtype
+      : undefined;
   const metadata = { marker: 'ndarray' as const, dims: shape?.length, dtype };
 
   if (encoding === 'arrow') {
+    if (strictV1 && dtype === undefined) {
+      throw new Error(
+        `Invalid ndarray envelope: dtype at path dtype is required for Arrow encoding; ` +
+          `declared shape ${JSON.stringify(shape)} and dtype undefined, actual count unknown, actual type undefined`
+      );
+    }
     const b64 = value.b64;
     if (typeof b64 !== 'string') {
-      throw new Error('Invalid ndarray envelope: missing b64');
+      if (!strictV1) {
+        throw new Error('Invalid ndarray envelope: missing b64');
+      }
+      throw new Error(
+        `Invalid ndarray envelope: b64 at path b64 must be a base64 string for declared ` +
+          `shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}; actual count unknown, ` +
+          `actual type ${actualType(b64)}`
+      );
     }
-    const bytes = fromBase64(b64);
+    const bytes = fromBase64(
+      b64,
+      strictV1 ? 'ndarray' : undefined,
+      `declared shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}`
+    );
     const decoded = decodeArrow(bytes);
 
     // Extract values from Arrow table and reshape if needed
@@ -486,9 +666,14 @@ const decodeNdarrayEnvelope: EnvelopeHandler = (value, decodeArrow) => {
     // Skip reshape for: 1D arrays (shape.length === 1) - return as-is
     if (isPromiseLike(decoded)) {
       return decoded.then(data => {
-        const values = extractArrowValues(data);
+        const values = strictV1
+          ? extractNdarrayArrowValues(data, shape, dtype)
+          : extractArrowValues(data);
         if (!values) {
-          return tagDecodedShape(data, metadata); // Fallback: keep provenance on raw data.
+          return tagDecodedShape(data, metadata);
+        }
+        if (strictV1) {
+          assertArrowCount(values, shape as number[], dtype as string);
         }
         // Reshape scalars and multi-dimensional arrays, but not 1D
         return tagDecodedShape(
@@ -497,9 +682,14 @@ const decodeNdarrayEnvelope: EnvelopeHandler = (value, decodeArrow) => {
         );
       });
     }
-    const values = extractArrowValues(decoded);
+    const values = strictV1
+      ? extractNdarrayArrowValues(decoded, shape, dtype)
+      : extractArrowValues(decoded);
     if (!values) {
-      return tagDecodedShape(decoded, metadata); // Fallback: keep provenance on raw data.
+      return tagDecodedShape(decoded, metadata);
+    }
+    if (strictV1) {
+      assertArrowCount(values, shape as number[], dtype as string);
     }
     // Reshape scalars and multi-dimensional arrays, but not 1D
     return tagDecodedShape(
@@ -509,7 +699,16 @@ const decodeNdarrayEnvelope: EnvelopeHandler = (value, decodeArrow) => {
   }
   if (encoding === 'json') {
     if (!('data' in value)) {
-      throw new Error('Invalid ndarray envelope: missing data');
+      if (!strictV1) {
+        throw new Error('Invalid ndarray envelope: missing data');
+      }
+      throw new Error(
+        `Invalid ndarray envelope: data at path data is required for declared shape ` +
+          `${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}; actual count 0, actual type undefined`
+      );
+    }
+    if (strictV1) {
+      assertJsonMatchesShape(value.data, shape as number[], dtype);
     }
     return tagDecodedShape(value.data, metadata);
   }
@@ -536,6 +735,40 @@ function assertIndexArrayInRange(arr: readonly unknown[], bound: number, label: 
     if (idx < 0 || idx >= bound) {
       throw new Error(
         `Invalid scipy.sparse envelope: ${label}[${i}]=${idx} is out of range [0, ${bound})`
+      );
+    }
+  }
+}
+
+function assertSparseDataDomain(
+  data: readonly unknown[],
+  dtype: string | undefined,
+  shape: readonly number[]
+): void {
+  for (let i = 0; i < data.length; i += 1) {
+    const item = data[i];
+    if (typeof item === 'number' && !Number.isFinite(item)) {
+      throw new Error(
+        `Invalid scipy.sparse envelope: data[${i}] at path data[${i}] must be finite for ` +
+          `declared shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}; ` +
+          `actual count ${data.length}, actual type number with value ${String(item)}`
+      );
+    }
+    const expectsBoolean = dtype === 'bool' || dtype === 'bool_';
+    const expectsInteger = dtype !== undefined && /^(?:u?int)\d*$/.test(dtype);
+    const expectsFloat = dtype !== undefined && /^float\d*$/.test(dtype);
+    const valid = expectsBoolean
+      ? typeof item === 'boolean'
+      : expectsInteger
+        ? typeof item === 'number' && Number.isInteger(item)
+        : expectsFloat
+          ? typeof item === 'number'
+          : true;
+    if (!valid) {
+      throw new Error(
+        `Invalid scipy.sparse envelope: data[${i}] at path data[${i}] is incompatible with ` +
+          `declared shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}; ` +
+          `actual count ${data.length}, actual type ${actualType(item)} with value ${String(item)}`
       );
     }
   }
@@ -569,8 +802,16 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
   if (!Array.isArray(data)) {
     throw new Error('Invalid scipy.sparse envelope: data must be an array');
   }
+  const strictV1 = isStrictV1Envelope(value);
   const dtypeValue = value.dtype;
-  const dtype = typeof dtypeValue === 'string' ? dtypeValue : undefined;
+  const dtype = strictV1
+    ? assertOptionalNonEmptyDtype(dtypeValue, 'scipy.sparse', 'dtype', shape)
+    : typeof dtypeValue === 'string'
+      ? dtypeValue
+      : undefined;
+  if (strictV1) {
+    assertSparseDataDomain(data, dtype, shape);
+  }
 
   if (format === 'coo') {
     const row = value.row;
@@ -680,34 +921,50 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
   if (!isObject(nested) || (nested as { __tywrap__?: unknown }).__tywrap__ !== 'ndarray') {
     throw new Error('Invalid torch.tensor envelope: value must be an ndarray envelope');
   }
-  const shapeValue = value.shape;
-  const shape = isNumberArray(shapeValue) ? shapeValue : undefined;
-  // The tensor shape must be a non-negative-integer dimension list. A negative or
-  // non-integer dim is a corrupt envelope, not a valid tensor.
-  if (shape) {
-    for (let i = 0; i < shape.length; i += 1) {
-      const dim = shape[i] as number;
-      if (!Number.isInteger(dim) || dim < 0) {
-        throw new Error(
-          `Invalid torch.tensor envelope: shape[${i}]=${dim} must be a non-negative integer`
-        );
-      }
-    }
-  }
-  // Cross-check the tensor shape's element count against the nested ndarray's
-  // declared shape (metadata only — no decode needed). A mismatch means the two
-  // shapes disagree about how many elements the payload holds.
+  const strictV1 = isStrictV1Envelope(value);
+  const shape = strictV1
+    ? assertShape(value.shape, 'torch.tensor', 'shape', value.dtype)
+    : isNumberArray(value.shape)
+      ? value.shape
+      : undefined;
   const nestedShapeValue = (nested as { shape?: unknown }).shape;
-  const nestedShape = isNumberArray(nestedShapeValue) ? nestedShapeValue : undefined;
-  if (shape && nestedShape && shapeProduct(shape) !== shapeProduct(nestedShape)) {
+  const nestedShape = strictV1
+    ? assertShape(nestedShapeValue, 'torch.tensor', 'value.shape', nested.dtype)
+    : isNumberArray(nestedShapeValue)
+      ? nestedShapeValue
+      : undefined;
+  const scalarNormalization =
+    shape !== undefined &&
+    nestedShape !== undefined &&
+    ((shape.length === 0 && nestedShape.length === 1 && nestedShape[0] === 1) ||
+      (nestedShape.length === 0 && shape.length === 1 && shape[0] === 1));
+  const shapesEqual =
+    shape !== undefined &&
+    nestedShape !== undefined &&
+    shape.length === nestedShape.length &&
+    shape.every((dim, index) => dim === nestedShape[index]);
+  const shapesDisagree = strictV1
+    ? !shapesEqual && !scalarNormalization
+    : shape !== undefined &&
+      nestedShape !== undefined &&
+      shapeProduct(shape) !== shapeProduct(nestedShape);
+  if (shape && nestedShape && shapesDisagree) {
     throw new Error(
-      `Invalid torch.tensor envelope: shape ${JSON.stringify(shape)} ` +
-        `(product ${shapeProduct(shape)}) disagrees with nested ndarray shape ` +
-        `${JSON.stringify(nestedShape)} (product ${shapeProduct(nestedShape)})`
+      `Invalid torch.tensor envelope: shape at path shape ${JSON.stringify(shape)} disagrees ` +
+        `with nested ndarray shape at path value.shape ${JSON.stringify(nestedShape)}; exact shapes are required ` +
+        `(except scalar []/[1]), declared dtypes ${JSON.stringify(value.dtype)}/${JSON.stringify(nested.dtype)}, ` +
+        `actual counts ${shapeProduct(shape)} and ${shapeProduct(nestedShape)}`
     );
   }
   const dtypeValue = value.dtype;
-  const dtype = typeof dtypeValue === 'string' ? dtypeValue : undefined;
+  const dtype = strictV1
+    ? assertOptionalNonEmptyDtype(dtypeValue, 'torch.tensor', 'dtype', shape)
+    : typeof dtypeValue === 'string'
+      ? dtypeValue
+      : undefined;
+  if (strictV1 && 'dtype' in nested) {
+    assertOptionalNonEmptyDtype(nested.dtype, 'torch.tensor', 'value.dtype', nestedShape);
+  }
   const deviceValue = value.device;
   if (deviceValue !== undefined && (typeof deviceValue !== 'string' || deviceValue.length === 0)) {
     throw new Error(
@@ -778,9 +1035,17 @@ const decodeSklearnEstimatorEnvelope: EnvelopeHandler = value => {
   const className = value.className;
   const module = value.module;
   const params = value.params;
-  if (typeof className !== 'string' || typeof module !== 'string' || !isObject(params)) {
+  const strictV1 = isStrictV1Envelope(value);
+  if (
+    typeof className !== 'string' ||
+    typeof module !== 'string' ||
+    (strictV1 && (className.length === 0 || module.length === 0)) ||
+    !isObject(params)
+  ) {
     throw new Error(
-      'Invalid sklearn.estimator envelope: expected className/module strings + params object'
+      `Invalid sklearn.estimator envelope: expected className/module strings + params object; ` +
+        `className at path className and module at path module must be non-empty; declared class ${JSON.stringify(className)}, ` +
+        `declared module ${JSON.stringify(module)}, actual types ${actualType(className)}/${actualType(module)}`
     );
   }
   // params must be a PLAIN JSON object end to end — metadata-only estimators never

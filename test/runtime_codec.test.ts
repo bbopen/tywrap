@@ -537,7 +537,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     });
 
     it('should await nested Arrow ndarray decoding', async () => {
-      registerArrowDecoder(bytes => bytes);
+      registerArrowDecoder(() => [1, 2, 3]);
       const testData = 'binary array data';
 
       const envelope: ValueEnvelope = {
@@ -549,6 +549,8 @@ describe('Cross-Runtime Data Transfer Codec', () => {
           codecVersion: 1,
           encoding: 'arrow',
           b64: Buffer.from(testData, 'utf-8').toString('base64'),
+          shape: [3],
+          dtype: 'float32',
         },
         shape: [3],
         dtype: 'float32',
@@ -559,7 +561,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       // Explicitly verify data is resolved, not a Promise (issue #21)
       expect((result as any).data).not.toBeInstanceOf(Promise);
       expect(result).toEqual({
-        data: expect.any(Uint8Array),
+        data: [1, 2, 3],
         shape: [3],
         dtype: 'float32',
         device: 'cpu',
@@ -580,6 +582,8 @@ describe('Cross-Runtime Data Transfer Codec', () => {
           codecVersion: 1,
           encoding: 'arrow',
           b64: Buffer.from('test', 'utf-8').toString('base64'),
+          shape: [3],
+          dtype: 'float32',
         },
         shape: [3],
         dtype: 'float32',
@@ -605,6 +609,8 @@ describe('Cross-Runtime Data Transfer Codec', () => {
           codecVersion: 1,
           encoding: 'arrow',
           b64: Buffer.from('test', 'utf-8').toString('base64'),
+          shape: [3],
+          dtype: 'float32',
         },
         shape: [3],
         dtype: 'float32',
@@ -615,7 +621,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     });
 
     it('should decode nested Arrow ndarray synchronously', () => {
-      registerArrowDecoder(bytes => bytes);
+      registerArrowDecoder(() => [1, 2, 3]);
 
       const envelope: ValueEnvelope = {
         __tywrap__: 'torch.tensor',
@@ -626,6 +632,8 @@ describe('Cross-Runtime Data Transfer Codec', () => {
           codecVersion: 1,
           encoding: 'arrow',
           b64: Buffer.from('test', 'utf-8').toString('base64'),
+          shape: [3],
+          dtype: 'float32',
         },
         shape: [3],
         dtype: 'float32',
@@ -634,7 +642,7 @@ describe('Cross-Runtime Data Transfer Codec', () => {
 
       const result = decodeValue(envelope);
       expect(result).toEqual({
-        data: expect.any(Uint8Array),
+        data: [1, 2, 3],
         shape: [3],
         dtype: 'float32',
         device: 'cpu',
