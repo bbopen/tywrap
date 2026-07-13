@@ -70,7 +70,7 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
       ).toThrow(/data at path data exceeds nesting depth 0.*actual count 1/);
     });
 
-    it('allows array-valued leaves for non-numeric JSON arrays', () => {
+    it('keeps dtype-absent JSON array leaves legacy tolerant', () => {
       const data = [[['nested', 'object-leaf']]];
       expect(
         decodeValue({
@@ -81,7 +81,11 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           shape: [1],
         })
       ).toEqual(data);
-      expect(
+    });
+
+    it('enforces strict leaves whenever a JSON dtype is declared', () => {
+      const data = [[['nested', 'object-leaf']]];
+      expect(() =>
         decodeValue({
           __tywrap__: 'ndarray',
           codecVersion: 1,
@@ -90,8 +94,8 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           shape: [1],
           dtype: "[('value', '<i4')]",
         })
-      ).toEqual(data);
-      expect(
+      ).toThrow(/data at path data\[0\] exceeds nesting depth 1.*dtype "\[\('value', '<i4'\)\]"/);
+      expect(() =>
         decodeValue({
           __tywrap__: 'ndarray',
           codecVersion: 1,
@@ -100,7 +104,41 @@ describe('#234 codec envelope re-validation (JS decoder)', () => {
           shape: [1],
           dtype: 'object',
         })
-      ).toEqual(data);
+      ).toThrow(/data at path data\[0\] exceeds nesting depth 1.*dtype "object"/);
+    });
+
+    it('accepts empty and float16 JSON arrays with declared dtype', () => {
+      expect(
+        decodeValue({
+          __tywrap__: 'ndarray',
+          codecVersion: 1,
+          encoding: 'json',
+          data: [],
+          shape: [0],
+          dtype: 'float64',
+        })
+      ).toEqual([]);
+      expect(
+        decodeValue({
+          __tywrap__: 'ndarray',
+          codecVersion: 1,
+          encoding: 'json',
+          data: [1.5, -2.25],
+          shape: [2],
+          dtype: 'float16',
+        })
+      ).toEqual([1.5, -2.25]);
+
+      expect(() =>
+        decodeValue({
+          __tywrap__: 'ndarray',
+          codecVersion: 1,
+          encoding: 'json',
+          data: [[1.5, -2.25]],
+          shape: [1],
+          dtype: 'float16',
+        })
+      ).toThrow(/data at path data\[0\] exceeds nesting depth 1.*dtype "float16"/);
     });
 
     it('requires Arrow dtype and rejects truncated base64 before decoding', () => {

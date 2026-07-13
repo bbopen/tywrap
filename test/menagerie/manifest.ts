@@ -17,6 +17,7 @@ export type OptionalLibrary =
 
 export type CatalogueExpectation =
   | { kind: 'equal'; value: unknown }
+  | { kind: 'ndarray'; value: unknown; dtype: string }
   | { kind: 'error'; pattern: RegExp }
   | { kind: 'length'; value: number }
   | { kind: 'match'; value: object }
@@ -284,8 +285,8 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     codec: 'json',
     requires: ['numpy'],
     status: 'EXPECTED_OK',
-    currentBehavior: 'JSON fallback preserves the float16 values as JavaScript numbers.',
-    expected: equal([1.5, -2.25]),
+    currentBehavior: 'JSON fallback preserves the values and declares their float16 dtype.',
+    expected: { kind: 'ndarray', value: [1.5, -2.25], dtype: 'float16' },
   }),
   libraryRow({
     id: 'numpy-bool',
@@ -346,9 +347,11 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'numpy_datetime64()',
     codec: 'json',
     requires: ['numpy'],
-    status: 'KNOWN_LIE',
-    currentBehavior: 'JSON fallback emits an untagged epoch integer that rounds in JavaScript.',
-    expected: equal([1704164645123456800]),
+    status: 'LOUD_FAIL',
+    currentBehavior: 'JSON fallback rejects datetime64 without an explicit caller conversion.',
+    expected: error(
+      /datetime64.*Arrow.*astype\('datetime64\[ms\]'\)\.astype\(str\).*declared unit/i
+    ),
   }),
   libraryRow({
     id: 'numpy-big-endian',
@@ -369,6 +372,25 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     expected: error(/Arrow encoding failed for ndarray/i),
   }),
   libraryRow({
+    id: 'numpy-structured-json',
+    call: 'numpy_structured()',
+    codec: 'json',
+    requires: ['numpy'],
+    status: 'LOUD_FAIL',
+    currentBehavior: 'JSON fallback rejects structured arrays instead of erasing field names.',
+    expected: error(/structured dtype=.*named field explicitly.*plain JSON object/i),
+  }),
+  libraryRow({
+    id: 'numpy-object-json',
+    call: 'numpy_object()',
+    codec: 'json',
+    requires: ['numpy'],
+    status: 'LOUD_FAIL',
+    currentBehavior:
+      'JSON fallback rejects object arrays instead of accepting arbitrary tolist output.',
+    expected: error(/object dtype=.*concrete numeric dtype.*elements explicitly as plain JSON/i),
+  }),
+  libraryRow({
     id: 'numpy-empty',
     call: 'numpy_empty()',
     codec: 'arrow',
@@ -382,9 +404,9 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     call: 'numpy_unsafe_int64()',
     codec: 'json',
     requires: ['numpy'],
-    status: 'KNOWN_LIE',
-    currentBehavior: 'JSON fallback rounds int64 values above 2^53.',
-    expected: equal([2 ** 53]),
+    status: 'LOUD_FAIL',
+    currentBehavior: 'JSON fallback rejects integers outside the JavaScript safe range.',
+    expected: error(/use Arrow encoding or cast\/encode explicitly.*astype\('float64'\).*str/i),
   }),
 
   // pandas: both paths are present whenever dtype/index fidelity differs.

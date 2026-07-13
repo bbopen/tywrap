@@ -504,7 +504,7 @@ function assertJsonMatchesShape(
   dtype: string | undefined
 ): void {
   const declaredCount = shapeProduct(shape);
-  const strictLeaves = /^(?:bool|u?int\d*|float\d*)$/.test(dtype ?? '');
+  const strictLeaves = dtype !== undefined;
   const actualCount = strictLeaves ? countJsonLeaves(data) : undefined;
   const visit = (value: unknown, depth: number, path: string): void => {
     if (depth === shape.length) {
