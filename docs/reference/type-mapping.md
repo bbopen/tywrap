@@ -126,6 +126,10 @@ interface TorchTensor {
   shape: number[];
   dtype?: string;
   device?: string;
+  /** Original dtype when the bridge upcast the tensor (e.g. torch.bfloat16). */
+  sourceDtype?: string;
+  /** Original device when TYWRAP_TORCH_ALLOW_COPY=1 moved the tensor to CPU. */
+  sourceDevice?: string;
 }
 ```
 
