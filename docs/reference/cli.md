@@ -80,7 +80,8 @@ npx tywrap generate --modules math,statistics --runtime node
 
 `--check` is for CI and upgrade verification. It does not write files.
 
-Each generation writes `<module>.contract.json` beside the generated wrapper.
+A normal generation writes `<module>.contract.json` beside the generated
+wrapper. Check mode compares against it without writing.
 The contract is byte-stable across machines and Python processes. `--check`
 compares that file as well as generated TypeScript, declaration files, and source
 maps when those outputs are enabled, so it also reports contract drift.

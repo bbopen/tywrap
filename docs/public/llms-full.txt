@@ -110,7 +110,6 @@ import { defineConfig } from 'tywrap';
 export default defineConfig({
   pythonModules: {
     math: {
-      runtime: 'node',
       typeHints: 'strict',
     },
   },
@@ -685,7 +684,7 @@ tywrap supports five runtime configurations. Choose based on your environment.
 | ------------------------------ | :-----: | :-: | :-----------------: | :------------------: | :---------: |
 | Python subprocess              | yes    | yes | yes              | no                 | no        |
 | Deno Deploy / serverless       | no     | no  | no               | yes                | yes       |
-| Apache Arrow transport         | yes    | yes | yes              | yes                | yes       |
+| Apache Arrow transport         | yes    | yes | yes              | no (JSON only)     | yes       |
 | Virtual environment support    | yes    | yes | yes              | no                 | Server-side |
 | Process pooling (experimental) | yes    | yes | yes              | no                 | no        |
 | Development hot reload         | yes    | no  | no               | Manual bridge reload | External |
@@ -1000,7 +999,8 @@ export TYWRAP_CODEC_FALLBACK=json
 
 ### Payload Size Limit
 
-The subprocess bridge writes a single JSONL response per call. To prevent
+The subprocess bridge writes one JSONL response per call; a response larger
+than the line ceiling is split with `tywrap-frame/1` chunking. To prevent
 oversized payloads:
 
 ```bash
@@ -1702,7 +1702,7 @@ setRuntimeBridge(
 
 | Option      | Required | Default | Description                                |
 | ----------- | -------- | ------- | ------------------------------------------ |
-| `baseURL`   | Yes      | required | Base URL of the Python bridge server      |
+| `baseURL`   | Yes      | none    | Base URL of the Python bridge server       |
 | `headers`   | No       | `{}`    | Additional HTTP headers (auth, CORS, etc.) |
 | `timeoutMs` | No       | `30000` | Request timeout in milliseconds            |
 | `codec`     | No       | Arrow   | Codec options                              |
@@ -1957,7 +1957,8 @@ npx tywrap generate --modules math,statistics --runtime node
 
 `--check` is for CI and upgrade verification. It does not write files.
 
-Each generation writes `<module>.contract.json` beside the generated wrapper.
+A normal generation writes `<module>.contract.json` beside the generated
+wrapper. Check mode compares against it without writing.
 The contract is byte-stable across machines and Python processes. `--check`
 compares that file as well as generated TypeScript, declaration files, and source
 maps when those outputs are enabled, so it also reports contract drift.
@@ -2365,9 +2366,9 @@ Every scientific envelope has these fields:
 ### SciPy sparse
 
 Supported targets are `scipy.sparse.csr_matrix`, `csc_matrix`, and
-`coo_matrix`.
+`coo_matrix`. The block below is a schema sketch, not a literal payload:
 
-```json
+```jsonc
 {
   "__tywrap__": "scipy.sparse",
   "codecVersion": 1,
@@ -2392,9 +2393,9 @@ your consumer needs a dense value.
 
 ### Torch tensor
 
-The target is `torch.Tensor`. CPU tensors work by default.
+The target is `torch.Tensor`. CPU tensors work by default. Schema sketch:
 
-```json
+```jsonc
 {
   "__tywrap__": "torch.tensor",
   "codecVersion": 1,
@@ -2421,9 +2422,9 @@ is acceptable for the call.
 ### Sklearn estimator
 
 Sklearn prediction and score values use the existing NumPy and pandas codecs.
-An estimator itself can use this metadata envelope:
+An estimator itself can use this metadata envelope (schema sketch):
 
-```json
+```jsonc
 {
   "__tywrap__": "sklearn.estimator",
   "codecVersion": 1,
@@ -2437,9 +2438,11 @@ An estimator itself can use this metadata envelope:
 
 ## Arrow and JSON
 
-Arrow is the default encoding for ndarrays, DataFrames, and Series when
-`apache-arrow` is available. The JavaScript runtime registers an Arrow decoder
-when it can import that package. `apache-arrow` is an optional peer dependency.
+Arrow is the default encoding for ndarrays, DataFrames, and Series when both
+sides support it: the Python bridge needs `pyarrow` (reported as
+`arrowAvailable` in `BridgeInfo`) and the JavaScript runtime needs the optional
+`apache-arrow` peer dependency. The Pyodide transport is JSON-only because
+pyarrow is not available in WASM.
 
 If an Arrow payload arrives without the dependency, decoding fails with an
 installation hint. Set `TYWRAP_CODEC_FALLBACK=json` on the Python side when a
@@ -2840,7 +2843,7 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
+    math: { typeHints: 'strict' },
   },
 });
 ```
@@ -2867,7 +2870,7 @@ import { generate } from 'tywrap';
 
 await generate({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
+    math: { typeHints: 'strict' },
   },
   output: {
     dir: './generated',
@@ -3147,8 +3150,8 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
-    collections: { runtime: 'node', typeHints: 'strict' },
+    math: { typeHints: 'strict' },
+    collections: { typeHints: 'strict' },
   },
   output: {
     dir: './generated',
@@ -3390,8 +3393,7 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    numpy: { 
-      runtime: 'node' as const,  // Correct type
+    numpy: {
       typeHints: 'strict' as const
     }
   },
@@ -3505,6 +3507,7 @@ try {
 - Verify custom bridge scripts follow the JSON line protocol.
 
 ### Memory Issues
+
 **Error**: out of memory errors or process crashes
 
 **Solutions**
@@ -3807,7 +3810,7 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' }
+    math: { typeHints: 'strict' }
   },
   output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false }
 });

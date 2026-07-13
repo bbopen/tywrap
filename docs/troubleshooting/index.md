@@ -172,8 +172,7 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    numpy: { 
-      runtime: 'node' as const,  // Correct type
+    numpy: {
       typeHints: 'strict' as const
     }
   },
@@ -287,6 +286,7 @@ try {
 - Verify custom bridge scripts follow the JSON line protocol.
 
 ### Memory Issues
+
 **Error**: out of memory errors or process crashes
 
 **Solutions**
@@ -589,7 +589,7 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' }
+    math: { typeHints: 'strict' }
   },
   output: { dir: './generated', format: 'esm', declaration: false, sourceMap: false }
 });

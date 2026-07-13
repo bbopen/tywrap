@@ -13,7 +13,7 @@ import { defineConfig } from 'tywrap';
 
 export default defineConfig({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
+    math: { typeHints: 'strict' },
   },
 });
 ```
@@ -40,7 +40,7 @@ import { generate } from 'tywrap';
 
 await generate({
   pythonModules: {
-    math: { runtime: 'node', typeHints: 'strict' },
+    math: { typeHints: 'strict' },
   },
   output: {
     dir: './generated',

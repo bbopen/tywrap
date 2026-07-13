@@ -273,7 +273,8 @@ export TYWRAP_CODEC_FALLBACK=json
 
 ### Payload Size Limit
 
-The subprocess bridge writes a single JSONL response per call. To prevent
+The subprocess bridge writes one JSONL response per call; a response larger
+than the line ceiling is split with `tywrap-frame/1` chunking. To prevent
 oversized payloads:
 
 ```bash

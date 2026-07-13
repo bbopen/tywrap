@@ -38,7 +38,7 @@ setRuntimeBridge(
 
 | Option      | Required | Default | Description                                |
 | ----------- | -------- | ------- | ------------------------------------------ |
-| `baseURL`   | Yes      | required | Base URL of the Python bridge server      |
+| `baseURL`   | Yes      | none    | Base URL of the Python bridge server       |
 | `headers`   | No       | `{}`    | Additional HTTP headers (auth, CORS, etc.) |
 | `timeoutMs` | No       | `30000` | Request timeout in milliseconds            |
 | `codec`     | No       | Arrow   | Codec options                              |

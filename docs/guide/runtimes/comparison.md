@@ -8,7 +8,7 @@ tywrap supports five runtime configurations. Choose based on your environment.
 | ------------------------------ | :-----: | :-: | :-----------------: | :------------------: | :---------: |
 | Python subprocess              | yes    | yes | yes              | no                 | no        |
 | Deno Deploy / serverless       | no     | no  | no               | yes                | yes       |
-| Apache Arrow transport         | yes    | yes | yes              | yes                | yes       |
+| Apache Arrow transport         | yes    | yes | yes              | no (JSON only)     | yes       |
 | Virtual environment support    | yes    | yes | yes              | no                 | Server-side |
 | Process pooling (experimental) | yes    | yes | yes              | no                 | no        |
 | Development hot reload         | yes    | no  | no               | Manual bridge reload | External |

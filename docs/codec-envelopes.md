@@ -43,9 +43,9 @@ Every scientific envelope has these fields:
 ### SciPy sparse
 
 Supported targets are `scipy.sparse.csr_matrix`, `csc_matrix`, and
-`coo_matrix`.
+`coo_matrix`. The block below is a schema sketch, not a literal payload:
 
-```json
+```jsonc
 {
   "__tywrap__": "scipy.sparse",
   "codecVersion": 1,
@@ -70,9 +70,9 @@ your consumer needs a dense value.
 
 ### Torch tensor
 
-The target is `torch.Tensor`. CPU tensors work by default.
+The target is `torch.Tensor`. CPU tensors work by default. Schema sketch:
 
-```json
+```jsonc
 {
   "__tywrap__": "torch.tensor",
   "codecVersion": 1,
@@ -99,9 +99,9 @@ is acceptable for the call.
 ### Sklearn estimator
 
 Sklearn prediction and score values use the existing NumPy and pandas codecs.
-An estimator itself can use this metadata envelope:
+An estimator itself can use this metadata envelope (schema sketch):
 
-```json
+```jsonc
 {
   "__tywrap__": "sklearn.estimator",
   "codecVersion": 1,
@@ -115,9 +115,11 @@ An estimator itself can use this metadata envelope:
 
 ## Arrow and JSON
 
-Arrow is the default encoding for ndarrays, DataFrames, and Series when
-`apache-arrow` is available. The JavaScript runtime registers an Arrow decoder
-when it can import that package. `apache-arrow` is an optional peer dependency.
+Arrow is the default encoding for ndarrays, DataFrames, and Series when both
+sides support it: the Python bridge needs `pyarrow` (reported as
+`arrowAvailable` in `BridgeInfo`) and the JavaScript runtime needs the optional
+`apache-arrow` peer dependency. The Pyodide transport is JSON-only because
+pyarrow is not available in WASM.
 
 If an Arrow payload arrives without the dependency, decoding fails with an
 installation hint. Set `TYWRAP_CODEC_FALLBACK=json` on the Python side when a

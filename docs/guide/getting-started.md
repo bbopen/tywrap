@@ -51,7 +51,6 @@ import { defineConfig } from 'tywrap';
 export default defineConfig({
   pythonModules: {
     math: {
-      runtime: 'node',
       typeHints: 'strict',
     },
   },
