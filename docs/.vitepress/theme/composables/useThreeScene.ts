@@ -211,7 +211,7 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     if (i === 1) {
       // Swing low through the open space below the feature panel, leaning
       // toward the camera: the stretch where the head shows off.
-      pathPoints.push(mid.clone().addScaledVector(side, 2.4).add(new THREE.Vector3(0, -2.1, 0)).setZ(2.4))
+      pathPoints.push(mid.clone().addScaledVector(side, 2.4).add(new THREE.Vector3(0, -2.7, 0)).setZ(2.4))
     } else {
       pathPoints.push(mid.clone().addScaledVector(side, 2.4).setZ(-2.0 * zSign))
     }
@@ -447,17 +447,73 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     metalness: 0.12,
     roughness: 0.55,
   }))
-  const skullGeo = track(new THREE.SphereGeometry(0.88, 24, 18))
-  skullGeo.scale(1.0, 0.58, 1.42)
-  const skull = new THREE.Mesh(skullGeo, headMat)
-  skull.position.z = 0.62
-  headGroup.add(skull)
-  const snoutGeo = track(new THREE.SphereGeometry(0.52, 20, 14))
-  snoutGeo.scale(0.82, 0.48, 1.3)
-  const snout = new THREE.Mesh(snoutGeo, headMat)
-  snout.position.set(0, -0.08, 1.55)
-  headGroup.add(snout)
 
+  // Lofted python head: elliptical cross-sections along the head's length.
+  // z runs 0 (neck joint) .. 1 (snout tip), scaled by HEAD_L. The skull is
+  // broad and flat behind the eyes, the snout tapers, droops slightly, and
+  // rounds off; the jaw is flatter than the crown and carries a mouth crease.
+  const HEAD_L = 2.45
+  const ss = (a: number, b: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
+    return t * t * (3 - 2 * t)
+  }
+  const headWidth = (z: number) => 0.36 + 0.3 * ss(0.05, 0.38, z) - 0.49 * ss(0.55, 0.97, z)
+  const headTop = (z: number) => 0.32 + 0.1 * ss(0.05, 0.4, z) - 0.3 * ss(0.5, 0.97, z)
+  const headBottom = (z: number) => 0.3 - 0.18 * ss(0.5, 0.97, z)
+  const headDroop = (z: number) => -0.09 * ss(0.5, 1, z)
+  const headCap = (z: number) => {
+    const t = Math.max(0, (z - 0.9) / 0.1)
+    return Math.sqrt(Math.max(0, 1 - t * t))
+  }
+  function headSurface(phi: number, z: number, out: THREE.Vector3): THREE.Vector3 {
+    // phi measured from +x (the snake's right); pi/2 is the crown.
+    const cap = headCap(z)
+    const sn = Math.sin(phi)
+    const h = sn > 0 ? headTop(z) : headBottom(z)
+    // Mouth crease: a shallow groove just below the widest line of each side.
+    const mouthPhi = Math.min(Math.abs(phi + 0.14), Math.abs(phi - Math.PI - 0.14), Math.abs(phi + Math.PI - 0.14))
+    const crease = 1 - 0.07 * Math.exp(-(mouthPhi * mouthPhi) / 0.012) * ss(0.3, 0.55, z)
+    out.set(
+      headWidth(z) * cap * Math.cos(phi) * crease,
+      h * cap * sn * crease + headDroop(z),
+      z * HEAD_L,
+    )
+    return out
+  }
+  {
+    const SEC = 40
+    const RAD = 44
+    const count = (SEC + 1) * (RAD + 1)
+    const hp = new Float32Array(count * 3)
+    const v = new THREE.Vector3()
+    for (let i = 0; i <= SEC; i++) {
+      const z = i / SEC
+      for (let j = 0; j <= RAD; j++) {
+        const phi = (j / RAD) * Math.PI * 2
+        headSurface(phi, z, v)
+        const k = (i * (RAD + 1) + j) * 3
+        hp[k] = v.x; hp[k + 1] = v.y; hp[k + 2] = v.z
+      }
+    }
+    const idx: number[] = []
+    for (let i = 0; i < SEC; i++) {
+      for (let j = 0; j < RAD; j++) {
+        const a = i * (RAD + 1) + j
+        const b = a + RAD + 1
+        idx.push(a, b, a + 1, b, b + 1, a + 1)
+      }
+    }
+    const headGeo = track(new THREE.BufferGeometry())
+    headGeo.setAttribute('position', new THREE.BufferAttribute(hp, 3))
+    headGeo.setIndex(idx)
+    headGeo.computeVertexNormals()
+    const headMesh = new THREE.Mesh(headGeo, headMat)
+    headMesh.position.z = -0.15 // tuck the neck joint into the body stub
+    headGroup.add(headMesh)
+  }
+
+  // Eyes sit just behind the widest point, high on the sides, under a shelf
+  // the loft's crown provides naturally. Slit pupils face forward.
   const eyeMat = track(new THREE.MeshStandardMaterial({
     color: 0xf5e18a,
     roughness: 0.15,
@@ -466,66 +522,85 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     emissiveIntensity: 0.35,
   }))
   const pupilMat = track(new THREE.MeshBasicMaterial({ color: 0x0a0a0a }))
-  const eyeGeo = track(new THREE.SphereGeometry(0.175, 16, 16))
-  const pupilGeo = track(new THREE.SphereGeometry(0.095, 12, 12))
-  const browGeo = track(new THREE.SphereGeometry(0.22, 14, 10))
-  for (const sideSign of [-1, 1]) {
-    const eye = new THREE.Mesh(eyeGeo, eyeMat)
-    eye.position.set(0.52 * sideSign, 0.22, 1.05)
-    headGroup.add(eye)
-    const pupil = new THREE.Mesh(pupilGeo, pupilMat)
-    pupil.scale.set(0.4, 1, 0.9) // vertical slit
-    pupil.position.set(0.6 * sideSign, 0.23, 1.12)
-    headGroup.add(pupil)
-    const brow = new THREE.Mesh(browGeo, headMat)
-    brow.scale.set(1.0, 0.35, 1.2)
-    brow.position.set(0.5 * sideSign, 0.34, 1.0)
-    headGroup.add(brow)
+  const eyeGeo = track(new THREE.SphereGeometry(0.16, 16, 16))
+  const pupilGeo = track(new THREE.SphereGeometry(0.085, 12, 12))
+  const nostrilGeo = track(new THREE.SphereGeometry(0.045, 8, 8))
+  {
+    const zEye = 0.5
+    const wE = headWidth(zEye) * headCap(zEye)
+    const hE = headTop(zEye) * headCap(zEye)
+    for (const sideSign of [-1, 1]) {
+      const eye = new THREE.Mesh(eyeGeo, eyeMat)
+      eye.position.set(wE * 0.78 * sideSign, hE * 0.52 + headDroop(zEye), zEye * HEAD_L - 0.15)
+      headGroup.add(eye)
+      const pupil = new THREE.Mesh(pupilGeo, pupilMat)
+      pupil.scale.set(0.38, 1, 0.9) // vertical slit
+      pupil.position.copy(eye.position)
+      pupil.position.x += 0.07 * sideSign
+      pupil.position.z += 0.09
+      headGroup.add(pupil)
+    }
+    const zN = 0.9
+    const wN = headWidth(zN) * headCap(zN)
+    for (const sideSign of [-1, 1]) {
+      const nostril = new THREE.Mesh(nostrilGeo, pupilMat)
+      nostril.position.set(wN * 0.45 * sideSign, headTop(zN) * headCap(zN) * 0.35 + headDroop(zN), zN * HEAD_L - 0.15)
+      headGroup.add(nostril)
+    }
   }
 
-  // Shingle the skull with mini scale plates so the head matches the body.
+  // Shingle the crown with plates fitted to the loft surface.
   {
-    const HEAD_PLATES = 90
-    const a = 0.88, b = 0.88 * 0.58, c = 0.88 * 1.42
+    const rows = 13
+    const perRowMax = 16
     const headScaleMat = track(new THREE.MeshStandardMaterial({
       color: 0xd08a2e,
       metalness: 0.15,
       roughness: 0.42,
     }))
-    const headScales = new THREE.InstancedMesh(plateGeo, headScaleMat, HEAD_PLATES)
+    const headScales = new THREE.InstancedMesh(plateGeo, headScaleMat, rows * perRowMax)
     headScales.instanceMatrix.setUsage(THREE.StaticDrawUsage)
-    const dir = new THREE.Vector3()
+    const sp = new THREE.Vector3()
+    const spNext = new THREE.Vector3()
+    const spSide = new THREE.Vector3()
     const nrm = new THREE.Vector3()
     const fwd = new THREE.Vector3()
     const sde = new THREE.Vector3()
-    const pos = new THREE.Vector3()
     const quat = new THREE.Quaternion()
     const basis = new THREE.Matrix4()
     const scl = new THREE.Vector3()
     const m = new THREE.Matrix4()
-    const golden = Math.PI * (3 - Math.sqrt(5))
     let placed = 0
-    for (let i = 0; i < 300 && placed < HEAD_PLATES; i++) {
-      const y = 1 - (i / 299) * 2
-      const rad = Math.sqrt(1 - y * y)
-      const th = golden * i
-      dir.set(Math.cos(th) * rad, y, Math.sin(th) * rad)
-      if (dir.y < -0.15) continue // belly side of the skull stays smooth
-      const t = 1 / Math.sqrt((dir.x / a) ** 2 + (dir.y / b) ** 2 + (dir.z / c) ** 2)
-      pos.copy(dir).multiplyScalar(t)
-      nrm.set(dir.x / (a * a), dir.y / (b * b), dir.z / (c * c)).normalize()
-      fwd.set(0, 0, 1).addScaledVector(nrm, -nrm.z).normalize()
-      sde.crossVectors(fwd, nrm).normalize()
-      fwd.crossVectors(nrm, sde).normalize()
-      basis.makeBasis(fwd, nrm, sde)
-      quat.setFromRotationMatrix(basis).multiply(new THREE.Quaternion().setFromAxisAngle(sde, 0.35))
-      scl.setScalar(0.5 + Math.random() * 0.15)
-      m.compose(pos.add(skull.position), quat, scl)
-      headScales.setMatrixAt(placed, m)
-      const chestnut = Math.random() < 0.25
-      color.setHSL(chestnut ? 0.05 : 0.08, chestnut ? 0.6 : 0.68, chestnut ? 0.16 : 0.42 + Math.random() * 0.1)
-      headScales.setColorAt(placed, color)
-      placed++
+    for (let ri = 0; ri < rows; ri++) {
+      const z = 0.08 + (ri / (rows - 1)) * 0.82
+      const zEyeGap = Math.abs(z - 0.5)
+      const w = headWidth(z) * headCap(z)
+      const n = Math.max(4, Math.round((w / 0.66) * perRowMax))
+      const stagger = (ri % 2) * 0.5
+      for (let s = 0; s < n; s++) {
+        // Crown and upper sides only; skip plates that would collide with eyes.
+        const phi = Math.PI * 0.12 + ((s + stagger) / (n - 0.5)) * Math.PI * 0.76
+        if (zEyeGap < 0.09 && (Math.abs(phi - Math.PI * 0.28) < 0.3 || Math.abs(phi - Math.PI * 0.72) < 0.3)) continue
+        headSurface(phi, z, sp)
+        headSurface(phi, Math.min(1, z + 0.02), spNext)
+        headSurface(phi + 0.04, z, spSide)
+        fwd.copy(spNext).sub(sp).normalize()
+        sde.copy(spSide).sub(sp).normalize()
+        nrm.crossVectors(sde, fwd).normalize()
+        if (nrm.y < 0) nrm.negate()
+        sde.crossVectors(fwd, nrm).normalize()
+        fwd.crossVectors(nrm, sde).normalize()
+        basis.makeBasis(fwd, nrm, sde)
+        quat.setFromRotationMatrix(basis).multiply(new THREE.Quaternion().setFromAxisAngle(sde, 0.3))
+        scl.setScalar((0.42 + Math.random() * 0.1) * (0.55 + 0.7 * w))
+        sp.z -= 0.15 // headMesh offset
+        m.compose(sp, quat, scl)
+        headScales.setMatrixAt(placed, m)
+        const chestnut = Math.random() < 0.25
+        color.setHSL(chestnut ? 0.05 : 0.08, chestnut ? 0.6 : 0.68, chestnut ? 0.16 : 0.42 + Math.random() * 0.1)
+        headScales.setColorAt(placed, color)
+        placed++
+      }
     }
     headScales.count = placed
     headScales.instanceMatrix.needsUpdate = true
@@ -536,7 +611,7 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
 
   // Tongue: two thin cylinders in a V, animated flick.
   const tongueGroup = new THREE.Group()
-  tongueGroup.position.set(0, -0.12, 1.72)
+  tongueGroup.position.set(0, headDroop(1) - 0.06, HEAD_L - 0.18)
   headGroup.add(tongueGroup)
   const tongueMat = track(new THREE.MeshStandardMaterial({ color: 0xb3123a, roughness: 0.4 }))
   const tongueGeo = track(new THREE.CylinderGeometry(0.022, 0.014, 0.7, 6))
