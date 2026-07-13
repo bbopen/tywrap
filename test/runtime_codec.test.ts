@@ -16,6 +16,7 @@ import {
   type DecodedValue,
   type ArrowTable,
 } from '../src/utils/codec.js';
+import { createReturnValidator } from '../src/runtime/validators.js';
 
 describe('Cross-Runtime Data Transfer Codec', () => {
   let originalAtob: typeof globalThis.atob | undefined;
@@ -468,6 +469,12 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         indptr: [0, 1, 2],
         dtype: 'float64',
       });
+      expect(
+        createReturnValidator(
+          { kind: 'marker', marker: 'scipy.sparse', dims: 2, dtype: 'float64' },
+          'fixture.sparse'
+        )(result)
+      ).toBe(result);
     });
 
     it('should reject invalid sparse matrix envelopes', async () => {
@@ -536,6 +543,12 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         dtype: 'float32',
         device: 'cpu',
       });
+      expect(
+        createReturnValidator(
+          { kind: 'marker', marker: 'torch.tensor', dims: 1, dtype: 'float32' },
+          'fixture.tensor'
+        )(result)
+      ).toBe(result);
     });
 
     it('should await nested Arrow ndarray decoding', async () => {
@@ -568,6 +581,12 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         dtype: 'float32',
         device: 'cpu',
       });
+      expect(
+        createReturnValidator(
+          { kind: 'marker', marker: 'torch.tensor', dims: 1, dtype: 'float32' },
+          'fixture.tensor'
+        )(result)
+      ).toBe(result);
     });
 
     it('should fail with an actionable error when apache-arrow is absent (nested)', async () => {
@@ -691,6 +710,12 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         version: '1.4.2',
         params: { fit_intercept: true },
       });
+      expect(
+        createReturnValidator(
+          { kind: 'marker', marker: 'sklearn.estimator' },
+          'fixture.estimator'
+        )(result)
+      ).toBe(result);
     });
 
     it('should reject invalid sklearn estimator envelopes', async () => {

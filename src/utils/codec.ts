@@ -858,14 +858,17 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
     }
     assertIndexArrayInRange(row, rows, 'row');
     assertIndexArrayInRange(col, cols, 'col');
-    return {
-      format,
-      shape,
-      data,
-      row,
-      col,
-      dtype,
-    } satisfies SparseMatrix;
+    return tagDecodedShape(
+      {
+        format,
+        shape,
+        data,
+        row,
+        col,
+        dtype,
+      } satisfies SparseMatrix,
+      { marker: 'scipy.sparse', dims: shape.length, dtype }
+    );
   }
 
   const indices = value.indices;
@@ -919,14 +922,17 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
     );
   }
   assertIndexArrayInRange(indices, minorAxis, 'indices');
-  return {
-    format,
-    shape,
-    data,
-    indices,
-    indptr,
-    dtype,
-  } satisfies SparseMatrix;
+  return tagDecodedShape(
+    {
+      format,
+      shape,
+      data,
+      indices,
+      indptr,
+      dtype,
+    } satisfies SparseMatrix,
+    { marker: 'scipy.sparse', dims: shape.length, dtype }
+  );
 };
 
 /** Product of a shape's dimensions (the element count). [] (scalar) -> 1. */
@@ -1010,9 +1016,19 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
 
   const decoded = recurse(nested);
   if (isPromiseLike(decoded)) {
-    return decoded.then(data => ({ data, shape, dtype, device })) as Promise<T | unknown>;
+    return decoded.then(data =>
+      tagDecodedShape({ data, shape, dtype, device } satisfies TorchTensor, {
+        marker: 'torch.tensor',
+        dims: shape?.length,
+        dtype,
+      })
+    ) as Promise<T | unknown>;
   }
-  return { data: decoded, shape, dtype, device } satisfies TorchTensor;
+  return tagDecodedShape({ data: decoded, shape, dtype, device } satisfies TorchTensor, {
+    marker: 'torch.tensor',
+    dims: shape?.length,
+    dtype,
+  });
 };
 
 /**
@@ -1101,12 +1117,15 @@ const decodeSklearnEstimatorEnvelope: EnvelopeHandler = value => {
     throw new Error('Invalid sklearn.estimator envelope: version must be a string when provided');
   }
   const version = typeof versionValue === 'string' ? versionValue : undefined;
-  return {
-    className,
-    module,
-    version,
-    params,
-  } satisfies SklearnEstimator;
+  return tagDecodedShape(
+    {
+      className,
+      module,
+      version,
+      params,
+    } satisfies SklearnEstimator,
+    { marker: 'sklearn.estimator' }
+  );
 };
 
 // Why: dispatch over the __tywrap__ typeTag instead of a long if-chain so each type's

@@ -512,6 +512,21 @@ export class CodeGenerator {
           if (leaf === 'ndarray' || leaf === 'NDArray' || full.includes('numpy')) {
             return { kind: 'marker', marker: 'ndarray' };
           }
+          if (
+            ['csr_matrix', 'csc_matrix', 'coo_matrix', 'spmatrix'].includes(leaf) &&
+            (!current.module || current.module.startsWith('scipy'))
+          ) {
+            return { kind: 'marker', marker: 'scipy.sparse' };
+          }
+          if (leaf === 'Tensor' && (!current.module || current.module.startsWith('torch'))) {
+            return { kind: 'marker', marker: 'torch.tensor' };
+          }
+          if (
+            leaf === 'BaseEstimator' &&
+            (!current.module || current.module.startsWith('sklearn'))
+          ) {
+            return { kind: 'marker', marker: 'sklearn.estimator' };
+          }
           return definitions.has(leaf) ? { kind: 'ref', name: leaf } : { kind: 'any' };
         }
         case 'typevar':

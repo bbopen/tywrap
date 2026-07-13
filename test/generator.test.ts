@@ -118,6 +118,42 @@ describe('CodeGenerator', () => {
     expect(code.typescript).toContain('{"kind":"any"}');
   });
 
+  it('emits provenance marker schemas for SciPy, Torch, and sklearn returns', () => {
+    const makeFunction = (name: string, returnType: any): any => ({
+      name,
+      signature: { parameters: [], returnType, isAsync: false, isGenerator: false },
+      decorators: [],
+      isAsync: false,
+      isGenerator: false,
+      returnType,
+      parameters: [],
+    });
+    const code = gen.generateModuleDefinition({
+      name: 'scientific',
+      functions: [
+        makeFunction('sparse', {
+          kind: 'custom',
+          name: 'csr_matrix',
+          module: 'scipy.sparse',
+        }),
+        makeFunction('tensor', { kind: 'custom', name: 'Tensor', module: 'torch' }),
+        makeFunction('estimator', {
+          kind: 'custom',
+          name: 'BaseEstimator',
+          module: 'sklearn.base',
+        }),
+      ],
+      classes: [],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    });
+
+    expect(code.typescript).toContain('{"kind":"marker","marker":"scipy.sparse"}');
+    expect(code.typescript).toContain('{"kind":"marker","marker":"torch.tensor"}');
+    expect(code.typescript).toContain('{"kind":"marker","marker":"sklearn.estimator"}');
+  });
+
   it('serializes tuple types as TS tuples', () => {
     const code = gen.generateFunctionWrapper(
       {
