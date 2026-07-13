@@ -148,10 +148,30 @@ def pandas_nullable_int64() -> object:
     return pd.DataFrame({"value": pd.Series([1, pd.NA], dtype="Int64")})
 
 
+def pandas_named_series() -> object:
+    import pandas as pd
+
+    return pd.Series([1, pd.NA], dtype="Int64", name="original_name")
+
+
 def pandas_categorical() -> object:
     import pandas as pd
 
-    return pd.DataFrame({"value": pd.Categorical(["a", "b", "a"])})
+    return pd.DataFrame(
+        {
+            "value": pd.Categorical(
+                ["a", "b", "a"],
+                categories=["unused", "b", "a"],
+                ordered=True,
+            )
+        }
+    )
+
+
+def pandas_nullable_boolean() -> object:
+    import pandas as pd
+
+    return pd.DataFrame({"value": pd.Series([True, pd.NA, False], dtype="boolean")})
 
 
 def pandas_pyarrow_string() -> object:
