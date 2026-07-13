@@ -124,7 +124,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "yargs": "^18.0.0"
   },
   "devDependencies": {
