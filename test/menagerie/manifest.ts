@@ -164,16 +164,23 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
   valuesRow({
     id: 'empty-values',
     call: 'empty_values()',
-    status: 'LOUD_FAIL',
-    currentBehavior: 'The unsupported nested set rejects with its result path.',
-    expected: error(/set is not JSON serializable at result\[3\]/i),
+    status: 'KNOWN_LIE',
+    currentBehavior: 'The empty Python tuple and set both arrive as arrays.',
+    expected: equal([[], [], {}, []]),
+    expectedFix: 'Future exact empty-tuple and set transport.',
   }),
   valuesRow({
     id: 'set-and-frozenset',
     call: 'set_and_frozenset()',
-    status: 'LOUD_FAIL',
-    currentBehavior: 'The unsupported set rejects before the frozenset with its result path.',
-    expected: error(/set is not JSON serializable at result\[0\]/i),
+    status: 'EXPECTED_OK',
+    currentBehavior: 'Python sets and frozensets are declared and delivered as JavaScript arrays.',
+    expected: {
+      kind: 'set-pair',
+      value: [
+        [1, 2],
+        ['a', 'b'],
+      ],
+    },
   }),
   valuesRow({
     id: 'int-key-dict',

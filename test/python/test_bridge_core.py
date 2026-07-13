@@ -20,6 +20,7 @@ from tywrap_bridge_core import (  # noqa: E402
     ProtocolError,
     deserialize,
     dispatch_request,
+    encode_value,
     serialize,
     serialize_ndarray_json,
 )
@@ -196,40 +197,18 @@ def test_invalid_dict_key_names_the_offending_path() -> None:
     assert 'keys must be str, int, float, bool or None, not tuple' in str(exc_info.value)
 
 
-def test_non_identifier_key_uses_decoder_style_path() -> None:
-    class CustomValue:
-        pass
+def test_nested_set_uses_the_same_default_encoding_as_a_root_set() -> None:
+    value = {1, 2}
+    root_json = encode_value(
+        serialize(value, force_json_markers=True),
+        allow_nan=False,
+    )
+    nested_json = encode_value(
+        serialize({'outer': {'values': value}}, force_json_markers=True),
+        allow_nan=False,
+    )
 
-    with pytest.raises(TypeError) as exc_info:
-        serialize({'données brutes': CustomValue()}, force_json_markers=True)
-
-    assert str(exc_info.value).endswith('at result["données brutes"]')
-
-
-@pytest.mark.parametrize(
-    ('value', 'path'),
-    [
-        ({'items': [{1, 2}]}, 'result.items[0]'),
-        ({'items': [frozenset({1, 2})]}, 'result.items[0]'),
-        ({1, 2}, 'result'),
-    ],
-)
-def test_sets_are_rejected_with_the_value_path(value: object, path: str) -> None:
-    with pytest.raises(TypeError) as exc_info:
-        serialize(value, force_json_markers=True)
-
-    assert 'is not JSON serializable' in str(exc_info.value)
-    assert str(exc_info.value).endswith(f'at {path}')
-
-
-def test_custom_object_rejection_names_the_nested_path() -> None:
-    class CustomValue:
-        pass
-
-    with pytest.raises(TypeError) as exc_info:
-        serialize({'items': [CustomValue()]}, force_json_markers=True)
-
-    assert str(exc_info.value).endswith('at result.items[0]')
+    assert nested_json == f'{{"outer": {{"values": {root_json}}}}}'
 
 
 def test_rejected_scientific_dtype_keeps_error_and_adds_path() -> None:

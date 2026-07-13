@@ -887,10 +887,8 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
     sys.modules, so these checks never cold-import the scientific stack. The
     package dispatch deliberately precedes the JSON-native fast path: e.g. a
     package-defined subclass of dict still receives its relevant codec check.
-    Remaining BridgeCodec scalar behaviors (numpy/pandas scalars, bytes, and
-    NaN/Infinity rejection) are applied later during JSON encoding. Unsupported
-    containers and values, including sets and complex numbers, reject here so a
-    nested failure can name its result path.
+    Every other value is left untouched so the shared JSON encoder applies the
+    exact same default conversion at the root and at any nested depth.
     """
     root = [None]
     active_ids = set()
@@ -960,34 +958,7 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
                 )
             continue
 
-        if isinstance(current, (type(None), bool, int, float, str)):
-            parent[key] = current
-            continue
-        if isinstance(current, (set, frozenset)):
-            raise TypeError(
-                f'Object of type {type(current).__name__} is not JSON serializable at {path}'
-            )
-
-        pydantic_value = serialize_pydantic(current)
-        if pydantic_value is not _NO_PYDANTIC:
-            stack.append(('visit', pydantic_value, depth, path, parent, key))
-            continue
-        stdlib_value = serialize_stdlib(current)
-        if stdlib_value is not None:
-            parent[key] = stdlib_value
-            continue
-
-        # These values retain the established BridgeCodec default-encoder behavior.
-        if (
-            isinstance(current, (bytes, bytearray))
-            or _is_numpy_scalar(current)
-            or _is_pandas_scalar(current)
-        ):
-            parent[key] = current
-            continue
-        raise TypeError(
-            f'Object of type {type(current).__name__} is not JSON serializable at {path}'
-        )
+        parent[key] = current
 
     return root[0]
 
