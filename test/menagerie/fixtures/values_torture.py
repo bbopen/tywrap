@@ -32,6 +32,30 @@ def integer_boundaries() -> list[int]:
     return [2**53 - 1, 2**53, 2**53 + 1, 2**63, -(2**63), math.factorial(30)]
 
 
+def integer_safe_max() -> int:
+    return 2**53 - 1
+
+
+def integer_first_unsafe() -> int:
+    return 2**53
+
+
+def integer_first_rounded() -> int:
+    return 2**53 + 1
+
+
+def integer_int64_max() -> int:
+    return 2**63 - 1
+
+
+def integer_int64_min() -> int:
+    return -(2**63)
+
+
+def integer_factorial_30() -> int:
+    return math.factorial(30)
+
+
 def bools_and_ints() -> list[bool | int]:
     return [True, False, 0, 1]
 

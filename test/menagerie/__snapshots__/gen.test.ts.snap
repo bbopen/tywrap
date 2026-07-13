@@ -354,6 +354,48 @@ export async function integerBoundaries(): Promise<number[]> {
   return getRuntimeBridge().call<number[]>('fixtures.values_torture', 'integer_boundaries', __args, undefined, __validateinteger_boundariesResult);
 }
 
+const __validateinteger_factorial_30Result = createReturnValidator({"kind":"primitive","type":"number"}, "fixtures.values_torture.integer_factorial_30", __tywrapReturnDefinitions);
+
+export async function integerFactorial_30(): Promise<number> {
+  const __args: unknown[] = [];
+  return getRuntimeBridge().call<number>('fixtures.values_torture', 'integer_factorial_30', __args, undefined, __validateinteger_factorial_30Result);
+}
+
+const __validateinteger_first_roundedResult = createReturnValidator({"kind":"primitive","type":"number"}, "fixtures.values_torture.integer_first_rounded", __tywrapReturnDefinitions);
+
+export async function integerFirstRounded(): Promise<number> {
+  const __args: unknown[] = [];
+  return getRuntimeBridge().call<number>('fixtures.values_torture', 'integer_first_rounded', __args, undefined, __validateinteger_first_roundedResult);
+}
+
+const __validateinteger_first_unsafeResult = createReturnValidator({"kind":"primitive","type":"number"}, "fixtures.values_torture.integer_first_unsafe", __tywrapReturnDefinitions);
+
+export async function integerFirstUnsafe(): Promise<number> {
+  const __args: unknown[] = [];
+  return getRuntimeBridge().call<number>('fixtures.values_torture', 'integer_first_unsafe', __args, undefined, __validateinteger_first_unsafeResult);
+}
+
+const __validateinteger_int64_maxResult = createReturnValidator({"kind":"primitive","type":"number"}, "fixtures.values_torture.integer_int64_max", __tywrapReturnDefinitions);
+
+export async function integerInt64Max(): Promise<number> {
+  const __args: unknown[] = [];
+  return getRuntimeBridge().call<number>('fixtures.values_torture', 'integer_int64_max', __args, undefined, __validateinteger_int64_maxResult);
+}
+
+const __validateinteger_int64_minResult = createReturnValidator({"kind":"primitive","type":"number"}, "fixtures.values_torture.integer_int64_min", __tywrapReturnDefinitions);
+
+export async function integerInt64Min(): Promise<number> {
+  const __args: unknown[] = [];
+  return getRuntimeBridge().call<number>('fixtures.values_torture', 'integer_int64_min', __args, undefined, __validateinteger_int64_minResult);
+}
+
+const __validateinteger_safe_maxResult = createReturnValidator({"kind":"primitive","type":"number"}, "fixtures.values_torture.integer_safe_max", __tywrapReturnDefinitions);
+
+export async function integerSafeMax(): Promise<number> {
+  const __args: unknown[] = [];
+  return getRuntimeBridge().call<number>('fixtures.values_torture', 'integer_safe_max', __args, undefined, __validateinteger_safe_maxResult);
+}
+
 const __validatelone_surrogateResult = createReturnValidator({"kind":"primitive","type":"string"}, "fixtures.values_torture.lone_surrogate", __tywrapReturnDefinitions);
 
 export async function loneSurrogate(): Promise<string> {
@@ -459,6 +501,18 @@ export function generatorValue(): Promise<object>;
 export function intKeyDict(): Promise<{  [key: number]: string; }>;
 
 export function integerBoundaries(): Promise<number[]>;
+
+export function integerFactorial_30(): Promise<number>;
+
+export function integerFirstRounded(): Promise<number>;
+
+export function integerFirstUnsafe(): Promise<number>;
+
+export function integerInt64Max(): Promise<number>;
+
+export function integerInt64Min(): Promise<number>;
+
+export function integerSafeMax(): Promise<number>;
 
 export function loneSurrogate(): Promise<string>;
 
