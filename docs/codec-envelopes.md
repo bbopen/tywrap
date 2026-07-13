@@ -40,6 +40,23 @@ Every scientific envelope has these fields:
 - `codecVersion` is `1`. Decoders treat a missing version as legacy version `0`.
 - `encoding` identifies the payload representation.
 
+Scientific values can appear at the root of a result or inside nested Python
+dictionaries, lists, and tuples. The Python bridge replaces each recognized
+value with its envelope. The JavaScript codec then walks plain objects and
+arrays and decodes recognized envelopes within the traversal bounds. A decoded
+envelope is a terminal value, so fields inside its decoded output are not
+scanned again. A `torch.tensor` envelope is the exception because its `value`
+field is a required nested ndarray envelope.
+
+Serialization accepts a maximum nesting depth of 900 and at most 1,000,000
+visited containers. Decoding accepts a maximum depth of 2048 and the same
+1,000,000-container limit. Scientific envelopes count as containers, including
+the ndarray nested inside a tensor. Primitive leaves and the elements of a
+decoded envelope payload do not consume the container limit. The bridge reports
+the result path when a serialization bound is exceeded, and the JavaScript
+codec does the same for decoding bounds. The bridge also rejects circular
+Python containers.
+
 ### SciPy sparse
 
 Supported targets are `scipy.sparse.csr_matrix`, `csc_matrix`, and
@@ -90,7 +107,8 @@ The target is `torch.Tensor`. CPU tensors work by default. Schema sketch:
     "encoding": "arrow" | "json",
     "b64": "...",        // when encoding="arrow"
     "data": [ ... ],     // when encoding="json"
-    "shape": [ ... ]
+    "shape": [ ... ],
+    "dtype": "float32"
   }
 }
 ```
@@ -128,8 +146,24 @@ pyarrow is not available in WASM.
 
 If an Arrow payload arrives without the dependency, decoding fails with an
 installation hint. Set `TYWRAP_CODEC_FALLBACK=json` on the Python side when a
-JSON fallback is acceptable. JSON fallback is lossy for dtype and missing-value
-fidelity.
+JSON representation is acceptable.
+
+An ndarray JSON envelope includes `shape`, `dtype`, and plain JSON `data`. The
+decoder checks that the data matches the declared shape and supported dtype
+domain. It returns plain JavaScript arrays, or a scalar for a zero-dimensional
+array. The `dtype` field records provenance for validation; it does not create a
+typed JavaScript array. JSON encoding rejects ndarray dtypes and values that it
+cannot represent safely, including complex, structured, object, byte-string,
+unicode, datetime, timedelta, big-endian, and unsafe integer cases.
+
+DataFrame and Series JSON envelopes are values-only representations. Before
+encoding, the bridge requires an unnamed `RangeIndex` starting at 0 with step 1.
+It rejects a `MultiIndex`, categorical dtype, unsupported cell values, unsafe
+integers, non-finite floats, duplicate DataFrame column labels, and labels that
+collide after JSON object-key coercion. `None`, `pd.NA`, and `pd.NaT` become
+JSON `null`. Supported booleans, numbers, strings, empty values, and nulls keep
+their value semantics, but pandas dtype and index metadata are not retained as
+they are with Arrow.
 
 ## Size limits and transport framing
 
@@ -154,7 +188,8 @@ their promises resolve. A result that does not match its declared return type
 throws `BridgeValidationError` with the declared type, received shape, and call
 site.
 
-Columnar values retain their decoded provenance. Validation checks the envelope
-marker, dimensions, and dtype for DataFrame, Series, and ndarray returns
-without walking Arrow data. Returns declared as `unknown`, `void`, or `Any` do
-not receive a runtime check.
+Decoded scientific values retain their envelope provenance. Return validation
+recognizes all six markers: `ndarray`, `dataframe`, `series`, `scipy.sparse`,
+`torch.tensor`, and `sklearn.estimator`. It checks the marker and, when present
+in the return contract, dimensions and dtype without walking Arrow data. Returns
+declared as `unknown`, `void`, or `Any` do not receive a runtime check.

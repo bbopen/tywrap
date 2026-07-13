@@ -60,6 +60,7 @@ PROTOCOL_VERSION = 1
 CODEC_VERSION = 1
 MAX_SERIALIZE_DEPTH = 900
 MAX_SERIALIZE_NODES = 1_000_000
+JS_SAFE_INTEGER_MAX = 2**53 - 1
 _SERIALIZE_PATH_IDENTIFIER = re.compile(r'^[A-Za-z_$][\w$]*$', re.ASCII)
 
 
@@ -414,9 +415,8 @@ def serialize_ndarray_json(obj):
     if dtype.kind in ('i', 'u'):
         # JSON numbers become JavaScript Number values. Scan only on this explicit
         # fallback path and reject before tolist() can silently round an integer.
-        js_safe_integer_max = 2**53 - 1
         if obj.size and (
-            (obj < -js_safe_integer_max).any() or (obj > js_safe_integer_max).any()
+            (obj < -JS_SAFE_INTEGER_MAX).any() or (obj > JS_SAFE_INTEGER_MAX).any()
         ):
             raise RuntimeError(
                 f'JSON ndarray encoding cannot safely represent dtype={dtype_label} values '
@@ -525,7 +525,7 @@ def serialize_dataframe_json(obj):
     import pandas as pd  # type: ignore
 
     _validate_pandas_json_index(obj.index, pd, 'DataFrame')
-    json_columns = [_pandas_json_object_key(column) for column in obj.columns]
+    json_columns = [_json_object_key(column) for column in obj.columns]
     supported_json_columns = [column for column in json_columns if column is not None]
     if not obj.columns.is_unique or len(set(supported_json_columns)) != len(
         supported_json_columns
@@ -645,7 +645,7 @@ def _validate_pandas_json_index(index, pd, container_name):
         )
 
 
-def _pandas_json_object_key(value):
+def _json_object_key(value):
     """Return json.dumps' object-key spelling, or None for unsupported keys."""
     try:
         encoded = json.dumps({value: None})
@@ -664,8 +664,7 @@ def _normalize_pandas_json_scalar(value, location, pd):
     if type(value) is bool:
         return value
     if type(value) is int:
-        js_safe_integer_max = 2**53 - 1
-        if value < -js_safe_integer_max or value > js_safe_integer_max:
+        if value < -JS_SAFE_INTEGER_MAX or value > JS_SAFE_INTEGER_MAX:
             raise RuntimeError(
                 f'JSON pandas encoding cannot safely represent {location} integer values '
                 'outside the JavaScript safe integer range; use Arrow encoding or '
@@ -759,8 +758,8 @@ def serialize_torch_tensor(obj, *, force_json_markers, torch_allow_copy=False):
     Rejection order is significant: the categorical rejections (sparse / quantized
     / meta / complex) are checked BEFORE the device/contiguous opt-in branch so
     they fail with a clear, specific message and are NOT bypassable by
-    TYWRAP_TORCH_ALLOW_COPY. The opt-in only governs the lossy-but-lossless device
-    transfer and contiguous copy, never an unrepresentable layout/dtype.
+    TYWRAP_TORCH_ALLOW_COPY. The opt-in only governs the device transfer and
+    contiguous copy, never an unrepresentable layout/dtype.
     """
     import torch  # already importable: is_torch_tensor() gated the dispatch
 
@@ -1053,7 +1052,7 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
                     f'keys must be str, int, float, bool or None, not '
                     f'{type(item_key).__name__} at {invalid_path}'
                 )
-            child_key = next(iter(json.loads(json.dumps({item_key: None}))))
+            child_key = _json_object_key(item_key)
             child_path = _serialize_path(path, child_key)
             if _needs_serialize_visit(item):
                 stack.append(('visit', item, depth + 1, child_path, output, item_key))
@@ -1198,20 +1197,9 @@ def make_default_encoder(*, allow_nan):
                 if isinstance(obj, pd.Timedelta):
                     return obj.total_seconds()
 
-        if isinstance(obj, dt.datetime):
-            return obj.isoformat()
-        if isinstance(obj, dt.date):
-            return obj.isoformat()
-        if isinstance(obj, dt.time):
-            return obj.isoformat()
-        if isinstance(obj, dt.timedelta):
-            return obj.total_seconds()
-        if isinstance(obj, decimal.Decimal):
-            return str(obj)
-        if isinstance(obj, uuid.UUID):
-            return str(obj)
-        if isinstance(obj, (Path, PurePath)):
-            return str(obj)
+        stdlib_value = serialize_stdlib(obj)
+        if stdlib_value is not None:
+            return stdlib_value
 
         if isinstance(obj, (bytes, bytearray)):
             return {

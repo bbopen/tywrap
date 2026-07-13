@@ -11,6 +11,45 @@
 
 import { tagDecodedShape } from '../runtime/validators.js';
 
+const SCIENTIFIC_MARKERS = [
+  'dataframe',
+  'series',
+  'ndarray',
+  'scipy.sparse',
+  'torch.tensor',
+  'sklearn.estimator',
+] as const;
+
+export type ScientificMarker = (typeof SCIENTIFIC_MARKERS)[number];
+
+export function isScientificMarker(value: unknown): value is ScientificMarker {
+  return SCIENTIFIC_MARKERS.includes(value as ScientificMarker);
+}
+
+type ScientificDecodeErrorKind = 'arrow' | 'envelope';
+type ScientificDecodeErrorMarker = ScientificMarker | 'unknown';
+
+/** @internal Structured failure consumed by BridgeCodec without parsing messages. */
+export class ScientificDecodeError extends Error {
+  constructor(
+    readonly kind: ScientificDecodeErrorKind,
+    readonly marker: ScientificDecodeErrorMarker,
+    override readonly cause: unknown,
+    message = cause instanceof Error ? cause.message : String(cause)
+  ) {
+    super(message, { cause });
+  }
+}
+
+function asScientificDecodeError(
+  error: unknown,
+  marker: ScientificDecodeErrorMarker
+): ScientificDecodeError {
+  return error instanceof ScientificDecodeError
+    ? error
+    : new ScientificDecodeError('envelope', marker, error);
+}
+
 // Avoid hard dependency on apache-arrow types at compile time to keep install optional.
 export type ArrowTable = { readonly numCols?: number; readonly numRows?: number } & Record<
   string,
@@ -265,9 +304,11 @@ const ARROW_MISSING_MESSAGE =
   'TYWRAP_CODEC_FALLBACK=json on the Python side to receive JSON instead ' +
   '(lossy for dtype/NA fidelity). tywrap never silently downgrades Arrow payloads.';
 
-function requireArrowDecoder(): (bytes: Uint8Array) => ArrowTable | Uint8Array {
+function requireArrowDecoder(
+  marker: ScientificMarker
+): (bytes: Uint8Array) => ArrowTable | Uint8Array {
   if (!arrowTableFrom) {
-    throw new Error(ARROW_MISSING_MESSAGE);
+    throw new ScientificDecodeError('arrow', marker, new Error(ARROW_MISSING_MESSAGE));
   }
   return arrowTableFrom;
 }
@@ -280,7 +321,9 @@ function requireArrowDecoder(): (bytes: Uint8Array) => ArrowTable | Uint8Array {
  * for the rest of the process. If apache-arrow is absent we throw a clear, actionable
  * error rather than silently producing wrong data.
  */
-async function ensureArrowDecoder(): Promise<(bytes: Uint8Array) => ArrowTable | Uint8Array> {
+async function ensureArrowDecoder(
+  marker: ScientificMarker
+): Promise<(bytes: Uint8Array) => ArrowTable | Uint8Array> {
   if (arrowTableFrom) {
     return arrowTableFrom;
   }
@@ -290,21 +333,30 @@ async function ensureArrowDecoder(): Promise<(bytes: Uint8Array) => ArrowTable |
   );
   await lazyRegistration;
   if (!arrowTableFrom) {
-    throw new Error(ARROW_MISSING_MESSAGE);
+    throw new ScientificDecodeError('arrow', marker, new Error(ARROW_MISSING_MESSAGE));
   }
   return arrowTableFrom;
 }
 
-async function tryDecodeArrowTable(bytes: Uint8Array): Promise<ArrowTable | Uint8Array> {
-  const decoder = await ensureArrowDecoder();
+async function tryDecodeArrowTable(
+  bytes: Uint8Array,
+  marker: ScientificMarker
+): Promise<ArrowTable | Uint8Array> {
+  const decoder = await ensureArrowDecoder(marker);
   try {
     return decoder(bytes);
   } catch (err) {
-    throw new Error(`Arrow decode failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw new ScientificDecodeError(
+      'arrow',
+      marker,
+      err,
+      `Arrow decode failed: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }
 
 type MaybePromise<T> = T | Promise<T>;
+type DecodeArrow<T> = (bytes: Uint8Array, marker: ScientificMarker) => MaybePromise<T>;
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return (
@@ -495,6 +547,36 @@ function assertOptionalNonEmptyDtype(
   return value;
 }
 
+type ShapedScientificMarker = 'ndarray' | 'torch.tensor' | 'scipy.sparse';
+
+function readEnvelopeShape(
+  envelope: { codecVersion?: unknown },
+  shapeValue: unknown,
+  marker: ShapedScientificMarker,
+  field = 'shape',
+  dtype?: unknown
+): number[] | undefined {
+  return isStrictV1Envelope(envelope)
+    ? assertShape(shapeValue, marker, field, dtype)
+    : isNumberArray(shapeValue)
+      ? shapeValue
+      : undefined;
+}
+
+function readEnvelopeDtype(
+  envelope: { codecVersion?: unknown },
+  dtypeValue: unknown,
+  marker: ShapedScientificMarker,
+  field = 'dtype',
+  shape?: unknown
+): string | undefined {
+  return isStrictV1Envelope(envelope)
+    ? assertOptionalNonEmptyDtype(dtypeValue, marker, field, shape)
+    : typeof dtypeValue === 'string'
+      ? dtypeValue
+      : undefined;
+}
+
 function countJsonLeaves(value: unknown): number {
   if (!Array.isArray(value)) {
     return 1;
@@ -590,7 +672,7 @@ function assertCodecVersion(envelope: { codecVersion?: unknown }, typeTag: strin
  */
 type EnvelopeHandler = <T>(
   value: { [k: string]: unknown },
-  decodeArrow: (bytes: Uint8Array) => MaybePromise<T>,
+  decodeArrow: DecodeArrow<T>,
   recurse: (value: unknown) => MaybePromise<T | unknown>
 ) => MaybePromise<T | unknown>;
 
@@ -602,8 +684,8 @@ type EnvelopeHandler = <T>(
  */
 function decodeArrowOrJsonEnvelope<T>(
   value: { [k: string]: unknown },
-  decodeArrow: (bytes: Uint8Array) => MaybePromise<T>,
-  typeTag: string
+  decodeArrow: DecodeArrow<T>,
+  typeTag: 'dataframe' | 'series'
 ): MaybePromise<T | unknown> {
   const encoding = value.encoding;
   if (encoding === 'arrow') {
@@ -612,16 +694,16 @@ function decodeArrowOrJsonEnvelope<T>(
       throw new Error(`Invalid ${typeTag} envelope: missing b64`);
     }
     const bytes = fromBase64(b64, isStrictV1Envelope(value) ? typeTag : undefined);
-    const decoded = decodeArrow(bytes);
+    const decoded = decodeArrow(bytes, typeTag);
     return isPromiseLike(decoded)
-      ? decoded.then(item => tagDecodedShape(item, { marker: typeTag as 'dataframe' | 'series' }))
-      : tagDecodedShape(decoded, { marker: typeTag as 'dataframe' | 'series' });
+      ? decoded.then(item => tagDecodedShape(item, { marker: typeTag }))
+      : tagDecodedShape(decoded, { marker: typeTag });
   }
   if (encoding === 'json') {
     if (!('data' in value)) {
       throw new Error(`Invalid ${typeTag} envelope: missing data`);
     }
-    return tagDecodedShape(value.data, { marker: typeTag as 'dataframe' | 'series' });
+    return tagDecodedShape(value.data, { marker: typeTag });
   }
   throw new Error(`Invalid ${typeTag} envelope: unsupported encoding ${String(encoding)}`);
 }
@@ -632,19 +714,33 @@ const decodeDataframeEnvelope: EnvelopeHandler = (value, decodeArrow) =>
 const decodeSeriesEnvelope: EnvelopeHandler = (value, decodeArrow) =>
   decodeArrowOrJsonEnvelope(value, decodeArrow, 'series');
 
+function finishNdarrayDecode(
+  data: unknown,
+  strictV1: boolean,
+  shape: readonly number[] | undefined,
+  dtype: string | undefined,
+  metadata: { marker: 'ndarray'; dims: number | undefined; dtype: string | undefined }
+): unknown {
+  const values = strictV1
+    ? extractNdarrayArrowValues(data, shape, dtype)
+    : extractArrowValues(data);
+  if (!values) {
+    return tagDecodedShape(data, metadata);
+  }
+  if (strictV1) {
+    assertArrowCount(values, shape as number[], dtype as string);
+  }
+  return tagDecodedShape(
+    shape && shape.length !== 1 ? reshapeArray(values, shape) : values,
+    metadata
+  );
+}
+
 const decodeNdarrayEnvelope: EnvelopeHandler = (value, decodeArrow) => {
   const encoding = value.encoding;
   const strictV1 = isStrictV1Envelope(value);
-  const shape = strictV1
-    ? assertShape(value.shape, 'ndarray', 'shape', value.dtype)
-    : isNumberArray(value.shape)
-      ? value.shape
-      : undefined;
-  const dtype = strictV1
-    ? assertOptionalNonEmptyDtype(value.dtype, 'ndarray', 'dtype', shape)
-    : typeof value.dtype === 'string'
-      ? value.dtype
-      : undefined;
+  const shape = readEnvelopeShape(value, value.shape, 'ndarray', 'shape', value.dtype);
+  const dtype = readEnvelopeDtype(value, value.dtype, 'ndarray', 'dtype', shape);
   const metadata = { marker: 'ndarray' as const, dims: shape?.length, dtype };
 
   if (encoding === 'arrow') {
@@ -670,44 +766,16 @@ const decodeNdarrayEnvelope: EnvelopeHandler = (value, decodeArrow) => {
       strictV1 ? 'ndarray' : undefined,
       `declared shape ${JSON.stringify(shape)} and dtype ${JSON.stringify(dtype)}`
     );
-    const decoded = decodeArrow(bytes);
+    const decoded = decodeArrow(bytes, 'ndarray');
 
     // Extract values from Arrow table and reshape if needed
     // Arrow only handles 1D arrays, so we flatten on encode and reshape here
     // Reshape for: scalars (shape.length === 0) and multi-dim (shape.length > 1)
     // Skip reshape for: 1D arrays (shape.length === 1) - return as-is
     if (isPromiseLike(decoded)) {
-      return decoded.then(data => {
-        const values = strictV1
-          ? extractNdarrayArrowValues(data, shape, dtype)
-          : extractArrowValues(data);
-        if (!values) {
-          return tagDecodedShape(data, metadata);
-        }
-        if (strictV1) {
-          assertArrowCount(values, shape as number[], dtype as string);
-        }
-        // Reshape scalars and multi-dimensional arrays, but not 1D
-        return tagDecodedShape(
-          shape && shape.length !== 1 ? reshapeArray(values, shape) : values,
-          metadata
-        );
-      });
+      return decoded.then(data => finishNdarrayDecode(data, strictV1, shape, dtype, metadata));
     }
-    const values = strictV1
-      ? extractNdarrayArrowValues(decoded, shape, dtype)
-      : extractArrowValues(decoded);
-    if (!values) {
-      return tagDecodedShape(decoded, metadata);
-    }
-    if (strictV1) {
-      assertArrowCount(values, shape as number[], dtype as string);
-    }
-    // Reshape scalars and multi-dimensional arrays, but not 1D
-    return tagDecodedShape(
-      shape && shape.length !== 1 ? reshapeArray(values, shape) : values,
-      metadata
-    );
+    return finishNdarrayDecode(decoded, strictV1, shape, dtype, metadata);
   }
   if (encoding === 'json') {
     if (!('data' in value)) {
@@ -809,9 +877,7 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
     throw new Error(`Invalid scipy.sparse envelope: unsupported format ${String(format)}`);
   }
   const strictV1 = isStrictV1Envelope(value);
-  const shape = strictV1
-    ? assertShape(value.shape, 'scipy.sparse', 'shape', value.dtype)
-    : value.shape;
+  const shape = readEnvelopeShape(value, value.shape, 'scipy.sparse', 'shape', value.dtype);
   if (
     !Array.isArray(shape) ||
     shape.length !== 2 ||
@@ -830,12 +896,7 @@ const decodeScipySparseEnvelope: EnvelopeHandler = value => {
   if (!Array.isArray(data)) {
     throw new Error('Invalid scipy.sparse envelope: data must be an array');
   }
-  const dtypeValue = value.dtype;
-  const dtype = strictV1
-    ? assertOptionalNonEmptyDtype(dtypeValue, 'scipy.sparse', 'dtype', shape)
-    : typeof dtypeValue === 'string'
-      ? dtypeValue
-      : undefined;
+  const dtype = readEnvelopeDtype(value, value.dtype, 'scipy.sparse', 'dtype', shape);
   if (strictV1 && dtype === undefined) {
     throw new Error(
       `Invalid scipy.sparse envelope: dtype at path dtype is required for declared shape ` +
@@ -946,7 +1007,7 @@ function shapeProduct(shape: readonly number[]): number {
 
 const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
   value: { [k: string]: unknown },
-  _decodeArrow: (bytes: Uint8Array) => MaybePromise<T>,
+  _decodeArrow: DecodeArrow<T>,
   recurse: (value: unknown) => MaybePromise<T | unknown>
 ): MaybePromise<T | unknown> => {
   const encoding = value.encoding;
@@ -961,17 +1022,15 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
     throw new Error('Invalid torch.tensor envelope: value must be an ndarray envelope');
   }
   const strictV1 = isStrictV1Envelope(value);
-  const shape = strictV1
-    ? assertShape(value.shape, 'torch.tensor', 'shape', value.dtype)
-    : isNumberArray(value.shape)
-      ? value.shape
-      : undefined;
+  const shape = readEnvelopeShape(value, value.shape, 'torch.tensor', 'shape', value.dtype);
   const nestedShapeValue = (nested as { shape?: unknown }).shape;
-  const nestedShape = strictV1
-    ? assertShape(nestedShapeValue, 'torch.tensor', 'value.shape', nested.dtype)
-    : isNumberArray(nestedShapeValue)
-      ? nestedShapeValue
-      : undefined;
+  const nestedShape = readEnvelopeShape(
+    value,
+    nestedShapeValue,
+    'torch.tensor',
+    'value.shape',
+    nested.dtype
+  );
   const scalarNormalization =
     shape !== undefined &&
     nestedShape !== undefined &&
@@ -995,12 +1054,7 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
         `actual counts ${shapeProduct(shape)} and ${shapeProduct(nestedShape)}`
     );
   }
-  const dtypeValue = value.dtype;
-  const dtype = strictV1
-    ? assertOptionalNonEmptyDtype(dtypeValue, 'torch.tensor', 'dtype', shape)
-    : typeof dtypeValue === 'string'
-      ? dtypeValue
-      : undefined;
+  const dtype = readEnvelopeDtype(value, value.dtype, 'torch.tensor', 'dtype', shape);
   if (strictV1 && dtype === undefined) {
     throw new Error(
       `Invalid torch.tensor envelope: dtype at path dtype is required for declared shape ` +
@@ -1038,30 +1092,24 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
   }
   const sourceDevice = typeof sourceDeviceValue === 'string' ? sourceDeviceValue : undefined;
 
-  const tensor = (data: unknown): TorchTensor => ({
-    data,
-    shape,
-    dtype,
-    device,
-    ...(sourceDtype === undefined ? {} : { sourceDtype }),
-    ...(sourceDevice === undefined ? {} : { sourceDevice }),
-  });
+  const finishTensorDecode = (data: unknown): TorchTensor =>
+    tagDecodedShape(
+      {
+        data,
+        shape,
+        dtype,
+        device,
+        ...(sourceDtype === undefined ? {} : { sourceDtype }),
+        ...(sourceDevice === undefined ? {} : { sourceDevice }),
+      },
+      { marker: 'torch.tensor', dims: shape?.length, dtype }
+    );
 
   const decoded = recurse(nested);
   if (isPromiseLike(decoded)) {
-    return decoded.then(data =>
-      tagDecodedShape(tensor(data), {
-        marker: 'torch.tensor',
-        dims: shape?.length,
-        dtype,
-      })
-    ) as Promise<T | unknown>;
+    return decoded.then(finishTensorDecode) as Promise<T | unknown>;
   }
-  return tagDecodedShape(tensor(decoded), {
-    marker: 'torch.tensor',
-    dims: shape?.length,
-    dtype,
-  });
+  return finishTensorDecode(decoded);
 };
 
 /**
@@ -1165,7 +1213,7 @@ const decodeSklearnEstimatorEnvelope: EnvelopeHandler = value => {
 // decode logic lives in one focused handler. The typeTag strings are the on-the-wire keys
 // emitted by the Python bridge and MUST stay byte-identical. A Map keyed by the typeTag
 // avoids prototype-chain lookups when dispatching on attacker-controlled typeTag strings.
-const ENVELOPE_HANDLERS: ReadonlyMap<string, EnvelopeHandler> = new Map([
+const ENVELOPE_HANDLERS: ReadonlyMap<ScientificMarker, EnvelopeHandler> = new Map([
   ['dataframe', decodeDataframeEnvelope],
   ['series', decodeSeriesEnvelope],
   ['ndarray', decodeNdarrayEnvelope],
@@ -1198,14 +1246,14 @@ function decodePath(base: string, key: string | number): string {
 
 function decodeEnvelopeCore<T>(
   value: unknown,
-  decodeArrow: (bytes: Uint8Array) => MaybePromise<T>,
+  decodeArrow: DecodeArrow<T>,
   recurse: (value: unknown) => MaybePromise<T | unknown>
 ): MaybePromise<T | unknown> {
   if (!isObject(value)) {
     return value;
   }
   const typeTag = (value as { __tywrap__?: unknown }).__tywrap__;
-  if (typeof typeTag !== 'string') {
+  if (!isScientificMarker(typeTag)) {
     return value as unknown;
   }
 
@@ -1214,11 +1262,23 @@ function decodeEnvelopeCore<T>(
     return value as unknown;
   }
 
-  assertCodecVersion(value as { codecVersion?: unknown }, typeTag);
-  return handler(value, decodeArrow, recurse);
+  try {
+    assertCodecVersion(value as { codecVersion?: unknown }, typeTag);
+    const decoded = handler(value, decodeArrow, recurse);
+    return isPromiseLike(decoded)
+      ? Promise.resolve(decoded).catch(error => {
+          throw asScientificDecodeError(error, typeTag);
+        })
+      : decoded;
+  } catch (error) {
+    throw asScientificDecodeError(error, typeTag);
+  }
 }
 
-function decodeEnvelope<T>(value: unknown, decodeArrow: (bytes: Uint8Array) => T): T | unknown {
+function decodeEnvelope<T>(
+  value: unknown,
+  decodeArrow: (bytes: Uint8Array, marker: ScientificMarker) => T
+): T | unknown {
   const recurse: (value: unknown) => MaybePromise<T | unknown> = v =>
     decodeEnvelopeCore(v, decodeArrow, recurse);
   const decoded = decodeEnvelopeCore(value, decodeArrow, recurse);
@@ -1230,7 +1290,7 @@ function decodeEnvelope<T>(value: unknown, decodeArrow: (bytes: Uint8Array) => T
 
 async function decodeEnvelopeAsync<T>(
   value: unknown,
-  decodeArrow: (bytes: Uint8Array) => Promise<T>
+  decodeArrow: (bytes: Uint8Array, marker: ScientificMarker) => Promise<T>
 ): Promise<T | unknown> {
   let visitedNodes = 0;
 
@@ -1275,7 +1335,10 @@ async function decodeEnvelopeAsync<T>(
     if (path === 'result') {
       throw error;
     }
-    throw new Error(
+    throw new ScientificDecodeError(
+      'envelope',
+      'unknown',
+      error,
       `Scientific envelope decode failed at ${path}: ${error instanceof Error ? error.message : String(error)}`
     );
   };
@@ -1331,7 +1394,7 @@ async function decodeEnvelopeAsync<T>(
     }
 
     if (plainObject && typeof current.__tywrap__ === 'string') {
-      if (!ENVELOPE_HANDLERS.has(current.__tywrap__)) {
+      if (!isScientificMarker(current.__tywrap__)) {
         return;
       }
 
@@ -1424,19 +1487,28 @@ async function decodeEnvelopeAsync<T>(
  * Decode values produced by the Python bridge.
  */
 export async function decodeValueAsync(value: unknown): Promise<DecodedValue> {
-  return await decodeEnvelopeAsync(value, tryDecodeArrowTable);
+  try {
+    return await decodeEnvelopeAsync(value, tryDecodeArrowTable);
+  } catch (error) {
+    throw asScientificDecodeError(error, 'unknown');
+  }
 }
 
 /**
  * Synchronous decode. Arrow decoding requires a registered decoder.
  */
 export function decodeValue(value: unknown): DecodedValue {
-  const decodeArrow = (bytes: Uint8Array): DecodedValue => {
-    const decoder = requireArrowDecoder();
+  const decodeArrow = (bytes: Uint8Array, marker: ScientificMarker): DecodedValue => {
+    const decoder = requireArrowDecoder(marker);
     try {
       return decoder(bytes);
     } catch (err) {
-      throw new Error(`Arrow decode failed: ${err instanceof Error ? err.message : String(err)}`);
+      throw new ScientificDecodeError(
+        'arrow',
+        marker,
+        err,
+        `Arrow decode failed: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   };
   return decodeEnvelope(value, decodeArrow);
