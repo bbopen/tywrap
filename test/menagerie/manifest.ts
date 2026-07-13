@@ -697,6 +697,22 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
       value: { data: [1, -2], shape: [2], dtype: 'torch.int64', device: 'cpu' },
     },
   }),
+  ...(['float64', 'int8', 'int16', 'int32', 'uint8'] as const).map(dtype => {
+    const data = dtype === 'uint8' ? [0, 3, 255] : dtype.startsWith('int') ? [1, -2] : [1.5, -2.25];
+    return libraryRow({
+      id: `torch-${dtype}`,
+      call: `torch_dtype('${dtype}')`,
+      functionName: 'torch_dtype',
+      args: [dtype],
+      requires: ['torch', 'pyarrow'],
+      status: 'EXPECTED_OK',
+      currentBehavior: `A dense ${dtype} CPU tensor round-trips with its declared dtype.`,
+      expected: {
+        kind: 'match',
+        value: { data, shape: [data.length], dtype: `torch.${dtype}`, device: 'cpu' },
+      },
+    });
+  }),
   libraryRow({
     id: 'torch-scalar',
     call: 'torch_scalar()',
@@ -712,9 +728,18 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     id: 'torch-bfloat16',
     call: 'torch_bfloat16()',
     requires: ['torch', 'pyarrow'],
-    status: 'LOUD_FAIL',
-    currentBehavior: 'NumPy conversion rejects bfloat16.',
-    expected: error(/Failed to convert torch\.Tensor to numpy/i),
+    status: 'EXPECTED_OK',
+    currentBehavior: 'bfloat16 values upcast exactly to float32 and retain their source dtype.',
+    expected: {
+      kind: 'match',
+      value: {
+        data: [1, -2.5, 3.140625, 2 ** 16, 2 ** 32],
+        shape: [5],
+        dtype: 'torch.float32',
+        sourceDtype: 'torch.bfloat16',
+        device: 'cpu',
+      },
+    },
   }),
   libraryRow({
     id: 'torch-sparse',
@@ -722,7 +747,7 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     requires: ['torch'],
     status: 'LOUD_FAIL',
     currentBehavior: 'Sparse tensor layouts are rejected explicitly.',
-    expected: error(/sparse tensors are not supported/i),
+    expected: error(/convert to a dense CPU tensor explicitly.*tensor\.to_dense/i),
   }),
   libraryRow({
     id: 'torch-quantized',
@@ -731,7 +756,15 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     featureProbe: 'import torch; print("1" if hasattr(torch, "quantize_per_tensor") else "0")',
     status: 'LOUD_FAIL',
     currentBehavior: 'Quantized tensors are rejected explicitly.',
-    expected: error(/quantized tensors are not supported/i),
+    expected: error(/dequantize explicitly.*tensor\.dequantize/i),
+  }),
+  libraryRow({
+    id: 'torch-meta',
+    call: 'torch_meta()',
+    requires: ['torch'],
+    status: 'LOUD_FAIL',
+    currentBehavior: 'Meta tensors are rejected explicitly.',
+    expected: error(/materialize the tensor on a real device before returning/i),
   }),
   libraryRow({
     id: 'torch-complex',
@@ -739,7 +772,7 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     requires: ['torch'],
     status: 'LOUD_FAIL',
     currentBehavior: 'Complex tensors are rejected explicitly.',
-    expected: error(/complex tensors are not supported/i),
+    expected: error(/split into real\/imag components explicitly before returning/i),
   }),
 
   libraryRow({

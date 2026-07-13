@@ -253,6 +253,18 @@ def torch_int64() -> object:
     return torch.tensor([1, -2], dtype=torch.int64)
 
 
+def torch_dtype(dtype_name: str) -> object:
+    import torch
+
+    if dtype_name == "uint8":
+        values = [0, 3, 255]
+    elif dtype_name.startswith("int"):
+        values = [1, -2]
+    else:
+        values = [1.5, -2.25]
+    return torch.tensor(values, dtype=getattr(torch, dtype_name))
+
+
 def torch_scalar() -> object:
     import torch
 
@@ -262,7 +274,9 @@ def torch_scalar() -> object:
 def torch_bfloat16() -> object:
     import torch
 
-    return torch.tensor([1.5], dtype=torch.bfloat16)
+    return torch.tensor(
+        [1.0, -2.5, 3.140625, 2**16, 2**32], dtype=torch.bfloat16
+    )
 
 
 def torch_sparse() -> object:
@@ -275,6 +289,12 @@ def torch_quantized() -> object:
     import torch
 
     return torch.quantize_per_tensor(torch.tensor([1.0, 2.0]), 0.1, 0, torch.qint8)
+
+
+def torch_meta() -> object:
+    import torch
+
+    return torch.empty(3, device="meta")
 
 
 def torch_complex() -> object:

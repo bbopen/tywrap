@@ -33,6 +33,8 @@ export interface TorchTensor {
   shape?: readonly number[];
   dtype?: string;
   device?: string;
+  sourceDtype?: string;
+  sourceDevice?: string;
 }
 
 export interface SklearnEstimator {
@@ -93,6 +95,8 @@ export type ValueEnvelope =
       readonly shape?: readonly number[];
       readonly dtype?: string;
       readonly device?: string;
+      readonly sourceDtype?: string;
+      readonly sourceDevice?: string;
     }
   | {
       readonly __tywrap__: 'sklearn.estimator';
@@ -1013,18 +1017,47 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
     );
   }
   const device = typeof deviceValue === 'string' ? deviceValue : undefined;
+  const sourceDtypeValue = value.sourceDtype;
+  if (
+    sourceDtypeValue !== undefined &&
+    (typeof sourceDtypeValue !== 'string' || sourceDtypeValue.length === 0)
+  ) {
+    throw new Error(
+      'Invalid torch.tensor envelope: sourceDtype must be a non-empty string when provided'
+    );
+  }
+  const sourceDtype = typeof sourceDtypeValue === 'string' ? sourceDtypeValue : undefined;
+  const sourceDeviceValue = value.sourceDevice;
+  if (
+    sourceDeviceValue !== undefined &&
+    (typeof sourceDeviceValue !== 'string' || sourceDeviceValue.length === 0)
+  ) {
+    throw new Error(
+      'Invalid torch.tensor envelope: sourceDevice must be a non-empty string when provided'
+    );
+  }
+  const sourceDevice = typeof sourceDeviceValue === 'string' ? sourceDeviceValue : undefined;
+
+  const tensor = (data: unknown): TorchTensor => ({
+    data,
+    shape,
+    dtype,
+    device,
+    ...(sourceDtype === undefined ? {} : { sourceDtype }),
+    ...(sourceDevice === undefined ? {} : { sourceDevice }),
+  });
 
   const decoded = recurse(nested);
   if (isPromiseLike(decoded)) {
     return decoded.then(data =>
-      tagDecodedShape({ data, shape, dtype, device } satisfies TorchTensor, {
+      tagDecodedShape(tensor(data), {
         marker: 'torch.tensor',
         dims: shape?.length,
         dtype,
       })
     ) as Promise<T | unknown>;
   }
-  return tagDecodedShape({ data: decoded, shape, dtype, device } satisfies TorchTensor, {
+  return tagDecodedShape(tensor(decoded), {
     marker: 'torch.tensor',
     dims: shape?.length,
     dtype,
