@@ -3,15 +3,19 @@
  *
  * "The Impossible Wrap": an original sculpture of the tywrap idea. A machined
  * graphite triangle (the rigid TypeScript structure) has a port bored through
- * each beam, and an amber python threads itself through all three, head
- * emerging toward the viewer. Sapphire type-current pulses circulate along the
+ * each beam, and an amber python perpetually slithers through all three,
+ * circulating the loop forever. Sapphire type-current pulses run along the
  * frame. Concept inspired by classic impossible-triangle snake illusions; all
  * geometry, materials, and animation here are original and generated in code —
  * the repo ships no model or texture binaries.
  *
- * The snake's skin is ~5k individually placed, overlapping scale plates
- * (InstancedMesh, matrices baked once at startup) over a dark under-body tube,
- * lit by a generated room environment for PBR reflections.
+ * The snake's skin is ~5k overlapping scale plates. Their placement is
+ * computed on the GPU: the closed spine's Frenet frames are baked into a
+ * float DataTexture, each plate carries its fixed offset behind the head, and
+ * a patched MeshStandardMaterial vertex shader positions every plate from a
+ * single uHead uniform. Advancing uHead slides the whole body along the loop,
+ * so the serpent threads the ports continuously at zero per-frame JS cost for
+ * the body. The head is one small group repositioned in JS each frame.
  */
 
 import * as THREE from 'three'
@@ -76,7 +80,7 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   renderer.setPixelRatio(dpr)
   renderer.setSize(width, height)
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.1
+  renderer.toneMappingExposure = 0.95
 
   // Generated room environment: PBR reflections with no HDR asset shipped.
   const pmrem = new THREE.PMREMGenerator(renderer)
@@ -88,9 +92,9 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   })
   composer.addPass(new RenderPass(scene, camera))
   const bloomEffect = new BloomEffect({
-    luminanceThreshold: 0.55,
+    luminanceThreshold: 0.78,
     mipmapBlur: true,
-    intensity: 0.9,
+    intensity: 0.7,
   })
   const vignetteEffect = new VignetteEffect({ eskil: false, offset: 0.3, darkness: 0.85 })
   composer.addPass(new EffectPass(camera, bloomEffect, vignetteEffect))
@@ -205,8 +209,8 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     pathPoints.push(mid.clone().setZ(1.15 * zSign))
     pathPoints.push(mid.clone().setZ(-1.15 * zSign))
     if (i === 1) {
-      // The head lives on this exit: swing low into the open space below the
-      // feature panel, leaning toward the camera.
+      // Swing low through the open space below the feature panel, leaning
+      // toward the camera: the stretch where the head shows off.
       pathPoints.push(mid.clone().addScaledVector(side, 2.4).add(new THREE.Vector3(0, -2.1, 0)).setZ(2.4))
     } else {
       pathPoints.push(mid.clone().addScaledVector(side, 2.4).setZ(-2.0 * zSign))
@@ -215,141 +219,203 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   }
   const spine = new THREE.CatmullRomCurve3(pathPoints, true, 'centripetal', 0.85)
 
-  // The snake occupies a window of the closed loop; head and tail taper inside
-  // it. The window is chosen so the head emerges from the upper-left port into
-  // the open gap beside the text and the tail trails off an outer coil.
-  const SNAKE_START = 0.545
-  const SNAKE_END = 1.465 // wraps past 1.0; sampled mod 1; head exits the bottom port toward the viewer
+  // The snake is a moving window of the closed loop: the head sits at uHead,
+  // the body trails LEN behind it. Radius depends only on offset-behind-head,
+  // so plate sizes and colors bake once while positions ride uHead on the GPU.
   const BODY_R = 0.62
-  const wrapU = (u: number) => ((u % 1) + 1) % 1
+  const LEN = 0.86 // body length as a fraction of the loop
 
-  function bodyRadius(u: number): number {
-    if (u < SNAKE_START || u > SNAKE_END) return 0
-    const t = (u - SNAKE_START) / (SNAKE_END - SNAKE_START)
+  function bodyRadius(offset: number): number {
+    if (offset < 0 || offset > LEN) return 0
+    const t = offset / LEN // 0 at head, 1 at tail tip
     let r = BODY_R
-    r *= Math.min(1, Math.pow(t / 0.28, 0.8)) // tail taper (long)
-    const headT = Math.min(1, (1 - t) / 0.05) // neck: taper to a stub the skull covers
+    r *= Math.min(1, Math.pow((1 - t) / 0.28, 0.8)) // long tail taper
+    const headT = Math.min(1, t / 0.05) // neck stub the skull covers
     r *= 0.55 + 0.45 * Math.pow(headT, 0.7)
     return r
   }
 
-  // Under-body: a dark tube so gaps between scale plates never show background.
+  // --- Frenet frames baked into a float texture (rows: pos, T, N, B) --------
+  const FRAME_SAMPLES = 2048
+  const loopFrames = spine.computeFrenetFrames(FRAME_SAMPLES, true)
+  const frameData = new Float32Array(FRAME_SAMPLES * 4 * 4)
+  const samplePoint = new THREE.Vector3()
+  for (let i = 0; i < FRAME_SAMPLES; i++) {
+    const u = i / FRAME_SAMPLES
+    spine.getPointAt(u, samplePoint)
+    const rows = [samplePoint, loopFrames.tangents[i], loopFrames.normals[i], loopFrames.binormals[i]]
+    for (let row = 0; row < 4; row++) {
+      const k = (row * FRAME_SAMPLES + i) * 4
+      frameData[k + 0] = rows[row].x
+      frameData[k + 1] = rows[row].y
+      frameData[k + 2] = rows[row].z
+      frameData[k + 3] = 1
+    }
+  }
+  const framesTex = track(new THREE.DataTexture(frameData, FRAME_SAMPLES, 4, THREE.RGBAFormat, THREE.FloatType))
+  framesTex.minFilter = THREE.LinearFilter
+  framesTex.magFilter = THREE.LinearFilter
+  framesTex.wrapS = THREE.RepeatWrapping
+  framesTex.needsUpdate = true
+
+  const headUniform = { value: 0 }
+
+  // Shared vertex-shader surgery: place geometry on the loop from (offset,
+  // angle, radius) attributes and the frames texture. `withScale` adds the
+  // per-plate scale/tilt used by the scale shingles.
+  function patchLoopMaterial(material: THREE.MeshStandardMaterial, withScale: boolean) {
+    material.onBeforeCompile = shader => {
+      shader.uniforms.uHead = headUniform
+      shader.uniforms.uFrames = { value: framesTex }
+      const decl = `
+        uniform sampler2D uFrames;
+        uniform float uHead;
+        attribute float iOff;
+        attribute float iAngle;
+        attribute float iR;
+        ${withScale ? 'attribute float iScale;' : ''}
+      `
+      const basisChunk = `
+        float uLoop = fract(uHead - iOff);
+        vec3 fC = texture2D(uFrames, vec2(uLoop, 0.125)).xyz;
+        vec3 fT = normalize(texture2D(uFrames, vec2(uLoop, 0.375)).xyz);
+        vec3 fN = normalize(texture2D(uFrames, vec2(uLoop, 0.625)).xyz);
+        vec3 fB = normalize(texture2D(uFrames, vec2(uLoop, 0.875)).xyz);
+        vec3 outwardV = normalize(cos(iAngle) * fN + sin(iAngle) * fB);
+        vec3 sideV = normalize(cross(fT, outwardV));
+        vec3 alongV = normalize(cross(outwardV, sideV));
+        mat3 loopBasis = mat3(alongV, outwardV, sideV);
+        const float ctilt = 0.8775826;
+        const float stilt = -0.4794255;
+      `
+      const normalChunk = withScale
+        ? `${basisChunk}
+           vec3 objectNormal = loopBasis * vec3(ctilt * normal.x + stilt * normal.y, -stilt * normal.x + ctilt * normal.y, normal.z);`
+        : `${basisChunk}
+           vec3 objectNormal = outwardV;`
+      const beginChunk = withScale
+        ? `vec3 pLocal = position * iScale;
+           pLocal = vec3(ctilt * pLocal.x + stilt * pLocal.y, -stilt * pLocal.x + ctilt * pLocal.y, pLocal.z);
+           vec3 transformed = fC + outwardV * iR + loopBasis * pLocal;`
+        : `vec3 transformed = fC + outwardV * iR;`
+      shader.vertexShader = decl + shader.vertexShader
+        .replace('#include <beginnormal_vertex>', normalChunk)
+        .replace('#include <begin_vertex>', beginChunk)
+    }
+    // uHead/uFrames make each compile unique; avoid program cache collisions.
+    material.customProgramCacheKey = () => `loop-${withScale ? 'plates' : 'tube'}`
+  }
+
+  // --- Under-body tube: a dark sleeve so plate gaps never show background ----
   const isMobile = width < 768
-  const TUBE_SEG = isMobile ? 400 : 800
+  const TUBE_SEG = isMobile ? 360 : 720
+  const TUBE_RADIAL = 12
   const underBodyMat = track(new THREE.MeshStandardMaterial({
     color: 0x2a1808,
     metalness: 0.0,
     roughness: 0.75,
   }))
-  class SnakeCurve extends THREE.Curve<THREE.Vector3> {
-    getPoint(t: number): THREE.Vector3 {
-      const u = SNAKE_START + t * (SNAKE_END - SNAKE_START)
-      return spine.getPointAt(wrapU(u))
-    }
-  }
-  const underGeo = track(new THREE.TubeGeometry(new SnakeCurve(), TUBE_SEG, BODY_R * 0.9, 14, false))
-  // Taper the under-body by scaling rings toward the ends.
+  patchLoopMaterial(underBodyMat, false)
   {
-    const pos = underGeo.attributes.position as THREE.BufferAttribute
     const rings = TUBE_SEG + 1
-    const radial = 14 + 1
-    const center = new THREE.Vector3()
+    const radial = TUBE_RADIAL + 1
+    const count = rings * radial
+    const posAttr = new Float32Array(count * 3) // placeholder; shader replaces it
+    const offAttr = new Float32Array(count)
+    const angAttr = new Float32Array(count)
+    const rAttr = new Float32Array(count)
     for (let i = 0; i < rings; i++) {
-      const t = i / TUBE_SEG
-      const u = SNAKE_START + t * (SNAKE_END - SNAKE_START)
-      const scale = bodyRadius(u) / BODY_R
-      spine.getPointAt(wrapU(u), center)
+      const offset = (i / TUBE_SEG) * LEN
+      const r = bodyRadius(offset) * 0.92
       for (let j = 0; j < radial; j++) {
         const k = i * radial + j
-        const x = pos.getX(k), y = pos.getY(k), z = pos.getZ(k)
-        pos.setXYZ(k, center.x + (x - center.x) * scale, center.y + (y - center.y) * scale, center.z + (z - center.z) * scale)
+        offAttr[k] = offset
+        angAttr[k] = (j / TUBE_RADIAL) * Math.PI * 2
+        rAttr[k] = r
       }
     }
-    pos.needsUpdate = true
-    underGeo.computeVertexNormals()
-  }
-  const underBody = new THREE.Mesh(underGeo, underBodyMat)
-  coreGroup.add(underBody)
-
-  // ---------------------------------------------------------------------------
-  // Scale plates: staggered rings of overlapping elliptical domes, baked once.
-  // ---------------------------------------------------------------------------
-  const frames = spine.computeFrenetFrames(2048, true)
-  function frameAt(uRaw: number) {
-    const u = wrapU(uRaw)
-    const idx = Math.min(2047, Math.max(0, Math.round(u * 2048))) % 2048
-    return {
-      p: spine.getPointAt(u),
-      t: frames.tangents[idx],
-      n: frames.normals[idx],
-      b: frames.binormals[idx],
+    const idx: number[] = []
+    for (let i = 0; i < TUBE_SEG; i++) {
+      for (let j = 0; j < TUBE_RADIAL; j++) {
+        const a = i * radial + j
+        const b = a + radial
+        idx.push(a, b, a + 1, b, b + 1, a + 1)
+      }
     }
+    const tubeGeo = track(new THREE.BufferGeometry())
+    tubeGeo.setAttribute('position', new THREE.BufferAttribute(posAttr, 3))
+    tubeGeo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(count * 3), 3))
+    tubeGeo.setAttribute('iOff', new THREE.BufferAttribute(offAttr, 1))
+    tubeGeo.setAttribute('iAngle', new THREE.BufferAttribute(angAttr, 1))
+    tubeGeo.setAttribute('iR', new THREE.BufferAttribute(rAttr, 1))
+    tubeGeo.setIndex(idx)
+    tubeGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 30)
+    const underBody = new THREE.Mesh(tubeGeo, underBodyMat)
+    underBody.frustumCulled = false
+    coreGroup.add(underBody)
   }
 
-  const SCALE_LEN = 0.34 // along the body
+  // ---------------------------------------------------------------------------
+  // Scale plates: staggered rings of overlapping domes riding the loop on GPU.
+  // ---------------------------------------------------------------------------
+  const SCALE_LEN = 0.34
   const loopLen = spine.getLength()
-  const RING_COUNT = Math.floor((loopLen * (SNAKE_END - SNAKE_START)) / (SCALE_LEN * 0.5))
+  const RING_COUNT = Math.floor((loopLen * LEN) / (SCALE_LEN * 0.5))
 
-  // Elliptical dome plate, long axis +x, dome +y, thin.
   const plateGeo = track(new THREE.SphereGeometry(1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2))
   plateGeo.scale(SCALE_LEN * 0.62, 0.075, SCALE_LEN * 0.46)
 
   const scaleMat = track(new THREE.MeshStandardMaterial({
-    color: 0xd08a2e,
+    color: 0xd08a2e, // amber ground; per-plate colors multiply against it
     metalness: 0.15,
     roughness: 0.42,
+    vertexColors: true,
   }))
+  patchLoopMaterial(scaleMat, true)
 
-  const placements: Array<{ u: number; angle: number; r: number }> = []
+  type Placement = { off: number; angle: number; r: number }
+  const placements: Placement[] = []
   for (let ring = 0; ring < RING_COUNT; ring++) {
-    const t = ring / RING_COUNT
-    const u = SNAKE_START + t * (SNAKE_END - SNAKE_START)
-    const r = bodyRadius(u)
+    const offset = (ring / RING_COUNT) * LEN
+    const r = bodyRadius(offset)
     if (r < 0.03) continue
     const circumference = 2 * Math.PI * r
     const count = Math.max(4, Math.round(circumference / (SCALE_LEN * 0.46)))
-    const offset = (ring % 2) * 0.5
+    const stagger = (ring % 2) * 0.5
     for (let s = 0; s < count; s++) {
-      placements.push({ u, angle: ((s + offset) / count) * Math.PI * 2, r })
+      placements.push({ off: offset, angle: ((s + stagger) / count) * Math.PI * 2, r })
     }
   }
 
-  const scales = new THREE.InstancedMesh(plateGeo, scaleMat, placements.length)
-  scales.instanceMatrix.setUsage(THREE.StaticDrawUsage)
+  const N = placements.length
+  const instGeo = track(new THREE.InstancedBufferGeometry())
+  instGeo.index = plateGeo.index
+  instGeo.setAttribute('position', plateGeo.getAttribute('position'))
+  instGeo.setAttribute('normal', plateGeo.getAttribute('normal'))
+  instGeo.setAttribute('uv', plateGeo.getAttribute('uv'))
+  instGeo.instanceCount = N
+  instGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 30)
+
+  const offArr = new Float32Array(N)
+  const angArr = new Float32Array(N)
+  const rArr = new Float32Array(N)
+  const sclArr = new Float32Array(N)
+  const colArr = new Float32Array(N * 3)
   const color = new THREE.Color()
-  const m = new THREE.Matrix4()
-  const pos = new THREE.Vector3()
-  const outward = new THREE.Vector3()
-  const along = new THREE.Vector3()
-  const side = new THREE.Vector3()
-  const quat = new THREE.Quaternion()
-  const basis = new THREE.Matrix4()
-  const scl = new THREE.Vector3()
-  for (let i = 0; i < placements.length; i++) {
-    const { u, angle, r } = placements[i]
-    const f = frameAt(u)
-    outward.copy(f.n).multiplyScalar(Math.cos(angle)).addScaledVector(f.b, Math.sin(angle)).normalize()
-    pos.copy(f.p).addScaledVector(outward, r * 0.98)
-    along.copy(f.t).normalize()
-    side.crossVectors(along, outward).normalize()
-    along.crossVectors(outward, side).normalize() // re-orthogonalize
-    // Tilt each plate backward (toward the tail) so rows imbricate.
-    const tilt = new THREE.Quaternion().setFromAxisAngle(side, -0.5)
-    basis.makeBasis(along, outward, side)
-    quat.setFromRotationMatrix(basis).multiply(tilt)
-    // Plates shrink with the body so the tail tip stays shingled.
-    const jitter = (0.9 + Math.random() * 0.25) * Math.max(0.4, Math.sqrt(r / BODY_R))
-    scl.setScalar(jitter)
-    m.compose(pos, quat, scl)
-    scales.setMatrixAt(i, m)
-    // Ball-python patterning: dark chestnut saddles over amber ground, with a
-    // pale cream belly. Saddle bands drift and vary in width along the body.
+  for (let i = 0; i < N; i++) {
+    const { off, angle, r } = placements[i]
+    offArr[i] = off
+    angArr[i] = angle
+    rArr[i] = r * 0.98
+    sclArr[i] = (0.9 + Math.random() * 0.25) * Math.max(0.4, Math.sqrt(r / BODY_R))
+    // Ball-python patterning keyed to the body (it rides along as it moves):
+    // dark chestnut saddles over amber ground, pale frame-relative belly.
     const saddleWave =
-      Math.sin(u * 145.0) * 0.6 +
-      Math.sin(u * 47.0 + 1.7) * 0.3 +
-      Math.sin(u * 301.0 + 0.6) * 0.25
+      Math.sin(off * 145.0) * 0.6 +
+      Math.sin(off * 47.0 + 1.7) * 0.3 +
+      Math.sin(off * 301.0 + 0.6) * 0.25
     const inSaddle = saddleWave > 0.28
-    const isBelly = outward.y < -0.62
+    const isBelly = Math.cos(angle) < -0.62
     if (isBelly) {
       color.setHSL(0.09 + Math.random() * 0.02, 0.30 + Math.random() * 0.1, 0.62 + Math.random() * 0.1)
     } else if (inSaddle) {
@@ -357,24 +423,25 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     } else {
       color.setHSL(0.075 + Math.random() * 0.025, 0.74 + Math.random() * 0.12, 0.40 + Math.random() * 0.14)
     }
-    scales.setColorAt(i, color)
+    colArr[i * 3 + 0] = color.r
+    colArr[i * 3 + 1] = color.g
+    colArr[i * 3 + 2] = color.b
   }
-  scales.instanceMatrix.needsUpdate = true
-  if (scales.instanceColor) scales.instanceColor.needsUpdate = true
+  instGeo.setAttribute('iOff', new THREE.InstancedBufferAttribute(offArr, 1))
+  instGeo.setAttribute('iAngle', new THREE.InstancedBufferAttribute(angArr, 1))
+  instGeo.setAttribute('iR', new THREE.InstancedBufferAttribute(rArr, 1))
+  instGeo.setAttribute('iScale', new THREE.InstancedBufferAttribute(sclArr, 1))
+  instGeo.setAttribute('color', new THREE.InstancedBufferAttribute(colArr, 3))
+  const scales = new THREE.Mesh(instGeo, scaleMat)
+  scales.frustumCulled = false
   coreGroup.add(scales)
 
   // ---------------------------------------------------------------------------
-  // Head: flattened wedge + brow scales + eyes + flicking tongue.
+  // Head: flattened wedge + shingled crown + eyes + flicking tongue.
+  // Positioned in JS each frame at uHead.
   // ---------------------------------------------------------------------------
   const headGroup = new THREE.Group()
   coreGroup.add(headGroup)
-  {
-    const f = frameAt(SNAKE_END)
-    headGroup.position.copy(f.p)
-    coreGroup.updateMatrixWorld(true)
-    // Face a point just left of the camera: a watchful 3/4 view.
-    headGroup.lookAt(new THREE.Vector3(-2, 0.5, 24))
-  }
   const headMat = track(new THREE.MeshStandardMaterial({
     color: 0xb9771f,
     metalness: 0.12,
@@ -420,12 +487,22 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   {
     const HEAD_PLATES = 90
     const a = 0.88, b = 0.88 * 0.58, c = 0.88 * 1.42
-    const headScales = new THREE.InstancedMesh(plateGeo, scaleMat, HEAD_PLATES)
+    const headScaleMat = track(new THREE.MeshStandardMaterial({
+      color: 0xd08a2e,
+      metalness: 0.15,
+      roughness: 0.42,
+    }))
+    const headScales = new THREE.InstancedMesh(plateGeo, headScaleMat, HEAD_PLATES)
     headScales.instanceMatrix.setUsage(THREE.StaticDrawUsage)
     const dir = new THREE.Vector3()
     const nrm = new THREE.Vector3()
     const fwd = new THREE.Vector3()
     const sde = new THREE.Vector3()
+    const pos = new THREE.Vector3()
+    const quat = new THREE.Quaternion()
+    const basis = new THREE.Matrix4()
+    const scl = new THREE.Vector3()
+    const m = new THREE.Matrix4()
     const golden = Math.PI * (3 - Math.sqrt(5))
     let placed = 0
     for (let i = 0; i < 300 && placed < HEAD_PLATES; i++) {
@@ -526,6 +603,12 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
   // ---------------------------------------------------------------------------
   // Animation loop
   // ---------------------------------------------------------------------------
+  const SLITHER_SPEED = 0.022 // loops per second: a full circuit every ~45s
+  const headPos = new THREE.Vector3()
+  const headTangent = new THREE.Vector3()
+  const headTarget = new THREE.Vector3()
+  const camWorld = new THREE.Vector3()
+
   let rafId: number | null = null
   let started = false
 
@@ -540,13 +623,28 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     mouse.y += (targetMouse.y - mouse.y) * 0.05
 
     // Slow presentational oscillation plus mouse parallax.
-    coreGroup.rotation.y = Math.sin(elapsed * 0.16) * 0.22 + mouse.x * 0.1
-    coreGroup.rotation.x = Math.sin(elapsed * 0.11) * 0.07 + mouse.y * -0.06
-    coreGroup.position.y = Math.sin(elapsed * 0.4) * 0.15 - scrollState.current * 0.01
+    coreGroup.rotation.y = Math.sin(elapsed * 0.16) * 0.18 + mouse.x * 0.1
+    coreGroup.rotation.x = Math.sin(elapsed * 0.11) * 0.06 + mouse.y * -0.06
+    coreGroup.position.y = -0.4 + Math.sin(elapsed * 0.4) * 0.12 - scrollState.current * 0.01
 
-    // Breathing: the whole serpent swells almost imperceptibly.
-    const breath = 1 + Math.sin(elapsed * 1.1) * 0.006
-    coreGroup.scale.setScalar(breath)
+    // The serpent circulates the loop forever.
+    const uHead = (elapsed * SLITHER_SPEED) % 1
+    headUniform.value = uHead
+
+    // Head rides the loop, facing along its travel with a lean to the camera.
+    // The lean fades to zero near the ports so the head always points into
+    // the hole it is threading instead of side-eyeing the viewer through it.
+    spine.getPointAt(uHead, headPos)
+    spine.getTangentAt(uHead, headTangent)
+    headGroup.position.copy(headPos)
+    camWorld.copy(camera.position)
+    coreGroup.worldToLocal(camWorld)
+    let portDist = Infinity
+    for (const h of holeCenters) portDist = Math.min(portDist, headPos.distanceTo(h))
+    const lean = 0.18 * THREE.MathUtils.smoothstep(portDist, 2.4, 4.8)
+    headTarget.copy(headPos).addScaledVector(headTangent, 4)
+    headTarget.lerp(camWorld, lean)
+    headGroup.lookAt(coreGroup.localToWorld(headTarget.clone()))
 
     // Type-current pulses race around the frame.
     for (let i = 0; i < PULSES; i++) {
@@ -561,10 +659,6 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     const flick = cycle < 0.5 ? Math.sin((cycle / 0.5) * Math.PI) : 0
     tongueGroup.scale.z = 0.1 + flick
     tongueGroup.visible = flick > 0.05
-
-    // Head micro-motion: a slow, watchful sway.
-    headGroup.rotation.y = Math.sin(elapsed * 0.5) * 0.08
-    headGroup.rotation.x = Math.sin(elapsed * 0.35) * 0.05
 
     composer.render()
   }
@@ -593,7 +687,6 @@ export function useThreeScene(options: ThreeSceneOptions): ThreeSceneReturn {
     if (rafId !== null) cancelAnimationFrame(rafId)
     window.removeEventListener('mousemove', onMouseMove)
     for (const d of disposables) d.dispose()
-    scales.dispose()
     envTexture.dispose()
     pmrem.dispose()
     composer.dispose()

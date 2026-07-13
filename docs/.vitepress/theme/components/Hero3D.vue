@@ -510,7 +510,11 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: 28rem;
   flex-shrink: 0;
-  background: rgba(5, 5, 8, 0.9);
+  /* Translucent so the serpent stays visible behind the list; the blur keeps
+     body text readable over moving scales. */
+  background: rgba(4, 4, 7, 0.62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 0.75rem;
   overflow: hidden;
