@@ -72,6 +72,13 @@ For CI (or to verify a dependency upgrade didn’t change the generated surface)
 npx tywrap generate --check
 ```
 
+## For coding agents
+
+Start with the [agent adoption guide](https://bbopen.github.io/tywrap/guide/agent-adoption)
+for exact commands, expected output, and failure fixes. The structured
+[llms.txt](https://bbopen.github.io/tywrap/llms.txt) index links to the same
+agent-facing docs and the supporting reference pages.
+
 For local Node development, `tywrap/dev` watches local Python package trees and
 regenerates wrappers. It swaps the active bridge only after a successful
 generation, so a failed regeneration leaves the previous state in place.
@@ -182,13 +189,11 @@ import { defineConfig } from 'tywrap';
 export default defineConfig({
   pythonModules: {
     pandas: {
-      runtime: 'node',
       typeHints: 'strict',
       classes: ['DataFrame'],
       functions: ['read_csv'],
     },
     numpy: {
-      runtime: 'node',
       typeHints: 'strict',
       alias: 'np',
     },
