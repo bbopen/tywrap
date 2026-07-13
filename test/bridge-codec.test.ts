@@ -432,6 +432,34 @@ describe('decodeResponse - Basic', () => {
     expect(codec.decodeResponse<null>('null')).toBe(null);
   });
 
+  it('rejects recognized scientific envelopes at root and nested locations', () => {
+    const envelope = {
+      __tywrap__: 'ndarray',
+      codecVersion: 1,
+      encoding: 'json',
+      data: [1],
+      shape: [1],
+      dtype: 'int64',
+    };
+
+    expect(() => codec.decodeResponse(JSON.stringify(envelope))).toThrow(
+      'scientific envelopes require decodeResponseAsync'
+    );
+    expect(() => codec.decodeResponse(JSON.stringify({ items: [{ matrix: envelope }] }))).toThrow(
+      'scientific envelopes require decodeResponseAsync'
+    );
+  });
+
+  it('keeps unknown scientific markers on the sync path', () => {
+    const value = {
+      item: {
+        __tywrap__: 'future.marker',
+        value: { __tywrap__: 'ndarray', encoding: 'json', data: [1] },
+      },
+    };
+    expect(codec.decodeResponse(JSON.stringify(value))).toEqual(value);
+  });
+
   it('throws BridgeCodecError on invalid JSON', () => {
     expect(() => codec.decodeResponse('not json')).toThrow(BridgeCodecError);
     expect(() => codec.decodeResponse('not json')).toThrow(/JSON parse failed/);
@@ -578,6 +606,31 @@ describe('decodeResponseAsync - Arrow Integration', () => {
     const payload = JSON.stringify({ simple: 'data' });
     const result = await codec.decodeResponseAsync<{ simple: string }>(payload);
     expect(result).toEqual({ simple: 'data' });
+  });
+
+  it('decodes producer-shaped scientific envelopes nested in RPC results', async () => {
+    const payload = JSON.stringify({
+      id: 1,
+      protocol: 'tywrap/1',
+      result: {
+        items: [
+          {
+            matrix: {
+              __tywrap__: 'ndarray',
+              codecVersion: 1,
+              encoding: 'json',
+              data: [1, 2],
+              shape: [2],
+              dtype: 'int64',
+            },
+          },
+        ],
+      },
+    });
+
+    await expect(codec.decodeResponseAsync(payload)).resolves.toEqual({
+      items: [{ matrix: [1, 2] }],
+    });
   });
 
   it('labels v1 scientific-envelope validation failures without Arrow wording', async () => {

@@ -110,7 +110,7 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     id: 'deeply-nested',
     call: 'deeply_nested()',
     status: 'EXPECTED_OK',
-    currentBehavior: 'One hundred nested list levels survive.',
+    currentBehavior: 'A 100-deep list survives and ends in the original leaf value.',
     expected: equal(Array.from({ length: 100 }).reduce<unknown>(value => [value], 'leaf')),
   }),
   valuesRow({
