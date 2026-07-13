@@ -1,16 +1,15 @@
 # Data-plane performance baselines
 
-This document records **indicative** baseline numbers for tywrap's hot
-data-plane paths. They are measure-first observations captured to give the
-0.8.0 release a real harness to layer perf **gates** on top of. As of this
-writing there is **no perf gating**. The benchmarks assert only that the
-measured work happened, then print timings.
+This document records historical local baseline numbers for tywrap's
+data-plane paths. The repository now enforces performance budgets in a
+required `data-plane-perf` CI job. That job sets
+`TYWRAP_DATA_PLANE_PERF=1` to enable the assertions in
+`test/data-plane-perf.test.ts`.
 
-> **Absolute numbers are machine-dependent and indicative only.** Do not treat
-> them as targets. The value here is the *relative* harness: re-run on the same
-> machine before/after a change to detect regressions, and use these as the
-> starting point for 0.8.0 threshold selection (gate on a generous multiple of
-> the observed baseline, not the raw number).
+> **The recorded numbers are machine-dependent historical observations.** Do
+> not treat them as current targets or CI thresholds. Re-run the harness on the
+> same machine before and after a change when you need a local comparison. CI
+> uses same-run relative budgets instead of the absolute values below.
 
 ## What is measured
 
@@ -56,8 +55,8 @@ dialed up for a dedicated bench run or down for CI smoke:
 
 ## Recorded local baseline
 
-Captured locally on the 0.7.0 refactor branch. Two consecutive runs shown to
-illustrate run-to-run variance.
+Captured locally on the 0.7.0 refactor branch. These are historical local
+baselines. Two consecutive runs show the observed run-to-run variance.
 
 - Machine is Apple Silicon (darwin), Node 25
 - **Date:** 2026-05-31
@@ -70,17 +69,18 @@ illustrate run-to-run variance.
 | ~5MB payload decode incl. size guard (5,242,922 bytes) | 5.116 ms/op | 5.142 ms/op |
 | PooledTransport small calls (4 workers, conc 8) | ~2.45M ops/sec | ~2.28M ops/sec |
 
-These numbers are stable run-to-run on this machine (single-digit-percent
-spread), which is what matters for using them as a regression tripwire.
+These historical numbers had a single-digit percentage spread on this
+machine. They remain a record of the local harness and are not CI thresholds.
 
-## Perf gates (0.8.0, #233)
+## Current perf gates
 
-0.8.0 layers actual **perf gates** on top of the measure-first harness above.
-They live in [`test/data-plane-perf.test.ts`](../test/data-plane-perf.test.ts)
-(also gated behind `TYWRAP_PERF_BUDGETS=1`) and assert budgets, where the
-measure-first benchmarks only print. The suite first proves correctness at
-scale (chunked 20 MiB + 80 MiB responses and a 20 MiB request echo, all forced
-through `tywrap-frame/1` frames against a 1 MiB ceiling), then checks budgets:
+The enforced budgets live in
+[`test/data-plane-perf.test.ts`](../test/data-plane-perf.test.ts). Setting
+`TYWRAP_DATA_PLANE_PERF=1` enables them. The required `data-plane-perf` CI
+job runs the suite. It first proves correctness at scale with chunked 20 MiB
+and 80 MiB responses plus a 20 MiB request echo. Each case uses
+`tywrap-frame/1` frames against a 1 MiB ceiling. The suite then checks these
+budgets:
 
 | Gate | Budget |
 |------|--------|
@@ -89,21 +89,18 @@ through `tywrap-frame/1` frames against a 1 MiB ceiling), then checks budgets:
 | Arrow ndarray/DataFrame + 100k-row decode | <= 2.0x of a same-run warm baseline |
 | Retained heap after an 80 MiB chunked response | <= `payload * 4 + fixed` (no quadratic growth) |
 
-> **CI baselines are stored and compared SEPARATELY from this local doc.** The
-> Apple-Silicon numbers in the table above are indicative only and are not
-> used as CI thresholds. Every gate in `test/data-plane-perf.test.ts` is
-> **same-run relative**: it measures a baseline in the same process on the same
-> runner (median of 5, after warmup) and compares the subject against *that*,
-> never against a hardcoded absolute. This keeps the gates portable across the
-> Apple-Silicon dev machine and the pinned Linux CI runner without re-tuning.
+> **CI compares same-run baselines rather than the local numbers in this
+> document.** Each gate measures a baseline in the same process on the same
+> runner, using a median of five after warmup, and compares the subject against
+> that result. The gates do not use a hardcoded absolute threshold.
 
-The gates run in a dedicated `data-plane-perf` CI job (pinned Node 22 / Python
-3.11, `TYWRAP_PERF_BUDGETS=1`, `NODE_OPTIONS=--expose-gc`, serial Vitest, no
-coverage so instrumentation does not skew timings). That job is part of the
-`required` gate. Release publishing also re-runs the full suite with
-`TYWRAP_PERF_BUDGETS=1`, so the data-plane gates also fence the npm publish.
+The gates run in a dedicated `data-plane-perf` CI job with pinned Node 22 and
+Python 3.11, `TYWRAP_DATA_PLANE_PERF=1`, `NODE_OPTIONS=--expose-gc`, serial
+Vitest, and no coverage. That job is part of the `required` gate. Release
+publishing reruns the full suite with `TYWRAP_PERF_BUDGETS=1`, while the
+dedicated data-plane gate is enforced by required CI.
 
 ```bash
-TYWRAP_PERF_BUDGETS=1 NODE_OPTIONS=--expose-gc npx vitest run \
+TYWRAP_DATA_PLANE_PERF=1 NODE_OPTIONS=--expose-gc npx vitest run \
   test/data-plane-perf.test.ts --reporter=verbose
 ```
