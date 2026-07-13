@@ -404,7 +404,7 @@ def serialize_ndarray_json(obj):
     if not dtype.isnative:
         raise RuntimeError(
             f'JSON ndarray encoding does not support big-endian dtype={dtype_label}; '
-            "convert to native byte order with byteswap().view(newbyteorder('='))"
+            "convert to native byte order with a.byteswap().view(a.dtype.newbyteorder('='))"
         )
 
     if dtype.kind in ('i', 'u'):
@@ -461,6 +461,11 @@ def serialize_ndarray_json(obj):
             f'JSON ndarray encoding does not support complex dtype={dtype_label}; encode '
             '.real and .imag arrays explicitly'
         )
+    elif dtype.kind == 'f' and dtype.itemsize > 8:
+        raise RuntimeError(
+            f'JSON ndarray encoding does not support float dtype={dtype_label} wider than '
+            "64 bits; cast explicitly (e.g. .astype('float64')) or use Arrow encoding"
+        )
     elif dtype.kind not in ('b', 'f'):
         raise RuntimeError(
             f'JSON ndarray encoding does not support dtype={dtype_label}; cast to bool, '
@@ -468,27 +473,7 @@ def serialize_ndarray_json(obj):
         )
 
     try:
-        if dtype.kind == 'f':
-            import numpy as np
-
-            if dtype.itemsize > np.dtype(np.float64).itemsize:
-                finite_outside_number_range = np.isfinite(obj) & (
-                    (obj > sys.float_info.max) | (obj < -sys.float_info.max)
-                )
-                if finite_outside_number_range.any():
-                    raise RuntimeError(
-                        f'JSON ndarray encoding cannot convert finite dtype={dtype_label} '
-                        'values outside the JavaScript Number range; scale into the float64 '
-                        'range or encode explicitly (e.g. str)'
-                    )
-            # np.longdouble.tolist() retains np.longdouble scalar leaves, which the
-            # JSON encoder cannot reduce to native JSON numbers. The declared dtype
-            # records the source width while float64 supplies JSON-native leaves.
-            data = obj.astype(np.float64, copy=True).tolist()
-        else:
-            data = obj.tolist()
-    except RuntimeError:
-        raise
+        data = obj.tolist()
     except Exception as exc:
         raise RuntimeError('JSON fallback failed for ndarray') from exc
     return {

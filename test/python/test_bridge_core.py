@@ -19,7 +19,6 @@ from tywrap_bridge_core import (  # noqa: E402
     ProtocolError,
     deserialize,
     dispatch_request,
-    encode_value,
     serialize_ndarray_json,
 )
 
@@ -73,16 +72,28 @@ def test_stateful_instance_methods_are_unknown() -> None:
         )
 
 
-def test_ndarray_json_declares_dtype_for_empty_and_float16_arrays() -> None:
+def test_ndarray_json_declares_dtype_for_empty_array() -> None:
     np = pytest.importorskip('numpy')
 
     empty = serialize_ndarray_json(np.array([], dtype=np.int64))
-    half = serialize_ndarray_json(np.array([1.5, -2.25], dtype=np.float16))
 
     assert empty['data'] == []
     assert empty['dtype'] == 'int64'
-    assert half['data'] == [1.5, -2.25]
-    assert half['dtype'] == 'float16'
+
+
+@pytest.mark.parametrize('dtype', ['float16', 'float32', 'float64'])
+def test_ndarray_json_serializes_standard_floats_without_astype(dtype: str) -> None:
+    np = pytest.importorskip('numpy')
+
+    class NoAstypeArray(np.ndarray):
+        def astype(self, *args, **kwargs):
+            raise AssertionError('serialize_ndarray_json must not call astype')
+
+    array = np.array([1.5, -2.25], dtype=dtype).view(NoAstypeArray)
+    envelope = serialize_ndarray_json(array)
+
+    assert envelope['data'] == [1.5, -2.25]
+    assert envelope['dtype'] == dtype
 
 
 def test_ndarray_json_keeps_existing_nonfinite_float_behavior() -> None:
@@ -123,27 +134,19 @@ def test_ndarray_json_rejects_unsafe_integers(dtype: str, value: int) -> None:
         serialize_ndarray_json(np.array([value], dtype=dtype))
 
 
-def test_ndarray_json_longdouble_has_json_native_number_leaves() -> None:
-    np = pytest.importorskip('numpy')
-
-    envelope = serialize_ndarray_json(np.array([1.25, -2.5], dtype=np.longdouble))
-    encoded = encode_value(envelope, allow_nan=False)
-
-    assert json.loads(encoded)['data'] == [1.25, -2.5]
-    assert envelope['dtype'] == np.dtype(np.longdouble).name
-
-
-def test_ndarray_json_rejects_finite_longdouble_outside_number_range() -> None:
+def test_ndarray_json_rejects_longdouble_wider_than_float64() -> None:
     np = pytest.importorskip('numpy')
     if np.dtype(np.longdouble).itemsize <= np.dtype(np.float64).itemsize:
-        pytest.skip('longdouble has no wider finite range on this platform')
-    value = np.nextafter(np.longdouble(sys.float_info.max), np.longdouble(np.inf))
+        pytest.skip('longdouble is not wider than float64 on this platform')
 
-    with pytest.raises(
-        RuntimeError,
-        match=r'finite dtype=.*outside the JavaScript Number range.*encode explicitly',
-    ):
-        serialize_ndarray_json(np.array([value], dtype=np.longdouble))
+    with pytest.raises(RuntimeError) as exc_info:
+        serialize_ndarray_json(np.array([1.25, -2.5], dtype=np.longdouble))
+
+    message = str(exc_info.value)
+    assert f'dtype={np.dtype(np.longdouble)}' in message
+    assert 'wider than 64 bits' in message
+    assert ".astype('float64')" in message
+    assert 'Arrow' in message
 
 
 @pytest.mark.parametrize(
@@ -159,7 +162,7 @@ def test_ndarray_json_rejects_finite_longdouble_outside_number_range() -> None:
         ),
         (
             lambda np: np.array([1], dtype='>i4'),
-            r"big-endian dtype=>i4.*byteswap\(\)\.view\(newbyteorder\('='\)\)",
+            r"big-endian dtype=>i4.*a\.byteswap\(\)\.view\(a\.dtype\.newbyteorder\('='\)\)",
         ),
         (
             lambda np: np.array([(1, 2.5)], dtype=[('left', 'i4'), ('right', 'f4')]),
