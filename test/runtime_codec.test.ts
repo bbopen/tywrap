@@ -939,8 +939,14 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       });
     });
 
-    it('rejects more than 1,000,000 visited nodes with the exact path', async () => {
-      const value = new Array<null>(1_000_000).fill(null);
+    it('does not spend the node budget on primitive leaves', async () => {
+      const value = new Array<number>(1_000_000).fill(0);
+
+      await expect(decodeValueAsync(value)).resolves.toBe(value);
+    });
+
+    it('rejects more than 1,000,000 visited container nodes with the exact path', async () => {
+      const value = Array.from({ length: 1_000_000 }, () => []);
 
       await expect(decodeValueAsync(value)).rejects.toMatchObject({
         message:

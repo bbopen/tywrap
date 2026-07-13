@@ -1220,7 +1220,12 @@ async function decodeEnvelopeAsync<T>(
    * serialized independently, and this decoder does not restore alias identity.
    */
   const visit = (current: unknown, depth: number, path: string): MaybePromise<T | unknown> => {
-    recordVisit(depth, path);
+    // Only containers consume the traversal budget. Primitive leaves are already
+    // bounded by the payload byte cap, and counting them would reject large plain
+    // arrays that decoded fine before recursion existed.
+    if (isPlainArray(current) || isPlainObject(current)) {
+      recordVisit(depth, path);
+    }
 
     if (
       isPlainObject(current) &&
