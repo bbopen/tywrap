@@ -558,6 +558,7 @@ describePerf('data-plane perf: Arrow + 100k-decode regression budget', () => {
           encoding: 'arrow',
           b64,
           shape: [ndValues.length],
+          dtype: 'float64',
         });
         expect(Array.isArray(decoded) || ArrayBuffer.isView(decoded)).toBe(true);
       };

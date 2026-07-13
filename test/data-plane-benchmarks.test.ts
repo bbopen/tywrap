@@ -194,6 +194,7 @@ describeBench('Data-plane baseline benchmarks (measure-first, no gating)', () =>
           encoding: 'arrow',
           b64,
           shape: [length],
+          dtype: 'float64',
         };
         const decoded = await decodeValueAsync(envelope);
         expect(Array.isArray(decoded) || ArrayBuffer.isView(decoded)).toBe(true);

@@ -28,6 +28,7 @@ describeBudget('Codec performance budgets', () => {
       encoding: 'json',
       format: 'csr',
       shape: [100, 100],
+      dtype: 'int64',
       data: Array.from({ length: 200 }, (_, idx) => idx % 7),
       indices: Array.from({ length: 200 }, (_, idx) => idx % 100),
       indptr: Array.from({ length: 101 }, (_, idx) => Math.min(idx * 2, 200)),
