@@ -1141,7 +1141,7 @@ const ENVELOPE_HANDLERS: ReadonlyMap<string, EnvelopeHandler> = new Map([
   ['sklearn.estimator', decodeSklearnEstimatorEnvelope],
 ]);
 
-const MAX_DECODE_DEPTH = 64;
+const MAX_DECODE_DEPTH = 2048;
 const MAX_DECODE_NODES = 1_000_000;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1231,8 +1231,7 @@ async function decodeEnvelopeAsync<T>(
     }
 
     // Handlers sometimes decode a required child envelope themselves (currently
-    // torch.tensor.value). Keep that single-envelope recursion unchanged; the
-    // generic container walk happens after the handler returns.
+    // torch.tensor.value). Keep that single-envelope recursion unchanged.
     const decodeSingle = (item: unknown): MaybePromise<T | unknown> => {
       const recurseSingle: (nested: unknown) => MaybePromise<T | unknown> = nested => {
         const nestedPath = decodePath(path, 'value');
@@ -1244,17 +1243,25 @@ async function decodeEnvelopeAsync<T>(
 
     const visitDecoded = (decoded: unknown): MaybePromise<T | unknown> => {
       if (isPlainArray(decoded)) {
-        const items = decoded.map((item, index) => visit(item, depth + 1, decodePath(path, index)));
-        const pending: PromiseLike<void>[] = [];
-        items.forEach((item, index) => {
-          if (isPromiseLike(item)) {
+        const pending: Promise<void>[] = [];
+        decoded.forEach((item, index) => {
+          let next: MaybePromise<T | unknown>;
+          try {
+            next = visit(item, depth + 1, decodePath(path, index));
+          } catch (error) {
+            pending.push(Promise.reject(error));
+            return;
+          }
+          if (isPromiseLike(next)) {
             pending.push(
-              item.then(resolved => {
-                decoded[index] = resolved;
+              Promise.resolve(next).then(resolved => {
+                if (resolved !== item) {
+                  decoded[index] = resolved;
+                }
               })
             );
-          } else {
-            decoded[index] = item;
+          } else if (next !== item) {
+            decoded[index] = next;
           }
         });
         return pending.length > 0 ? Promise.all(pending).then(() => decoded) : decoded;
@@ -1263,14 +1270,22 @@ async function decodeEnvelopeAsync<T>(
         const output = decoded;
         const pending: PromiseLike<void>[] = [];
         for (const [key, item] of Object.entries(decoded)) {
-          const next = visit(item, depth + 1, decodePath(path, key));
+          let next: MaybePromise<T | unknown>;
+          try {
+            next = visit(item, depth + 1, decodePath(path, key));
+          } catch (error) {
+            pending.push(Promise.reject(error));
+            continue;
+          }
           if (isPromiseLike(next)) {
             pending.push(
-              next.then(resolved => {
-                output[key] = resolved;
+              Promise.resolve(next).then(resolved => {
+                if (resolved !== item) {
+                  output[key] = resolved;
+                }
               })
             );
-          } else {
+          } else if (next !== item) {
             output[key] = next;
           }
         }
@@ -1279,8 +1294,30 @@ async function decodeEnvelopeAsync<T>(
       return decoded;
     };
 
-    const decoded = isPlainObject(current) ? decodeSingle(current) : current;
-    return isPromiseLike(decoded) ? decoded.then(visitDecoded) : visitDecoded(decoded);
+    if (
+      isPlainObject(current) &&
+      typeof current.__tywrap__ === 'string' &&
+      ENVELOPE_HANDLERS.has(current.__tywrap__)
+    ) {
+      const prefixHandlerError = (error: unknown): never => {
+        if (path === 'result') {
+          throw error;
+        }
+        throw new Error(
+          `Scientific envelope decode failed at ${path}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      };
+
+      let decoded: MaybePromise<T | unknown>;
+      try {
+        decoded = decodeSingle(current);
+      } catch (error) {
+        return prefixHandlerError(error);
+      }
+      return isPromiseLike(decoded) ? Promise.resolve(decoded).catch(prefixHandlerError) : decoded;
+    }
+
+    return visitDecoded(current);
   };
 
   return await visit(value, 0, 'result');

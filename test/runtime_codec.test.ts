@@ -826,7 +826,47 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       });
     });
 
-    it('decodes an envelope inside a decoded container value', async () => {
+    it('handles an earlier rejecting async envelope when a later sibling throws synchronously', async () => {
+      let releaseLoader: (() => void) | undefined;
+      _setLazyArrowLoaderForTesting(
+        () =>
+          new Promise((_, reject) => {
+            releaseLoader = () => reject(new Error('deferred loader rejection'));
+          })
+      );
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown): void => {
+        unhandled.push(reason);
+      };
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        const decoding = decodeValueAsync([
+          {
+            __tywrap__: 'dataframe',
+            codecVersion: 1,
+            encoding: 'arrow',
+            b64: '',
+          },
+          {
+            __tywrap__: 'ndarray',
+            codecVersion: 1,
+            encoding: 'json',
+            data: [1],
+            dtype: 'int64',
+          },
+        ]);
+
+        await expect(decoding).rejects.toThrow('shape at path shape');
+        releaseLoader?.();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('treats decoded envelope output as terminal', async () => {
       const value = {
         __tywrap__: 'dataframe' as const,
         codecVersion: 1,
@@ -843,32 +883,41 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       };
 
       await expect(decodeValueAsync(value)).resolves.toEqual({
-        matrix: [
-          [1, 2],
-          [3, 4],
-        ],
+        matrix: ndarray(
+          [
+            [1, 2],
+            [3, 4],
+          ],
+          [2, 2]
+        ),
       });
     });
 
-    it('rejects values deeper than 64 with the exact path', async () => {
+    it('does not count decoded ndarray payload elements as visited nodes', async () => {
+      const data = new Array<number>(1_000_001).fill(1);
+
+      await expect(decodeValueAsync(ndarray(data))).resolves.toBe(data);
+    });
+
+    it('rejects values deeper than 2048 with the exact path', async () => {
       const value: Record<string, unknown> = {};
       let cursor = value;
-      for (let depth = 0; depth < 65; depth += 1) {
+      for (let depth = 0; depth < 2049; depth += 1) {
         const next: Record<string, unknown> = {};
         cursor.next = next;
         cursor = next;
       }
-      const path = `result${'.next'.repeat(65)}`;
+      const path = `result${'.next'.repeat(2049)}`;
 
       await expect(decodeValueAsync(value)).rejects.toMatchObject({
-        message: `Scientific envelope decode maximum depth 64 exceeded at ${path}`,
+        message: `Scientific envelope decode maximum depth 2048 exceeded at ${path}`,
       });
     });
 
     it('counts a torch tensor nested ndarray against the depth bound', async () => {
       const value: Record<string, unknown> = {};
       let cursor = value;
-      for (let depth = 0; depth < 63; depth += 1) {
+      for (let depth = 0; depth < 2047; depth += 1) {
         const next: Record<string, unknown> = {};
         cursor.next = next;
         cursor = next;
@@ -882,10 +931,11 @@ describe('Cross-Runtime Data Transfer Codec', () => {
         dtype: 'torch.int64',
         device: 'cpu',
       };
-      const path = `result${'.next'.repeat(63)}.tensor.value`;
+      const path = `result${'.next'.repeat(2047)}.tensor.value`;
+      const tensorPath = `result${'.next'.repeat(2047)}.tensor`;
 
       await expect(decodeValueAsync(value)).rejects.toMatchObject({
-        message: `Scientific envelope decode maximum depth 64 exceeded at ${path}`,
+        message: `Scientific envelope decode failed at ${tensorPath}: Scientific envelope decode maximum depth 2048 exceeded at ${path}`,
       });
     });
 
@@ -911,6 +961,36 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       expect(nestedDecoded).toEqual({
         item: { __tywrap__: 'future.marker', value: ndarray([1]) },
       });
+    });
+
+    it('passes through frozen envelope-free objects and arrays unchanged', async () => {
+      const nested = Object.freeze({ value: 1 });
+      const items = Object.freeze([nested, 'plain']);
+      const value = Object.freeze({ items });
+
+      const decoded = await decodeValueAsync(value);
+      expect(decoded).toBe(value);
+      expect((decoded as { items: unknown }).items).toBe(items);
+    });
+
+    it('prefixes nested envelope validation errors with the traversal path', async () => {
+      const value = {
+        groups: [
+          {
+            matrix: {
+              __tywrap__: 'ndarray',
+              codecVersion: 1,
+              encoding: 'json',
+              data: [1],
+              dtype: 'int64',
+            },
+          },
+        ],
+      };
+
+      await expect(decodeValueAsync(value)).rejects.toThrow(
+        'Scientific envelope decode failed at result.groups[0].matrix: Invalid ndarray envelope: shape at path shape'
+      );
     });
 
     it('passes through custom-prototype objects without inspecting their contents', async () => {
