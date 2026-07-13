@@ -77,6 +77,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+function isPlainArray(value: unknown): value is unknown[] {
+  return Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype;
+}
+
 /**
  * Build a path string for error messages.
  */
@@ -105,6 +109,29 @@ function scientificMarkerFrom(value: unknown, errorMessage: string): string | un
     return SCIENTIFIC_MARKERS.has(value.__tywrap__) ? value.__tywrap__ : undefined;
   }
   return undefined;
+}
+
+function containsScientificEnvelope(value: unknown): boolean {
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (isPlainArray(current)) {
+      for (const item of current) {
+        pending.push(item);
+      }
+      continue;
+    }
+    if (!isPlainObject(current)) {
+      continue;
+    }
+    if (typeof current.__tywrap__ === 'string') {
+      return SCIENTIFIC_MARKERS.has(current.__tywrap__);
+    }
+    for (const item of Object.values(current)) {
+      pending.push(item);
+    }
+  }
+  return false;
 }
 
 /**
@@ -627,6 +654,13 @@ export class BridgeCodec {
    */
   decodeResponse<T>(payload: string): T {
     const result = this.parseResponseResult(payload);
+
+    if (containsScientificEnvelope(result)) {
+      throw new BridgeCodecError('scientific envelopes require decodeResponseAsync', {
+        codecPhase: 'decode',
+        valueType: 'scientific-envelope',
+      });
+    }
 
     // Post-decode validation for special floats if enabled
     this.assertNoSpecialFloats(result);

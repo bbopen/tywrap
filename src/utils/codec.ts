@@ -1141,6 +1141,28 @@ const ENVELOPE_HANDLERS: ReadonlyMap<string, EnvelopeHandler> = new Map([
   ['sklearn.estimator', decodeSklearnEstimatorEnvelope],
 ]);
 
+const MAX_DECODE_DEPTH = 64;
+const MAX_DECODE_NODES = 1_000_000;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!isObject(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function isPlainArray(value: unknown): value is unknown[] {
+  return Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype;
+}
+
+function decodePath(base: string, key: string | number): string {
+  if (typeof key === 'number') {
+    return `${base}[${key}]`;
+  }
+  return /^[A-Za-z_$][\w$]*$/.test(key) ? `${base}.${key}` : `${base}[${JSON.stringify(key)}]`;
+}
+
 function decodeEnvelopeCore<T>(
   value: unknown,
   decodeArrow: (bytes: Uint8Array) => MaybePromise<T>,
@@ -1177,9 +1199,91 @@ async function decodeEnvelopeAsync<T>(
   value: unknown,
   decodeArrow: (bytes: Uint8Array) => Promise<T>
 ): Promise<T | unknown> {
-  const recurse: (value: unknown) => MaybePromise<T | unknown> = v =>
-    decodeEnvelopeCore(v, decodeArrow, recurse);
-  return await decodeEnvelopeCore(value, decodeArrow, recurse);
+  let visitedNodes = 0;
+
+  const recordVisit = (depth: number, path: string): void => {
+    visitedNodes += 1;
+    if (visitedNodes > MAX_DECODE_NODES) {
+      throw new Error(
+        `Scientific envelope decode maximum visited nodes ${MAX_DECODE_NODES} exceeded at ${path}`
+      );
+    }
+    if (depth > MAX_DECODE_DEPTH) {
+      throw new Error(
+        `Scientific envelope decode maximum depth ${MAX_DECODE_DEPTH} exceeded at ${path}`
+      );
+    }
+  };
+
+  /**
+   * Values have copy semantics across the bridge: repeated Python references are
+   * serialized independently, and this decoder does not restore alias identity.
+   */
+  const visit = (current: unknown, depth: number, path: string): MaybePromise<T | unknown> => {
+    recordVisit(depth, path);
+
+    if (
+      isPlainObject(current) &&
+      typeof current.__tywrap__ === 'string' &&
+      !ENVELOPE_HANDLERS.has(current.__tywrap__)
+    ) {
+      return current;
+    }
+
+    // Handlers sometimes decode a required child envelope themselves (currently
+    // torch.tensor.value). Keep that single-envelope recursion unchanged; the
+    // generic container walk happens after the handler returns.
+    const decodeSingle = (item: unknown): MaybePromise<T | unknown> => {
+      const recurseSingle: (nested: unknown) => MaybePromise<T | unknown> = nested => {
+        const nestedPath = decodePath(path, 'value');
+        recordVisit(depth + 1, nestedPath);
+        return decodeEnvelopeCore(nested, decodeArrow, recurseSingle);
+      };
+      return decodeEnvelopeCore(item, decodeArrow, recurseSingle);
+    };
+
+    const visitDecoded = (decoded: unknown): MaybePromise<T | unknown> => {
+      if (isPlainArray(decoded)) {
+        const items = decoded.map((item, index) => visit(item, depth + 1, decodePath(path, index)));
+        const pending: PromiseLike<void>[] = [];
+        items.forEach((item, index) => {
+          if (isPromiseLike(item)) {
+            pending.push(
+              item.then(resolved => {
+                decoded[index] = resolved;
+              })
+            );
+          } else {
+            decoded[index] = item;
+          }
+        });
+        return pending.length > 0 ? Promise.all(pending).then(() => decoded) : decoded;
+      }
+      if (isPlainObject(decoded)) {
+        const output = decoded;
+        const pending: PromiseLike<void>[] = [];
+        for (const [key, item] of Object.entries(decoded)) {
+          const next = visit(item, depth + 1, decodePath(path, key));
+          if (isPromiseLike(next)) {
+            pending.push(
+              next.then(resolved => {
+                output[key] = resolved;
+              })
+            );
+          } else {
+            output[key] = next;
+          }
+        }
+        return pending.length > 0 ? Promise.all(pending).then(() => output) : output;
+      }
+      return decoded;
+    };
+
+    const decoded = isPlainObject(current) ? decodeSingle(current) : current;
+    return isPromiseLike(decoded) ? decoded.then(visitDecoded) : visitDecoded(decoded);
+  };
+
+  return await visit(value, 0, 'result');
 }
 
 /**

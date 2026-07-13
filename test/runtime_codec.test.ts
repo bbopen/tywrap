@@ -804,6 +804,134 @@ describe('Cross-Runtime Data Transfer Codec', () => {
     });
   });
 
+  describe('Recursive scientific envelope decoding', () => {
+    const ndarray = (data: unknown[], shape: number[] = [data.length]) => ({
+      __tywrap__: 'ndarray' as const,
+      codecVersion: 1,
+      encoding: 'json' as const,
+      data,
+      shape,
+      dtype: 'int64',
+    });
+
+    it('decodes envelopes in object, array, and deeply mixed containers', async () => {
+      const value = {
+        direct: ndarray([1, 2]),
+        items: ['plain', ndarray([3]), { nested: [ndarray([4, 5])] }],
+      };
+
+      await expect(decodeValueAsync(value)).resolves.toEqual({
+        direct: [1, 2],
+        items: ['plain', [3], { nested: [[4, 5]] }],
+      });
+    });
+
+    it('decodes an envelope inside a decoded container value', async () => {
+      const value = {
+        __tywrap__: 'dataframe' as const,
+        codecVersion: 1,
+        encoding: 'json' as const,
+        data: {
+          matrix: ndarray(
+            [
+              [1, 2],
+              [3, 4],
+            ],
+            [2, 2]
+          ),
+        },
+      };
+
+      await expect(decodeValueAsync(value)).resolves.toEqual({
+        matrix: [
+          [1, 2],
+          [3, 4],
+        ],
+      });
+    });
+
+    it('rejects values deeper than 64 with the exact path', async () => {
+      const value: Record<string, unknown> = {};
+      let cursor = value;
+      for (let depth = 0; depth < 65; depth += 1) {
+        const next: Record<string, unknown> = {};
+        cursor.next = next;
+        cursor = next;
+      }
+      const path = `result${'.next'.repeat(65)}`;
+
+      await expect(decodeValueAsync(value)).rejects.toMatchObject({
+        message: `Scientific envelope decode maximum depth 64 exceeded at ${path}`,
+      });
+    });
+
+    it('counts a torch tensor nested ndarray against the depth bound', async () => {
+      const value: Record<string, unknown> = {};
+      let cursor = value;
+      for (let depth = 0; depth < 63; depth += 1) {
+        const next: Record<string, unknown> = {};
+        cursor.next = next;
+        cursor = next;
+      }
+      cursor.tensor = {
+        __tywrap__: 'torch.tensor',
+        codecVersion: 1,
+        encoding: 'ndarray',
+        value: ndarray([1]),
+        shape: [1],
+        dtype: 'torch.int64',
+        device: 'cpu',
+      };
+      const path = `result${'.next'.repeat(63)}.tensor.value`;
+
+      await expect(decodeValueAsync(value)).rejects.toMatchObject({
+        message: `Scientific envelope decode maximum depth 64 exceeded at ${path}`,
+      });
+    });
+
+    it('rejects more than 1,000,000 visited nodes with the exact path', async () => {
+      const value = new Array<null>(1_000_000).fill(null);
+
+      await expect(decodeValueAsync(value)).rejects.toMatchObject({
+        message:
+          'Scientific envelope decode maximum visited nodes 1000000 exceeded at result[999999]',
+      });
+    });
+
+    it('preserves unknown nested marker behavior from the root', async () => {
+      const root = { __tywrap__: 'future.marker', value: ndarray([1]) };
+      const nested = { item: { __tywrap__: 'future.marker', value: ndarray([1]) } };
+      const nestedMarker = nested.item;
+
+      const rootDecoded = await decodeValueAsync(root);
+      const nestedDecoded = await decodeValueAsync(nested);
+      expect(rootDecoded).toBe(root);
+      expect(rootDecoded).toEqual({ __tywrap__: 'future.marker', value: ndarray([1]) });
+      expect((nestedDecoded as { item: unknown }).item).toBe(nestedMarker);
+      expect(nestedDecoded).toEqual({
+        item: { __tywrap__: 'future.marker', value: ndarray([1]) },
+      });
+    });
+
+    it('passes through custom-prototype objects without inspecting their contents', async () => {
+      const custom = Object.create({ kind: 'custom' }) as { value: unknown };
+      custom.value = ndarray([1]);
+
+      const customEnvelope = Object.assign(Object.create({ kind: 'custom' }), ndarray([3]));
+
+      const decoded = await decodeValueAsync({ custom, customEnvelope });
+      expect((decoded as { custom: unknown }).custom).toBe(custom);
+      expect(custom.value).toMatchObject({ __tywrap__: 'ndarray' });
+      expect((decoded as { customEnvelope: unknown }).customEnvelope).toBe(customEnvelope);
+
+      class CustomArray extends Array<unknown> {}
+      const customArray = new CustomArray(ndarray([2]));
+      const arrayDecoded = await decodeValueAsync({ customArray });
+      expect((arrayDecoded as { customArray: unknown }).customArray).toBe(customArray);
+      expect(customArray[0]).toMatchObject({ __tywrap__: 'ndarray' });
+    });
+  });
+
   describe('Encoding Edge Cases', () => {
     it('should handle missing encoding field', async () => {
       const envelope = {

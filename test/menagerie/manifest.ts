@@ -109,9 +109,9 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
   valuesRow({
     id: 'deeply-nested',
     call: 'deeply_nested()',
-    status: 'EXPECTED_OK',
-    currentBehavior: 'One hundred nested list levels survive.',
-    expected: equal(Array.from({ length: 100 }).reduce<unknown>(value => [value], 'leaf')),
+    status: 'LOUD_FAIL',
+    currentBehavior: 'Values deeper than the decoder limit reject with their exact path.',
+    expected: error(/maximum depth 64 exceeded at result(?:\[0\]){65}/i),
   }),
   valuesRow({
     id: 'integer-safe-max',
