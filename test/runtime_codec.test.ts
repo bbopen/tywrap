@@ -914,6 +914,27 @@ describe('Cross-Runtime Data Transfer Codec', () => {
       });
     });
 
+    it('walks deeply nested plain arrays without using the JavaScript call stack', async () => {
+      const nestedArray = (depth: number): unknown[] => {
+        const value: unknown[] = [];
+        let cursor = value;
+        for (let index = 0; index < depth; index += 1) {
+          const next: unknown[] = [];
+          cursor.push(next);
+          cursor = next;
+        }
+        return value;
+      };
+      const tooDeep = nestedArray(2049);
+      const withinBound = nestedArray(2000);
+      const path = `result${'[0]'.repeat(2049)}`;
+
+      await expect(decodeValueAsync(tooDeep)).rejects.toMatchObject({
+        message: `Scientific envelope decode maximum depth 2048 exceeded at ${path}`,
+      });
+      await expect(decodeValueAsync(withinBound)).resolves.toBe(withinBound);
+    });
+
     it('counts a torch tensor nested ndarray against the depth bound', async () => {
       const value: Record<string, unknown> = {};
       let cursor = value;

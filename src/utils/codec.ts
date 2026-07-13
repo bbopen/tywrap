@@ -1201,6 +1201,29 @@ async function decodeEnvelopeAsync<T>(
 ): Promise<T | unknown> {
   let visitedNodes = 0;
 
+  type DecodeTarget =
+    | { container: unknown[]; key: number }
+    | { container: Record<string, unknown>; key: string };
+
+  interface ArrayFrame {
+    kind: 'array';
+    container: unknown[];
+    depth: number;
+    path: string;
+    nextIndex: number;
+  }
+
+  interface ObjectFrame {
+    kind: 'object';
+    container: Record<string, unknown>;
+    depth: number;
+    path: string;
+    entries: [string, unknown][];
+    nextIndex: number;
+  }
+
+  type DecodeFrame = ArrayFrame | ObjectFrame;
+
   const recordVisit = (depth: number, path: string): void => {
     visitedNodes += 1;
     if (visitedNodes > MAX_DECODE_NODES) {
@@ -1215,117 +1238,153 @@ async function decodeEnvelopeAsync<T>(
     }
   };
 
+  const prefixHandlerError = (error: unknown, path: string): never => {
+    if (path === 'result') {
+      throw error;
+    }
+    throw new Error(
+      `Scientific envelope decode failed at ${path}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  };
+
+  const assignDecoded = (target: DecodeTarget, original: unknown, decoded: unknown): void => {
+    if (decoded !== original) {
+      if (Array.isArray(target.container)) {
+        target.container[target.key as number] = decoded;
+      } else {
+        target.container[target.key as string] = decoded;
+      }
+    }
+  };
+
+  const settleDecoded = async (
+    decoded: PromiseLike<T | unknown>,
+    original: unknown,
+    target: DecodeTarget,
+    path: string
+  ): Promise<void> => {
+    let resolved: T | unknown;
+    try {
+      resolved = await decoded;
+    } catch (error) {
+      return prefixHandlerError(error, path);
+    }
+    assignDecoded(target, original, resolved);
+  };
+
+  const decodeSingle = (item: unknown, depth: number, path: string): MaybePromise<T | unknown> => {
+    // Handlers sometimes decode a required child envelope themselves (currently
+    // torch.tensor.value). Keep that single-envelope recursion unchanged.
+    const recurseSingle: (nested: unknown) => MaybePromise<T | unknown> = nested => {
+      const nestedPath = decodePath(path, 'value');
+      recordVisit(depth + 1, nestedPath);
+      return decodeEnvelopeCore(nested, decodeArrow, recurseSingle);
+    };
+    return decodeEnvelopeCore(item, decodeArrow, recurseSingle);
+  };
+
+  const frames: DecodeFrame[] = [];
+  const pending: Promise<void>[] = [];
+
+  const visit = (current: unknown, depth: number, path: string, target?: DecodeTarget): void => {
+    const plainArray = isPlainArray(current);
+    const plainObject = isPlainObject(current);
+
+    // Only containers consume the traversal budget. Primitive leaves are already
+    // bounded by the payload byte cap, and counting them would reject large plain
+    // arrays that decoded fine before recursion existed.
+    if (plainArray || plainObject) {
+      recordVisit(depth, path);
+    }
+
+    if (plainObject && typeof current.__tywrap__ === 'string') {
+      if (!ENVELOPE_HANDLERS.has(current.__tywrap__)) {
+        return;
+      }
+
+      let decoded: MaybePromise<T | unknown>;
+      try {
+        decoded = decodeSingle(current, depth, path);
+      } catch (error) {
+        return prefixHandlerError(error, path);
+      }
+      if (isPromiseLike(decoded)) {
+        if (target) {
+          pending.push(settleDecoded(decoded, current, target, path));
+        } else {
+          pending.push(settleDecoded(decoded, current, { container: root, key: 'value' }, path));
+        }
+      } else if (target) {
+        assignDecoded(target, current, decoded);
+      } else if (decoded !== current) {
+        root.value = decoded;
+      }
+      return;
+    }
+
+    if (plainArray) {
+      frames.push({ kind: 'array', container: current, depth, path, nextIndex: 0 });
+    } else if (plainObject) {
+      frames.push({
+        kind: 'object',
+        container: current,
+        depth,
+        path,
+        entries: Object.entries(current),
+        nextIndex: 0,
+      });
+    }
+  };
+
   /**
    * Values have copy semantics across the bridge: repeated Python references are
    * serialized independently, and this decoder does not restore alias identity.
    */
-  const visit = (current: unknown, depth: number, path: string): MaybePromise<T | unknown> => {
-    // Only containers consume the traversal budget. Primitive leaves are already
-    // bounded by the payload byte cap, and counting them would reject large plain
-    // arrays that decoded fine before recursion existed.
-    if (isPlainArray(current) || isPlainObject(current)) {
-      recordVisit(depth, path);
+  const root: { value: unknown } = { value };
+  visit(value, 0, 'result');
+
+  const visitChild = (
+    item: unknown,
+    key: string | number,
+    target: DecodeTarget,
+    frame: DecodeFrame
+  ): void => {
+    try {
+      visit(item, frame.depth + 1, decodePath(frame.path, key), target);
+    } catch (error) {
+      pending.push(Promise.reject(error));
     }
-
-    if (
-      isPlainObject(current) &&
-      typeof current.__tywrap__ === 'string' &&
-      !ENVELOPE_HANDLERS.has(current.__tywrap__)
-    ) {
-      return current;
-    }
-
-    // Handlers sometimes decode a required child envelope themselves (currently
-    // torch.tensor.value). Keep that single-envelope recursion unchanged.
-    const decodeSingle = (item: unknown): MaybePromise<T | unknown> => {
-      const recurseSingle: (nested: unknown) => MaybePromise<T | unknown> = nested => {
-        const nestedPath = decodePath(path, 'value');
-        recordVisit(depth + 1, nestedPath);
-        return decodeEnvelopeCore(nested, decodeArrow, recurseSingle);
-      };
-      return decodeEnvelopeCore(item, decodeArrow, recurseSingle);
-    };
-
-    const visitDecoded = (decoded: unknown): MaybePromise<T | unknown> => {
-      if (isPlainArray(decoded)) {
-        const pending: Promise<void>[] = [];
-        decoded.forEach((item, index) => {
-          let next: MaybePromise<T | unknown>;
-          try {
-            next = visit(item, depth + 1, decodePath(path, index));
-          } catch (error) {
-            pending.push(Promise.reject(error));
-            return;
-          }
-          if (isPromiseLike(next)) {
-            pending.push(
-              Promise.resolve(next).then(resolved => {
-                if (resolved !== item) {
-                  decoded[index] = resolved;
-                }
-              })
-            );
-          } else if (next !== item) {
-            decoded[index] = next;
-          }
-        });
-        return pending.length > 0 ? Promise.all(pending).then(() => decoded) : decoded;
-      }
-      if (isPlainObject(decoded)) {
-        const output = decoded;
-        const pending: PromiseLike<void>[] = [];
-        for (const [key, item] of Object.entries(decoded)) {
-          let next: MaybePromise<T | unknown>;
-          try {
-            next = visit(item, depth + 1, decodePath(path, key));
-          } catch (error) {
-            pending.push(Promise.reject(error));
-            continue;
-          }
-          if (isPromiseLike(next)) {
-            pending.push(
-              Promise.resolve(next).then(resolved => {
-                if (resolved !== item) {
-                  output[key] = resolved;
-                }
-              })
-            );
-          } else if (next !== item) {
-            output[key] = next;
-          }
-        }
-        return pending.length > 0 ? Promise.all(pending).then(() => output) : output;
-      }
-      return decoded;
-    };
-
-    if (
-      isPlainObject(current) &&
-      typeof current.__tywrap__ === 'string' &&
-      ENVELOPE_HANDLERS.has(current.__tywrap__)
-    ) {
-      const prefixHandlerError = (error: unknown): never => {
-        if (path === 'result') {
-          throw error;
-        }
-        throw new Error(
-          `Scientific envelope decode failed at ${path}: ${error instanceof Error ? error.message : String(error)}`
-        );
-      };
-
-      let decoded: MaybePromise<T | unknown>;
-      try {
-        decoded = decodeSingle(current);
-      } catch (error) {
-        return prefixHandlerError(error);
-      }
-      return isPromiseLike(decoded) ? Promise.resolve(decoded).catch(prefixHandlerError) : decoded;
-    }
-
-    return visitDecoded(current);
   };
 
-  return await visit(value, 0, 'result');
+  while (frames.length > 0) {
+    const frame = frames[frames.length - 1];
+    if (!frame) {
+      break;
+    }
+    if (
+      frame.nextIndex >= (frame.kind === 'array' ? frame.container.length : frame.entries.length)
+    ) {
+      frames.pop();
+      continue;
+    }
+
+    const index = frame.nextIndex;
+    frame.nextIndex += 1;
+    if (frame.kind === 'array') {
+      visitChild(frame.container[index], index, { container: frame.container, key: index }, frame);
+    } else {
+      const entry = frame.entries[index];
+      if (entry) {
+        const [key, item] = entry;
+        visitChild(item, key, { container: frame.container, key }, frame);
+      }
+    }
+  }
+
+  if (pending.length > 0) {
+    await Promise.all(pending);
+  }
+  return root.value;
 }
 
 /**
