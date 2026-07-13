@@ -15,10 +15,12 @@ RUNTIME_DIR = Path(__file__).parent.parent.parent / 'runtime'
 sys.path.insert(0, str(RUNTIME_DIR))
 
 from tywrap_bridge_core import (  # noqa: E402
+    MAX_SERIALIZE_DEPTH,
     PROTOCOL,
     ProtocolError,
     deserialize,
     dispatch_request,
+    serialize,
     serialize_ndarray_json,
 )
 
@@ -35,7 +37,7 @@ from tywrap_bridge_core import serialize
 packages = ('numpy', 'pandas', 'scipy', 'torch', 'sklearn')
 before = {{package for package in packages if package in sys.modules}}
 for value in (1, 'plain', [1, 'two'], {{'nested': [3]}}):
-    assert serialize(value, force_json_markers=True) is value
+    assert serialize(value, force_json_markers=True) == value
 after = {{package for package in packages if package in sys.modules}}
 print(json.dumps(sorted(after - before)))
 """
@@ -48,6 +50,211 @@ print(json.dumps(sorted(after - before)))
     )
 
     assert json.loads(completed.stdout) == []
+
+
+def test_serializes_all_marker_families_inside_plain_containers() -> None:
+    np = pytest.importorskip('numpy')
+    pd = pytest.importorskip('pandas')
+    sparse = pytest.importorskip('scipy.sparse')
+    torch = pytest.importorskip('torch')
+    linear_model = pytest.importorskip('sklearn.linear_model')
+
+    value = {
+        'matrix': np.array([[1, 2]], dtype=np.int64),
+        'items': [
+            pd.DataFrame({'value': [3]}),
+            pd.Series([4], name='values'),
+            sparse.csr_matrix([[0, 5]]),
+        ],
+        'models': (
+            torch.tensor([6], dtype=torch.int64),
+            linear_model.LinearRegression(fit_intercept=False),
+        ),
+    }
+
+    result = serialize(value, force_json_markers=True)
+
+    assert result['matrix']['__tywrap__'] == 'ndarray'
+    assert [item['__tywrap__'] for item in result['items']] == [
+        'dataframe',
+        'series',
+        'scipy.sparse',
+    ]
+    assert isinstance(result['models'], tuple)
+    assert [item['__tywrap__'] for item in result['models']] == [
+        'torch.tensor',
+        'sklearn.estimator',
+    ]
+
+
+def test_cycle_rejection_names_the_nested_path() -> None:
+    value: dict[str, object] = {'items': []}
+    items = value['items']
+    assert isinstance(items, list)
+    items.append(value)
+
+    with pytest.raises(RuntimeError, match=r'Circular reference detected at result\.items\[0\]'):
+        serialize(value, force_json_markers=True)
+
+
+def test_depth_bound_accepts_2048_containers_and_rejects_2049() -> None:
+    def nested(depth: int) -> dict[str, object]:
+        root: dict[str, object] = {}
+        cursor = root
+        for _ in range(depth):
+            child: dict[str, object] = {}
+            cursor['next'] = child
+            cursor = child
+        return root
+
+    serialize(nested(MAX_SERIALIZE_DEPTH), force_json_markers=True)
+    path = 'result' + '.next' * (MAX_SERIALIZE_DEPTH + 1)
+    with pytest.raises(RuntimeError) as exc_info:
+        serialize(nested(MAX_SERIALIZE_DEPTH + 1), force_json_markers=True)
+    assert str(exc_info.value) == (
+        f'Scientific envelope serialization maximum depth {MAX_SERIALIZE_DEPTH} '
+        f'exceeded at {path}'
+    )
+
+
+def test_primitive_leaf_does_not_consume_depth_budget() -> None:
+    root: dict[str, object] = {}
+    cursor = root
+    for _ in range(MAX_SERIALIZE_DEPTH):
+        child: dict[str, object] = {}
+        cursor['next'] = child
+        cursor = child
+    cursor['value'] = 1
+
+    serialize(root, force_json_markers=True)
+
+
+def test_scientific_leaf_consumes_depth_budget() -> None:
+    np = pytest.importorskip('numpy')
+
+    def nested_with_array(depth: int) -> dict[str, object]:
+        root: dict[str, object] = {}
+        cursor = root
+        for _ in range(depth):
+            child: dict[str, object] = {}
+            cursor['next'] = child
+            cursor = child
+        cursor['matrix'] = np.array([1], dtype=np.int64)
+        return root
+
+    serialize(nested_with_array(MAX_SERIALIZE_DEPTH - 1), force_json_markers=True)
+    path = 'result' + '.next' * MAX_SERIALIZE_DEPTH + '.matrix'
+    with pytest.raises(RuntimeError) as exc_info:
+        serialize(nested_with_array(MAX_SERIALIZE_DEPTH), force_json_markers=True)
+    assert str(exc_info.value).endswith(f'exceeded at {path}')
+
+
+def test_torch_tensor_reserves_depth_for_its_nested_ndarray() -> None:
+    torch = pytest.importorskip('torch')
+
+    def nested_with_tensor(depth: int) -> dict[str, object]:
+        root: dict[str, object] = {}
+        cursor = root
+        for _ in range(depth):
+            child: dict[str, object] = {}
+            cursor['next'] = child
+            cursor = child
+        cursor['tensor'] = torch.tensor([1], dtype=torch.int64)
+        return root
+
+    serialize(nested_with_tensor(MAX_SERIALIZE_DEPTH - 2), force_json_markers=True)
+    path = 'result' + '.next' * (MAX_SERIALIZE_DEPTH - 1) + '.tensor.value'
+    with pytest.raises(RuntimeError) as exc_info:
+        serialize(nested_with_tensor(MAX_SERIALIZE_DEPTH - 1), force_json_markers=True)
+    assert str(exc_info.value).endswith(f'exceeded at {path}')
+
+
+def test_depth_rejection_precedes_scientific_codec_rejection() -> None:
+    np = pytest.importorskip('numpy')
+    root: dict[str, object] = {}
+    cursor = root
+    for _ in range(MAX_SERIALIZE_DEPTH):
+        child: dict[str, object] = {}
+        cursor['next'] = child
+        cursor = child
+    cursor['matrix'] = np.array([object()], dtype=object)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        serialize(root, force_json_markers=True)
+
+    assert 'maximum depth 2048 exceeded' in str(exc_info.value)
+    assert 'object dtype' not in str(exc_info.value)
+
+
+def test_invalid_dict_key_names_the_offending_path() -> None:
+    value = {'items': [{('bad', 1): 'value'}]}
+
+    with pytest.raises(TypeError) as exc_info:
+        serialize(value, force_json_markers=True)
+
+    assert "result.items[0][('bad', 1)]" in str(exc_info.value)
+    assert 'keys must be str, int, float, bool or None, not tuple' in str(exc_info.value)
+
+
+def test_non_identifier_key_uses_decoder_style_path() -> None:
+    class CustomValue:
+        pass
+
+    with pytest.raises(TypeError) as exc_info:
+        serialize({'données brutes': CustomValue()}, force_json_markers=True)
+
+    assert str(exc_info.value).endswith('at result["données brutes"]')
+
+
+@pytest.mark.parametrize(
+    ('value', 'path'),
+    [
+        ({'items': [{1, 2}]}, 'result.items[0]'),
+        ({'items': [frozenset({1, 2})]}, 'result.items[0]'),
+        ({1, 2}, 'result'),
+    ],
+)
+def test_sets_are_rejected_with_the_value_path(value: object, path: str) -> None:
+    with pytest.raises(TypeError) as exc_info:
+        serialize(value, force_json_markers=True)
+
+    assert 'is not JSON serializable' in str(exc_info.value)
+    assert str(exc_info.value).endswith(f'at {path}')
+
+
+def test_custom_object_rejection_names_the_nested_path() -> None:
+    class CustomValue:
+        pass
+
+    with pytest.raises(TypeError) as exc_info:
+        serialize({'items': [CustomValue()]}, force_json_markers=True)
+
+    assert str(exc_info.value).endswith('at result.items[0]')
+
+
+def test_rejected_scientific_dtype_keeps_error_and_adds_path() -> None:
+    np = pytest.importorskip('numpy')
+
+    with pytest.raises(RuntimeError) as exc_info:
+        serialize(
+            {'items': [{'matrix': np.array([object()], dtype=object)}]},
+            force_json_markers=True,
+        )
+
+    message = str(exc_info.value)
+    assert 'Scientific value serialization failed at result.items[0].matrix' in message
+    assert 'object dtype=object' in message
+
+
+def test_shared_aliases_are_serialized_with_value_semantics() -> None:
+    np = pytest.importorskip('numpy')
+    shared = [np.array([1], dtype=np.int64)]
+
+    result = serialize({'left': shared, 'right': shared}, force_json_markers=True)
+
+    assert result['left'] == result['right']
+    assert result['left'] is not result['right']
+    assert result['left'][0] is not result['right'][0]
 
 
 def test_deserialize_fast_path_preserves_plain_request_tree() -> None:

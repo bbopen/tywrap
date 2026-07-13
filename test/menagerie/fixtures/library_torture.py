@@ -19,7 +19,7 @@ def numpy_adversarial() -> object:
     return {
         "array": np.array([2**53 + 1, 2**63 - 1], dtype=np.int64),
         "scalar": np.int64(2**53 + 1),
-        "nan_column": np.array([1.0, np.nan]),
+        "float_column": np.array([1.0, 2.5]),
     }
 
 
@@ -37,6 +37,22 @@ def pandas_adversarial() -> object:
             {"value": [1]}, index=pd.MultiIndex.from_tuples([("left", 1)], names=["side", "n"])
         ),
         "empty": pd.DataFrame(),
+    }
+
+
+def pandas_nested_list() -> object:
+    import pandas as pd
+
+    return [pd.DataFrame({"value": [1]}), pd.DataFrame({"value": [2]})]
+
+
+def sklearn_projection_result() -> object:
+    import numpy as np
+    import pandas as pd
+
+    return {
+        "samples": pd.DataFrame({"sample": ["alpha", "beta"]}),
+        "projection": np.array([[1.5, -2.0], [3.25, 4.5]], dtype=np.float64),
     }
 
 

@@ -93,6 +93,17 @@ function assertResolvedValue(value: unknown, expected: CatalogueExpectation): vo
       )(value);
       expect(value).toEqual(expected.value);
       return;
+    case 'record': {
+      expect(value).toBeTypeOf('object');
+      expect(value).not.toBeNull();
+      expect(Array.isArray(value)).toBe(false);
+      const record = value as Record<string, unknown>;
+      expect(Object.keys(record)).toEqual(Object.keys(expected.value));
+      for (const [key, nestedExpected] of Object.entries(expected.value)) {
+        assertResolvedValue(record[key], nestedExpected);
+      }
+      return;
+    }
     case 'length':
       expect(value).toHaveLength(expected.value);
       return;

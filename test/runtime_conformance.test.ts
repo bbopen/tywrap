@@ -794,10 +794,10 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
   );
 
   // -------------------------------------------------------------------------
-  // Case 11: BridgeCodec value edge cases (set/frozenset, complex rejection)
+  // Case 11: producer value edge cases (set and complex rejection)
   // -------------------------------------------------------------------------
   it.skipIf(!PYTHON_OK)(
-    'set serializes to list and complex is rejected',
+    'set and complex are rejected',
     async () => {
       for (const { name, get } of liveBackends()) {
         const backend = get();
@@ -807,8 +807,10 @@ describeNodeOnly('Cross-backend protocol conformance', () => {
           method: 'call',
           params: { module: 'builtins', functionName: 'set', args: [[1]], kwargs: {} },
         });
-        expect(setRes.error, `${name} set error`).toBeUndefined();
-        expect(setRes.result, `${name} set -> list`).toEqual([1]);
+        expect(setRes.error, `${name} set rejected`).toBeDefined();
+        expect(setRes.error?.message, `${name} set path`).toMatch(
+          /set is not JSON serializable at result/i
+        );
 
         const complexRes = await backend.dispatch({
           method: 'call',

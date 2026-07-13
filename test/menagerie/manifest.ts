@@ -18,6 +18,7 @@ export type OptionalLibrary =
 export type CatalogueExpectation =
   | { kind: 'equal'; value: unknown }
   | { kind: 'ndarray'; value: unknown; dtype: string }
+  | { kind: 'record'; value: Readonly<Record<string, CatalogueExpectation>> }
   | { kind: 'error'; pattern: RegExp }
   | { kind: 'length'; value: number }
   | { kind: 'match'; value: object }
@@ -163,23 +164,16 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
   valuesRow({
     id: 'empty-values',
     call: 'empty_values()',
-    status: 'KNOWN_LIE',
-    currentBehavior: 'The empty Python tuple and set both arrive as arrays.',
-    expected: equal([[], [], {}, []]),
-    expectedFix: 'Future exact empty-tuple and set transport.',
+    status: 'LOUD_FAIL',
+    currentBehavior: 'The unsupported nested set rejects with its result path.',
+    expected: error(/set is not JSON serializable at result\[3\]/i),
   }),
   valuesRow({
     id: 'set-and-frozenset',
     call: 'set_and_frozenset()',
-    status: 'EXPECTED_OK',
-    currentBehavior: 'Python sets and frozensets are declared and delivered as JavaScript arrays.',
-    expected: {
-      kind: 'set-pair',
-      value: [
-        [1, 2],
-        ['a', 'b'],
-      ],
-    },
+    status: 'LOUD_FAIL',
+    currentBehavior: 'The unsupported set rejects before the frozenset with its result path.',
+    expected: error(/set is not JSON serializable at result\[0\]/i),
   }),
   valuesRow({
     id: 'int-key-dict',
@@ -561,6 +555,28 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     status: 'KNOWN_LIE',
     currentBehavior: 'Records-oriented JSON loses the empty DataFrame schema.',
     expected: equal([]),
+  }),
+  libraryRow({
+    id: 'sklearn-projection-result-arrow',
+    call: 'sklearn_projection_result()',
+    codec: 'arrow',
+    requires: ['numpy', 'pandas', 'pyarrow'],
+    status: 'EXPECTED_OK',
+    currentBehavior: 'A DataFrame and ndarray returned together preserve both outputs.',
+    expected: {
+      kind: 'record',
+      value: {
+        samples: { kind: 'table-rows', value: [{ sample: 'alpha' }, { sample: 'beta' }] },
+        projection: {
+          kind: 'ndarray',
+          value: [
+            [1.5, -2],
+            [3.25, 4.5],
+          ],
+          dtype: 'float64',
+        },
+      },
+    },
   }),
 
   // SciPy sparse markers are JSON-only on both bridge paths.

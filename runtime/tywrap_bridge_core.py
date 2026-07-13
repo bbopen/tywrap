@@ -47,6 +47,7 @@ import importlib
 import importlib.util
 import json
 import math
+import re
 import sys
 import traceback
 import uuid
@@ -57,6 +58,8 @@ from pathlib import Path, PurePath
 PROTOCOL = 'tywrap/1'
 PROTOCOL_VERSION = 1
 CODEC_VERSION = 1
+MAX_SERIALIZE_DEPTH = 2048
+_SERIALIZE_PATH_IDENTIFIER = re.compile(r'^[A-Za-z_$][\w$]*$', re.ASCII)
 
 
 class ProtocolError(Exception):
@@ -813,6 +816,68 @@ def serialize_stdlib(obj):
     return None
 
 
+_NO_SCIENTIFIC = object()
+
+
+def _check_serialize_depth(depth, path):
+    if depth > MAX_SERIALIZE_DEPTH:
+        raise RuntimeError(
+            f'Scientific envelope serialization maximum depth '
+            f'{MAX_SERIALIZE_DEPTH} exceeded at {path}'
+        )
+
+
+def _serialize_scientific(obj, *, force_json_markers, torch_allow_copy, depth, path):
+    """Serialize a supported scientific value, or return _NO_SCIENTIFIC."""
+    package = type(obj).__module__.split('.', 1)[0]
+
+    if package == 'numpy' and 'numpy' in sys.modules:
+        if is_numpy_array(obj):
+            _check_serialize_depth(depth, path)
+            return serialize_ndarray(obj, force_json_markers=force_json_markers)
+    elif package == 'pandas' and 'pandas' in sys.modules:
+        if is_pandas_dataframe(obj):
+            _check_serialize_depth(depth, path)
+            return serialize_dataframe(obj, force_json_markers=force_json_markers)
+        if is_pandas_series(obj):
+            _check_serialize_depth(depth, path)
+            return serialize_series(obj, force_json_markers=force_json_markers)
+    elif package == 'scipy' and 'scipy.sparse' in sys.modules:
+        if is_scipy_sparse(obj):
+            _check_serialize_depth(depth, path)
+            return serialize_sparse_matrix(obj)
+    elif package == 'torch' and 'torch' in sys.modules:
+        if is_torch_tensor(obj):
+            _check_serialize_depth(depth, path)
+            _check_serialize_depth(depth + 1, _serialize_path(path, 'value'))
+            return serialize_torch_tensor(
+                obj, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy
+            )
+    elif 'sklearn.base' in sys.modules and is_sklearn_estimator(obj):
+        # No package gate here, unlike the branches above: subclassing
+        # BaseEstimator is sklearn's documented extension point, so user-defined
+        # estimators live outside the 'sklearn' package and must still get the
+        # estimator serializer (and its param-naming errors).
+        _check_serialize_depth(depth, path)
+        return serialize_sklearn_estimator(obj)
+
+    return _NO_SCIENTIFIC
+
+
+def _serialize_path(base, key):
+    """Build a decoder-compatible JSONPath-like result path."""
+    if isinstance(key, int):
+        return f'{base}[{key}]'
+    if _SERIALIZE_PATH_IDENTIFIER.fullmatch(key):
+        return f'{base}.{key}'
+    return f'{base}[{json.dumps(key, ensure_ascii=False)}]'
+
+
+def _invalid_key_path(base, key):
+    """Name a dict key that cannot be represented by JSON."""
+    return f'{base}[{key!r}]'
+
+
 def serialize(obj, *, force_json_markers, torch_allow_copy=False):
     """
     Top-level result serializer.
@@ -822,45 +887,109 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
     sys.modules, so these checks never cold-import the scientific stack. The
     package dispatch deliberately precedes the JSON-native fast path: e.g. a
     package-defined subclass of dict still receives its relevant codec check.
-    The remaining BridgeCodec value behaviors (numpy/pandas scalars, bytes, sets,
-    complex rejection, NaN/Infinity) are applied later during JSON encoding by
-    default_encoder.
+    Remaining BridgeCodec scalar behaviors (numpy/pandas scalars, bytes, and
+    NaN/Infinity rejection) are applied later during JSON encoding. Unsupported
+    containers and values, including sets and complex numbers, reject here so a
+    nested failure can name its result path.
     """
-    package = type(obj).__module__.split('.', 1)[0]
+    root = [None]
+    active_ids = set()
+    stack = [('visit', obj, 0, 'result', root, 0)]
 
-    if package == 'numpy' and 'numpy' in sys.modules:
-        if is_numpy_array(obj):
-            return serialize_ndarray(obj, force_json_markers=force_json_markers)
-    elif package == 'pandas' and 'pandas' in sys.modules:
-        if is_pandas_dataframe(obj):
-            return serialize_dataframe(obj, force_json_markers=force_json_markers)
-        if is_pandas_series(obj):
-            return serialize_series(obj, force_json_markers=force_json_markers)
-    elif package == 'scipy' and 'scipy.sparse' in sys.modules:
-        if is_scipy_sparse(obj):
-            return serialize_sparse_matrix(obj)
-    elif package == 'torch' and 'torch' in sys.modules:
-        if is_torch_tensor(obj):
-            return serialize_torch_tensor(
-                obj, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy
+    # Repeated aliases have value semantics and are intentionally serialized twice.
+    while stack:
+        action, current, depth, path, parent, key = stack.pop()
+        if action == 'exit':
+            active_ids.remove(id(current))
+            continue
+        if action == 'tuple':
+            parent[key] = tuple(current)
+            continue
+        try:
+            scientific = _serialize_scientific(
+                current,
+                force_json_markers=force_json_markers,
+                torch_allow_copy=torch_allow_copy,
+                depth=depth,
+                path=path,
             )
-    elif 'sklearn.base' in sys.modules and is_sklearn_estimator(obj):
-        # No package gate here, unlike the branches above: subclassing
-        # BaseEstimator is sklearn's documented extension point, so user-defined
-        # estimators live outside the 'sklearn' package and must still get the
-        # estimator serializer (and its param-naming errors).
-        return serialize_sklearn_estimator(obj)
+        except Exception as exc:
+            if path == 'result':
+                raise
+            raise RuntimeError(f'Scientific value serialization failed at {path}: {exc}') from exc
+        if scientific is not _NO_SCIENTIFIC:
+            parent[key] = scientific
+            continue
 
-    if isinstance(obj, (type(None), bool, int, float, str, dict, list, tuple)):
-        return obj
+        container_type = type(current)
+        if container_type in (dict, list, tuple):
+            _check_serialize_depth(depth, path)
+            current_id = id(current)
+            if current_id in active_ids:
+                raise RuntimeError(f'Circular reference detected at {path}')
+            active_ids.add(current_id)
+            stack.append(('exit', current, depth, path, parent, key))
 
-    pydantic_value = serialize_pydantic(obj)
-    if pydantic_value is not _NO_PYDANTIC:
-        return pydantic_value
-    stdlib_value = serialize_stdlib(obj)
-    if stdlib_value is not None:
-        return stdlib_value
-    return obj
+            if container_type is dict:
+                output = {}
+                parent[key] = output
+                items = list(current.items())
+                for item_key, item in reversed(items):
+                    if not (
+                        isinstance(item_key, (str, int, float, bool)) or item_key is None
+                    ):
+                        invalid_path = _invalid_key_path(path, item_key)
+                        raise TypeError(
+                            f'keys must be str, int, float, bool or None, not '
+                            f'{type(item_key).__name__} at {invalid_path}'
+                        )
+                    child_key = next(iter(json.loads(json.dumps({item_key: None}))))
+                    stack.append(
+                        ('visit', item, depth + 1, _serialize_path(path, child_key), output, item_key)
+                    )
+                continue
+
+            output = [None] * len(current)
+            if container_type is list:
+                parent[key] = output
+            else:
+                stack.append(('tuple', output, depth, path, parent, key))
+            for index in range(len(current) - 1, -1, -1):
+                stack.append(
+                    ('visit', current[index], depth + 1, _serialize_path(path, index), output, index)
+                )
+            continue
+
+        if isinstance(current, (type(None), bool, int, float, str)):
+            parent[key] = current
+            continue
+        if isinstance(current, (set, frozenset)):
+            raise TypeError(
+                f'Object of type {type(current).__name__} is not JSON serializable at {path}'
+            )
+
+        pydantic_value = serialize_pydantic(current)
+        if pydantic_value is not _NO_PYDANTIC:
+            stack.append(('visit', pydantic_value, depth, path, parent, key))
+            continue
+        stdlib_value = serialize_stdlib(current)
+        if stdlib_value is not None:
+            parent[key] = stdlib_value
+            continue
+
+        # These values retain the established BridgeCodec default-encoder behavior.
+        if (
+            isinstance(current, (bytes, bytearray))
+            or _is_numpy_scalar(current)
+            or _is_pandas_scalar(current)
+        ):
+            parent[key] = current
+            continue
+        raise TypeError(
+            f'Object of type {type(current).__name__} is not JSON serializable at {path}'
+        )
+
+    return root[0]
 
 
 # =============================================================================
