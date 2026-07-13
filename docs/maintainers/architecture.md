@@ -12,7 +12,7 @@ the declared return schema.
 | Python analysis | `tywrap_ir/tywrap_ir/__main__.py`, `tywrap_ir/tywrap_ir/` | The extractor emits JSON typed IR for the requested module. |
 | IR contract | `src/tywrap.ts`, `src/types/` | A contract has the expected module and `ir_version`. The current version is `0.4.0`. |
 | Wrapper generation | `src/core/generator.ts`, `src/core/emit-call.ts`, `src/core/mapper.ts` | Generated calls carry a `ReturnSchema` that represents the Python return annotation. |
-| Runtime transport | `src/runtime/node.ts`, `src/runtime/subprocess-transport.ts`, `src/runtime/frame-codec.ts`, `runtime/python_bridge.py` | Node subprocess requests use JSONL and negotiate `tywrap-frame/1` when a message exceeds one line. |
+| Runtime transport | `src/runtime/node.ts`, `src/runtime/subprocess-transport.ts`, `src/runtime/frame-codec.ts`, `runtime/python_bridge.py` | Node subprocess requests use JSONL and use `tywrap-frame/1` when a message exceeds one line. |
 | Python dispatch and encoding | `runtime/tywrap_bridge_core.py`, `runtime/safe_codec.py` | The bridge validates protocol input, then dispatches the requested call and returns JSON-safe values or versioned envelopes. |
 | JavaScript decoding | `src/utils/codec.ts`, `src/runtime/bridge-codec.ts` | Envelope shape and payload domains are checked before a decoded value reaches application code. |
 | Return validation | `src/runtime/validators.ts` | A decoded result matches the generated `ReturnSchema`, including scientific provenance when declared. |
