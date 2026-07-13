@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, localcontext as _localcontext
 from enum import Enum
-from pathlib import Path
+# PurePosixPath keeps str() stable across platforms; WindowsPath stringifies
+# with backslashes and the manifest expectation is a literal.
+from pathlib import PurePosixPath
 from uuid import UUID
 
 
@@ -111,7 +113,7 @@ def decimal_values() -> list[Decimal]:
 def uuid_and_path() -> dict[str, object]:
     return {
         "uuid": UUID("12345678-1234-5678-1234-567812345678"),
-        "path": Path("fixtures/example.txt"),
+        "path": PurePosixPath("fixtures/example.txt"),
     }
 
 
