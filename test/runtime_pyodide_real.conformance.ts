@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { join } from 'node:path';
 
 import { PyodideBridge } from '../src/runtime/pyodide.js';
 
-const PYODIDE_VERSION = '0.28.1';
-const indexURL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+const indexURL = `${join(process.cwd(), 'node_modules', 'pyodide')}/`;
 
 describe('real PyodideBridge', () => {
   let bridge: PyodideBridge | undefined;

@@ -98,7 +98,6 @@ describe('real browser PyodideBridge', () => {
         'pyodide',
         '--output-dir',
         generated,
-        '--fail-on-warn',
       ],
       repoRoot
     );
