@@ -31,7 +31,7 @@ change does not claim that both languages execute one shared codec implementatio
 | Safe integers | Python rejects unsafe integers before JSON; generated validators enforce safe integer results; clean consumers exercise boundaries and rejection. | Accepted numeric and consumer histories; integrated [CI 35503216347](https://github.com/bbopen/tywrap/actions/runs/35503216347). |
 | Float16 values | Real NumPy and Torch annotations pass analysis, generated typing, TypeScript compilation, bridge execution, decoding, and validation. Wrong dtype rejects. | NumPy conformance `1736b68`; real Torch `4db7002`, [CI 35503315287](https://github.com/bbopen/tywrap/actions/runs/35503315287). |
 | Nested overload results | Generated overloads retain supported input/output relationships. Strict consumer compilation rejects invalid calls, and runtime validation rejects a wrong selected result. | Independent conformance `1736b68`, [CI 35500783650](https://github.com/bbopen/tywrap/actions/runs/35500783650). |
-| Coroutine results | Generated implementations and declarations return Promise<string> without warnings. Node and actual Pyodide execute the calls and retain cancellation/reuse checks. | `54cef7c`, [CI 35503202358](https://github.com/bbopen/tywrap/actions/runs/35503202358). |
+| Coroutine results | Generated implementations and declarations return `Promise<string>` without warnings. Node and actual Pyodide execute the calls and retain cancellation/reuse checks. | `54cef7c`, [CI 35503202358](https://github.com/bbopen/tywrap/actions/runs/35503202358). |
 
 The numeric oracle checks every finite binary16 storage word against Python's
 standard-library decoder. Mutation tests reject incorrect dtype, shape, codec
