@@ -1,6 +1,5 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
 import { loadPyodide } from 'pyodide';
@@ -35,7 +34,7 @@ describe('real PyodideBridge', () => {
   }, 180_000);
 
   it('executes a generated asyncText wrapper through real Pyodide', async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), 'tywrap-pyodide-coroutine-'));
+    const tempDir = mkdtempSync(join(process.cwd(), '.tmp-pyodide-coroutine-'));
     const globals = globalThis as typeof globalThis & { loadPyodide?: typeof loadPyodide };
     const previousLoader = globals.loadPyodide;
     try {
