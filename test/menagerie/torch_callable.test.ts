@@ -51,7 +51,7 @@ describe('real Torch generated callable', () => {
             '-c',
             'import json; from tywrap_ir.ir import extract_module_ir; ir=extract_module_ir("fixtures.torch_callable"); print(json.dumps({"functions": [{"name": f["name"], "returns": f["returns"]} for f in ir["functions"]], "warnings": ir["warnings"]}))',
           ],
-          repoRoot,
+          tempRoot,
           pythonEnv
         );
         const ir = JSON.parse(analyzed.stdout) as {
