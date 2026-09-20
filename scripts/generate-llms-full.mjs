@@ -22,15 +22,22 @@ const orderedDocs = [
   'docs/transport-framing.md',
   'docs/reference/api/index.md',
   'docs/maintainers/architecture.md',
+  'docs/maintainers/callable-contracts.md',
   'docs/maintainers/menagerie.md',
   'docs/examples/index.md',
   'docs/troubleshooting/index.md',
 ];
 
-// Internal / forward-looking docs kept out of the agent-facing llms-full bundle.
+// Keep design proposals and review records outside the agent guide.
 const excludedDocs = new Set([
   'docs/perf-baselines.md',
   'docs/release.md',
+  'docs/maintainers/client-binding-design.md',
+  'docs/maintainers/client-binding-prototype-review.md',
+  'docs/maintainers/coroutines.md',
+  'docs/maintainers/value-contract-prototypes.md',
+  'docs/maintainers/value-contracts.md',
+  'docs/maintainers/architecture-decision-0.11.md',
 ]);
 
 async function collectDocs(dir) {
@@ -54,11 +61,6 @@ async function collectDocs(dir) {
     }
 
     if (!normalized.endsWith('.md') || excludedDocs.has(normalized)) {
-      continue;
-    }
-
-    // Include only the maintainer guides selected above, not internal review reports.
-    if (normalized.startsWith('docs/maintainers/') && !orderedDocs.includes(normalized)) {
       continue;
     }
 
