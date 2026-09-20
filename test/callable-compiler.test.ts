@@ -1397,6 +1397,109 @@ describe('compileContract', () => {
     }
   });
 
+  it('resolves selected local TypedDict fields and simple aliases through revision 2', async () => {
+    const source = rawIr.functions[1]!;
+    const point = rawIr.classes[0]!;
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: [
+          {
+            ...source,
+            name: 'payload_value',
+            qualname: 'fixture.payload_value',
+            returns: 'Payload',
+          },
+          { ...source, name: 'user_id', qualname: 'fixture.user_id', returns: 'UserId' },
+        ],
+        classes: [
+          {
+            ...point,
+            name: 'Payload',
+            qualname: 'fixture.Payload',
+            typed_dict: true,
+            is_dataclass: false,
+            fields: [
+              { name: 'x', kind: 'FIELD', annotation: 'int', default: false },
+              { name: 'label', kind: 'FIELD', annotation: 'str', default: true },
+            ],
+          },
+        ],
+        type_aliases: [{ name: 'UserId', definition: 'int', is_generic: false, type_params: [] }],
+      },
+      'selected named values contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        functions: ['payload_value', 'user_id'].map(name => ({
+          ...moduleModel.functions[1]!,
+          name,
+        })),
+        classes: [{ ...moduleModel.classes[0]!, name: 'Payload' }],
+        typeAliases: [{ name: 'UserId', type: { kind: 'primitive', name: 'int' } }],
+      },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.diagnostics).toEqual([]);
+    expect(compiled.generated.declaration).toContain('payloadValue(): Promise<Payload>');
+    expect(compiled.generated.declaration).toContain('userId(): Promise<UserId>');
+    expect(compiled.callables[0]?.result.resolution).toMatchObject({
+      status: 'supported',
+      value: {
+        kind: 'record',
+        fields: [
+          { name: 'x', required: true, value: { kind: 'integer' } },
+          { name: 'label', required: false, value: { kind: 'string' } },
+        ],
+      },
+    });
+    expect(compiled.callables[1]?.result.resolution).toMatchObject({
+      status: 'supported',
+      value: { kind: 'integer', constraint: 'safe-integer' },
+    });
+
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-named-proof-'));
+    try {
+      const outputPath = join(temporary, 'fixture.generated.mjs');
+      const javascript = ts.transpileModule(compiled.generated.typescript, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(outputPath, javascript, 'utf8');
+      setRuntimeBridge({
+        async call<T>(
+          _module: string,
+          functionName: string,
+          _args: unknown[],
+          _kwargs?: Record<string, unknown>,
+          validate?: (result: T) => void
+        ): Promise<T> {
+          const result = (
+            functionName === 'user_id' ? Number.MAX_SAFE_INTEGER + 1 : { x: 'bad' }
+          ) as T;
+          validate?.(result);
+          return result;
+        },
+        async dispose(): Promise<void> {},
+      });
+      const generated = (await import(pathToFileURL(outputPath).href)) as {
+        payloadValue: () => Promise<{ x: number; label?: string }>;
+        userId: () => Promise<number>;
+      };
+      await expect(generated.payloadValue()).rejects.toThrow(BridgeValidationError);
+      await expect(generated.userId()).rejects.toThrow(BridgeValidationError);
+    } finally {
+      clearRuntimeBridge();
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
   it('requires returned dataclass fields even when their constructor has defaults', () => {
     const point = rawIr.classes[0]!;
     const ir = validateIrContract(

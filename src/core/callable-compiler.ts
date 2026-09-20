@@ -5,7 +5,11 @@
  * deterministic step between validated IR and generated wrapper files.
  */
 
-import { VALUE_CONTRACT_REVISION, type ValueContract } from '../contracts/value-contract.js';
+import {
+  VALUE_CONTRACT_REVISION,
+  type ValueContract,
+  type ValueContractField,
+} from '../contracts/value-contract.js';
 import type {
   GeneratedCode,
   Parameter,
@@ -988,6 +992,61 @@ export function compileContract(
     canonical.typeAliases ?? [],
     options.module.typeAliases ?? canonical.typeAliases ?? []
   );
+  const localTypedDicts = new Map(
+    selectedClasses
+      .filter(cls => cls.kind === 'typed_dict' && !cls.typeParameters?.length)
+      .map(cls => [cls.name, cls] as const)
+  );
+  const localAliases = new Map(
+    selectedAliases
+      .filter(alias => !alias.typeParameters?.length)
+      .map(alias => [alias.name, alias] as const)
+  );
+  const conversion: ValueConversionDescription = {
+    revision: options.conversion.revision,
+    resolve(request): ValueResolution {
+      const type = request.logicalType;
+      if (type.kind !== 'custom' || (type.module !== undefined && type.module !== ir.module)) {
+        return options.conversion.resolve(request);
+      }
+      const typedDict = localTypedDicts.get(type.name);
+      if (typedDict) {
+        if ((request.depth ?? 0) >= 64) {
+          return {
+            status: 'unsupported',
+            reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+            guidance: 'Flatten the value or provide a bounded adapter.',
+          };
+        }
+        const fields: ValueContractField[] = [];
+        for (const property of typedDict.properties) {
+          const field = options.conversion.resolve({
+            ...request,
+            logicalType: property.type,
+            path: `${request.path}.${property.name}`,
+            depth: (request.depth ?? 0) + 1,
+          });
+          if (field.status !== 'supported') {
+            return field;
+          }
+          fields.push({ name: property.name, value: field.value, required: !property.optional });
+        }
+        return {
+          status: 'supported',
+          value: { kind: 'record', wire: 'json', decodedAs: 'object', fields },
+        };
+      }
+      const alias = localAliases.get(type.name);
+      if (alias) {
+        return options.conversion.resolve({
+          ...request,
+          logicalType: alias.type,
+          depth: (request.depth ?? 0) + 1,
+        });
+      }
+      return options.conversion.resolve(request);
+    },
+  };
   const capabilities = new Map(
     options.capabilities.map(capability => [capability.name, capability])
   );
@@ -998,7 +1057,7 @@ export function compileContract(
     const result = resolveCallable(
       func,
       path,
-      options.conversion,
+      conversion,
       capabilities,
       dataclassNames,
       diagnostics
