@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,10 +13,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / 'prototypes'))
 import value_extensions as prototype  # noqa: E402
 
+INTEGER = {'kind': 'integer'}
+
 
 def test_nested_exact_integers_round_trip_beyond_int64() -> None:
     value = {
-        'outer': [2**80 + 1, {'negative': -(2**130 + 7)}],
+        'outer': [2**80 + 1, -(2**130 + 7)],
+        'nested': {'negative': -(2**130 + 7)},
         'safe': 7,
         'flag': True,
     }
@@ -23,7 +27,16 @@ def test_nested_exact_integers_round_trip_beyond_int64() -> None:
     assert encoded['outer'][0]['value'] == str(2**80 + 1)
     assert encoded['safe']['value'] == '7'
     assert encoded['flag'] is True
-    assert prototype.decode_exact_integers(encoded) == value
+    contract = {
+        'kind': 'record',
+        'fields': {
+            'outer': {'kind': 'array', 'item': INTEGER},
+            'nested': {'kind': 'record', 'fields': {'negative': INTEGER}},
+            'safe': INTEGER,
+            'flag': {'kind': 'boolean'},
+        },
+    }
+    assert prototype.decode_exact_integers(encoded, contract) == value
 
 
 @pytest.mark.parametrize('bad', ['-0', '+1', '01', '-01', '1.0', '1e2', ' 1', '١'])
@@ -35,13 +48,19 @@ def test_integer_decimal_rejects_noncanonical_values(bad: str) -> None:
         'value': bad,
     }
     with pytest.raises(prototype.PrototypeError, match='noncanonical integer decimal'):
-        prototype.decode_exact_integers({'item': [envelope]})
+        prototype.decode_exact_integers(
+            {'item': [envelope]},
+            {
+                'kind': 'record',
+                'fields': {'item': {'kind': 'array', 'item': INTEGER}},
+            },
+        )
 
 
 def test_integer_digit_and_payload_caps() -> None:
     accepted = int('9' * prototype.MAX_DECIMAL_DIGITS)
     assert prototype.decode_exact_integers(
-        prototype.encode_exact_integers(accepted)
+        prototype.encode_exact_integers(accepted), INTEGER
     ) == accepted
     with pytest.raises(prototype.PrototypeError, match='4096 digits'):
         prototype.encode_exact_integers(int('9' * (prototype.MAX_DECIMAL_DIGITS + 1)))
@@ -58,9 +77,9 @@ def test_integer_envelope_and_capability_fail_closed() -> None:
         {'unexpected': True},
     ):
         with pytest.raises(prototype.PrototypeError, match='invalid integer envelope'):
-            prototype.decode_exact_integers({**encoded, **change})
+            prototype.decode_exact_integers({**encoded, **change}, INTEGER)
     with pytest.raises(prototype.PrototypeError, match='untagged integer at args'):
-        prototype.decode_exact_integers(42)
+        prototype.decode_exact_integers(42, INTEGER)
     with pytest.raises(prototype.PrototypeError, match='reserved record key at result.__tywrap__'):
         prototype.encode_exact_integers({'__tywrap__': 'ordinary'})
     with pytest.raises(prototype.PrototypeError, match='bridge lacks'):
@@ -70,6 +89,49 @@ def test_integer_envelope_and_capability_fail_closed() -> None:
             {'valueCapabilities': ['exactIntegerDecimalV2']},
             'exactIntegerDecimalV2',
             'fields-v2',
+        )
+
+
+def test_float_contract_recovers_integer_json_tokens_without_weakening_integer() -> None:
+    assert prototype.decode_exact_integers(1, {'kind': 'float'}) == 1.0
+    assert type(prototype.decode_exact_integers(1, {'kind': 'float'})) is float
+    assert prototype.decode_exact_integers(1.5, {'kind': 'float'}) == 1.5
+    zero = prototype.decode_exact_integers(
+        {'__tywrap__': 'float', 'codecVersion': 2, 'encoding': 'negative-zero'},
+        {'kind': 'float'},
+    )
+    assert math.copysign(1, zero) == -1
+    with pytest.raises(prototype.PrototypeError, match='untagged integer'):
+        prototype.decode_exact_integers(1, INTEGER)
+    with pytest.raises(
+        prototype.PrototypeError,
+        match=r'untagged integer at args\.mixed\[0\]\.quantity',
+    ):
+        prototype.decode_exact_integers(
+            {'mixed': [{'quantity': 1, 'ratio': 2, 'flag': True}]},
+            {
+                'kind': 'record',
+                'fields': {
+                    'mixed': {
+                        'kind': 'array',
+                        'item': {
+                            'kind': 'record',
+                            'fields': {
+                                'quantity': INTEGER,
+                                'ratio': {'kind': 'float'},
+                                'flag': {'kind': 'boolean'},
+                            },
+                        },
+                    },
+                },
+            },
+        )
+    with pytest.raises(prototype.PrototypeError, match='expected finite float'):
+        prototype.decode_exact_integers(True, {'kind': 'float'})
+    with pytest.raises(prototype.PrototypeError, match='invalid float envelope'):
+        prototype.decode_exact_integers(
+            {'__tywrap__': 'float', 'codecVersion': 1, 'encoding': 'negative-zero'},
+            {'kind': 'float'},
         )
 
 
