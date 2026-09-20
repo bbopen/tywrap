@@ -2,7 +2,7 @@
 
 `tywrap_ir` emits IR 0.4. `validateIrContract()` checks required fields in unknown JSON. Each diagnostic has a JSON path. Validation stops after 100,000 array entries.
 
-`compileContract()` is an internal pure step. It accepts validated IR, a mapped module, value conversions, capabilities, and a generator. It returns the resolved module, callable records, diagnostics, and TypeScript and declaration content.
+`compileContract()` is an internal pure step. It accepts validated IR, exported-name selection, value conversions, capabilities, and a generator. It maps callable types from the validated IR. The selection input cannot change those types. It returns the resolved module, callable records, diagnostics, and TypeScript and declaration content.
 
 The compiler does not read files. It does not start Python. It does not read a cache. It does not write files. It does not access a runtime registry.
 
@@ -26,6 +26,8 @@ Each value conversion uses revision 2 of [value-contracts.v2.json](value-contrac
 
 The compiler requires an explicit float16 dtype. An untyped ndarray or Torch tensor stays unresolved.
 
+NumPy can spell `NDArray[np.float16]` as `numpy.ndarray[tuple[Any, ...], numpy.dtype[numpy.float16]]`. The compiler reads the dtype argument, not the shape wildcard. Only a supported scientific result clears its matching external-annotation IR warning. Other external annotations remain warnings.
+
 The codec records scalar ndarray dtype and rank for one call. A generated return validator accepts a scalar only with matching proof. Nested proof follows its parent and array index or record key. Array index `0` and `"0"` refer to the same child. Equal numbers from separate calls do not share proof. Array and tensor objects keep their identity-based marker proof.
 
 The compiler keeps Arrow int64 behavior outside this prototype. Existing Arrow int64 values can decode as `bigint`.
@@ -35,7 +37,7 @@ The compiler keeps Arrow int64 behavior outside this prototype. Existing Arrow i
 Known unsupported cases create error diagnostics. The compiler changes the affected generated type to `unknown`. `generate()` returns each diagnostic as a warning, so `--fail-on-warn` rejects strict builds.
 
 - Coroutines require the capability owned by #338.
-- Dataclasses require an adapter owned by #339.
+- Dataclasses require an adapter owned by #339. The default capability stays unavailable. An explicit output record conversion can use the adapter capability when enabled.
 - Non-string record keys require an explicit conversion.
 
 Unresolved annotations create warning diagnostics. They retain the generator's current fallback and do not claim a supported conversion.

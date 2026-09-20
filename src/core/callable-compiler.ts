@@ -17,7 +17,8 @@ import type {
   PythonType,
 } from '../types/index.js';
 import type { CodeGenerator } from './generator.js';
-import type { IrFunction, ValidatedIrContract } from './ir-contract.js';
+import type { ValidatedIrContract } from './ir-contract.js';
+import { transformIrToTsModel } from './ir-model.js';
 
 export type CallableDirection = 'input' | 'output';
 
@@ -121,7 +122,7 @@ export interface CompiledContract {
 }
 
 export interface CompileContractOptions {
-  /** Parser-mapped model derived from the supplied validated IR. */
+  /** Select exported names only. The compiler derives all types from validated IR. */
   module: PythonModule;
   /** The generator is synchronous and performs no filesystem or runtime work. */
   generator: Pick<CodeGenerator, 'generateModuleDefinition'>;
@@ -320,7 +321,16 @@ function resolveUnion(
 }
 
 function resolveNdarray(type: PythonType): ValueResolution {
-  const typeArgument = type.kind === 'generic' ? type.typeArgs[0] : undefined;
+  const typeArgument = type.kind === 'generic' && type.typeArgs.length === 2 &&
+    type.typeArgs[1]?.kind === 'generic' &&
+    type.typeArgs[1].name === 'dtype' &&
+    type.typeArgs[1].module === 'numpy' &&
+    (type.typeArgs[0]?.kind === 'collection' ||
+      (type.typeArgs[0]?.kind === 'custom' && type.typeArgs[0].name === 'Any'))
+    ? type.typeArgs[1].typeArgs[0]
+    : type.kind === 'generic' && type.typeArgs.length === 1
+      ? type.typeArgs[0]
+      : undefined;
   const dtype = typeArgument ? leafName(typeArgument) : undefined;
   const normalizedDtype = dtype?.toLowerCase();
   if (normalizedDtype !== 'float16') {
@@ -567,6 +577,9 @@ function diagnosticForResolution(
 }
 
 function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {
+  if (left.kind === 'unsupported' || right.kind === 'unsupported') {
+    return true;
+  }
   if (left.kind === 'union') {
     return left.options.some(option => valuesMayOverlap(option, right));
   }
@@ -579,6 +592,16 @@ function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {
   ) {
     return true;
   }
+  if (left.kind === 'ndarray-float16' || right.kind === 'ndarray-float16' ||
+      left.kind === 'torch-float16' || right.kind === 'torch-float16') {
+    return true;
+  }
+  if (left.kind === 'tuple' && right.kind === 'sequence') {
+    return left.items.every(item => valuesMayOverlap(item, right.item));
+  }
+  if (left.kind === 'sequence' && right.kind === 'tuple') {
+    return right.items.every(item => valuesMayOverlap(left.item, item));
+  }
   if (left.kind !== right.kind) {
     return false;
   }
@@ -587,9 +610,48 @@ function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {
       left.items.every((item, index) => valuesMayOverlap(item, right.items[index]!));
   }
   if (left.kind === 'sequence' && right.kind === 'sequence') {
-    return valuesMayOverlap(left.item, right.item);
+    return true; // An empty array matches both element schemas.
   }
   return true;
+}
+
+function positionalSlot(parameters: readonly Parameter[], index: number): number | null {
+  const parameter = parameters[index]!;
+  if (parameter.keywordOnly || parameter.kwArgs || parameter.varArgs) {
+    return null;
+  }
+  let slot = 0;
+  for (const earlier of parameters.slice(0, index)) {
+    if (earlier.varArgs) {
+      return null;
+    }
+    if (!earlier.keywordOnly && !earlier.kwArgs) {
+      slot += 1;
+    }
+  }
+  return slot;
+}
+
+function sharesRequiredBinding(
+  left: readonly Parameter[],
+  leftIndex: number,
+  right: readonly Parameter[],
+  rightIndex: number
+): boolean {
+  const a = left[leftIndex]!;
+  const b = right[rightIndex]!;
+  if (a.optional || b.optional || a.varArgs || b.varArgs || a.kwArgs || b.kwArgs ||
+      a.name !== b.name) {
+    return false;
+  }
+  if (a.keywordOnly && b.keywordOnly) {
+    return true;
+  }
+  if (a.keywordOnly || b.keywordOnly) {
+    return !a.positionalOnly && !b.positionalOnly;
+  }
+  const leftSlot = positionalSlot(left, leftIndex);
+  return leftSlot !== null && leftSlot === positionalSlot(right, rightIndex);
 }
 
 function overloadsMayOverlap(
@@ -609,12 +671,30 @@ function overloadsMayOverlap(
   if (leftMax < rightMin || rightMax < leftMin) {
     return false;
   }
-  return left.slice(0, Math.min(left.length, right.length)).every((value, index) => {
-    const other = right[index]!;
-    return value.resolution.status !== 'supported' ||
-      other.resolution.status !== 'supported' ||
-      valuesMayOverlap(value.resolution.value, other.resolution.value);
-  });
+  for (let leftIndex = 0; leftIndex < leftParameters.length; leftIndex += 1) {
+    if (leftParameters.filter(parameter =>
+      parameter.name === leftParameters[leftIndex]!.name
+    ).length !== 1) {
+      continue;
+    }
+    const rightIndex = rightParameters.findIndex(parameter =>
+      parameter.name === leftParameters[leftIndex]!.name
+    );
+    if (rightIndex < 0 || rightParameters.filter(parameter =>
+      parameter.name === leftParameters[leftIndex]!.name
+    ).length !== 1 || !sharesRequiredBinding(
+      leftParameters, leftIndex, rightParameters, rightIndex
+    )) {
+      continue;
+    }
+    const a = left[leftIndex]?.resolution;
+    const b = right[rightIndex]?.resolution;
+    if (a?.status === 'supported' && b?.status === 'supported' &&
+        !valuesMayOverlap(a.value, b.value)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function resolveCallable(
@@ -696,7 +776,18 @@ function resolveCallable(
     }
   }
   for (const value of values) {
-    if (containsNamedType(value.logicalType, dataclassNames)) {
+    const directDataclass =
+      (value.logicalType.kind === 'custom' || value.logicalType.kind === 'generic') &&
+      dataclassNames.has(leafName(value.logicalType) ?? '');
+    const adaptedDataclass =
+      value.direction === 'output' &&
+      directDataclass &&
+      capabilities.get('dataclass-adapter')?.available === true &&
+      value.resolution.status === 'supported' &&
+      value.resolution.value.kind === 'record';
+    if (adaptedDataclass) {
+      requiredCapabilities.add('dataclass-adapter');
+    } else if (containsNamedType(value.logicalType, dataclassNames)) {
       diagnostics.push({
         severity: 'error',
         code: 'dataclass-unsupported',
@@ -803,42 +894,39 @@ function resolveCallable(
 
 /**
  * Compile already-validated IR without filesystem, subprocess, cache, or
- * registry access. `generate()` supplies the model and writes these files.
+ * registry access. `generate()` selects exports and writes these files.
  */
 export function compileContract(
   ir: ValidatedIrContract,
   options: CompileContractOptions
 ): CompiledContract {
-  const matchesFunction = (source: IrFunction, mapped: PythonFunction): boolean =>
-    source.name === mapped.name &&
-    source.parameters.length === mapped.parameters.length &&
-    source.parameters.every((parameter, index) => parameter.name === mapped.parameters[index]?.name) &&
-    source.overloads.length === (mapped.overloads?.length ?? 0) &&
-    source.overloads.every((overload, index) =>
-      overload.parameters.length === mapped.overloads?.[index]?.parameters.length &&
-      overload.parameters.every((parameter, parameterIndex) =>
-        parameter.name === mapped.overloads?.[index]?.parameters[parameterIndex]?.name
-      )
-    );
   if (ir.module !== options.module.name) {
     throw new Error(`Compiled module ${options.module.name} does not match IR module ${ir.module}.`);
   }
-  for (const func of options.module.functions) {
-    const source = ir.functions.find(entry => entry.name === func.name);
-    if (!source || !matchesFunction(source, func)) {
-      throw new Error(`Compiled function ${func.name} does not match validated IR.`);
-    }
-  }
-  for (const cls of options.module.classes) {
-    const source = ir.classes.find(entry => entry.name === cls.name);
-    if (!source || cls.methods.some(method =>
-      !source.methods.some(entry =>
-        matchesFunction(entry, method)
-      )
-    )) {
-      throw new Error(`Compiled class ${cls.name} does not match validated IR.`);
-    }
-  }
+  const canonical = transformIrToTsModel(ir);
+  const select = <T extends { name: string }>(
+    kind: string,
+    source: readonly T[],
+    requested: readonly { name: string }[]
+  ): T[] => {
+    const byName = new Map(source.map(item => [item.name, item] as const));
+    const seen = new Set<string>();
+    return requested.map(item => {
+      const match = byName.get(item.name);
+      if (!match || seen.has(item.name)) {
+        throw new Error(`Selected ${kind} ${item.name} does not match validated IR.`);
+      }
+      seen.add(item.name);
+      return match;
+    });
+  };
+  const selectedFunctions = select('function', canonical.functions, options.module.functions);
+  const selectedClasses = select('class', canonical.classes, options.module.classes);
+  const selectedAliases = select(
+    'type alias',
+    canonical.typeAliases ?? [],
+    options.module.typeAliases ?? canonical.typeAliases ?? []
+  );
   const capabilities = new Map(options.capabilities.map(capability => [capability.name, capability]));
   const dataclassNames = new Set(
     ir.classes.filter(cls => cls.is_dataclass).map(cls => cls.name)
@@ -858,11 +946,11 @@ export function compileContract(
     return result.function;
   };
   const module: PythonModule = {
-    ...options.module,
-    functions: options.module.functions.map(func =>
+    ...canonical,
+    functions: selectedFunctions.map(func =>
       compileFunction(func, `$.functions[${ir.functions.findIndex(entry => entry.name === func.name)}]`)
     ),
-    classes: options.module.classes.map(cls => ({
+    classes: selectedClasses.map(cls => ({
       ...cls,
       methods: cls.methods.map(method => {
         const sourceClassIndex = ir.classes.findIndex(entry => entry.name === cls.name);
@@ -875,6 +963,7 @@ export function compileContract(
         );
       }),
     })),
+    typeAliases: selectedAliases,
   };
   const generated = options.generator.generateModuleDefinition(module, options.annotatedJSDoc);
   return {
