@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "contractRevision": 2,
+  "propertySeed": 20260920,
+  "safeIntegers": [
+    { "decimal": "-9007199254740991", "accepted": true },
+    { "decimal": "9007199254740991", "accepted": true },
+    { "decimal": "-9007199254740992", "accepted": false },
+    { "decimal": "9007199254740992", "accepted": false },
+    { "decimal": "9007199254740993", "accepted": false },
+    { "decimal": "-9223372036854775808", "accepted": false },
+    { "decimal": "9223372036854775807", "accepted": false },
+    { "decimal": "265252859812191058636308480000000", "accepted": false }
+  ],
+  "binary16": [
+    { "wordHex": "0000", "decimal": "0", "negativeZero": false },
+    { "wordHex": "8000", "decimal": "-0", "negativeZero": true },
+    { "wordHex": "0001", "decimal": "5.960464477539063e-8", "negativeZero": false },
+    { "wordHex": "03ff", "decimal": "0.00006097555160522461", "negativeZero": false },
+    { "wordHex": "0400", "decimal": "0.00006103515625", "negativeZero": false },
+    { "wordHex": "3e00", "decimal": "1.5", "negativeZero": false },
+    { "wordHex": "c080", "decimal": "-2.25", "negativeZero": false },
+    { "wordHex": "7bff", "decimal": "65504", "negativeZero": false },
+    { "wordHex": "fbff", "decimal": "-65504", "negativeZero": false }
+  ],
+  "nonFiniteBinary16": [
+    { "wordHex": "7c00", "kind": "infinity" },
+    { "wordHex": "fc00", "kind": "infinity" },
+    { "wordHex": "7d00", "kind": "nan" },
+    { "wordHex": "7e00", "kind": "nan" },
+    { "wordHex": "fe00", "kind": "nan" }
+  ],
+  "nestedCases": [
+    {
+      "path": "result.outer[0].value",
+      "value": "9007199254740993",
+      "outcome": "reject"
+    },
+    {
+      "path": "result.outer[0].tensor.value",
+      "float16Words": ["3e00", "c080"],
+      "outcome": "numbers"
+    }
+  ],
+  "overloadCases": [
+    {
+      "function": "select_record",
+      "inputType": "str",
+      "argument": "label",
+      "returnType": "dict[str, dict[str, str]]",
+      "expected": { "outer": { "value": "label" } }
+    },
+    {
+      "function": "select_record",
+      "inputType": "int",
+      "argument": 42,
+      "returnType": "dict[str, dict[str, int]]",
+      "expected": { "outer": { "value": 42 } }
+    }
+  ],
+  "wrongReturn": {
+    "function": "wrong_integer_return",
+    "declaredType": "int",
+    "returnedValue": "not an integer",
+    "expectedError": "BridgeValidationError"
+  }
+}
