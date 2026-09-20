@@ -10,6 +10,7 @@
  */
 
 import { tagDecodedShape } from '../runtime/validators.js';
+import type { DecodedProvenance } from '../runtime/decoded-provenance.js';
 import { isSafeJsonInteger, MAX_SAFE_JSON_INTEGER } from '../contracts/value-contract.js';
 
 const SCIENTIFIC_MARKERS = [
@@ -1108,6 +1109,19 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
   if (strictV1 && 'dtype' in nested) {
     assertOptionalNonEmptyDtype(nested.dtype, 'torch.tensor', 'value.dtype', nestedShape);
   }
+  if (strictV1 && dtype === 'torch.float16') {
+    if (!isStrictV1Envelope(nested)) {
+      throw new Error(
+        'Invalid torch.tensor envelope: float16 value must use ndarray codecVersion 1'
+      );
+    }
+    if (nested.dtype !== 'float16') {
+      throw new Error(
+        `Invalid torch.tensor envelope: value.dtype at path value.dtype must be "float16" ` +
+          `for outer dtype "torch.float16"; got ${JSON.stringify(nested.dtype)}`
+      );
+    }
+  }
   const deviceValue = value.device;
   if (deviceValue !== undefined && (typeof deviceValue !== 'string' || deviceValue.length === 0)) {
     throw new Error(
@@ -1334,7 +1348,8 @@ function decodeEnvelope<T>(
 
 async function decodeEnvelopeAsync<T>(
   value: unknown,
-  decodeArrow: (bytes: Uint8Array, marker: ScientificMarker) => Promise<T>
+  decodeArrow: (bytes: Uint8Array, marker: ScientificMarker) => Promise<T>,
+  provenance?: DecodedProvenance
 ): Promise<T | unknown> {
   let visitedNodes = 0;
 
@@ -1397,6 +1412,34 @@ async function decodeEnvelopeAsync<T>(
     }
   };
 
+  const recordScalarProvenance = (
+    original: unknown,
+    decoded: unknown,
+    target?: DecodeTarget
+  ): void => {
+    if (
+      !provenance ||
+      typeof decoded !== 'number' ||
+      !isPlainObject(original) ||
+      original.__tywrap__ !== 'ndarray' ||
+      !isStrictV1Envelope(original) ||
+      !Array.isArray(original.shape) ||
+      original.shape.length !== 0
+    ) {
+      return;
+    }
+    const metadata = {
+      marker: 'ndarray' as const,
+      dims: 0,
+      dtype: typeof original.dtype === 'string' ? original.dtype : undefined,
+    };
+    if (target) {
+      provenance.recordChild(target.container, target.key, metadata);
+    } else {
+      provenance.recordRoot(metadata);
+    }
+  };
+
   const settleDecoded = async (
     decoded: PromiseLike<T | unknown>,
     original: unknown,
@@ -1409,6 +1452,7 @@ async function decodeEnvelopeAsync<T>(
     } catch (error) {
       return prefixHandlerError(error, path);
     }
+    recordScalarProvenance(original, resolved, path === 'result' ? undefined : target);
     assignDecoded(target, original, resolved);
   };
 
@@ -1455,8 +1499,10 @@ async function decodeEnvelopeAsync<T>(
           pending.push(settleDecoded(decoded, current, { container: root, key: 'value' }, path));
         }
       } else if (target) {
+        recordScalarProvenance(current, decoded, target);
         assignDecoded(target, current, decoded);
       } else if (decoded !== current) {
+        recordScalarProvenance(current, decoded);
         root.value = decoded;
       }
       return;
@@ -1530,9 +1576,12 @@ async function decodeEnvelopeAsync<T>(
 /**
  * Decode values produced by the Python bridge.
  */
-export async function decodeValueAsync(value: unknown): Promise<DecodedValue> {
+export async function decodeValueAsync(
+  value: unknown,
+  provenance?: DecodedProvenance
+): Promise<DecodedValue> {
   try {
-    return await decodeEnvelopeAsync(value, tryDecodeArrowTable);
+    return await decodeEnvelopeAsync(value, tryDecodeArrowTable, provenance);
   } catch (error) {
     throw asScientificDecodeError(error, 'unknown');
   }
