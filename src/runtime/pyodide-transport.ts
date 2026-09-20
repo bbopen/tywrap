@@ -15,7 +15,7 @@
  */
 
 import { DisposableBase } from './bounded-context.js';
-import { BridgeProtocolError } from './errors.js';
+import { BridgeDisposedError, BridgeProtocolError, BridgeTimeoutError } from './errors.js';
 import { PYODIDE_BRIDGE_CORE_SOURCE } from './pyodide-bootstrap-core.generated.js';
 import {
   PROTOCOL_ID,
@@ -100,6 +100,7 @@ export const BOOTSTRAP_PYTHON = `
 import sys as __tywrap_sys
 import json as __tywrap_json
 import types as __tywrap_types
+import asyncio as __tywrap_asyncio
 
 # Load the shared bridge core from the embedded source into a real module so the
 # Pyodide server runs the IDENTICAL protocol/serialization code as the reference
@@ -111,9 +112,10 @@ __tywrap_sys.modules[${JSON.stringify(PYODIDE_CORE_MODULE_NAME)}] = __tywrap_cor
 exec(compile(__tywrap_core_source, '<tywrap_bridge_core>', 'exec'), __tywrap_core.__dict__)
 
 __tywrap_protocol = __tywrap_core.PROTOCOL
+__tywrap_tasks = {}
 
 
-def __tywrap_dispatch(message_json):
+async def __tywrap_dispatch_task(msg, message_json, mid):
     """
     Dispatch a protocol message and return a JSON response string.
 
@@ -123,13 +125,9 @@ def __tywrap_dispatch(message_json):
     so NaN/Infinity is rejected with the same wording the subprocess server uses.
     """
     core = __tywrap_core
-    mid = None
     try:
-        msg = __tywrap_json.loads(message_json)
-        if isinstance(msg, dict) and isinstance(msg.get('id'), int):
-            mid = msg.get('id')
         try:
-            out = core.dispatch_request(
+            out = await core.dispatch_request_async(
                 msg,
                 bridge='pyodide',
                 pid=None,
@@ -143,8 +141,7 @@ def __tywrap_dispatch(message_json):
         except Exception as e:
             out = core.build_error_payload(mid, e, include_traceback=True)
     except Exception as e:
-        # Malformed JSON / unexpected pre-dispatch failure: well-formed error,
-        # no traceback (matches the reference's outer handler).
+        # Unexpected pre-dispatch failure keeps the reference error envelope.
         out = core.build_error_payload(mid, e, include_traceback=False)
 
     try:
@@ -160,6 +157,40 @@ def __tywrap_dispatch(message_json):
         # exactly as the subprocess server's fallback does.
         err_out = core.build_error_payload(mid, e, include_traceback=False)
         return __tywrap_json.dumps(err_out)
+
+
+def __tywrap_forget_task(mid, task):
+    if __tywrap_tasks.get(mid) is task:
+        __tywrap_tasks.pop(mid, None)
+
+
+def __tywrap_dispatch(message_json):
+    """Register a task before JavaScript can timeout or abort the call."""
+    try:
+        msg = __tywrap_json.loads(message_json)
+    except Exception as e:
+        out = __tywrap_core.build_error_payload(None, e, include_traceback=False)
+        return __tywrap_json.dumps(out)
+
+    mid = msg.get('id') if isinstance(msg, dict) and isinstance(msg.get('id'), int) else None
+    if mid is not None and mid in __tywrap_tasks:
+        error = __tywrap_core.ProtocolError(f'Duplicate request id: {mid}')
+        out = __tywrap_core.build_error_payload(mid, error, include_traceback=False)
+        return __tywrap_json.dumps(out)
+
+    task = __tywrap_asyncio.get_event_loop().create_task(
+        __tywrap_dispatch_task(msg, message_json, mid)
+    )
+    if mid is not None:
+        __tywrap_tasks[mid] = task
+        task.add_done_callback(lambda done: __tywrap_forget_task(mid, done))
+    return task
+
+
+def __tywrap_cancel(mid):
+    """Request cooperative cancellation of one active RPC task."""
+    task = __tywrap_tasks.get(mid)
+    return task.cancel() if task is not None else False
 `;
 
 // =============================================================================
@@ -196,6 +227,7 @@ export class PyodideTransport extends DisposableBase implements Transport {
   private readonly indexURL: string;
   private readonly packages: readonly string[];
   private py?: PyodideInstance;
+  private readonly activeCalls = new Map<number, { cancel: () => void; dispose: () => void }>();
 
   /**
    * Create a new PyodideTransport.
@@ -248,6 +280,9 @@ export class PyodideTransport extends DisposableBase implements Transport {
    * We clear our reference and rely on garbage collection.
    */
   protected async doDispose(): Promise<void> {
+    for (const call of this.activeCalls.values()) {
+      call.dispose();
+    }
     this.py = undefined;
   }
 
@@ -284,7 +319,11 @@ export class PyodideTransport extends DisposableBase implements Transport {
   ): Promise<string> {
     return this.execute(
       async () => {
-        if (!this.py) {
+        const py = this.py;
+        if (this.state === 'disposing' || this.state === 'disposed') {
+          throw new BridgeDisposedError('Transport disposed');
+        }
+        if (!py) {
           throw new BridgeProtocolError('Pyodide not initialized');
         }
 
@@ -306,41 +345,110 @@ export class PyodideTransport extends DisposableBase implements Transport {
         if (!parsed.params || typeof parsed.params !== 'object' || Array.isArray(parsed.params)) {
           throw new BridgeProtocolError('Message missing required fields: id, method');
         }
+        if (this.activeCalls.has(parsed.id)) {
+          throw new BridgeProtocolError(`Duplicate request id: ${parsed.id}`);
+        }
 
         // Get the dispatch function
-        const dispatchFn = this.py.globals.get('__tywrap_dispatch');
+        const dispatchFn = py.globals.get('__tywrap_dispatch');
         if (!dispatchFn) {
           throw new BridgeProtocolError('Pyodide dispatch function not initialized');
         }
 
+        let result: string | PromiseLike<string>;
         try {
-          // Call the dispatch function
-          const invoke = dispatchFn as (messageJson: string) => string;
-          const responseJson = invoke(message);
+          result = (dispatchFn as (messageJson: string) => string | PromiseLike<string>)(message);
+        } catch (error) {
+          this.destroyPyProxy(dispatchFn);
+          throw error;
+        }
 
-          // Validate response is valid JSON
+        const cancel = (): void => {
+          let cancelFn: unknown;
           try {
-            const response = JSON.parse(responseJson) as ProtocolResponse;
-            if (typeof response.id !== 'number' || !Number.isInteger(response.id)) {
-              throw new BridgeProtocolError('Invalid response from Python: missing numeric id');
+            cancelFn = py.globals.get('__tywrap_cancel');
+            if (typeof cancelFn === 'function') {
+              (cancelFn as (id: number) => unknown)(parsed.id);
             }
-            if (response.protocol !== undefined && response.protocol !== PROTOCOL_ID) {
-              throw new BridgeProtocolError(
-                `Invalid protocol version: expected "${PROTOCOL_ID}", got "${response.protocol}"`
-              );
-            }
-            if (response.error) {
-              // Return the response as-is; let the caller handle the error
-              return responseJson;
-            }
-            return responseJson;
+          } catch {
+            // A timeout or disposal must retain its original error.
+          } finally {
+            this.destroyPyProxy(cancelFn);
+          }
+        };
+
+        let rejectEarly: (error: Error) => void = () => {};
+        const interrupted = new Promise<never>((_resolve, reject) => {
+          rejectEarly = reject;
+        });
+        let finished = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const stopTimer = (): void => {
+          if (timer !== undefined) {
+            clearTimeout(timer);
+          }
+          signal?.removeEventListener('abort', onAbort);
+        };
+        const interrupt = (error: Error): void => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          stopTimer();
+          cancel();
+          rejectEarly(error);
+        };
+        const onAbort = (): void => interrupt(new BridgeTimeoutError('Operation aborted'));
+
+        const completion = Promise.resolve(result).then(responseJson => {
+          let response: ProtocolResponse;
+          try {
+            response = JSON.parse(responseJson) as ProtocolResponse;
           } catch {
             throw new BridgeProtocolError(`Invalid JSON response from Python: ${responseJson}`);
           }
-        } finally {
-          // Clean up the proxy
+          if (typeof response.id !== 'number' || !Number.isInteger(response.id)) {
+            throw new BridgeProtocolError('Invalid response from Python: missing numeric id');
+          }
+          if (response.id !== parsed.id) {
+            throw new BridgeProtocolError(
+              `Invalid response id: expected ${parsed.id}, got ${response.id}`
+            );
+          }
+          if (response.protocol !== undefined && response.protocol !== PROTOCOL_ID) {
+            throw new BridgeProtocolError(
+              `Invalid protocol version: expected "${PROTOCOL_ID}", got "${response.protocol}"`
+            );
+          }
+          return responseJson;
+        });
+
+        // This handler owns proxy cleanup even if the caller's timeout wins.
+        const cleanup = (): void => {
+          finished = true;
+          stopTimer();
+          this.activeCalls.delete(parsed.id);
+          this.destroyPyProxy(result);
           this.destroyPyProxy(dispatchFn);
+        };
+        completion.then(cleanup, cleanup);
+
+        this.activeCalls.set(parsed.id, {
+          cancel,
+          dispose: () => interrupt(new BridgeDisposedError('Transport disposed')),
+        });
+        if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+          timer = setTimeout(
+            () => interrupt(new BridgeTimeoutError(`Operation timed out after ${timeoutMs}ms`)),
+            timeoutMs
+          );
         }
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) {
+          onAbort();
+        }
+
+        return Promise.race([completion, interrupted]);
       },
       { timeoutMs, signal }
     );

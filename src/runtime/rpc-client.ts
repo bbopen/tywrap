@@ -330,9 +330,8 @@ export class RpcClient extends DisposableBase {
    * supplies auto-init and exactly-one-attempt timeout/abort handling), where the only difference between
    * the sync and Arrow-aware paths is the supplied `decode` step.
    *
-   * Behavior-preserving extraction of the two twins; ordering, the
-   * `options?.timeoutMs ?? this.defaultTimeoutMs` fallback, and the
-   * `this.execute(..., options)` wrapping are unchanged.
+   * The transport gets the configured timeout. The outer bound adds one
+   * second so transport errors can include details such as Python stderr.
    */
   private async sendVia<T>(
     message: Omit<ProtocolMessage, 'id' | 'protocol'>,
@@ -340,22 +339,28 @@ export class RpcClient extends DisposableBase {
     decode: (responseStr: string) => T | Promise<T>
   ): Promise<T> {
     const fullMessage = this.stampMessage(message);
+    const transportTimeoutMs = options?.timeoutMs ?? this.defaultTimeoutMs;
+    // Let the transport report its own timeout, including Python stderr.
+    const executionTimeoutMs = transportTimeoutMs > 0 ? transportTimeoutMs + 1_000 : 0;
 
-    return this.execute(async () => {
-      // 1. Encode request (validates args)
-      const encoded = this.codec.encodeRequest(fullMessage);
+    return this.execute(
+      async () => {
+        // 1. Encode request (validates args)
+        const encoded = this.codec.encodeRequest(fullMessage);
 
-      // 2. Send via transport
-      const responseStr = await this.transport.send(
-        encoded,
-        options?.timeoutMs ?? this.defaultTimeoutMs,
-        options?.signal,
-        fullMessage.id
-      );
+        // 2. Send via transport
+        const responseStr = await this.transport.send(
+          encoded,
+          transportTimeoutMs,
+          options?.signal,
+          fullMessage.id
+        );
 
-      // 3. Decode response (sync or Arrow-aware, per caller)
-      return decode(responseStr);
-    }, options);
+        // 3. Decode response (sync or Arrow-aware, per caller)
+        return decode(responseStr);
+      },
+      { ...options, timeoutMs: executionTimeoutMs }
+    );
   }
 
   /**
