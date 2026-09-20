@@ -1,5 +1,12 @@
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+
 import packageJson from '../package.json' with { type: 'json' };
-import browsers from 'playwright-core/browsers.json' with { type: 'json' };
+
+const require = createRequire(import.meta.url);
+const browsersPath = join(dirname(require.resolve('playwright-core')), 'browsers.json');
+const browsers = JSON.parse(await readFile(browsersPath, 'utf8'));
 
 const pyodideVersion = packageJson.devDependencies.pyodide;
 const playwrightVersion = packageJson.devDependencies['@playwright/test'];

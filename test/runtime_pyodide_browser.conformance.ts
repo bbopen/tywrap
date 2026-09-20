@@ -123,32 +123,34 @@ describe('real browser PyodideBridge', () => {
     );
 
     const { server, origin } = await createStaticServer(compiled);
-    const browser = await chromium.launch();
+    let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
     try {
+      browser = await chromium.launch();
       const page = await browser.newPage();
       await page.goto(origin);
-      const result = await page.evaluate(
-        async ({ pyodideURL, version }) => {
-          const { PyodideBridge } = await import('/dist/runtime/pyodide.js');
-          const { clearRuntimeBridge, setRuntimeBridge } = await import('/dist/runtime/index.js');
-          const math = await import('/generated/math.generated.js');
-          const bridge = new PyodideBridge({ indexURL: `${pyodideURL}/pyodide/` });
-          setRuntimeBridge({
-            call: bridge.call.bind(bridge),
-            dispose: bridge.dispose.bind(bridge),
-          });
-          try {
-            return { result: await math.sqrt(81), version };
-          } finally {
-            clearRuntimeBridge();
-            await bridge.dispose();
-          }
-        },
-        { pyodideURL: origin, version: pyodideVersion }
-      );
-      expect(result).toEqual({ result: 9, version: pyodideVersion });
+      const result = await page.evaluate(async pyodideURL => {
+        const { PyodideBridge } = await import('/dist/runtime/pyodide.js');
+        const { clearRuntimeBridge, setRuntimeBridge } = await import('/dist/runtime/index.js');
+        const math = await import('/generated/math.generated.js');
+        const bridge = new PyodideBridge({ indexURL: `${pyodideURL}/pyodide/` });
+        setRuntimeBridge({
+          call: bridge.call.bind(bridge),
+          dispose: bridge.dispose.bind(bridge),
+        });
+        try {
+          return {
+            result: await math.sqrt(81),
+            pythonVersion: await bridge.call('sys', 'version', []),
+          };
+        } finally {
+          clearRuntimeBridge();
+          await bridge.dispose();
+        }
+      }, origin);
+      expect(result).toMatchObject({ result: 9 });
+      expect(result.pythonVersion).toMatch(/^\d+\.\d+\.\d+/);
     } finally {
-      await browser.close();
+      await browser?.close();
       await new Promise<void>((resolveClose, reject) =>
         server.close(error => (error ? reject(error) : resolveClose()))
       );
