@@ -26,6 +26,31 @@ type ConsumerMode =
   | { kind: 'candidate' }
   | { kind: 'published'; npmVersion: string; pypiVersion: string };
 
+const npmExactVersion = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
+const pypiExactVersion = /^\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?$/;
+const pypiHyphenatedPrerelease =
+  /^(\d+\.\d+\.\d+)-(alpha|beta|rc)[.-]?(0|[1-9]\d*)((?:\.post\d+)?(?:\.dev\d+)?)$/;
+
+function canonicalPyPiVersion(version: string): string {
+  return version.replace(
+    pypiHyphenatedPrerelease,
+    (_match, release: string, label: string, number: string, suffix: string) => {
+      const shortLabel = label === 'alpha' ? 'a' : label === 'beta' ? 'b' : 'rc';
+      return `${release}${shortLabel}${number}${suffix}`;
+    }
+  );
+}
+
+function isExactPublishedVersion(
+  version: string | undefined,
+  registry: 'npm' | 'pypi'
+): version is string {
+  if (!version) return false;
+  return registry === 'npm'
+    ? npmExactVersion.test(version)
+    : pypiExactVersion.test(canonicalPyPiVersion(version));
+}
+
 function consumerMode(env: NodeJS.ProcessEnv = process.env): ConsumerMode {
   const mode = env.TYWRAP_CONSUMER_MODE ?? 'candidate';
   const npmVersion = env.TYWRAP_PUBLISHED_NPM_VERSION;
@@ -39,13 +64,10 @@ function consumerMode(env: NodeJS.ProcessEnv = process.env): ConsumerMode {
   if (mode !== 'published') {
     throw new Error(`Unknown consumer mode: ${mode}`);
   }
-  if (!npmVersion || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$/.test(npmVersion)) {
+  if (!isExactPublishedVersion(npmVersion, 'npm')) {
     throw new Error('TYWRAP_PUBLISHED_NPM_VERSION must be an exact npm version');
   }
-  if (
-    !pypiVersion ||
-    !/^\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?$/.test(pypiVersion)
-  ) {
+  if (!isExactPublishedVersion(pypiVersion, 'pypi')) {
     throw new Error('TYWRAP_PUBLISHED_PYPI_VERSION must be an exact PyPI version');
   }
   return { kind: 'published', npmVersion, pypiVersion };
@@ -104,6 +126,41 @@ describe('isolated npm consumer', () => {
     ).toEqual({ kind: 'published', npmVersion: '1.2.3', pypiVersion: '4.5.6' });
   });
 
+  it('accepts the stable release pair and canonical PyPI prereleases', () => {
+    expect(
+      consumerMode({
+        TYWRAP_CONSUMER_MODE: 'published',
+        TYWRAP_PUBLISHED_NPM_VERSION: '0.11.0',
+        TYWRAP_PUBLISHED_PYPI_VERSION: '0.3.1',
+      })
+    ).toEqual({ kind: 'published', npmVersion: '0.11.0', pypiVersion: '0.3.1' });
+    expect(isExactPublishedVersion('0.3.1rc1.post2.dev3', 'pypi')).toBe(true);
+  });
+
+  it.each([
+    ['0.11.0-rc-1', '0.3.1-rc-1'],
+    ['0.11.0-rc.1', '0.3.1-rc.1'],
+    ['0.11.0-alpha.2', '0.3.1-alpha.2'],
+  ])('accepts exact project prereleases %s and %s', (npmVersion, pypiVersion) => {
+    expect(
+      consumerMode({
+        TYWRAP_CONSUMER_MODE: 'published',
+        TYWRAP_PUBLISHED_NPM_VERSION: npmVersion,
+        TYWRAP_PUBLISHED_PYPI_VERSION: pypiVersion,
+      })
+    ).toEqual({ kind: 'published', npmVersion, pypiVersion });
+  });
+
+  it.each([
+    ['0.3.1-rc-1', '0.3.1rc1'],
+    ['0.3.1-rc.1', '0.3.1rc1'],
+    ['0.3.1-alpha.2', '0.3.1a2'],
+    ['0.3.1-beta-3', '0.3.1b3'],
+    ['0.3.1rc1.post2.dev3', '0.3.1rc1.post2.dev3'],
+  ])('compares PyPI metadata using canonical version %s', (version, canonical) => {
+    expect(canonicalPyPiVersion(version)).toBe(canonical);
+  });
+
   it.each([
     { TYWRAP_CONSUMER_MODE: 'published', TYWRAP_PUBLISHED_PYPI_VERSION: '4.5.6' },
     { TYWRAP_CONSUMER_MODE: 'published', TYWRAP_PUBLISHED_NPM_VERSION: '1.2.3' },
@@ -118,6 +175,26 @@ describe('isolated npm consumer', () => {
       TYWRAP_PUBLISHED_PYPI_VERSION: '>=4.5',
     },
     { TYWRAP_PUBLISHED_NPM_VERSION: '1.2.3' },
+    {
+      TYWRAP_CONSUMER_MODE: 'published',
+      TYWRAP_PUBLISHED_NPM_VERSION: '0.11.0-rc-1',
+      TYWRAP_PUBLISHED_PYPI_VERSION: '0.3.1-foo.1',
+    },
+    {
+      TYWRAP_CONSUMER_MODE: 'published',
+      TYWRAP_PUBLISHED_NPM_VERSION: '0.11.0-rc-1',
+      TYWRAP_PUBLISHED_PYPI_VERSION: '0.3.1-rc-01',
+    },
+    {
+      TYWRAP_CONSUMER_MODE: 'published',
+      TYWRAP_PUBLISHED_NPM_VERSION: '0.11.0+build.1',
+      TYWRAP_PUBLISHED_PYPI_VERSION: '0.3.1',
+    },
+    {
+      TYWRAP_CONSUMER_MODE: 'published',
+      TYWRAP_PUBLISHED_NPM_VERSION: '0.11.0',
+      TYWRAP_PUBLISHED_PYPI_VERSION: '1!0.3.1',
+    },
   ])('rejects an incomplete or floating published version pair', env => {
     expect(() => consumerMode(env)).toThrow();
   });
@@ -248,7 +325,7 @@ describe('isolated npm consumer', () => {
       const irInstall = report.install?.find(
         item => item.metadata?.name?.toLowerCase().replace(/[-_.]+/g, '-') === 'tywrap-ir'
       );
-      expect(irInstall?.metadata?.version).toBe(mode.pypiVersion);
+      expect(irInstall?.metadata?.version).toBe(canonicalPyPiVersion(mode.pypiVersion));
       expect(new URL(irInstall?.download_info?.url ?? '').hostname).toBe('files.pythonhosted.org');
     }
 
@@ -352,7 +429,7 @@ describe('isolated npm consumer', () => {
           { cwd: consumer, env: isolatedPythonEnv }
         )
       ) as { version?: string; direct_url?: string | null };
-      expect(installedIr.version).toBe(mode.pypiVersion);
+      expect(installedIr.version).toBe(canonicalPyPiVersion(mode.pypiVersion));
       expect(installedIr.direct_url).toBeNull();
     }
 
