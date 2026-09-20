@@ -421,7 +421,9 @@ describeNodeOnly('startNodeWatchSession', () => {
       await expect(session.reloadNow()).resolves.toBe(false);
       const reloadError = events.find(event => event.type === 'reload-error' && event.manual);
       expect(reloadError).toMatchObject({
-        error: { message: 'Watched Python source changed during reload; keeping the current bridge' },
+        error: {
+          message: 'Watched Python source changed during reload; keeping the current bridge',
+        },
       });
       expect(await generatedModule.answer()).toBe(1);
     } finally {
