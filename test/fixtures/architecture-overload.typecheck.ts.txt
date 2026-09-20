@@ -1,0 +1,18 @@
+import { selectRecord } from './generated/architecture_callable_fixture.generated.js';
+
+const textRecord: Promise<Record<string, Record<string, string>>> = selectRecord('label');
+const integerRecord: Promise<Record<string, Record<string, number>>> = selectRecord(42);
+
+// @ts-expect-error An integer input must not infer a string record.
+const wrongTextRecord: Promise<Record<string, Record<string, string>>> = selectRecord(42);
+
+// @ts-expect-error A string input must not infer an integer record.
+const wrongIntegerRecord: Promise<Record<string, Record<string, number>>> = selectRecord('label');
+
+// @ts-expect-error A boolean input matches no overload.
+selectRecord(true);
+
+void textRecord;
+void integerRecord;
+void wrongTextRecord;
+void wrongIntegerRecord;
