@@ -1,6 +1,6 @@
 # Migrating to 0.11
 
-This guide covers the planned 0.11 changes. The release is not published yet.
+This guide covers tywrap 0.11.0 and tywrap-ir 0.3.1.
 
 ## Large Python integers
 
@@ -91,7 +91,7 @@ Python results; upgrading the TypeScript client does not update that server.
 
 ## Regenerate wrappers
 
-After these versions are published, upgrade both packages:
+Upgrade both packages:
 
 ```bash
 npm install tywrap@0.11.0
