@@ -1447,11 +1447,9 @@ def coerce_dict(value, key):
     return value
 
 
-def handle_call(
+def _invoke_call(
     params,
     *,
-    force_json_markers,
-    torch_allow_copy,
     allowed_modules,
     allow_private_attrs,
     has_envelope_markers,
@@ -1465,7 +1463,72 @@ def handle_call(
     # calls, which the generated wrapper routes through call() rather than an
     # instance handle. resolve_allowed_attr_path guards each segment.
     func = resolve_allowed_attr_path(mod, function_name, allow_private_attrs=allow_private_attrs)
-    res = func(*args, **kwargs)
+    return func(*args, **kwargs)
+
+
+def _reject_generator(value):
+    import inspect
+
+    if inspect.isgenerator(value):
+        raise TypeError('Generator results are not supported by tywrap RPC')
+    if inspect.isasyncgen(value):
+        raise TypeError('Async generator results are not supported by tywrap RPC')
+
+
+async def _await_result(value):
+    return await value
+
+
+def handle_call(
+    params,
+    *,
+    force_json_markers,
+    torch_allow_copy,
+    allowed_modules,
+    allow_private_attrs,
+    has_envelope_markers,
+):
+    """Run one call. The serial subprocess owns a fresh loop for awaitables."""
+    import asyncio
+    import inspect
+
+    res = _invoke_call(
+        params,
+        allowed_modules=allowed_modules,
+        allow_private_attrs=allow_private_attrs,
+        has_envelope_markers=has_envelope_markers,
+    )
+    _reject_generator(res)
+    if inspect.isawaitable(res):
+        # asyncio.run requires a coroutine, while user code may return any
+        # awaitable. It closes the per-call loop on Python 3.10 through 3.12.
+        res = asyncio.run(_await_result(res))
+    _reject_generator(res)
+    return serialize(res, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy)
+
+
+async def handle_call_async(
+    params,
+    *,
+    force_json_markers,
+    torch_allow_copy,
+    allowed_modules,
+    allow_private_attrs,
+    has_envelope_markers,
+):
+    """Run one call on the caller's loop, which Pyodide owns."""
+    import inspect
+
+    res = _invoke_call(
+        params,
+        allowed_modules=allowed_modules,
+        allow_private_attrs=allow_private_attrs,
+        has_envelope_markers=has_envelope_markers,
+    )
+    _reject_generator(res)
+    if inspect.isawaitable(res):
+        res = await res
+    _reject_generator(res)
     return serialize(res, force_json_markers=force_json_markers, torch_allow_copy=torch_allow_copy)
 
 
@@ -1544,6 +1607,52 @@ def dispatch_request(
     params = coerce_dict(msg.get('params'), 'params')
     if method == 'call':
         result = handle_call(
+            params,
+            force_json_markers=force_json_markers,
+            torch_allow_copy=torch_allow_copy,
+            allowed_modules=allowed_modules,
+            allow_private_attrs=allow_private_attrs,
+            has_envelope_markers=has_envelope_markers,
+        )
+    elif method == 'meta':
+        if python_version is None:
+            import sys
+            python_version = sys.version.split()[0]
+        codec_fallback = 'json' if force_json_markers else 'none'
+        result = build_meta(
+            bridge=bridge,
+            pid=pid,
+            python_version=python_version,
+            codec_fallback=codec_fallback,
+            arrow_available_override=arrow_available_override,
+        )
+    else:
+        raise ProtocolError(f'Unknown method: {method}')
+    return {'id': mid, 'protocol': PROTOCOL, 'result': result}
+
+
+async def dispatch_request_async(
+    msg,
+    *,
+    bridge,
+    pid,
+    force_json_markers,
+    allow_nan=False,
+    python_version=None,
+    torch_allow_copy=False,
+    arrow_available_override=None,
+    allowed_modules=None,
+    allow_private_attrs=False,
+    has_envelope_markers=True,
+):
+    """Dispatch on the caller's event loop and return one response envelope."""
+    mid = require_protocol(msg)
+    method = msg.get('method')
+    if not isinstance(method, str):
+        raise ProtocolError('Missing method')
+    params = coerce_dict(msg.get('params'), 'params')
+    if method == 'call':
+        result = await handle_call_async(
             params,
             force_json_markers=force_json_markers,
             torch_allow_copy=torch_allow_copy,
