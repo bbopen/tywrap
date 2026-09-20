@@ -23,6 +23,7 @@ import type { BridgeBackend, BridgeInfo } from '../types/index.js';
 import { DisposableBase, type ExecuteOptions } from './bounded-context.js';
 import { BridgeProtocolError } from './errors.js';
 import { BridgeCodec, type CodecOptions } from './bridge-codec.js';
+import { DecodedProvenance } from './decoded-provenance.js';
 import {
   PROTOCOL_ID,
   TYWRAP_PROTOCOL_VERSION,
@@ -431,9 +432,10 @@ export class RpcClient extends DisposableBase {
     functionName: string,
     args: unknown[],
     kwargs?: Record<string, unknown>,
-    validate?: (result: T) => void
+    validate?: (result: T, provenance?: DecodedProvenance) => void
   ): Promise<T> {
-    return this.sendMessageAsync<T>(
+    const provenance = validate ? new DecodedProvenance() : undefined;
+    return this.sendVia<T>(
       {
         method: 'call',
         params: {
@@ -446,11 +448,12 @@ export class RpcClient extends DisposableBase {
       validate
         ? {
             validate: result => {
-              validate(result);
+              validate(result, provenance);
               return result;
             },
           }
-        : undefined
+        : undefined,
+      responseStr => this.codec.decodeResponseAsync<T>(responseStr, provenance)
     );
   }
 

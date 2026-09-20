@@ -565,13 +565,17 @@ def serialize_dataframe_json(obj):
     }
 
 
-def serialize_series(obj, *, force_json_markers):
+def serialize_series(obj, *, force_json_markers, path='result'):
     """
     Encode a pandas Series as a single-column Arrow Table stream (the JS decoder
     contract is "table-like"); JSON when force_json_markers is set.
     """
     if force_json_markers:
-        return serialize_series_json(obj)
+        return serialize_series_json(obj, path=path)
+    name = getattr(obj, 'name', None)
+    _check_terminal_json_integers(
+        encode_value(name, allow_nan=False), _serialize_path(path, 'name')
+    )
     try:
         import pyarrow as pa  # type: ignore
     except Exception as exc:
@@ -591,13 +595,13 @@ def serialize_series(obj, *, force_json_markers):
             'codecVersion': CODEC_VERSION,
             'encoding': 'arrow',
             'b64': b64,
-            'name': getattr(obj, 'name', None),
+            'name': name,
         }
     except Exception as exc:
         raise RuntimeError('Arrow encoding failed for pandas.Series') from exc
 
 
-def serialize_series_json(obj):
+def serialize_series_json(obj, *, path='result'):
     """JSON fallback for Series values that JavaScript can represent safely."""
     import pandas as pd  # type: ignore
 
@@ -615,12 +619,16 @@ def serialize_series_json(obj):
         _normalize_pandas_json_scalar(value, f'Series value at position {position}', pd)
         for position, value in enumerate(data)
     ]
+    name = getattr(obj, 'name', None)
+    _check_terminal_json_integers(
+        encode_value(name, allow_nan=False), _serialize_path(path, 'name')
+    )
     return {
         '__tywrap__': 'series',
         'codecVersion': CODEC_VERSION,
         'encoding': 'json',
         'data': data,
-        'name': getattr(obj, 'name', None),
+        'name': name,
     }
 
 
@@ -688,7 +696,7 @@ def _normalize_pandas_json_scalar(value, location, pd):
     )
 
 
-def serialize_sparse_matrix(obj):
+def serialize_sparse_matrix(obj, *, path='result'):
     """
     Serialize scipy sparse matrices into structured JSON envelopes (json-only;
     there is no Arrow path). Preserves sparsity; rejects unsupported formats and
@@ -723,6 +731,24 @@ def serialize_sparse_matrix(obj):
             'JSON scipy sparse encoding cannot safely represent data outside the '
             'JavaScript safe integer range; cast or encode the values explicitly'
         )
+
+    for index, dimension in enumerate(obj.shape):
+        if int.__int__(dimension) > JS_SAFE_INTEGER_MAX:
+            raise RuntimeError(
+                f'Unsafe Python integer at {_serialize_path(_serialize_path(path, "shape"), index)}: '
+                f'{dimension} is outside the JavaScript safe integer range'
+            )
+    index_fields = ('indices', 'indptr') if fmt in ('csr', 'csc') else ('row', 'col')
+    for field in index_fields:
+        values = getattr(obj, field)
+        if values.size and (
+            (values < -JS_SAFE_INTEGER_MAX).any()
+            or (values > JS_SAFE_INTEGER_MAX).any()
+        ):
+            raise RuntimeError(
+                f'JSON scipy sparse encoding cannot safely represent {field} at '
+                f'{_serialize_path(path, field)} outside the JavaScript safe integer range'
+            )
 
     if fmt in ('csr', 'csc'):
         data = obj.data.tolist()
@@ -853,7 +879,7 @@ def serialize_torch_tensor(obj, *, force_json_markers, torch_allow_copy=False):
     return envelope
 
 
-def serialize_sklearn_estimator(obj):
+def serialize_sklearn_estimator(obj, *, path):
     """Serialize sklearn estimators as metadata only (json-only); no pickling."""
     try:
         import sklearn  # noqa: F401
@@ -869,7 +895,11 @@ def serialize_sklearn_estimator(obj):
     # params here for parity with the response codec.
     for key, value in params.items():
         try:
-            json.dumps(value, allow_nan=False)
+            encoded = json.dumps(value, allow_nan=False)
+            param_path = _serialize_path(_serialize_path(path, 'params'), str(key))
+            _check_terminal_json_integers(encoded, param_path)
+        except RuntimeError:
+            raise
         except (TypeError, ValueError) as exc:
             raise RuntimeError(
                 f'scikit-learn estimator param {key!r} is not JSON-serializable '
@@ -887,6 +917,25 @@ def serialize_sklearn_estimator(obj):
         'version': getattr(sklearn, '__version__', None),
         'params': params,
     }
+
+
+def _check_terminal_json_integers(encoded, path):
+    """Check integer tokens in a small JSON metadata value before emission."""
+    stack = [(json.loads(encoded), path)]
+    while stack:
+        current, current_path = stack.pop()
+        if type(current) is int:
+            _serialize_leaf(current, current_path)
+        elif isinstance(current, dict):
+            stack.extend(
+                (item, _serialize_path(current_path, key))
+                for key, item in current.items()
+            )
+        elif isinstance(current, list):
+            stack.extend(
+                (item, _serialize_path(current_path, index))
+                for index, item in enumerate(current)
+            )
 
 
 _NO_PYDANTIC = object()
@@ -962,11 +1011,11 @@ def _serialize_scientific(obj, *, force_json_markers, torch_allow_copy, depth, p
             return serialize_dataframe(obj, force_json_markers=force_json_markers)
         if is_pandas_series(obj):
             _check_serialize_depth(depth, path)
-            return serialize_series(obj, force_json_markers=force_json_markers)
+            return serialize_series(obj, force_json_markers=force_json_markers, path=path)
     elif package == 'scipy' and 'scipy.sparse' in sys.modules:
         if is_scipy_sparse(obj):
             _check_serialize_depth(depth, path)
-            return serialize_sparse_matrix(obj)
+            return serialize_sparse_matrix(obj, path=path)
     elif package == 'torch' and 'torch' in sys.modules:
         if is_torch_tensor(obj):
             _check_serialize_depth(depth, path)
@@ -980,7 +1029,7 @@ def _serialize_scientific(obj, *, force_json_markers, torch_allow_copy, depth, p
         # estimators live outside the 'sklearn' package and must still get the
         # estimator serializer (and its param-naming errors).
         _check_serialize_depth(depth, path)
-        return serialize_sklearn_estimator(obj)
+        return serialize_sklearn_estimator(obj, path=path)
 
     return _NO_SCIENTIFIC
 
@@ -1015,11 +1064,12 @@ def _needs_serialize_visit(value):
 
 def _serialize_leaf(value, path):
     """Apply non-container conversions without allocating a traversal frame."""
-    if isinstance(value, int) and not isinstance(value, bool) and (
-        value < -JS_SAFE_INTEGER_MAX or value > JS_SAFE_INTEGER_MAX
+    integer_value = int.__int__(value) if isinstance(value, int) and not isinstance(value, bool) else None
+    if integer_value is not None and (
+        integer_value < -JS_SAFE_INTEGER_MAX or integer_value > JS_SAFE_INTEGER_MAX
     ):
         raise RuntimeError(
-            f'Unsafe Python integer at {path}: {value} is outside the JavaScript safe '
+            f'Unsafe Python integer at {path}: {integer_value} is outside the JavaScript safe '
             'integer range; return an explicit string or use an Arrow integer column'
         )
     if type(value) in (type(None), bool, int, float, str):
@@ -1036,7 +1086,7 @@ def _serialize_leaf(value, path):
     pydantic_value = serialize_pydantic(value)
     if pydantic_value is not _NO_PYDANTIC:
         return pydantic_value
-    if type(value) in (set, frozenset):
+    if isinstance(value, (set, frozenset)):
         return list(value)
     stdlib_value = serialize_stdlib(value)
     if stdlib_value is not None:
@@ -1138,6 +1188,24 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
             parent[key] = scientific
             continue
 
+        if callable(getattr(current, 'model_dump', None)):
+            _check_serialize_depth(depth, path)
+            visited_nodes += 1
+            _check_serialize_nodes(visited_nodes, path)
+            current_id = id(current)
+            if current_id in active_ids:
+                raise RuntimeError(f'Circular model conversion detected at {path}')
+            active_ids.add(current_id)
+            normalized = _serialize_leaf(current, path)
+            if normalized is current:
+                raise RuntimeError(f'Circular model conversion detected at {path}')
+            stack.append(('release-model', current_id))
+            if _needs_serialize_visit(normalized):
+                stack.append(('visit', normalized, depth + 1, path, parent, key))
+            else:
+                parent[key] = _serialize_leaf(normalized, path)
+            continue
+
         if isinstance(current, (dict, list, tuple)):
             _check_serialize_depth(depth, path)
             visited_nodes += 1
@@ -1159,24 +1227,6 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
             if isinstance(current, list):
                 parent[key] = output
             stack.append(('sequence', current, depth, path, parent, key, output, 0))
-            continue
-
-        if callable(getattr(current, 'model_dump', None)):
-            _check_serialize_depth(depth, path)
-            visited_nodes += 1
-            _check_serialize_nodes(visited_nodes, path)
-            current_id = id(current)
-            if current_id in active_ids:
-                raise RuntimeError(f'Circular model conversion detected at {path}')
-            active_ids.add(current_id)
-            normalized = _serialize_leaf(current, path)
-            if normalized is current:
-                raise RuntimeError(f'Circular model conversion detected at {path}')
-            stack.append(('release-model', current_id))
-            if _needs_serialize_visit(normalized):
-                stack.append(('visit', normalized, depth + 1, path, parent, key))
-            else:
-                parent[key] = _serialize_leaf(normalized, path)
             continue
 
         normalized = _serialize_leaf(current, path)

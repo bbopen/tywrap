@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import tracemalloc
+import types
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,9 @@ from tywrap_bridge_core import (  # noqa: E402
     serialize,
     serialize_dataframe_json,
     serialize_ndarray_json,
+    serialize_series,
     serialize_series_json,
+    serialize_sparse_matrix,
 )
 
 
@@ -82,6 +85,18 @@ def test_model_dump_values_follow_nested_integer_policy() -> None:
 
     with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result:'):
         serialize(ScalarModel(), force_json_markers=True)
+
+
+def test_mapping_model_dump_keeps_alias_precedence() -> None:
+    class ModelMap(dict[str, int]):
+        def model_dump(self, **_kwargs: object) -> dict[str, int]:
+            return {'from_alias': self['internal']}
+
+    value = ModelMap(internal=7)
+    assert serialize(value, force_json_markers=True) == {'from_alias': 7}
+    assert serialize({'item': value}, force_json_markers=True) == {
+        'item': {'from_alias': 7}
+    }
 
 
 def test_model_dump_cycle_rejects_without_recursing_forever() -> None:
@@ -166,6 +181,100 @@ def test_integer_subclass_cannot_bypass_policy() -> None:
         serialize(RecordSubclass(value=2**53), force_json_markers=True)
     with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\[0\]:'):
         serialize(ListSubclass([2**53]), force_json_markers=True)
+
+    class MisleadingInteger(int):
+        def __lt__(self, _other: object) -> bool:
+            return False
+
+        def __gt__(self, _other: object) -> bool:
+            return False
+
+        def __int__(self) -> int:
+            return 0
+
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.value:'):
+        serialize({'value': MisleadingInteger(2**53 + 1)}, force_json_markers=True)
+
+
+@pytest.mark.parametrize('container_type', [set, frozenset])
+def test_set_subclass_values_follow_nested_integer_policy(container_type: type) -> None:
+    class SetSubclass(container_type):
+        pass
+
+    for force_json_markers in (False, True):
+        with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.items\[0\]:'):
+            serialize({'items': SetSubclass([2**53 + 1])}, force_json_markers=force_json_markers)
+        with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\[0\]:'):
+            serialize(SetSubclass([2**53 + 1]), force_json_markers=force_json_markers)
+
+        safe = serialize({'items': SetSubclass([2**53 - 1])}, force_json_markers=force_json_markers)
+        assert json.loads(encode_value(safe, allow_nan=False)) == {
+            'items': [2**53 - 1]
+        }
+
+
+def test_estimator_metadata_rejects_nested_unsafe_integer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sklearn = types.ModuleType('sklearn')
+    sklearn.__version__ = 'stub'
+    sklearn_base = types.ModuleType('sklearn.base')
+
+    class BaseEstimator:
+        pass
+
+    sklearn_base.BaseEstimator = BaseEstimator
+    sklearn.base = sklearn_base
+    monkeypatch.setitem(sys.modules, 'sklearn', sklearn)
+    monkeypatch.setitem(sys.modules, 'sklearn.base', sklearn_base)
+
+    class Estimator(BaseEstimator):
+        def __init__(self, value: int):
+            self.value = value
+
+        def get_params(self, *, deep: bool) -> dict[str, object]:
+            assert deep is False
+            return {'config': {'nested': {'unsafe': self.value}}}
+
+    for force_json_markers in (False, True):
+        with pytest.raises(
+            RuntimeError,
+            match=r'Unsafe Python integer at result\.params\.config\.nested\.unsafe:',
+        ):
+            serialize(Estimator(2**53 + 1), force_json_markers=force_json_markers)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r'Unsafe Python integer at result\.fit\.params\.config\.nested\.unsafe:',
+    ):
+        serialize({'fit': Estimator(2**53)}, force_json_markers=True)
+
+    safe = serialize(Estimator(2**53 - 1), force_json_markers=True)
+    assert json.loads(encode_value(safe, allow_nan=False))['params']['config']['nested'][
+        'unsafe'
+    ] == 2**53 - 1
+
+
+def test_terminal_scientific_metadata_rejects_unsafe_integer() -> None:
+    class Series:
+        name = 2**53
+
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.name:'):
+        serialize_series(Series(), force_json_markers=False)
+
+    class EmptyData:
+        size = 0
+
+    class Sparse:
+        dtype = types.SimpleNamespace(kind='i')
+        data = EmptyData()
+        shape = (2**53, 1)
+
+        def getformat(self) -> str:
+            return 'coo'
+
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.shape\[0\]:'):
+        serialize_sparse_matrix(Sparse())
 
 
 def test_json_scientific_values_report_unsafe_integer_path() -> None:

@@ -209,6 +209,39 @@ describe('IR Extraction - Complex Fixture Files', () => {
 });
 
 describe('IR Extraction - Generic Metadata', () => {
+  it('keeps type parameters declared only in overload signatures', async () => {
+    const version = await processUtils.exec(PYTHON_EXECUTABLE, [
+      '-c',
+      'import typing; raise SystemExit(0 if hasattr(typing, "get_overloads") else 1)',
+    ]);
+    if (version.code !== 0) {
+      return;
+    }
+
+    createTempModule(
+      'overload_only_generic',
+      `from typing import TypeVar, overload
+
+T = TypeVar("T")
+
+@overload
+def choose(value: T) -> T: ...
+
+@overload
+def choose(value: None) -> None: ...
+
+def choose(value: object) -> object:
+    return value
+`
+    );
+
+    const ir = await extractIR('overload_only_generic');
+    const choose = ir.functions.find((item: { name: string }) => item.name === 'choose');
+    expect(choose.type_params.map((param: { name: string }) => param.name)).toEqual(['T']);
+    expect(choose.overloads).toHaveLength(2);
+    expect(choose.overloads[0].parameters[0].annotation).toMatch(/T$/);
+  });
+
   it('extracts ordered type parameters for functions, classes, and type aliases', async () => {
     if (!(await supportsVariadicTypingFeatures())) {
       return;

@@ -871,6 +871,14 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     },
   }),
   libraryRow({
+    id: 'sklearn-unsafe-nested-estimator',
+    call: 'sklearn_unsafe_nested_estimator()',
+    requires: ['sklearn'],
+    status: 'LOUD_FAIL',
+    currentBehavior: 'Unsafe nested estimator parameters reject before JSON encoding.',
+    expected: error(/Unsafe Python integer at result\.params\.config\.nested\.unsafe/),
+  }),
+  libraryRow({
     id: 'sklearn-pipeline',
     call: 'sklearn_pipeline()',
     requires: ['sklearn'],
