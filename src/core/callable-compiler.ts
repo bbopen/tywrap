@@ -328,44 +328,40 @@ function acceptsWireCategory(value: ValueContract, category: WireCategory): bool
   return expected === category;
 }
 
-function taggedEnvelopeShapes(
-  value: ValueContract
-): readonly Readonly<Record<string, WireCategory>>[] {
+interface TaggedEnvelopeShape {
+  readonly required: Readonly<Record<string, WireCategory>>;
+  readonly optional?: Readonly<Record<string, WireCategory>>;
+}
+
+function taggedEnvelopeShapes(value: ValueContract): readonly TaggedEnvelopeShape[] {
   switch (value.kind) {
     case 'bytes':
       return [
-        { __type__: 'string', encoding: 'string', data: 'string' },
-        { __tywrap_bytes__: 'boolean', b64: 'string' },
+        { required: { __type__: 'string', encoding: 'string', data: 'string' } },
+        { required: { __tywrap_bytes__: 'boolean', b64: 'string' } },
       ];
     case 'ndarray-float16':
+      // Legacy envelopes may omit the version, shape, and dtype.
       return [
         {
-          __tywrap__: 'string',
-          codecVersion: 'number',
-          encoding: 'string',
-          b64: 'string',
-          shape: 'array',
-          dtype: 'string',
+          required: { __tywrap__: 'string', encoding: 'string', b64: 'string' },
+          optional: { codecVersion: 'number' },
         },
         {
-          __tywrap__: 'string',
-          codecVersion: 'number',
-          encoding: 'string',
-          data: 'unknown',
-          shape: 'array',
-          dtype: 'string',
+          required: { __tywrap__: 'string', encoding: 'string', data: 'unknown' },
+          optional: { codecVersion: 'number' },
         },
       ];
     case 'torch-float16':
       return [
         {
-          __tywrap__: 'string',
-          codecVersion: 'number',
-          encoding: 'string',
-          value: 'object',
-          shape: 'array',
-          dtype: 'string',
-          device: 'string',
+          required: { __tywrap__: 'string', encoding: 'string', value: 'object' },
+          optional: {
+            codecVersion: 'number',
+            device: 'string',
+            sourceDtype: 'string',
+            sourceDevice: 'string',
+          },
         },
       ];
     default:
@@ -375,16 +371,26 @@ function taggedEnvelopeShapes(
 
 function recordCanMatchEnvelope(
   record: Extract<ValueContract, { kind: 'record' }>,
-  envelope: Readonly<Record<string, WireCategory>>
+  envelope: TaggedEnvelopeShape
 ): boolean {
   const fields = new Map(record.fields.map(field => [field.name, field] as const));
   // Current decoders accept extra keys on marker envelopes.
-  for (const [name, category] of Object.entries(envelope)) {
+  for (const [name, category] of Object.entries(envelope.required)) {
     const field = fields.get(name);
     if (field && !acceptsWireCategory(field.value, category)) {
       return false;
     }
     if (record.additionalValues && !acceptsWireCategory(record.additionalValues, category)) {
+      return false;
+    }
+  }
+  // An optional marker field proves disjointness only when the record requires it.
+  for (const [name, category] of Object.entries(envelope.optional ?? {})) {
+    const field = fields.get(name);
+    if (field?.required && !acceptsWireCategory(field.value, category)) {
+      return false;
+    }
+    if (field?.required && record.additionalValues && !acceptsWireCategory(record.additionalValues, category)) {
       return false;
     }
   }

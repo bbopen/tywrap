@@ -1846,6 +1846,60 @@ describe('compileContract', () => {
             },
           };
         }
+        if (
+          request.logicalType.kind === 'custom' &&
+          (request.logicalType.name === 'NdarrayRecord' ||
+            request.logicalType.name === 'NdarrayVersionRecord' ||
+            request.logicalType.name === 'TorchRecord')
+        ) {
+          const stringValue = { kind: 'string', wire: 'json', decodedAs: 'string' } as const;
+          const integerValue = {
+            kind: 'integer',
+            wire: 'json',
+            decodedAs: 'number',
+            constraint: 'safe-integer',
+          } as const;
+          const scientific = request.logicalType.name !== 'TorchRecord';
+          return {
+            status: 'supported',
+            value: {
+              kind: 'record',
+              wire: 'json',
+              decodedAs: 'object',
+              fields: [
+                { name: '__tywrap__', required: true, value: stringValue },
+                { name: 'encoding', required: true, value: stringValue },
+                {
+                  name: scientific ? 'data' : 'value',
+                  required: true,
+                  value: scientific
+                    ? { kind: 'sequence', wire: 'json', decodedAs: 'array', item: integerValue }
+                    : { kind: 'record', wire: 'json', decodedAs: 'object', fields: [] },
+                },
+                {
+                  name: 'codecVersion',
+                  required: request.logicalType.name === 'NdarrayVersionRecord',
+                  value: stringValue,
+                },
+                ...(scientific
+                  ? [
+                      {
+                        name: 'shape',
+                        required: true,
+                        value: {
+                          kind: 'sequence' as const,
+                          wire: 'json' as const,
+                          decodedAs: 'array' as const,
+                          item: integerValue,
+                        },
+                      },
+                      { name: 'dtype', required: true, value: stringValue },
+                    ]
+                  : [{ name: 'device', required: false, value: integerValue }]),
+              ],
+            },
+          };
+        }
         return DEFAULT_VALUE_CONVERSION.resolve({ ...request, resolveNested: tagged.resolve });
       },
     };
@@ -1868,6 +1922,30 @@ describe('compileContract', () => {
         reason: 'Union alternatives can share a wire value but decode differently.',
       });
     }
+    for (const annotation of [
+      'numpy.NDArray[numpy.float16] | NdarrayRecord',
+      'torch.Tensor[torch.float16] | TorchRecord',
+    ]) {
+      expect(
+        tagged.resolve({
+          direction: 'output',
+          path: '$.returns',
+          logicalType: parseAnnotationToPythonType(annotation),
+        })
+      ).toMatchObject({
+        status: 'unsupported',
+        reason: 'Union alternatives can share a wire value but decode differently.',
+      });
+    }
+    expect(
+      tagged.resolve({
+        direction: 'output',
+        path: '$.returns',
+        logicalType: parseAnnotationToPythonType(
+          'numpy.NDArray[numpy.float16] | NdarrayVersionRecord'
+        ),
+      }).status
+    ).toBe('supported');
     const decoded = await new BridgeCodec().decodeResponseAsync<Uint8Array>(
       JSON.stringify({
         id: 1,
@@ -1876,6 +1954,40 @@ describe('compileContract', () => {
       })
     );
     expect(decoded).toEqual(Uint8Array.from([120]));
+    const ndarrayDecoded = await new BridgeCodec().decodeResponseAsync<number[]>(
+      JSON.stringify({
+        id: 2,
+        protocol: 'tywrap/1',
+        result: {
+          __tywrap__: 'ndarray',
+          encoding: 'json',
+          data: [1],
+          shape: [1],
+          dtype: 'float16',
+        },
+      })
+    );
+    expect(ndarrayDecoded).toEqual([1]);
+    const torchDecoded = await new BridgeCodec().decodeResponseAsync(
+      JSON.stringify({
+        id: 3,
+        protocol: 'tywrap/1',
+        result: {
+          __tywrap__: 'torch.tensor',
+          encoding: 'ndarray',
+          value: {
+            __tywrap__: 'ndarray',
+            encoding: 'json',
+            data: [1],
+            shape: [1],
+            dtype: 'float16',
+          },
+          shape: [1],
+          dtype: 'torch.float16',
+        },
+      })
+    );
+    expect(torchDecoded).toMatchObject({ data: [1], shape: [1], dtype: 'torch.float16' });
 
     const source = rawIr.functions[1]!;
     const ir = validateIrContract(
