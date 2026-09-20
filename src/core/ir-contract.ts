@@ -126,8 +126,11 @@ export type IrValidationResult =
 class ValidationState {
   readonly diagnostics: IrDiagnostic[] = [];
   private overflowed = false;
+  private entriesVisited = 0;
+  private entryBudgetExceeded = false;
 
   private static readonly maxDiagnostics = 100;
+  private static readonly maxEntries = 100_000;
 
   constructor(private readonly source: string) {}
 
@@ -151,6 +154,23 @@ class ValidationState {
     });
   }
 
+  visit(path: string): boolean {
+    if (this.diagnostics.length >= ValidationState.maxDiagnostics) {
+      this.overflowed = true;
+      return false;
+    }
+    if (this.entryBudgetExceeded) {
+      return false;
+    }
+    this.entriesVisited += 1;
+    if (this.entriesVisited > ValidationState.maxEntries) {
+      this.entryBudgetExceeded = true;
+      this.invalid(path, `IR exceeds the ${ValidationState.maxEntries} entry validation limit.`);
+      return false;
+    }
+    return true;
+  }
+
   finish(): readonly IrDiagnostic[] {
     if (!this.overflowed) {
       return this.diagnostics;
@@ -168,6 +188,21 @@ class ValidationState {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function visitArray(
+  values: readonly unknown[],
+  path: string,
+  state: ValidationState,
+  validate: (value: unknown, path: string) => void
+): void {
+  for (let index = 0; index < values.length; index += 1) {
+    const entryPath = `${path}[${index}]`;
+    if (!state.visit(entryPath)) {
+      break;
+    }
+    validate(values[index], entryPath);
+  }
 }
 
 function recordAt(value: unknown, path: string, state: ValidationState): Record<string, unknown> | null {
@@ -265,9 +300,9 @@ function validateStringArray(value: unknown, path: string, state: ValidationStat
     state.invalid(path, `${path} must be an array.`);
     return;
   }
-  value.forEach((entry, index) => {
+  visitArray(value, path, state, (entry, entryPath) => {
     if (typeof entry !== 'string') {
-      state.invalid(`${path}[${index}]`, `${path}[${index}] must be a string.`);
+      state.invalid(entryPath, `${entryPath} must be a string.`);
     }
   });
 }
@@ -321,29 +356,27 @@ function validateFunction(value: unknown, path: string, state: ValidationState):
   requiredString(callable, 'qualname', path, state);
   requiredNullableString(callable, 'docstring', path, state);
   const parameters = requiredArray(callable, 'parameters', path, state);
-  parameters?.forEach((parameter, index) => validateParameter(parameter, `${path}.parameters[${index}]`, state));
+  if (parameters) visitArray(parameters, `${path}.parameters`, state, (parameter, entryPath) =>
+    validateParameter(parameter, entryPath, state));
   requiredNullableString(callable, 'returns', path, state);
   requiredBoolean(callable, 'is_async', path, state);
   requiredBoolean(callable, 'is_generator', path, state);
   const typeParameters = requiredArray(callable, 'type_params', path, state);
-  typeParameters?.forEach((parameter, index) =>
-    validateTypeParameter(parameter, `${path}.type_params[${index}]`, state)
-  );
+  if (typeParameters) visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
+    validateTypeParameter(parameter, entryPath, state));
   const methodKind = requiredString(callable, 'method_kind', path, state);
   if (methodKind !== null && !METHOD_KINDS.has(methodKind)) {
     state.invalid(`${path}.method_kind`, `${path}.method_kind must be instance, class, or static.`);
   }
   const overloads = requiredArray(callable, 'overloads', path, state);
-  overloads?.forEach((overload, index) => {
-    const overloadPath = `${path}.overloads[${index}]`;
+  if (overloads) visitArray(overloads, `${path}.overloads`, state, (overload, overloadPath) => {
     const signature = recordAt(overload, overloadPath, state);
     if (!signature) {
       return;
     }
     const overloadParameters = requiredArray(signature, 'parameters', overloadPath, state);
-    overloadParameters?.forEach((parameter, parameterIndex) =>
-      validateParameter(parameter, `${overloadPath}.parameters[${parameterIndex}]`, state)
-    );
+    if (overloadParameters) visitArray(overloadParameters, `${overloadPath}.parameters`, state,
+      (parameter, entryPath) => validateParameter(parameter, entryPath, state));
     requiredNullableString(signature, 'returns', overloadPath, state);
   });
 }
@@ -373,26 +406,26 @@ function validateClass(value: unknown, path: string, state: ValidationState): vo
   requiredNullableString(cls, 'docstring', path, state);
   validateStringArray(requiredValue(cls, 'bases', path, state), `${path}.bases`, state);
   const methods = requiredArray(cls, 'methods', path, state);
-  methods?.forEach((method, index) => validateFunction(method, `${path}.methods[${index}]`, state));
+  if (methods) visitArray(methods, `${path}.methods`, state, (method, entryPath) =>
+    validateFunction(method, entryPath, state));
   requiredBoolean(cls, 'typed_dict', path, state);
   const total = requiredValue(cls, 'total', path, state);
   if (total !== null && typeof total !== 'boolean') {
     state.invalid(`${path}.total`, `${path}.total must be a boolean or null.`);
   }
   const fields = requiredArray(cls, 'fields', path, state);
-  fields?.forEach((field, index) =>
-    validateParameter(field, `${path}.fields[${index}]`, state, FIELD_KINDS)
-  );
+  if (fields) visitArray(fields, `${path}.fields`, state, (field, entryPath) =>
+    validateParameter(field, entryPath, state, FIELD_KINDS));
   requiredBoolean(cls, 'is_protocol', path, state);
   requiredBoolean(cls, 'is_namedtuple', path, state);
   requiredBoolean(cls, 'is_dataclass', path, state);
   requiredBoolean(cls, 'is_pydantic', path, state);
   const typeParameters = requiredArray(cls, 'type_params', path, state);
-  typeParameters?.forEach((parameter, index) =>
-    validateTypeParameter(parameter, `${path}.type_params[${index}]`, state)
-  );
+  if (typeParameters) visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
+    validateTypeParameter(parameter, entryPath, state));
   const accessors = requiredArray(cls, 'accessors', path, state);
-  accessors?.forEach((accessor, index) => validateAccessor(accessor, `${path}.accessors[${index}]`, state));
+  if (accessors) visitArray(accessors, `${path}.accessors`, state, (accessor, entryPath) =>
+    validateAccessor(accessor, entryPath, state));
 }
 
 function validateConstant(value: unknown, path: string, state: ValidationState): void {
@@ -415,9 +448,8 @@ function validateTypeAlias(value: unknown, path: string, state: ValidationState)
   requiredString(alias, 'definition', path, state, true);
   requiredBoolean(alias, 'is_generic', path, state);
   const typeParameters = requiredArray(alias, 'type_params', path, state);
-  typeParameters?.forEach((parameter, index) =>
-    validateTypeParameter(parameter, `${path}.type_params[${index}]`, state)
-  );
+  if (typeParameters) visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
+    validateTypeParameter(parameter, entryPath, state));
 }
 
 /**
@@ -443,13 +475,17 @@ export function validateIrContract(
   }
   requiredString(contract, 'module', '$', state);
   const functions = requiredArray(contract, 'functions', '$', state);
-  functions?.forEach((functionValue, index) => validateFunction(functionValue, `$.functions[${index}]`, state));
+  if (functions) visitArray(functions, '$.functions', state, (functionValue, entryPath) =>
+    validateFunction(functionValue, entryPath, state));
   const classes = requiredArray(contract, 'classes', '$', state);
-  classes?.forEach((classValue, index) => validateClass(classValue, `$.classes[${index}]`, state));
+  if (classes) visitArray(classes, '$.classes', state, (classValue, entryPath) =>
+    validateClass(classValue, entryPath, state));
   const constants = requiredArray(contract, 'constants', '$', state);
-  constants?.forEach((constant, index) => validateConstant(constant, `$.constants[${index}]`, state));
+  if (constants) visitArray(constants, '$.constants', state, (constant, entryPath) =>
+    validateConstant(constant, entryPath, state));
   const aliases = requiredArray(contract, 'type_aliases', '$', state);
-  aliases?.forEach((alias, index) => validateTypeAlias(alias, `$.type_aliases[${index}]`, state));
+  if (aliases) visitArray(aliases, '$.type_aliases', state, (alias, entryPath) =>
+    validateTypeAlias(alias, entryPath, state));
   const metadata = contract.metadata;
   if (metadata === undefined && !options.allowOmittedMetadata) {
     state.invalid('$.metadata', '$ is missing required field metadata.');

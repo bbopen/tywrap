@@ -8,6 +8,7 @@ import { NodeBridge } from '../src/runtime/node.js';
 import {
   createReturnValidator,
   describeReceivedShape,
+  selectOverloadReturnValidator,
   tagDecodedShape,
   type ReturnSchema,
 } from '../src/runtime/validators.js';
@@ -39,6 +40,34 @@ describe('generated return validators', () => {
     expect(() => validator({ count: Number.MAX_SAFE_INTEGER + 1 })).toThrow(
       BridgeValidationError
     );
+  });
+
+  it('uses declaration order when an optional-arity overload also matches', () => {
+    const stringValue = { kind: 'primitive', type: 'string' } as const;
+    const integerValue = { kind: 'primitive', type: 'number', constraint: 'safe-integer' } as const;
+    const overloads = [
+      {
+        parameters: [
+          { name: 'value', kind: 'positional-or-keyword', optional: false, value: stringValue },
+        ],
+        result: stringValue,
+        selectable: true,
+      },
+      {
+        parameters: [
+          { name: 'value', kind: 'positional-or-keyword', optional: false, value: stringValue },
+          { name: 'base', kind: 'positional-or-keyword', optional: true, value: integerValue },
+        ],
+        result: integerValue,
+        selectable: true,
+      },
+    ] as const;
+    const fallback = createReturnValidator({ kind: 'any' }, 'fixture.ambiguous');
+    const oneArg = selectOverloadReturnValidator(overloads, ['key'], undefined, fallback, 'fixture.ambiguous');
+    const twoArgs = selectOverloadReturnValidator(overloads, ['key', 2], undefined, fallback, 'fixture.ambiguous');
+    expect(() => oneArg(4)).toThrow(BridgeValidationError);
+    expect(oneArg('text')).toBe('text');
+    expect(twoArgs(4)).toBe(4);
   });
 
   it('checks unions, optionals, tuples, TypedDict records, and no-op schemas', () => {

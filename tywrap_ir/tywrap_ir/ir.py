@@ -493,11 +493,13 @@ def _extract_function(
     # Async generators must be marked as generators so callers can distinguish
     # them from plain coroutines.
     is_generator = inspect.isgeneratorfunction(obj) or inspect.isasyncgenfunction(obj)
+    overloads, overload_annotations = _extract_overloads(obj)
     type_params = (
         _collect_scoped_type_params(
             obj,
             *annotations_for_params,
             returns,
+            *overload_annotations,
             inherited_type_params=inherited_type_params,
         )
         if include_type_params
@@ -514,7 +516,7 @@ def _extract_function(
         is_generator=is_generator,
         type_params=type_params,
         method_kind=method_kind,
-        overloads=_extract_overloads(obj),
+        overloads=overloads,
     )
 
 
@@ -525,8 +527,8 @@ _pending_overload_warnings: List[str] = []
 _overload_warning_recorded = False
 
 
-def _extract_overloads(obj: Any) -> List[IROverload]:
-    """Capture @typing.overload signatures for ``obj`` (Python 3.11+).
+def _extract_overloads(obj: Any) -> tuple[List[IROverload], List[Any]]:
+    """Capture overload signatures and their raw annotations (Python 3.11+).
 
     On interpreters without ``typing.get_overloads`` (3.10 and earlier) this
     degrades to an empty list and records a single structured IR warning
@@ -541,14 +543,15 @@ def _extract_overloads(obj: Any) -> List[IROverload]:
                 "typing.get_overloads is unavailable (Python < 3.11); "
                 "@overload signatures will not be captured in the IR."
             )
-        return []
+        return [], []
 
     try:
         registered = get_overloads(obj)
     except Exception:
-        return []
+        return [], []
 
     out: List[IROverload] = []
+    annotations: List[Any] = []
     for ov in registered or ():
         try:
             sig = inspect.signature(ov)
@@ -564,6 +567,7 @@ def _extract_overloads(obj: Any) -> List[IROverload]:
         params: List[IRParam] = []
         for pname, p in sig.parameters.items():
             ann = hints.get(pname, p.annotation)
+            annotations.append(ann)
             params.append(
                 IRParam(
                     name=pname,
@@ -573,8 +577,9 @@ def _extract_overloads(obj: Any) -> List[IROverload]:
                 )
             )
         ret = hints.get("return", sig.return_annotation)
+        annotations.append(ret)
         out.append(IROverload(parameters=params, returns=_stringify_annotation(ret)))
-    return out
+    return out, annotations
 
 
 def _accessor_return_annotation(getter: Any) -> Optional[str]:

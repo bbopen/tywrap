@@ -316,6 +316,162 @@ describe('compileContract', () => {
     }
   });
 
+  it('warns when an optional parameter makes two overload inputs overlap', () => {
+    const source = rawIr.functions[0]!;
+    const key = source.overloads[0]!.parameters[0]!;
+    const optionalBase = {
+      name: 'base', kind: 'POSITIONAL_OR_KEYWORD', annotation: 'int', default: true,
+    };
+    const ir = validateIrContract({
+      ...rawIr,
+      functions: [{
+        ...source,
+        parameters: [key, optionalBase],
+        overloads: [
+          { parameters: [key], returns: 'str' },
+          { parameters: [key, optionalBase], returns: 'int' },
+        ],
+      }],
+      classes: [],
+    }, 'optional overload contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const original = moduleModel.functions[0]!;
+    const keyModel = original.overloads![0]!.parameters[0]!;
+    const baseModel = {
+      ...keyModel,
+      name: 'base',
+      type: { kind: 'primitive', name: 'int' } as PythonType,
+      optional: true,
+    };
+    const model: PythonModule = {
+      ...moduleModel,
+      classes: [],
+      functions: [{
+        ...original,
+        parameters: [keyModel, baseModel],
+        overloads: [
+          { parameters: [keyModel], returnType: { kind: 'primitive', name: 'str' } },
+          { parameters: [keyModel, baseModel], returnType: { kind: 'primitive', name: 'int' } },
+        ],
+      }],
+    };
+    const compiled = compileContract(ir.contract, {
+      module: model,
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'overload-ambiguous', path: '$.functions[0].overloads[1]' }),
+    ]));
+  });
+
+  it('selects a class method overload without validating its implicit cls receiver', async () => {
+    const source = rawIr.functions[0]!;
+    const receiver = {
+      name: 'cls', kind: 'POSITIONAL_OR_KEYWORD', annotation: null, default: false,
+    };
+    const stringInput = source.overloads[0]!.parameters[0]!;
+    const integerInput = source.overloads[1]!.parameters[0]!;
+    const methodIr = {
+      ...source,
+      name: 'convert',
+      qualname: 'fixture.Converter.convert',
+      parameters: [receiver, source.parameters[0]!],
+      method_kind: 'class',
+      overloads: [
+        { parameters: [receiver, stringInput], returns: 'str' },
+        { parameters: [receiver, integerInput], returns: 'int' },
+      ],
+    };
+    const ir = validateIrContract({
+      ...rawIr,
+      functions: [],
+      classes: [{
+        ...rawIr.classes[0]!,
+        name: 'Converter',
+        qualname: 'fixture.Converter',
+        methods: [methodIr],
+        fields: [],
+        is_dataclass: false,
+      }],
+    }, 'class overload contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const original = moduleModel.functions[0]!;
+    const receiverModel = {
+      ...original.parameters[0]!,
+      name: 'cls',
+      type: { kind: 'custom', name: 'Any', module: 'typing' } as PythonType,
+    };
+    const method = {
+      ...original,
+      name: 'convert',
+      methodKind: 'class' as const,
+      parameters: [receiverModel, original.parameters[0]!],
+      overloads: original.overloads?.map(overload => ({
+        ...overload,
+        parameters: [receiverModel, ...overload.parameters],
+      })),
+    };
+    const model: PythonModule = {
+      ...moduleModel,
+      functions: [],
+      classes: [{
+        ...moduleModel.classes[0]!,
+        name: 'Converter',
+        kind: 'class',
+        methods: [method],
+        properties: [],
+      }],
+    };
+    const compiled = compileContract(ir.contract, {
+      module: model,
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.diagnostics.some(item => item.path.endsWith('.parameters[0]'))).toBe(false);
+    expect(compiled.generated.typescript).toContain('"selectable":true');
+    expect(compiled.generated.declaration).toContain('static convert(key: string): Promise<string>;');
+
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-class-overload-'));
+    try {
+      const outputPath = join(temporary, 'fixture.generated.mjs');
+      const javascript = ts.transpileModule(compiled.generated.typescript, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(outputPath, javascript, 'utf8');
+      setRuntimeBridge({
+        async call<T>(
+          _module: string,
+          _functionName: string,
+          _args: unknown[],
+          _kwargs?: Record<string, unknown>,
+          validate?: (result: T) => void
+        ): Promise<T> {
+          const result = 7 as T;
+          validate?.(result);
+          return result;
+        },
+        async dispose(): Promise<void> {},
+      });
+      const generated = (await import(pathToFileURL(outputPath).href)) as {
+        Converter: { convert: (key: string | number) => Promise<string | number> };
+      };
+      await expect(generated.Converter.convert('key')).rejects.toThrow(BridgeValidationError);
+      await expect(generated.Converter.convert(2)).resolves.toBe(7);
+    } finally {
+      clearRuntimeBridge();
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
   it('uses revision 2 for selected unions and fixed heterogeneous tuples', () => {
     const union = DEFAULT_VALUE_CONVERSION.resolve({
       direction: 'output',

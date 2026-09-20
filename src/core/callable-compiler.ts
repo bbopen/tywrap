@@ -587,15 +587,25 @@ function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {
 
 function overloadsMayOverlap(
   left: readonly ResolvedCallableValue[],
-  right: readonly ResolvedCallableValue[]
+  right: readonly ResolvedCallableValue[],
+  leftParameters: readonly Parameter[],
+  rightParameters: readonly Parameter[]
 ): boolean {
-  if (left.length !== right.length) {
+  const countRange = (parameters: readonly Parameter[]): [number, number] => [
+    parameters.filter(parameter => !parameter.optional && !parameter.varArgs && !parameter.kwArgs).length,
+    parameters.some(parameter => parameter.varArgs || parameter.kwArgs)
+      ? Number.POSITIVE_INFINITY
+      : parameters.length,
+  ];
+  const [leftMin, leftMax] = countRange(leftParameters);
+  const [rightMin, rightMax] = countRange(rightParameters);
+  if (leftMax < rightMin || rightMax < leftMin) {
     return false;
   }
-  return left.every((value, index) => {
-    const other = right[index];
+  return left.slice(0, Math.min(left.length, right.length)).every((value, index) => {
+    const other = right[index]!;
     return value.resolution.status !== 'supported' ||
-      other?.resolution.status !== 'supported' ||
+      other.resolution.status !== 'supported' ||
       valuesMayOverlap(value.resolution.value, other.resolution.value);
   });
 }
@@ -645,6 +655,9 @@ function resolveCallable(
         func.overloads?.[overloadIndex]?.parameters[index]?.name !== 'cls'
     )
   );
+  const visibleOverloadSignatures = (func.overloads ?? []).map(overload =>
+    overload.parameters.filter(parameter => parameter.name !== 'self' && parameter.name !== 'cls')
+  );
   const values = [
     ...visibleParameters,
     result,
@@ -660,12 +673,17 @@ function resolveCallable(
   }
   for (let index = 0; index < overloadParameters.length; index += 1) {
     for (let earlier = 0; earlier < index; earlier += 1) {
-      if (overloadsMayOverlap(visibleOverloadParameters[earlier]!, visibleOverloadParameters[index]!)) {
+      if (overloadsMayOverlap(
+        visibleOverloadParameters[earlier]!,
+        visibleOverloadParameters[index]!,
+        visibleOverloadSignatures[earlier]!,
+        visibleOverloadSignatures[index]!
+      )) {
         diagnostics.push({
           severity: 'warning',
           code: 'overload-ambiguous',
           path: `${path}.overloads[${index}]`,
-          message: `${path}.overloads[${index}]: input values may also match overload ${earlier}. Runtime return validation uses the implementation result for ambiguous calls.`,
+          message: `${path}.overloads[${index}]: input values may also match overload ${earlier}. Runtime return validation selects the first declared match.`,
         });
       }
     }

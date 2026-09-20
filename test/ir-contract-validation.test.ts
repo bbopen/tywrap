@@ -114,4 +114,15 @@ describe('validateIrContract', () => {
       expect(result.diagnostics.at(-1)?.message).toContain('more than 100 contract errors');
     }
   });
+
+  it('rejects contracts that exceed the shared entry traversal limit', () => {
+    const oversized = { ...validContract, warnings: Array(100_001).fill('warning') };
+    const result = validateIrContract(oversized, 'large contract');
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) {
+      expect(result.diagnostics.some(diagnostic =>
+        diagnostic.message.includes('100000 entry validation limit')
+      )).toBe(true);
+    }
+  });
 });

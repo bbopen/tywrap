@@ -311,7 +311,7 @@ function matchesOverload(
   return acceptsOtherKeywords || Object.keys(keywords).every(name => usedKeywords.has(name));
 }
 
-/** Select one supported overload; ambiguous calls use the implementation validator. */
+/** Select the first supported match, as TypeScript does for declared overloads. */
 export function selectOverloadReturnValidator<T = unknown>(
   overloads: readonly OverloadReturnSchema[],
   args: readonly unknown[],
@@ -320,9 +320,9 @@ export function selectOverloadReturnValidator<T = unknown>(
   callSite: string,
   definitions: Readonly<Record<string, ReturnSchema>> = {}
 ): ReturnValidator<T> {
-  const matches = overloads.filter(overload => matchesOverload(overload, args, kwargs));
-  return matches.length === 1
-    ? createReturnValidator<T>(matches[0]!.result, callSite, definitions)
+  const selected = overloads.find(overload => matchesOverload(overload, args, kwargs));
+  return selected
+    ? createReturnValidator<T>(selected.result, callSite, definitions)
     : fallback;
 }
 
