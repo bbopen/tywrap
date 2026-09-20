@@ -1633,6 +1633,57 @@ describe('compileContract', () => {
     expect(declined.generated.declaration).toContain('nestedValues(): Promise<unknown>');
   });
 
+  it('bounds local alias expansion when a converter leaves custom names unresolved', () => {
+    const aliases = Array.from({ length: 70 }, (_, index) => ({
+      name: `Alias${index}`,
+      definition: index === 69 ? 'External' : `Alias${index + 1}`,
+      is_generic: false,
+      type_params: [],
+    }));
+    const source = rawIr.functions[1]!;
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: [
+          { ...source, name: 'alias_chain', qualname: 'fixture.alias_chain', returns: 'Alias0' },
+        ],
+        type_aliases: aliases,
+      },
+      'bounded alias chain contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const unresolvedCustom: typeof DEFAULT_VALUE_CONVERSION = {
+      revision: DEFAULT_VALUE_CONVERSION.revision,
+      resolve(request) {
+        if (request.logicalType.kind === 'custom') {
+          return { status: 'unresolved', annotation: request.logicalType.name };
+        }
+        return DEFAULT_VALUE_CONVERSION.resolve(request);
+      },
+    };
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        functions: [{ ...moduleModel.functions[1]!, name: 'alias_chain' }],
+        classes: [],
+        typeAliases: aliases.map(alias => ({
+          name: alias.name,
+          type: { kind: 'custom' as const, name: 'Any' },
+        })),
+      },
+      generator: new CodeGenerator(),
+      conversion: unresolvedCustom,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.callables[0]?.result.resolution).toMatchObject({
+      status: 'unsupported',
+      reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+    });
+  });
+
   it('treats a variadic integer tuple as the supported sequence contract', () => {
     const logicalType = parseAnnotationToPythonType('tuple[int, ...]');
     expect(

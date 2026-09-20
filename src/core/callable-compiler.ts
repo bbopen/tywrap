@@ -1050,6 +1050,13 @@ export function compileContract(
         if (request.activeNames?.includes(key)) {
           return { status: 'unresolved', annotation: annotationName(type) };
         }
+        if ((request.depth ?? 0) >= 64) {
+          return {
+            status: 'unsupported',
+            reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+            guidance: 'Flatten the value or provide a bounded adapter.',
+          };
+        }
         return conversion.resolve({
           ...request,
           logicalType: alias.type,
