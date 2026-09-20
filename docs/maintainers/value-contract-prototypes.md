@@ -12,6 +12,8 @@ The version 2 integer envelope is `{"__tywrap__":"integer","codecVersion":2,"enc
 
 The request encoder tags every `bigint`, including safe values. The Python request decoder yields `int`. The Python response encoder tags every `int`, including safe values. The TypeScript response decoder yields `bigint`. Both walk nested arrays and string-keyed records within the existing depth and node limits. They reject cycles and unsupported values with paths. Arrow int64 keeps its existing Arrow encoding and decoded type.
 
+An ordinary record cannot use `__tywrap__` as a key in this mode. The encoder rejects it because the decoder reserves that key for envelopes.
+
 The generated return validator requires `bigint` at every integer node. It must reject an ordinary number and a raw tagged record. A wrapper with `integerMode: 'bigint'` therefore cannot expose `Promise<number>` for a Python integer.
 
 The bounded prototype must round trip positive and negative values larger than 64 bits through nested arrays and records in both directions. It must test malformed envelopes, the 4096-digit boundary, whole-message byte limits, and old/new bridge combinations. Production work needs a separate review of capability negotiation, generated types, and migration cost.
