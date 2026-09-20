@@ -1,9 +1,9 @@
 # Value contracts
 
 The frozen internal prototype is [value-contracts.v1.json](value-contracts.v1.json).
-The TypeScript interface is `src/contracts/value-contract.ts`. Its revision is 1.
+That JSON file owns the policy. The TypeScript interface mirrors it and has revision 1.
 
-Each contract names a logical value, its wire encoding, its decoded JavaScript value, and its constraints. A sequence or record holds child contracts. An ndarray holds one element contract. A Torch tensor uses the ndarray contract for its value. Unsupported conversions carry a reason and guidance.
+Each contract names a logical value, its wire encoding, its decoded JavaScript value, and its constraints. A sequence or record holds child contracts. The prototype covers float16 ndarrays and Torch tensors. Other Arrow types keep their existing rules. In particular, Arrow int64 may decode as `bigint`. Unsupported conversions carry a reason and guidance.
 
 The wire stays at `tywrap/1` and scientific `codecVersion: 1`. Existing Arrow envelopes, JSON fallback, and transports keep their shape. The producer rejects unsafe Python integers before it writes JSON. A generated wrapper that consumes this interface must keep `number` for Python `int` and add a safe-integer return constraint. Regenerate wrappers after that compiler change. Do not return `bigint` under an existing `Promise<number>`.
 

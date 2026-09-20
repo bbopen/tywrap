@@ -6,7 +6,8 @@
   "rules": {
     "integer": {
       "logicalKind": "Python int, excluding bool",
-      "constraint": "-9007199254740991 <= value <= 9007199254740991",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991,
       "wire": "JSON integer number",
       "decodedAs": "JavaScript number",
       "failure": "reject before JSON encoding with result path and explicit conversion guidance"
@@ -44,6 +45,7 @@
       "conversion": "reuse ndarray-float16 rule for nested value"
     }
   },
+  "prototypeBoundary": "Only float16 scientific values use the new ndarray contract. Existing Arrow int64 values may decode as bigint and keep their current rules.",
   "compatibility": {
     "wireChange": false,
     "unknownVersion": "reject",

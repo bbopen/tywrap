@@ -34,18 +34,18 @@ export type ValueContract =
       readonly additionalValues?: ValueContract;
     }
   | {
-      readonly kind: 'ndarray';
+      readonly kind: 'ndarray-float16';
       readonly wire: 'arrow' | 'json-fallback';
       readonly decodedAs: 'nested-array-or-scalar';
-      readonly element: ValueContract;
-      readonly dtype?: string;
+      readonly element: Extract<ValueContract, { kind: 'float' }>;
+      readonly dtype: 'float16';
       readonly rank?: number;
     }
   | {
-      readonly kind: 'torch-tensor';
+      readonly kind: 'torch-float16';
       readonly wire: 'ndarray-envelope';
       readonly decodedAs: 'tensor-record';
-      readonly value: Extract<ValueContract, { kind: 'ndarray' }>;
+      readonly value: Extract<ValueContract, { kind: 'ndarray-float16' }>;
     }
   | {
       readonly kind: 'unsupported';
