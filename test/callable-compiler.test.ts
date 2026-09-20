@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
@@ -11,6 +13,7 @@ import {
 import { CodeGenerator } from '../src/core/generator.js';
 import { validateIrContract } from '../src/core/ir-contract.js';
 import { BridgeValidationError } from '../src/runtime/errors.js';
+import { HttpBridge } from '../src/runtime/http.js';
 import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 import type { PythonModule, PythonType } from '../src/types/index.js';
 
@@ -474,6 +477,81 @@ describe('compileContract', () => {
       await expect(generated.Converter.convert(2)).resolves.toBe(7);
     } finally {
       clearRuntimeBridge();
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it('validates a generated scalar float16 wrapper from the HTTP codec proof', async () => {
+    const source = rawIr.functions[1]!;
+    const ir = validateIrContract({
+      ...rawIr,
+      functions: [{ ...source, name: 'scalar_value', qualname: 'fixture.scalar_value',
+        returns: 'numpy.typing.NDArray[numpy.float16]' }],
+      classes: [],
+    }, 'scalar contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const scalarType: PythonType = {
+      kind: 'generic', name: 'NDArray', module: 'numpy.typing',
+      typeArgs: [{ kind: 'custom', name: 'float16', module: 'numpy' }],
+    };
+    const original = moduleModel.functions[1]!;
+    const model: PythonModule = {
+      ...moduleModel,
+      classes: [],
+      functions: [{
+        ...original,
+        name: 'scalar_value',
+        returnType: scalarType,
+        signature: { ...original.signature, returnType: scalarType },
+      }],
+    };
+    const compiled = compileContract(ir.contract, {
+      module: model,
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.generated.typescript).toContain('"marker":"ndarray","dtype":"float16"');
+
+    let dtype = 'float16';
+    let requestId = 0;
+    const server = createServer((request, response) => {
+      request.resume();
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({
+        id: ++requestId,
+        result: {
+          __tywrap__: 'ndarray', codecVersion: 1, encoding: 'json',
+          shape: [], dtype, data: 1.5,
+        },
+      }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as AddressInfo;
+    const bridge = new HttpBridge({ baseURL: `http://127.0.0.1:${address.port}` });
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-scalar-proof-'));
+    try {
+      const outputPath = join(temporary, 'fixture.generated.mjs');
+      const javascript = ts.transpileModule(compiled.generated.typescript, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(outputPath, javascript, 'utf8');
+      setRuntimeBridge(bridge);
+      const generated = (await import(pathToFileURL(outputPath).href)) as {
+        scalarValue: () => Promise<number>;
+      };
+      await expect(generated.scalarValue()).resolves.toBe(1.5);
+      dtype = 'float32';
+      await expect(generated.scalarValue()).rejects.toThrow(BridgeValidationError);
+    } finally {
+      clearRuntimeBridge();
+      await bridge.dispose();
+      await new Promise<void>((resolve, reject) =>
+        server.close(error => (error ? reject(error) : resolve()))
+      );
       await rm(temporary, { recursive: true, force: true });
     }
   });
