@@ -378,9 +378,7 @@ function recordCanMatchEnvelope(
   envelope: Readonly<Record<string, WireCategory>>
 ): boolean {
   const fields = new Map(record.fields.map(field => [field.name, field] as const));
-  if (record.fields.some(field => field.required && !(field.name in envelope))) {
-    return false;
-  }
+  // Current decoders accept extra keys on marker envelopes.
   for (const [name, category] of Object.entries(envelope)) {
     const field = fields.get(name);
     if (field && !acceptsWireCategory(field.value, category)) {

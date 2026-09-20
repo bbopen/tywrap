@@ -14,6 +14,7 @@ import { CodeGenerator } from '../src/core/generator.js';
 import { parseAnnotationToPythonType } from '../src/core/annotation-parser.js';
 import { validateIrContract } from '../src/core/ir-contract.js';
 import { BridgeValidationError } from '../src/runtime/errors.js';
+import { BridgeCodec } from '../src/runtime/bridge-codec.js';
 import { HttpBridge } from '../src/runtime/http.js';
 import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 import type { PythonModule, PythonType } from '../src/types/index.js';
@@ -1701,7 +1702,7 @@ describe('compileContract', () => {
     });
   });
 
-  it('rejects unions whose marker wire can decode as a different value', () => {
+  it('rejects unions whose marker wire can decode as a different value', async () => {
     const annotations = [
       'bytes | dict[str, str]',
       'list[bytes] | list[dict[str, str]]',
@@ -1787,6 +1788,64 @@ describe('compileContract', () => {
             },
           };
         }
+        if (
+          request.logicalType.kind === 'custom' &&
+          (request.logicalType.name === 'ExtraRecord' ||
+            request.logicalType.name === 'ExtraRecordValues')
+        ) {
+          return {
+            status: 'supported',
+            value: {
+              kind: 'record',
+              wire: 'json',
+              decodedAs: 'object',
+              fields: [
+                {
+                  name: '__type__',
+                  required: true,
+                  value: { kind: 'string', wire: 'json', decodedAs: 'string' },
+                },
+                {
+                  name: 'encoding',
+                  required: true,
+                  value: { kind: 'string', wire: 'json', decodedAs: 'string' },
+                },
+                {
+                  name: 'data',
+                  required: true,
+                  value: { kind: 'string', wire: 'json', decodedAs: 'string' },
+                },
+                {
+                  name: 'extra',
+                  required: true,
+                  value: {
+                    kind: 'integer',
+                    wire: 'json',
+                    decodedAs: 'number',
+                    constraint: 'safe-integer',
+                  },
+                },
+              ],
+              additionalValues:
+                request.logicalType.name === 'ExtraRecordValues'
+                  ? {
+                      kind: 'union',
+                      wire: 'selected-option',
+                      decodedAs: 'selected-option',
+                      options: [
+                        { kind: 'string', wire: 'json', decodedAs: 'string' },
+                        {
+                          kind: 'integer',
+                          wire: 'json',
+                          decodedAs: 'number',
+                          constraint: 'safe-integer',
+                        },
+                      ],
+                    }
+                  : undefined,
+            },
+          };
+        }
         return DEFAULT_VALUE_CONVERSION.resolve({ ...request, resolveNested: tagged.resolve });
       },
     };
@@ -1797,6 +1856,26 @@ describe('compileContract', () => {
         logicalType: parseAnnotationToPythonType('IntTag | StringTag'),
       }).status
     ).toBe('supported');
+    for (const annotation of ['bytes | ExtraRecord', 'bytes | ExtraRecordValues']) {
+      expect(
+        tagged.resolve({
+          direction: 'output',
+          path: '$.returns',
+          logicalType: parseAnnotationToPythonType(annotation),
+        })
+      ).toMatchObject({
+        status: 'unsupported',
+        reason: 'Union alternatives can share a wire value but decode differently.',
+      });
+    }
+    const decoded = await new BridgeCodec().decodeResponseAsync<Uint8Array>(
+      JSON.stringify({
+        id: 1,
+        protocol: 'tywrap/1',
+        result: { __type__: 'bytes', encoding: 'base64', data: 'eA==', extra: 1 },
+      })
+    );
+    expect(decoded).toEqual(Uint8Array.from([120]));
 
     const source = rawIr.functions[1]!;
     const ir = validateIrContract(
