@@ -384,11 +384,15 @@ export class PyodideTransport extends DisposableBase implements Transport {
         let finished = false;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const stopTimer = (): void => {
-          if (timer !== undefined) clearTimeout(timer);
+          if (timer !== undefined) {
+            clearTimeout(timer);
+          }
           signal?.removeEventListener('abort', onAbort);
         };
         const interrupt = (error: Error): void => {
-          if (finished) return;
+          if (finished) {
+            return;
+          }
           finished = true;
           stopTimer();
           cancel();
@@ -420,22 +424,14 @@ export class PyodideTransport extends DisposableBase implements Transport {
         });
 
         // This handler owns proxy cleanup even if the caller's timeout wins.
-        void completion.then(
-          () => {
-            finished = true;
-            stopTimer();
-            this.activeCalls.delete(parsed.id);
-            this.destroyPyProxy(result);
-            this.destroyPyProxy(dispatchFn);
-          },
-          () => {
-            finished = true;
-            stopTimer();
-            this.activeCalls.delete(parsed.id);
-            this.destroyPyProxy(result);
-            this.destroyPyProxy(dispatchFn);
-          }
-        );
+        const cleanup = (): void => {
+          finished = true;
+          stopTimer();
+          this.activeCalls.delete(parsed.id);
+          this.destroyPyProxy(result);
+          this.destroyPyProxy(dispatchFn);
+        };
+        completion.then(cleanup, cleanup);
 
         this.activeCalls.set(parsed.id, {
           cancel,
@@ -448,7 +444,9 @@ export class PyodideTransport extends DisposableBase implements Transport {
           );
         }
         signal?.addEventListener('abort', onAbort, { once: true });
-        if (signal?.aborted) onAbort();
+        if (signal?.aborted) {
+          onAbort();
+        }
 
         return Promise.race([completion, interrupted]);
       },
