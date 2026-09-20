@@ -119,9 +119,13 @@ nodeSuite('Coroutine RPC through Node', () => {
     bridge = createBridge();
     await bridge.call('os', 'getpid', []);
     const pending = bridge.call('async_module', 'delayed_value', [3]);
+    const settled = pending.then(
+      () => new Error('Expected disposal to reject the call'),
+      error => error as Error
+    );
     await new Promise(resolve => setTimeout(resolve, 100));
     await bridge.dispose();
-    await expect(pending).rejects.toBeInstanceOf(BridgeDisposedError);
+    expect(await settled).toBeInstanceOf(BridgeDisposedError);
   }, 10000);
 });
 
