@@ -10,7 +10,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(process.cwd());
-const pyodideVersion = '0.28.1';
 const tempRoot = mkdtempSync(join(tmpdir(), 'tywrap-pyodide-browser-'));
 
 function isInside(child: string, parent: string): boolean {
