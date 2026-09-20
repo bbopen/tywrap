@@ -80,8 +80,11 @@ sys.modules['tywrap_async_text'] = tywrap_async_text
       clearRuntimeBridge();
       await bridge?.dispose();
       bridge = undefined;
-      if (previousLoader) globals.loadPyodide = previousLoader;
-      else delete globals.loadPyodide;
+      if (previousLoader) {
+        globals.loadPyodide = previousLoader;
+      } else {
+        delete globals.loadPyodide;
+      }
       rmSync(tempDir, { recursive: true, force: true });
     }
   }, 180_000);
