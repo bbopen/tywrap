@@ -231,6 +231,71 @@ describe('IR-only integration', () => {
     }
   }, 30_000);
 
+  it('preserves Python overload input-to-return relationships in generated declarations', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-overload-contract-'));
+    try {
+      const outDir = join(tempDir, 'generated');
+      const result = await generate({
+        pythonModules: { advanced_types: { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: ['test/fixtures/python'],
+        output: { dir: outDir, format: 'esm', declaration: true, sourceMap: false },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+      } as any);
+
+      expect(result.failures).toEqual([]);
+      const generated = await fsUtils.readFile(join(outDir, 'advanced_types.generated.d.ts'));
+      expect(generated).toContain('export function getValue(key: string): Promise<string>;');
+      expect(generated).toContain('export function getValue(key: number): Promise<number>;');
+
+      const consumerPath = join(tempDir, 'consumer.ts');
+      await writeFile(
+        consumerPath,
+        `import { getValue } from './generated/advanced_types.generated.js';
+
+const text: Promise<string> = getValue('key');
+const integer: Promise<number> = getValue(1);
+// @ts-expect-error boolean has no declared Python overload
+void getValue(true);
+// @ts-expect-error string overload cannot return Promise<number>
+const wrong: Promise<number> = getValue('key');
+
+void text;
+void integer;
+void wrong;
+`,
+        'utf8'
+      );
+      const tscPath = join(process.cwd(), 'node_modules', 'typescript', 'lib', 'tsc.js');
+      const compile = await processUtils.exec(
+        process.execPath,
+        [
+          tscPath,
+          '--ignoreConfig',
+          '--noEmit',
+          '--pretty',
+          'false',
+          '--target',
+          'ES2022',
+          '--lib',
+          'ES2022,DOM,DOM.Iterable',
+          '--module',
+          'ESNext',
+          '--moduleResolution',
+          'bundler',
+          '--skipLibCheck',
+          consumerPath,
+        ],
+        { cwd: process.cwd(), timeoutMs: 30_000 }
+      );
+
+      expect(compile.code).toBe(0);
+      expect(compile.stderr).toBe('');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('generates safe generic wrappers and declaration files that typecheck', async () => {
     if (!(await supportsVariadicTypingFeatures())) {
       return;

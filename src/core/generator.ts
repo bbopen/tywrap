@@ -9,6 +9,7 @@ import type {
   PythonModule,
   PythonType,
   PythonTypeAlias,
+  Parameter,
   GeneratedCode,
   TypescriptType,
 } from '../types/index.js';
@@ -592,13 +593,20 @@ export class CodeGenerator {
     const positionalParams = filteredParams.filter(p => !p.keywordOnly && !p.varArgs && !p.kwArgs);
     const genericContext = this.buildGenericRenderContext(
       this.getTypeParameters(func.typeParameters),
-      [func.returnType, ...filteredParams.map(param => param.type)],
+      [
+        func.returnType,
+        ...filteredParams.map(param => param.type),
+        ...(func.overloads ?? []).flatMap(overload => [
+          overload.returnType,
+          ...overload.parameters.map(parameter => parameter.type),
+        ]),
+      ],
       moduleName,
       localDeclaredNames
     );
     const typeParamDecl = genericContext.declaration;
 
-    const tsTypeForValue = (p: (typeof filteredParams)[number]): string =>
+    const tsTypeForValue = (p: Parameter): string =>
       this.typeToTsFromPython(p.type, genericContext, 'value');
 
     const kwargsType = (() => {
@@ -665,7 +673,104 @@ export class CodeGenerator {
     const validatorName = `__validate${this.escapeIdentifier(func.name, { preserveCase: true })}Result`;
     const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.returnSchema(func.returnType, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n\n`;
 
-    // Overloads: generate trailing optional parameter drop variants (exclude *args/**kwargs).
+    const renderDeclaredOverload = (overload: NonNullable<typeof func.overloads>[number]): string[] => {
+      const overloadParams = overload.parameters.filter(
+        parameter => parameter.name !== 'self' && parameter.name !== 'cls'
+      );
+      const overloadPositional = overloadParams.filter(
+        parameter => !parameter.keywordOnly && !parameter.varArgs && !parameter.kwArgs
+      );
+      const overloadKeywordOnly = overloadParams.filter(parameter => parameter.keywordOnly);
+      const overloadVarArgs = overloadParams.find(parameter => parameter.varArgs);
+      const overloadHasVarKwArgs = overloadParams.some(parameter => parameter.kwArgs);
+      const overloadNeedsKwargs = overloadKeywordOnly.length > 0 || overloadHasVarKwArgs;
+      const overloadNeedsVarArgsArray = Boolean(overloadVarArgs) && overloadNeedsKwargs;
+      const overloadKwargsType = (() => {
+        if (!overloadNeedsKwargs) {
+          return '';
+        }
+        if (overloadKeywordOnly.length === 0 && overloadHasVarKwArgs) {
+          return 'Record<string, unknown>';
+        }
+        const properties = overloadKeywordOnly
+          .map(
+            parameter =>
+              `${JSON.stringify(parameter.name)}${parameter.optional ? '?' : ''}: ${tsTypeForValue(parameter)};`
+          )
+          .join(' ');
+        const object = `{ ${properties} }`;
+        return overloadHasVarKwArgs ? `(${object} & Record<string, unknown>)` : object;
+      })();
+      const renderPositional = (parameter: Parameter, forceRequired = false): string =>
+        `${this.escapeIdentifier(parameter.name)}${!forceRequired && parameter.optional ? '?' : ''}: ${tsTypeForValue(parameter)}`;
+      const renderVarArgs = (forceRequired = false): string | null => {
+        if (!overloadVarArgs) {
+          return null;
+        }
+        if (!overloadNeedsVarArgsArray) {
+          return `...${this.escapeIdentifier(overloadVarArgs.name)}: unknown[]`;
+        }
+        return `${this.escapeIdentifier(overloadVarArgs.name)}${forceRequired ? '' : '?'}: unknown[]`;
+      };
+      const renderKwargs = (forceRequired = false): string | null =>
+        overloadNeedsKwargs
+          ? `kwargs${forceRequired ? '' : '?'}: ${overloadKwargsType}`
+          : null;
+      const overloadReturnType = this.typeToTsFromPython(
+        overload.returnType,
+        genericContext,
+        'return'
+      );
+      const signatures: string[] = [];
+      const addSignature = (parameters: string[]): void => {
+        signatures.push(
+          `export function ${fname}${typeParamDecl}(${parameters.join(', ')}): Promise<${overloadReturnType}>;`
+        );
+      };
+      const firstOptional = overloadPositional.findIndex(parameter => parameter.optional);
+      const requiredPositionalCount =
+        firstOptional >= 0 ? firstOptional : overloadPositional.length;
+      const requiredKwOnly = overloadKeywordOnly.some(parameter => !parameter.optional);
+
+      if (requiredKwOnly) {
+        for (let count = requiredPositionalCount; count <= overloadPositional.length; count += 1) {
+          const head = overloadPositional
+            .slice(0, count)
+            .map(parameter => renderPositional(parameter, true));
+          const rest: string[] = [];
+          if (overloadVarArgs) {
+            if (overloadNeedsVarArgsArray) {
+              rest.push(`${this.escapeIdentifier(overloadVarArgs.name)}: unknown[] | undefined`);
+            } else {
+              rest.push(`...${this.escapeIdentifier(overloadVarArgs.name)}: unknown[]`);
+            }
+          }
+          const kwargs = renderKwargs(true);
+          if (kwargs) {
+            rest.push(kwargs);
+          }
+          addSignature([...head, ...rest]);
+          if (overloadVarArgs && overloadNeedsVarArgsArray && kwargs) {
+            addSignature([...head, kwargs]);
+          }
+        }
+        return signatures;
+      }
+
+      const parameters = overloadPositional.map(parameter => renderPositional(parameter));
+      const varArgs = renderVarArgs();
+      if (varArgs) {
+        parameters.push(varArgs);
+      }
+      const kwargs = renderKwargs();
+      if (kwargs) {
+        parameters.push(kwargs);
+      }
+      addSignature(parameters);
+      return signatures;
+    };
+
+    // Optional parameter overloads make Python's trailing defaults available to TypeScript callers.
     // Why: Python APIs frequently have many optional tail params. TypeScript callers expect
     // `fn(a)`, `fn(a, b)`, ... all to typecheck. We emit a family of overloads that progressively
     // "drop" optional tail args, but also include the full positional signature (<= length) so a
@@ -673,7 +778,7 @@ export class CodeGenerator {
     const firstOptionalIndex = positionalParams.findIndex(p => p.optional);
     const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
     const keywordOnlyNames = keywordOnlyParams.map(p => p.name);
-    const overloads: string[] = [];
+    const overloads: string[] = (func.overloads ?? []).flatMap(renderDeclaredOverload);
     if (requiredKwOnlyNames.length > 0) {
       // Required keyword-only params must be represented with a required `kwargs` parameter.
       // Avoid "required after optional" by emitting overloads where all preceding parameters are required.

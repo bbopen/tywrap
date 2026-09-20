@@ -3,6 +3,11 @@
  */
 
 import { CodeGenerator } from './core/generator.js';
+import {
+  TYWRAP_IR_VERSION,
+  validateIrContract,
+  type ValidatedIrContract,
+} from './core/ir-contract.js';
 import { TypeMapper } from './core/mapper.js';
 import { parseAnnotationToPythonType } from './core/annotation-parser.js';
 import { createConfig } from './config/index.js';
@@ -16,15 +21,12 @@ import type {
   Parameter,
   PythonType,
   PythonModuleConfig,
-  IrContract,
 } from './types/index.js';
 import { fsUtils, pathUtils, processUtils, isWindows } from './utils/runtime.js';
 import { globalCache } from './utils/cache.js';
 import { resolvePythonExecutable } from './utils/python.js';
 import { computeIrCacheFilename } from './utils/ir-cache.js';
 import { logger } from './utils/logger.js';
-
-const TYWRAP_IR_VERSION = '0.4.0';
 
 // Collect unknown typing constructs encountered during annotation parsing (per-generate run)
 let unknownTypeNamesCollector: Map<string, number> = new Map();
@@ -101,7 +103,7 @@ function stableJson(value: unknown): unknown {
   return value;
 }
 
-function serializeContract(ir: IrContract): string {
+function serializeContract(ir: ValidatedIrContract): string {
   const contract = { ...ir };
   delete contract.metadata;
   return `${JSON.stringify(stableJson(contract), null, 2)}\n`;
@@ -110,43 +112,17 @@ function serializeContract(ir: IrContract): string {
 function validateIrVersion(
   ir: unknown,
   source: string
-): { ir: IrContract | null; error?: string; code?: GenerateFailure['code'] } {
-  if (ir === null || typeof ir !== 'object' || Array.isArray(ir)) {
-    return { ir: null, code: 'contract-invalid', error: `${source} is not a JSON IR object.` };
+): { ir: ValidatedIrContract | null; error?: string; code?: GenerateFailure['code'] } {
+  const result = validateIrContract(ir, source);
+  if (result.ok) {
+    return { ir: result.contract };
   }
-  const contract = ir as IrContract;
-  if (typeof contract.ir_version !== 'string') {
-    return {
-      ir: null,
-      code: 'contract-invalid',
-      error: `${source} is missing its string ir_version.`,
-    };
-  }
-  if (contract.ir_version !== TYWRAP_IR_VERSION) {
-    return {
-      ir: null,
-      code: 'ir-version-mismatch',
-      error: `IR version mismatch: TypeScript expects ${TYWRAP_IR_VERSION}, but ${source} declares ${contract.ir_version}. Regenerate the contract with a matching tywrap_ir.`,
-    };
-  }
-  if (typeof contract.module !== 'string' || contract.module.length === 0) {
-    return { ir: null, code: 'contract-invalid', error: `${source} is missing its module name.` };
-  }
-  const requiredArrays: ReadonlyArray<readonly [string, unknown]> = [
-    ['functions', contract.functions],
-    ['classes', contract.classes],
-    ['type_aliases', contract.type_aliases],
-  ];
-  for (const [field, value] of requiredArrays) {
-    if (!Array.isArray(value)) {
-      return {
-        ir: null,
-        code: 'contract-invalid',
-        error: `${source} is missing required array field ${field}.`,
-      };
-    }
-  }
-  return { ir: contract };
+  const first = result.diagnostics[0];
+  return {
+    ir: null,
+    code: first?.code ?? 'contract-invalid',
+    error: first?.message ?? `${source} is not a JSON IR object.`,
+  };
 }
 
 async function safeReadFile(path: string): Promise<string | null> {
@@ -172,7 +148,7 @@ async function fetchAndCacheIr(
   cacheKey: string,
   caching: boolean,
   checkMode: boolean
-): Promise<{ ir: IrContract | null; error?: string; code?: GenerateFailure['code'] }> {
+): Promise<{ ir: ValidatedIrContract | null; error?: string; code?: GenerateFailure['code'] }> {
   let ir: unknown | null = null;
   let irError: string | undefined;
   if (caching && fsUtils.isAvailable() && !checkMode) {
@@ -217,7 +193,7 @@ async function fetchAndCacheIr(
 async function readContractInput(
   moduleKey: string,
   contractInput: TywrapOptions['contractInput']
-): Promise<{ ir: IrContract | null; error?: string; code?: GenerateFailure['code'] }> {
+): Promise<{ ir: ValidatedIrContract | null; error?: string; code?: GenerateFailure['code'] }> {
   const inputPath = typeof contractInput === 'string' ? contractInput : contractInput?.[moduleKey];
   if (!inputPath) {
     return {
@@ -656,12 +632,11 @@ function collectModuleTypeVarNames(obj: Record<string, unknown>): Set<string> {
   return names;
 }
 
-function transformIrToTsModel(ir: unknown): TSPythonModule {
-  const obj: Record<string, unknown> =
-    typeof ir === 'object' && ir !== null ? (ir as Record<string, unknown>) : {};
-  const functions = (obj.functions as unknown[]) ?? [];
-  const classes = (obj.classes as unknown[]) ?? [];
-  const aliases = (obj.type_aliases as unknown[]) ?? [];
+function transformIrToTsModel(ir: ValidatedIrContract): TSPythonModule {
+  const obj: Record<string, unknown> = ir;
+  const functions = ir.functions;
+  const classes = ir.classes;
+  const aliases = ir.type_aliases;
   const moduleTypeVarNames = collectModuleTypeVarNames(obj);
   const parseType = (
     annotation: unknown,
@@ -736,6 +711,19 @@ function transformIrToTsModel(ir: unknown): TSPythonModule {
         ? (f.parameters as unknown[]).map(v =>
             mapParam((v ?? {}) as Record<string, unknown>, annotationTypeParameters)
           )
+          : [],
+      overloads: Array.isArray(f.overloads)
+        ? (f.overloads as unknown[]).map(overload => {
+            const signature = (overload ?? {}) as Record<string, unknown>;
+            return {
+              parameters: Array.isArray(signature.parameters)
+                ? (signature.parameters as unknown[]).map(value =>
+                    mapParam((value ?? {}) as Record<string, unknown>, annotationTypeParameters)
+                  )
+                : [],
+              returnType: parseType(signature.returns, annotationTypeParameters),
+            };
+          })
         : [],
       methodKind: mapMethodKind(f.method_kind),
     };

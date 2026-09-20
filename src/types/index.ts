@@ -41,10 +41,23 @@ export interface PythonFunction {
   returnType: PythonType;
   parameters: Parameter[];
   /**
+   * Distinct callable signatures extracted from `@typing.overload`.
+   *
+   * The implementation signature stays in `parameters` and `returnType` for
+   * runtime binding. Each overload retains its own input-to-result relation for
+   * generated declarations.
+   */
+  overloads?: PythonFunctionOverload[];
+  /**
    * Binding of this callable on its owning class. Defaults to `'instance'`.
    * @see PythonMethodKind
    */
   methodKind?: PythonMethodKind;
+}
+
+export interface PythonFunctionOverload {
+  parameters: Parameter[];
+  returnType: PythonType;
 }
 
 /**

@@ -561,6 +561,100 @@ describe('CodeGenerator', () => {
     );
   });
 
+  it('preserves declared overload input-to-return relationships', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'get_value',
+        signature: {
+          parameters: [
+            {
+              name: 'key',
+              type: {
+                kind: 'union',
+                types: [
+                  { kind: 'primitive', name: 'str' },
+                  { kind: 'primitive', name: 'int' },
+                ],
+              },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+          ],
+          returnType: {
+            kind: 'union',
+            types: [
+              { kind: 'primitive', name: 'str' },
+              { kind: 'primitive', name: 'int' },
+            ],
+          },
+          isAsync: false,
+          isGenerator: false,
+        },
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: {
+          kind: 'union',
+          types: [
+            { kind: 'primitive', name: 'str' },
+            { kind: 'primitive', name: 'int' },
+          ],
+        },
+        parameters: [
+          {
+            name: 'key',
+            type: {
+              kind: 'union',
+              types: [
+                { kind: 'primitive', name: 'str' },
+                { kind: 'primitive', name: 'int' },
+              ],
+            },
+            optional: false,
+            varArgs: false,
+            kwArgs: false,
+          },
+        ],
+        overloads: [
+          {
+            parameters: [
+              {
+                name: 'key',
+                type: { kind: 'primitive', name: 'str' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+            returnType: { kind: 'primitive', name: 'str' },
+          },
+          {
+            parameters: [
+              {
+                name: 'key',
+                type: { kind: 'primitive', name: 'int' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+            returnType: { kind: 'primitive', name: 'int' },
+          },
+        ],
+      } as any,
+      'advanced_types'
+    );
+
+    expect(code.typescript).toContain('export function getValue(key: string): Promise<string>;');
+    expect(code.typescript).toContain('export function getValue(key: number): Promise<number>;');
+    expect(code.typescript).toContain(
+      'export async function getValue(key: string | number): Promise<string | number>'
+    );
+    expect(code.declaration).toContain('export function getValue(key: string): Promise<string>;');
+    expect(code.declaration).toContain('export function getValue(key: number): Promise<number>;');
+  });
+
   it('models *args as an array parameter when kwargs are present', () => {
     const code = gen.generateFunctionWrapper(
       {
