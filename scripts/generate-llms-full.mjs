@@ -30,6 +30,8 @@ const orderedDocs = [
 const excludedDocs = new Set([
   'docs/perf-baselines.md',
   'docs/release.md',
+  'docs/maintainers/callable-contracts.md',
+  'docs/maintainers/value-contracts.md',
 ]);
 
 async function collectDocs(dir) {

@@ -5,10 +5,7 @@
  * deterministic step between validated IR and generated wrapper files.
  */
 
-import {
-  VALUE_CONTRACT_REVISION,
-  type ValueContract,
-} from '../contracts/value-contract.js';
+import { VALUE_CONTRACT_REVISION, type ValueContract } from '../contracts/value-contract.js';
 import type {
   GeneratedCode,
   Parameter,
@@ -162,7 +159,8 @@ export const DEFAULT_CALLABLE_CAPABILITIES: readonly CapabilityDescription[] = [
   {
     name: 'dataclass-adapter',
     available: false,
-    guidance: 'Use a TypedDict or an explicit record adapter until #339 defines dataclass conversion.',
+    guidance:
+      'Use a TypedDict or an explicit record adapter until #339 defines dataclass conversion.',
   },
 ];
 
@@ -271,7 +269,12 @@ function resolveTuple(
   const values = entries as SupportedValueResolution[];
   return {
     status: 'supported',
-    value: { kind: 'tuple', wire: 'json', decodedAs: 'array', items: values.map(entry => entry.value) },
+    value: {
+      kind: 'tuple',
+      wire: 'json',
+      decodedAs: 'array',
+      items: values.map(entry => entry.value),
+    },
   };
 }
 
@@ -321,18 +324,23 @@ function resolveUnion(
 }
 
 function resolveNdarray(type: PythonType): ValueResolution {
-  const typeArgument = type.kind === 'generic' && type.typeArgs.length === 2 &&
+  const typeArgument =
+    type.kind === 'generic' &&
+    type.typeArgs.length === 2 &&
     type.typeArgs[1]?.kind === 'generic' &&
     type.typeArgs[1].name === 'dtype' &&
     type.typeArgs[1].module === 'numpy' &&
     (type.typeArgs[0]?.kind === 'collection' ||
       (type.typeArgs[0]?.kind === 'custom' && type.typeArgs[0].name === 'Any'))
-    ? type.typeArgs[1].typeArgs[0]
-    : type.kind === 'generic' && type.typeArgs.length === 1
-      ? type.typeArgs[0]
-      : undefined;
-  if (typeArgument?.kind !== 'custom' || typeArgument.name !== 'float16' ||
-      typeArgument.module !== 'numpy') {
+      ? type.typeArgs[1].typeArgs[0]
+      : type.kind === 'generic' && type.typeArgs.length === 1
+        ? type.typeArgs[0]
+        : undefined;
+  if (
+    typeArgument?.kind !== 'custom' ||
+    typeArgument.name !== 'float16' ||
+    typeArgument.module !== 'numpy'
+  ) {
     return {
       status: 'unresolved',
       annotation: annotationName(type),
@@ -391,7 +399,10 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
           };
         }
         if (type.name === 'str') {
-          return { status: 'supported', value: { kind: 'string', wire: 'json', decodedAs: 'string' } };
+          return {
+            status: 'supported',
+            value: { kind: 'string', wire: 'json', decodedAs: 'string' },
+          };
         }
         if (type.name === 'bytes') {
           return {
@@ -436,7 +447,11 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
         if (type.name === 'tuple') {
           return resolveTuple(type.itemTypes, request, DEFAULT_VALUE_CONVERSION);
         }
-        return resolveSequence(type.itemTypes[0] ?? UNKNOWN_TYPE, request, DEFAULT_VALUE_CONVERSION);
+        return resolveSequence(
+          type.itemTypes[0] ?? UNKNOWN_TYPE,
+          request,
+          DEFAULT_VALUE_CONVERSION
+        );
       case 'generic': {
         const leaf = leafName(type);
         if (leaf === 'NDArray' || leaf === 'ndarray') {
@@ -444,8 +459,12 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
         }
         if (leaf === 'Tensor' && type.module?.startsWith('torch')) {
           const tensorDtype = type.typeArgs[0];
-          if (type.typeArgs.length !== 1 || tensorDtype?.kind !== 'custom' ||
-              tensorDtype.name !== 'float16' || tensorDtype.module !== 'torch') {
+          if (
+            type.typeArgs.length !== 1 ||
+            tensorDtype?.kind !== 'custom' ||
+            tensorDtype.name !== 'float16' ||
+            tensorDtype.module !== 'torch'
+          ) {
             return { status: 'unresolved', annotation: annotationName(type) };
           }
           const ndarray = resolveNdarray({
@@ -469,7 +488,11 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
           };
         }
         if (['list', 'List', 'Sequence', 'Iterable', 'set', 'frozenset'].includes(leaf ?? '')) {
-          return resolveSequence(type.typeArgs[0] ?? UNKNOWN_TYPE, request, DEFAULT_VALUE_CONVERSION);
+          return resolveSequence(
+            type.typeArgs[0] ?? UNKNOWN_TYPE,
+            request,
+            DEFAULT_VALUE_CONVERSION
+          );
         }
         if (['dict', 'Dict', 'Mapping', 'MutableMapping'].includes(leaf ?? '')) {
           const key = type.typeArgs[0];
@@ -596,8 +619,12 @@ function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {
   ) {
     return true;
   }
-  if (left.kind === 'ndarray-float16' || right.kind === 'ndarray-float16' ||
-      left.kind === 'torch-float16' || right.kind === 'torch-float16') {
+  if (
+    left.kind === 'ndarray-float16' ||
+    right.kind === 'ndarray-float16' ||
+    left.kind === 'torch-float16' ||
+    right.kind === 'torch-float16'
+  ) {
     return true;
   }
   if (left.kind === 'tuple' && right.kind === 'sequence') {
@@ -610,8 +637,10 @@ function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {
     return false;
   }
   if (left.kind === 'tuple' && right.kind === 'tuple') {
-    return left.items.length === right.items.length &&
-      left.items.every((item, index) => valuesMayOverlap(item, right.items[index]!));
+    return (
+      left.items.length === right.items.length &&
+      left.items.every((item, index) => valuesMayOverlap(item, right.items[index]!))
+    );
   }
   if (left.kind === 'sequence' && right.kind === 'sequence') {
     return true; // An empty array matches both element schemas.
@@ -644,8 +673,15 @@ function sharesRequiredBinding(
 ): boolean {
   const a = left[leftIndex]!;
   const b = right[rightIndex]!;
-  if (a.optional || b.optional || a.varArgs || b.varArgs || a.kwArgs || b.kwArgs ||
-      a.name !== b.name) {
+  if (
+    a.optional ||
+    b.optional ||
+    a.varArgs ||
+    b.varArgs ||
+    a.kwArgs ||
+    b.kwArgs ||
+    a.name !== b.name
+  ) {
     return false;
   }
   if (a.keywordOnly && b.keywordOnly) {
@@ -665,7 +701,8 @@ function overloadsMayOverlap(
   rightParameters: readonly Parameter[]
 ): boolean {
   const countRange = (parameters: readonly Parameter[]): [number, number] => [
-    parameters.filter(parameter => !parameter.optional && !parameter.varArgs && !parameter.kwArgs).length,
+    parameters.filter(parameter => !parameter.optional && !parameter.varArgs && !parameter.kwArgs)
+      .length,
     parameters.some(parameter => parameter.varArgs || parameter.kwArgs)
       ? Number.POSITIVE_INFINITY
       : parameters.length,
@@ -676,25 +713,30 @@ function overloadsMayOverlap(
     return false;
   }
   for (let leftIndex = 0; leftIndex < leftParameters.length; leftIndex += 1) {
-    if (leftParameters.filter(parameter =>
-      parameter.name === leftParameters[leftIndex]!.name
-    ).length !== 1) {
+    if (
+      leftParameters.filter(parameter => parameter.name === leftParameters[leftIndex]!.name)
+        .length !== 1
+    ) {
       continue;
     }
-    const rightIndex = rightParameters.findIndex(parameter =>
-      parameter.name === leftParameters[leftIndex]!.name
+    const rightIndex = rightParameters.findIndex(
+      parameter => parameter.name === leftParameters[leftIndex]!.name
     );
-    if (rightIndex < 0 || rightParameters.filter(parameter =>
-      parameter.name === leftParameters[leftIndex]!.name
-    ).length !== 1 || !sharesRequiredBinding(
-      leftParameters, leftIndex, rightParameters, rightIndex
-    )) {
+    if (
+      rightIndex < 0 ||
+      rightParameters.filter(parameter => parameter.name === leftParameters[leftIndex]!.name)
+        .length !== 1 ||
+      !sharesRequiredBinding(leftParameters, leftIndex, rightParameters, rightIndex)
+    ) {
       continue;
     }
     const a = left[leftIndex]?.resolution;
     const b = right[rightIndex]?.resolution;
-    if (a?.status === 'supported' && b?.status === 'supported' &&
-        !valuesMayOverlap(a.value, b.value)) {
+    if (
+      a?.status === 'supported' &&
+      b?.status === 'supported' &&
+      !valuesMayOverlap(a.value, b.value)
+    ) {
       return false;
     }
   }
@@ -764,12 +806,14 @@ function resolveCallable(
   }
   for (let index = 0; index < overloadParameters.length; index += 1) {
     for (let earlier = 0; earlier < index; earlier += 1) {
-      if (overloadsMayOverlap(
-        visibleOverloadParameters[earlier]!,
-        visibleOverloadParameters[index]!,
-        visibleOverloadSignatures[earlier]!,
-        visibleOverloadSignatures[index]!
-      )) {
+      if (
+        overloadsMayOverlap(
+          visibleOverloadParameters[earlier]!,
+          visibleOverloadParameters[index]!,
+          visibleOverloadSignatures[earlier]!,
+          visibleOverloadSignatures[index]!
+        )
+      ) {
         diagnostics.push({
           severity: 'warning',
           code: 'overload-ambiguous',
@@ -846,8 +890,7 @@ function resolveCallable(
 
   const resolvedParameters: Parameter[] = parameters.map((parameter, index) => ({
     ...func.parameters[index]!,
-    type:
-      parameter.resolution.status === 'unsupported' ? UNKNOWN_TYPE : parameter.logicalType,
+    type: parameter.resolution.status === 'unsupported' ? UNKNOWN_TYPE : parameter.logicalType,
   }));
   const resolvedOverloads = (func.overloads ?? []).map((overload, index) => ({
     ...overload,
@@ -859,7 +902,9 @@ function resolveCallable(
           : parameter.type,
     })),
     returnType:
-      overloadResults[index]?.resolution.status === 'unsupported' ? UNKNOWN_TYPE : overload.returnType,
+      overloadResults[index]?.resolution.status === 'unsupported'
+        ? UNKNOWN_TYPE
+        : overload.returnType,
   }));
   const supportedValue = (value: ResolvedCallableValue): ValueContract | undefined =>
     value.resolution.status === 'supported' ? value.resolution.value : undefined;
@@ -905,7 +950,9 @@ export function compileContract(
   options: CompileContractOptions
 ): CompiledContract {
   if (ir.module !== options.module.name) {
-    throw new Error(`Compiled module ${options.module.name} does not match IR module ${ir.module}.`);
+    throw new Error(
+      `Compiled module ${options.module.name} does not match IR module ${ir.module}.`
+    );
   }
   const canonical = transformIrToTsModel(ir);
   const select = <T extends { name: string }>(
@@ -931,10 +978,10 @@ export function compileContract(
     canonical.typeAliases ?? [],
     options.module.typeAliases ?? canonical.typeAliases ?? []
   );
-  const capabilities = new Map(options.capabilities.map(capability => [capability.name, capability]));
-  const dataclassNames = new Set(
-    ir.classes.filter(cls => cls.is_dataclass).map(cls => cls.name)
+  const capabilities = new Map(
+    options.capabilities.map(capability => [capability.name, capability])
   );
+  const dataclassNames = new Set(ir.classes.filter(cls => cls.is_dataclass).map(cls => cls.name));
   const diagnostics: CallableCompilationDiagnostic[] = [];
   const callables: ResolvedCallable[] = [];
   const compileFunction = (func: PythonFunction, path: string): PythonFunction => {
@@ -952,7 +999,10 @@ export function compileContract(
   const module: PythonModule = {
     ...canonical,
     functions: selectedFunctions.map(func =>
-      compileFunction(func, `$.functions[${ir.functions.findIndex(entry => entry.name === func.name)}]`)
+      compileFunction(
+        func,
+        `$.functions[${ir.functions.findIndex(entry => entry.name === func.name)}]`
+      )
     ),
     classes: selectedClasses.map(cls => ({
       ...cls,

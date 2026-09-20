@@ -472,27 +472,32 @@ export async function generate(
         const classIndex = ir.classes.findIndex(cls =>
           cls.methods.some(method => method.qualname === qualname)
         );
-        const methodIndex = classIndex < 0 ? -1 : ir.classes[classIndex]!.methods.findIndex(
-          method => method.qualname === qualname
-        );
-        const path = functionIndex >= 0
-          ? `$.functions[${functionIndex}]`
-          : methodIndex >= 0
-            ? `$.classes[${classIndex}].methods[${methodIndex}]`
-            : '';
+        const methodIndex =
+          classIndex < 0
+            ? -1
+            : ir.classes[classIndex]!.methods.findIndex(method => method.qualname === qualname);
+        const path =
+          functionIndex >= 0
+            ? `$.functions[${functionIndex}]`
+            : methodIndex >= 0
+              ? `$.classes[${classIndex}].methods[${methodIndex}]`
+              : '';
         const callableResult = compiled.callables.find(callable => callable.path === path)?.result;
         const logicalType = callableResult?.logicalType;
-        const outerName = logicalType &&
+        const outerName =
+          logicalType &&
           (logicalType.kind === 'custom' || logicalType.kind === 'generic') &&
           logicalType.module
-          ? `${logicalType.module}.${logicalType.name}`
-          : undefined;
+            ? `${logicalType.module}.${logicalType.name}`
+            : undefined;
         const resolution = callableResult?.resolution;
-        if (resolution?.status === 'supported' && candidate === outerName && (
-          (resolution.value.kind === 'ndarray-float16' &&
+        if (
+          resolution?.status === 'supported' &&
+          candidate === outerName &&
+          ((resolution.value.kind === 'ndarray-float16' &&
             (candidate === 'numpy.ndarray' || candidate === 'numpy.typing.NDArray')) ||
-          (resolution.value.kind === 'torch-float16' && candidate === 'torch.Tensor')
-        )) {
+            (resolution.value.kind === 'torch-float16' && candidate === 'torch.Tensor'))
+        ) {
           continue;
         }
       }

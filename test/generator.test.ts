@@ -59,6 +59,76 @@ describe('CodeGenerator', () => {
     expect(code.typescript).toContain('createReturnValidator');
   });
 
+  it('uses one opt-in runtime provider for free and static wrappers', () => {
+    const ping = {
+      name: 'ping',
+      signature: {
+        parameters: [],
+        returnType: { kind: 'primitive', name: 'int' },
+        isAsync: false,
+        isGenerator: false,
+      },
+      decorators: [],
+      isAsync: false,
+      isGenerator: false,
+      returnType: { kind: 'primitive', name: 'int' },
+      parameters: [],
+    } as any;
+    const module = {
+      name: 'binding_fixture',
+      functions: [ping],
+      classes: [
+        {
+          name: 'Box',
+          kind: 'class',
+          bases: [],
+          properties: [],
+          decorators: [],
+          methods: [{ ...ping, name: 'pong', methodKind: 'static' }],
+        },
+      ],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    } as any;
+    const normal = gen.generateModuleDefinition(module);
+    const bound = gen.generateModuleBindingTemplate(module);
+    expect(normal.typescript).toContain(
+      "getRuntimeBridge().call<number>('binding_fixture', 'ping'"
+    );
+    expect(normal.typescript).toContain(
+      "getRuntimeBridge().call<number>('binding_fixture', 'Box.pong'"
+    );
+    expect(bound.typescript).toContain(
+      "__tywrapRuntimeProvider().call<number>('binding_fixture', 'ping'"
+    );
+    expect(bound.typescript).toContain(
+      "__tywrapRuntimeProvider().call<number>('binding_fixture', 'Box.pong'"
+    );
+    expect(bound.typescript).not.toContain('getRuntimeBridge');
+    expect(bound.declaration).toBe(normal.declaration);
+    for (const identifier of [
+      'ping',
+      'provider',
+      'createReturnValidator',
+      '__tywrapReturnDefinitions',
+      '__args',
+      'for',
+      'super',
+      'this',
+      'arguments',
+      'undefined',
+      'provider;inject',
+    ]) {
+      expect(() => gen.generateModuleBindingTemplate(module, false, identifier)).toThrow(
+        /Invalid runtime getter identifier/
+      );
+    }
+    expect(
+      gen.generateModuleBindingTemplate(module, false, '__tywrapRuntimeProvider1').typescript
+    ).toContain('__tywrapRuntimeProvider1().call');
+  });
+
   it('emits a null union member for X | None returns, not an accept-everything any', () => {
     const code = gen.generateFunctionWrapper(
       {
@@ -704,9 +774,7 @@ describe('CodeGenerator', () => {
       },
       'fixture'
     );
-    expect(classCode.declaration).toContain(
-      'static getValue(key: string): Promise<string>;'
-    );
+    expect(classCode.declaration).toContain('static getValue(key: string): Promise<string>;');
     expect(classCode.declaration).not.toContain('fallback');
   });
 

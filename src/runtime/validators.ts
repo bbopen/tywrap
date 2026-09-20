@@ -51,7 +51,12 @@ export type ReturnValidator<T = unknown> = (result: T, provenance?: DecodedProve
 /** One Python parameter used to select a declared overload after call binding. */
 export interface OverloadParameterSchema {
   name: string;
-  kind: 'positional-only' | 'positional-or-keyword' | 'var-positional' | 'keyword-only' | 'var-keyword';
+  kind:
+    | 'positional-only'
+    | 'positional-or-keyword'
+    | 'var-positional'
+    | 'keyword-only'
+    | 'var-keyword';
   optional: boolean;
   value: ReturnSchema;
 }
@@ -191,14 +196,19 @@ function check(
     case 'literal':
       return Object.is(value, schema.value);
     case 'array':
-      return Array.isArray(value) && value.every((item, index) =>
-        check(schema.element, item, state, { parent: value, key: index }));
+      return (
+        Array.isArray(value) &&
+        value.every((item, index) =>
+          check(schema.element, item, state, { parent: value, key: index })
+        )
+      );
     case 'tuple':
       return (
         Array.isArray(value) &&
         value.length === schema.elements.length &&
         schema.elements.every((entry, index) =>
-          check(entry, value[index], state, { parent: value, key: index }))
+          check(entry, value[index], state, { parent: value, key: index })
+        )
       );
     case 'record': {
       if (!isPlainObject(value)) {
@@ -220,7 +230,8 @@ function check(
       return (
         !schema.values ||
         Object.entries(value).every(([key, item]) =>
-          check(schema.values as ReturnSchema, item, state, { parent: value, key }))
+          check(schema.values as ReturnSchema, item, state, { parent: value, key })
+        )
       );
     }
     case 'union':
@@ -253,7 +264,9 @@ export function createReturnValidator<T = unknown>(
 ): ReturnValidator<T> {
   const declaredType = renderSchema(schema);
   return (result: T, provenance?: DecodedProvenance): T => {
-    if (!check(schema, result, { definitions, pairs: new WeakMap<object, Set<string>>(), provenance })) {
+    if (
+      !check(schema, result, { definitions, pairs: new WeakMap<object, Set<string>>(), provenance })
+    ) {
       throw new BridgeValidationError({
         declaredType,
         receivedShape: describeReceivedShape(result),
@@ -336,9 +349,7 @@ export function selectOverloadReturnValidator<T = unknown>(
   definitions: Readonly<Record<string, ReturnSchema>> = {}
 ): ReturnValidator<T> {
   const selected = overloads.find(overload => matchesOverload(overload, args, kwargs));
-  return selected
-    ? createReturnValidator<T>(selected.result, callSite, definitions)
-    : fallback;
+  return selected ? createReturnValidator<T>(selected.result, callSite, definitions) : fallback;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

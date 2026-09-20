@@ -146,6 +146,60 @@ export class CodeGenerator {
     this.onTypeDegrade = options.onTypeDegrade;
   }
 
+  private assertRuntimeGetterIdentifier(identifier: string): void {
+    if (
+      identifier !== 'getRuntimeBridge' &&
+      !/^__tywrapRuntimeProvider(?:[1-9][0-9]*)?$/.test(identifier)
+    ) {
+      throw new Error(`Invalid runtime getter identifier: ${identifier}`);
+    }
+  }
+
+  private assertBindingGetterAvailable(module: PythonModule, identifier: string): void {
+    const occupied = new Set([
+      'getRuntimeBridge',
+      'createReturnValidator',
+      'selectOverloadReturnValidator',
+      'ReturnSchema',
+      '__tywrapReturnDefinitions',
+      '__tywrapFloat16Value',
+      '__tywrapFloat16Tensor',
+      '__tywrapCreateApi',
+      '__args',
+      '__kwargs',
+      '__candidate',
+      '__varargs',
+      '__positionalOnly',
+      '__requiredKwOnly',
+      '__missing',
+      '__selectedReturnValidator',
+      'kwargs',
+      'key',
+    ]);
+    const includeCallable = (func: PythonFunction, owner = ''): void => {
+      occupied.add(this.escapeIdentifier(func.name));
+      occupied.add(
+        `__validate${owner}${this.escapeIdentifier(func.name, { preserveCase: true })}Result`
+      );
+      for (const parameter of [
+        ...func.parameters,
+        ...(func.overloads ?? []).flatMap(overload => overload.parameters),
+      ]) {
+        occupied.add(this.escapeIdentifier(parameter.name));
+      }
+    };
+    module.functions.forEach(func => includeCallable(func));
+    for (const cls of module.classes) {
+      occupied.add(this.escapeIdentifier(cls.name));
+      const owner = this.escapeIdentifier(cls.name, { preserveCase: true });
+      cls.methods.forEach(method => includeCallable(method, owner));
+    }
+    (module.typeAliases ?? []).forEach(alias => occupied.add(this.escapeIdentifier(alias.name)));
+    if (occupied.has(identifier)) {
+      throw new Error(`Runtime getter identifier ${identifier} conflicts with a generated binding`);
+    }
+  }
+
   /**
    * Convert Python snake_case to TypeScript camelCase and escape reserved words
    */
@@ -624,14 +678,14 @@ export class CodeGenerator {
           .map(({ parameter, parameterIndex }) => ({
             name: parameter.name,
             kind: parameter.varArgs
-              ? 'var-positional' as const
+              ? ('var-positional' as const)
               : parameter.kwArgs
-                ? 'var-keyword' as const
+                ? ('var-keyword' as const)
                 : parameter.keywordOnly
-                  ? 'keyword-only' as const
+                  ? ('keyword-only' as const)
                   : parameter.positionalOnly
-                    ? 'positional-only' as const
-                    : 'positional-or-keyword' as const,
+                    ? ('positional-only' as const)
+                    : ('positional-or-keyword' as const),
             optional: parameter.optional,
             value: contract?.parameterValues[parameterIndex]
               ? valueContractToReturnSchema(contract.parameterValues[parameterIndex])
@@ -685,8 +739,10 @@ export class CodeGenerator {
     moduleName?: string,
     annotatedJSDoc = false,
     localDeclaredNames: Set<string> = new Set(),
-    returnDefinitions: ReturnDefinitionNames = new Set()
+    returnDefinitions: ReturnDefinitionNames = new Set(),
+    runtimeGetterIdentifier = 'getRuntimeBridge'
   ): GeneratedCode {
+    this.assertRuntimeGetterIdentifier(runtimeGetterIdentifier);
     const jsdoc = this.generateJsDoc(
       func.docstring,
       annotatedJSDoc ? func.parameters.map(p => String(p.type)) : undefined
@@ -835,9 +891,7 @@ export class CodeGenerator {
         return `${this.escapeIdentifier(overloadVarArgs.name)}${forceRequired ? '' : '?'}: unknown[]`;
       };
       const renderKwargs = (forceRequired = false): string | null =>
-        overloadNeedsKwargs
-          ? `kwargs${forceRequired ? '' : '?'}: ${overloadKwargsType}`
-          : null;
+        overloadNeedsKwargs ? `kwargs${forceRequired ? '' : '?'}: ${overloadKwargsType}` : null;
       const overloadReturnType = this.resolvedReturnType(
         func.callableContract?.overloads[overloadIndex]?.returnValue,
         overload.returnType,
@@ -983,13 +1037,14 @@ export class CodeGenerator {
     const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
     const callPreludeLines = emitCallPrelude(callDescriptor, this.callEmitHelpers());
     const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
-    const overloadValidator = (func.overloads?.length ?? 0) > 0
-      ? `  const __selectedReturnValidator = selectOverloadReturnValidator(${JSON.stringify(this.overloadReturnSchemas(func, returnDefinitions))}, __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${validatorName}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n`
-      : '';
+    const overloadValidator =
+      (func.overloads?.length ?? 0) > 0
+        ? `  const __selectedReturnValidator = selectOverloadReturnValidator(${JSON.stringify(this.overloadReturnSchemas(func, returnDefinitions))}, __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${validatorName}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n`
+        : '';
     const selectedValidatorName = overloadValidator ? '__selectedReturnValidator' : validatorName;
 
     const ts = `${jsdoc}${returnValidator}${overloadDecl}export async function ${fname}${hasDeclaredOverloads ? '' : typeParamDecl}(${paramDecl}): Promise<${implementationReturnType}> {
-${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${implementationReturnType}>('${moduleId}', '${func.name}', __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${selectedValidatorName});
+${callPrelude}${guards}${overloadValidator}  return ${runtimeGetterIdentifier}().call<${implementationReturnType}>('${moduleId}', '${func.name}', __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${selectedValidatorName});
 }
 `;
 
@@ -1006,8 +1061,10 @@ ${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${im
     moduleName?: string,
     _annotatedJSDoc = false,
     localDeclaredNames: Set<string> = new Set(),
-    returnDefinitions: ReturnDefinitionNames = new Set()
+    returnDefinitions: ReturnDefinitionNames = new Set(),
+    runtimeGetterIdentifier = 'getRuntimeBridge'
   ): GeneratedCode {
+    this.assertRuntimeGetterIdentifier(runtimeGetterIdentifier);
     const moduleDeclaredNames = new Set(localDeclaredNames);
     moduleDeclaredNames.add(cls.name);
     const jsdoc = this.generateJsDoc(cls.docstring);
@@ -1200,24 +1257,28 @@ ${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${im
         const validatorName = `__validate${this.escapeIdentifier(cls.name, { preserveCase: true })}${this.escapeIdentifier(method.name, { preserveCase: true })}Result`;
         const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.resolvedReturnSchema(method, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n\n`;
 
-        const declaredOverloads = (method.overloads?.length ?? 0) > 0
-          ? this.generateFunctionWrapper(
-              {
-                ...method,
-                parameters: fparams,
-                overloads: method.overloads?.map(overload => ({
-                  ...overload,
-                  parameters: overload.parameters.filter(p => p.name !== 'self' && p.name !== 'cls'),
-                })),
-              },
-              moduleName,
-              false,
-              moduleDeclaredNames,
-              returnDefinitions
-            ).declaration.match(/^export function .*;$/gm)?.map(line =>
-              `  static ${line.slice('export function '.length)}`
-            ) ?? []
-          : [];
+        const declaredOverloads =
+          (method.overloads?.length ?? 0) > 0
+            ? (this.generateFunctionWrapper(
+                {
+                  ...method,
+                  parameters: fparams,
+                  overloads: method.overloads?.map(overload => ({
+                    ...overload,
+                    parameters: overload.parameters.filter(
+                      p => p.name !== 'self' && p.name !== 'cls'
+                    ),
+                  })),
+                },
+                moduleName,
+                false,
+                moduleDeclaredNames,
+                returnDefinitions,
+                runtimeGetterIdentifier
+              )
+                .declaration.match(/^export function .*;$/gm)
+                ?.map(line => `  static ${line.slice('export function '.length)}`) ?? [])
+            : [];
         const overloads: string[] = [...declaredOverloads];
         if (declaredOverloads.length === 0 && needsKwargsParam && requiredKwOnlyNames.length > 0) {
           const firstOptionalIndex = positionalParams.findIndex(p => p.optional);
@@ -1263,12 +1324,15 @@ ${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${im
 
         const guardLines = emitArgGuards(callDescriptor);
         const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
-        const overloadValidator = declaredOverloads.length > 0
-          ? `    const __selectedReturnValidator = selectOverloadReturnValidator(${JSON.stringify(this.overloadReturnSchemas(method, returnDefinitions))}, __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${validatorName}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n`
-          : '';
-        const selectedValidatorName = overloadValidator ? '__selectedReturnValidator' : validatorName;
+        const overloadValidator =
+          declaredOverloads.length > 0
+            ? `    const __selectedReturnValidator = selectOverloadReturnValidator(${JSON.stringify(this.overloadReturnSchemas(method, returnDefinitions))}, __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${validatorName}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n`
+            : '';
+        const selectedValidatorName = overloadValidator
+          ? '__selectedReturnValidator'
+          : validatorName;
 
-        const callExpr = `getRuntimeBridge().call<${implementationReturnType}>('${moduleId}', '${cls.name}.${method.name}', __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${selectedValidatorName})`;
+        const callExpr = `${runtimeGetterIdentifier}().call<${implementationReturnType}>('${moduleId}', '${cls.name}.${method.name}', __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${selectedValidatorName})`;
         methodBodies.push(`${overloadDecl}  ${staticPrefix}async ${mname}${hasDeclaredOverloads ? '' : methodTypeParamDecl}(${paramsDecl}): Promise<${implementationReturnType}> {
     ${returnValidator}${callPrelude}${guards}${overloadValidator}    return ${callExpr};
   }`);
@@ -1344,6 +1408,30 @@ ${migrationNote}${declarationMethodsSection}
   }
 
   generateModuleDefinition(module: PythonModule, annotatedJSDoc = false): GeneratedCode {
+    return this.generateModuleWithGetter(module, annotatedJSDoc, 'getRuntimeBridge', true);
+  }
+
+  /** Build an intermediate template. The caller must bind its provider before emission. */
+  generateModuleBindingTemplate(
+    module: PythonModule,
+    annotatedJSDoc = false,
+    runtimeGetterIdentifier = '__tywrapRuntimeProvider'
+  ): GeneratedCode {
+    if (runtimeGetterIdentifier === 'getRuntimeBridge') {
+      throw new Error('Binding templates require a distinct runtime getter');
+    }
+    this.assertRuntimeGetterIdentifier(runtimeGetterIdentifier);
+    this.assertBindingGetterAvailable(module, runtimeGetterIdentifier);
+    return this.generateModuleWithGetter(module, annotatedJSDoc, runtimeGetterIdentifier, false);
+  }
+
+  private generateModuleWithGetter(
+    module: PythonModule,
+    annotatedJSDoc: boolean,
+    runtimeGetterIdentifier: string,
+    importRuntimeGetter: boolean
+  ): GeneratedCode {
+    this.assertRuntimeGetterIdentifier(runtimeGetterIdentifier);
     const localDeclaredNames = new Set([
       ...module.classes.map(cls => cls.name),
       ...(module.typeAliases ?? []).map(alias => alias.name),
@@ -1356,7 +1444,8 @@ ${migrationNote}${declarationMethodsSection}
           module.name,
           annotatedJSDoc,
           localDeclaredNames,
-          this.returnDefinitions(module)
+          this.returnDefinitions(module),
+          runtimeGetterIdentifier
         )
       );
     const classResults = [...module.classes]
@@ -1367,7 +1456,8 @@ ${migrationNote}${declarationMethodsSection}
           module.name,
           annotatedJSDoc,
           localDeclaredNames,
-          this.returnDefinitions(module)
+          this.returnDefinitions(module),
+          runtimeGetterIdentifier
         )
       );
     const typeAliasResults = [...(module.typeAliases ?? [])]
@@ -1387,30 +1477,33 @@ ${migrationNote}${declarationMethodsSection}
     const needsRuntime = module.functions.length > 0 || hasRuntimeClasses;
     const hasOverloads =
       module.functions.some(func => (func.overloads?.length ?? 0) > 0) ||
-      module.classes.some(cls =>
-        cls.methods.some(method => (method.overloads?.length ?? 0) > 0)
-      );
+      module.classes.some(cls => cls.methods.some(method => (method.overloads?.length ?? 0) > 0));
     const emittedCallables = [
       ...module.functions,
-      ...module.classes.flatMap(cls => cls.methods.filter(method =>
-        method.name !== '__init__' &&
-        (method.methodKind === 'class' || method.methodKind === 'static')
-      )),
+      ...module.classes.flatMap(cls =>
+        cls.methods.filter(
+          method =>
+            method.name !== '__init__' &&
+            (method.methodKind === 'class' || method.methodKind === 'static')
+        )
+      ),
     ];
     const resolvedReturns = emittedCallables.flatMap(func => [
       func.callableContract?.returnValue,
       ...(func.callableContract?.overloads.map(overload => overload.returnValue) ?? []),
     ]);
     const needsTorchFloat16 = resolvedReturns.some(value => value?.kind === 'torch-float16');
-    const needsFloat16 = needsTorchFloat16 ||
-      resolvedReturns.some(value => value?.kind === 'ndarray-float16');
+    const needsFloat16 =
+      needsTorchFloat16 || resolvedReturns.some(value => value?.kind === 'ndarray-float16');
     const scientificTypes = needsFloat16
-      ? `type __tywrapFloat16Value = number | __tywrapFloat16Value[];\n${needsTorchFloat16
-        ? `type __tywrapFloat16Tensor = { data: __tywrapFloat16Value; shape: number[]; dtype: 'torch.float16'; device?: string; sourceDtype?: string; sourceDevice?: string };\n`
-        : ''}\n`
+      ? `type __tywrapFloat16Value = number | __tywrapFloat16Value[];\n${
+          needsTorchFloat16
+            ? `type __tywrapFloat16Tensor = { data: __tywrapFloat16Value; shape: number[]; dtype: 'torch.float16'; device?: string; sourceDtype?: string; sourceDevice?: string };\n`
+            : ''
+        }\n`
       : '';
     const bridgeDecl = needsRuntime
-      ? `import { createReturnValidator, ${hasOverloads ? 'selectOverloadReturnValidator, ' : ''}getRuntimeBridge, type ReturnSchema } from 'tywrap/runtime';\n\n${this.emitReturnDefinitions(module)}`
+      ? `import { createReturnValidator, ${hasOverloads ? 'selectOverloadReturnValidator, ' : ''}${importRuntimeGetter ? 'getRuntimeBridge, ' : ''}type ReturnSchema } from 'tywrap/runtime';\n\n${this.emitReturnDefinitions(module)}`
       : '';
 
     const ts = `${`${header}${bridgeDecl}${scientificTypes}${functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd()}\n`;
