@@ -33,6 +33,10 @@ coroutine results through Node and Pyodide.
 - Node and Pyodide await Python coroutine results. Exceptions retain call context;
   timeout and disposal checks cover subsequent requests. HTTP behavior depends
   on the server's coroutine support.
+- Development reload preserves the working bridge and generated files when a
+  configured Python module changes during candidate preparation.
+- Python encodes ASCII subprocess frames without per-character scanning,
+  preserving the wire format and Unicode handling.
 - `tywrap-ir` 0.3.1 collects generic parameters used only in overload annotations.
   Its package version changes independently from the npm package.
 

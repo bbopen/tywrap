@@ -1,7 +1,7 @@
 # Architecture decision for 0.11
 
 Decision: proceed with the reviewed core and retain the extensions as bounded
-prototypes. Final release checks and publication verification remain required.
+prototypes. This decision does not replace release checks or publication verification.
 
 ## Decision
 
