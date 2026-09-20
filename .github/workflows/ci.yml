@@ -78,6 +78,29 @@ jobs:
           files: ./coverage/lcov.info
           fail_ci_if_error: false
 
+  isolated-consumer:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: Build package candidate
+        run: npm run build
+      - name: Run isolated consumer check
+        env:
+          CI: '1'
+        run: npx vitest run --config vitest.isolated-consumer.config.ts
+
   python-suite-core:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
@@ -359,6 +382,7 @@ jobs:
     needs:
       - lint
       - test
+      - isolated-consumer
       - python-suite-core
       - python-suite-data
       - living-app
@@ -373,6 +397,7 @@ jobs:
           fail=0
           if [ "${{ needs.lint.result }}" != "success" ]; then echo "::error::lint: ${{ needs.lint.result }}"; fail=1; fi
           if [ "${{ needs.test.result }}" != "success" ]; then echo "::error::test: ${{ needs.test.result }}"; fail=1; fi
+          if [ "${{ needs.isolated-consumer.result }}" != "success" ]; then echo "::error::isolated-consumer: ${{ needs.isolated-consumer.result }}"; fail=1; fi
           if [ "${{ needs.python-suite-core.result }}" != "success" ]; then echo "::error::python-suite-core: ${{ needs.python-suite-core.result }}"; fail=1; fi
           if [ "${{ needs.python-suite-data.result }}" != "success" ]; then echo "::error::python-suite-data: ${{ needs.python-suite-data.result }}"; fail=1; fi
           if [ "${{ needs.living-app.result }}" != "success" ]; then echo "::error::living-app: ${{ needs.living-app.result }}"; fail=1; fi
