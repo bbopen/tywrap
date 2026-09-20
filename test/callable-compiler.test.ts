@@ -375,6 +375,81 @@ describe('compileContract', () => {
     ]));
   });
 
+  it('warns when keyword-only overloads overlap despite declaration order', () => {
+    const source = rawIr.functions[0]!;
+    const x = { name: 'x', kind: 'KEYWORD_ONLY', annotation: 'str', default: false };
+    const y = { name: 'y', kind: 'KEYWORD_ONLY', annotation: 'int', default: false };
+    const ir = validateIrContract({
+      ...rawIr,
+      functions: [{
+        ...source,
+        name: 'choose', qualname: 'fixture.choose',
+        parameters: [x, y],
+        overloads: [
+          { parameters: [x, y], returns: 'str' },
+          { parameters: [y, x], returns: 'int' },
+        ],
+      }],
+      classes: [],
+    }, 'keyword overload contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        functions: [{ ...moduleModel.functions[0]!, name: 'choose' }],
+        classes: [],
+      },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'overload-ambiguous', path: '$.functions[0].overloads[1]' }),
+    ]));
+  });
+
+  it('takes callable types from validated IR, not from the export selection model', () => {
+    const source = rawIr.functions[1]!;
+    const ir = validateIrContract({
+      ...rawIr,
+      functions: [{
+        ...source,
+        name: 'echo', qualname: 'fixture.echo',
+        parameters: [{ name: 'value', kind: 'POSITIONAL_OR_KEYWORD', annotation: 'str', default: false }],
+        returns: 'str',
+      }],
+      classes: [],
+    }, 'IR authority contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const forged = {
+      ...moduleModel.functions[1]!,
+      name: 'echo',
+      parameters: [{
+        name: 'value', type: { kind: 'primitive', name: 'int' } as PythonType,
+        optional: false, varArgs: false, kwArgs: false,
+      }],
+      returnType: { kind: 'primitive', name: 'int' } as PythonType,
+    };
+    const compiled = compileContract(ir.contract, {
+      module: { ...moduleModel, functions: [forged], classes: [] },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.module.functions[0]?.parameters[0]?.type).toEqual({ kind: 'primitive', name: 'str' });
+    expect(compiled.callables[0]?.result.resolution).toMatchObject({
+      status: 'supported', value: { kind: 'string' },
+    });
+    expect(compiled.generated.declaration).toContain('echo(value: string): Promise<string>');
+    expect(compiled.generated.declaration).not.toContain('echo(value: number)');
+  });
+
   it('selects a class method overload without validating its implicit cls receiver', async () => {
     const source = rawIr.functions[0]!;
     const receiver = {
