@@ -4,6 +4,7 @@
   "base": {
     "file": "value-contracts.v2.json",
     "revision": 2,
+    "hashCanonicalization": "UTF-8 with LF line endings",
     "sha256": "554f84b75126513250a7eb773294347fe4dc42262e4ac52f86e7aa19cc65bb4e"
   },
   "transport": "tywrap/1 value RPC",

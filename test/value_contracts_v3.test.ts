@@ -12,7 +12,7 @@ const specification = JSON.parse(
   readFileSync(new URL('../docs/maintainers/value-contracts.v3.json', import.meta.url), 'utf8')
 ) as {
   revision: number;
-  base: { file: string; revision: number; sha256: string };
+  base: { file: string; revision: number; hashCanonicalization: string; sha256: string };
   exactIntegerEnvelopeCodecVersion: number;
   callPolicy: string;
   requiredCapability: string;
@@ -49,7 +49,11 @@ describe('exact integer value policy', () => {
     expect(fixtures.revision).toBe(VALUE_CONTRACT_V3_REVISION);
     expect(specification.base.revision).toBe(VALUE_CONTRACT_REVISION);
     expect(baseRevision.revision).toBe(VALUE_CONTRACT_REVISION);
-    expect(createHash('sha256').update(base).digest('hex')).toBe(specification.base.sha256);
+    expect(specification.base.hashCanonicalization).toBe('UTF-8 with LF line endings');
+    const canonical = base.toString('utf8').replace(/\r\n/g, '\n');
+    expect(createHash('sha256').update(canonical, 'utf8').digest('hex')).toBe(
+      specification.base.sha256
+    );
   });
 
   it('keeps semantic revision, envelope version, and call policy distinct', () => {

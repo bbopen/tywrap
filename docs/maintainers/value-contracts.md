@@ -46,35 +46,35 @@ These checks do not walk Arrow payloads again for schema validation.
 
 ## Exact bigint extension for #337
 
-This extension is a design sketch. The 0.11 policy still rejects unsafe plain
-Python integers.
+The [revision-3 policy](value-contracts.v3.json) is a bounded prototype. It pins
+the revision-2 policy and adds one `integer-exact` leaf. Revision 2 remains the
+default safe-number policy. No default bridge supports bigint calls yet.
 
-Choose an explicit callable option, `integerMode: 'bigint'`. When enabled, map
-Python `int` to TypeScript `bigint` for both parameters and returns. The return
-validator must require `typeof value === 'bigint'`, including every record and
-sequence member. Keep `bool` separate. Calls without the option keep `number`
-and the safe range.
+The internal `EXACT_INTEGER_VALUE_CONVERSION` selects revision 3 for a fixture
+module. It maps Python `int` to TypeScript `bigint` in parameters and returns.
+The generated validator requires `bigint` at nested integer nodes. Python `bool`
+and finite `float` keep their revision-2 rules. The compiler requires an
+explicit `exact-integer-adapter` capability. It is unavailable by default. The
+prototype has no public per-callable option for mixed modules.
 
-Add a version 2 integer value envelope with a canonical signed decimal string. A
-sample value is
+The opted call uses a version-2 integer envelope with a canonical signed decimal
+string. A sample value is
 `{"__tywrap__":"integer","codecVersion":2,"encoding":"decimal","value":"18446744073709551617"}`.
-The request encoder and Python request decoder must validate the same grammar
-and digit limit. The response encoder and TypeScript decoder must do the same.
-Use `BigInt` only after validation. Keep Arrow int64 columns on their current
-Arrow path.
+The companion test adapter must check the grammar and 4096-digit limit in both
+directions. It must use `BigInt` only after validation. Arrow int64 keeps its
+current path. Contract revision 3, envelope `codecVersion: 2`, per-call policy
+`bigint-v2`, and RPC protocol `tywrap/1` are different version labels.
 
-The bridge must advertise exact integer support during capability negotiation. A
-generated bigint wrapper must reject an older bridge before its first call. The
-new bridge must emit version 2 integer envelopes only when the call opts in. An
-older client therefore continues to receive the 0.11 safe integer policy.
-Unknown integer envelopes, mixed versions, oversized strings, and malformed
-decimal values must fail with a path. Do not guess a conversion.
+The bound test provider must see `exactIntegerDecimalV2` in bridge metadata
+before it sends a tagged request. It sets `params.valuePolicy.integer` to
+`bigint-v2`. Calls without that policy keep revision-2 behavior. The production
+bridge does not negotiate this capability. Unknown versions and malformed
+decimal values must fail with a path.
 
-Acceptance evidence still needed: a bounded prototype must round trip positive
-and negative values beyond 64 bits through nested records and arrays. It must
-test bigint inputs, malformed tags, payload limits, and both mixed-version
-directions. An independent review must approve the wire grammar, capability
-rule, generated types, and migration cost before #337 can close.
+The [revision-3 fixtures](value-contract-fixtures.v3.json) record exact values,
+negative zero, and migration cost. The generated proof still needs integrated CI
+and independent review before #337 can close. A prototype does not enable bigint
+by default or authorize a release.
 
 ## Dataclass return extension for #339
 
