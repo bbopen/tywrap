@@ -30,6 +30,7 @@ export class DecodedProvenance {
   }
 
   recordChild(parent: object, key: string | number, metadata: DecodedShapeMetadata): void {
+    key = this.normalizeKey(parent, key);
     let entries = this.children.get(parent);
     if (!entries) {
       entries = new Map();
@@ -47,7 +48,19 @@ export class DecodedProvenance {
   }
 
   atChild(parent: object, key: string | number): DecodedShapeMetadata | undefined {
-    return this.children.get(parent)?.get(key);
+    return this.children.get(parent)?.get(this.normalizeKey(parent, key));
+  }
+
+  private normalizeKey(parent: object, key: string | number): string | number {
+    if (
+      Array.isArray(parent) &&
+      typeof key === 'string' &&
+      /^(0|[1-9]\d*)$/.test(key) &&
+      Number.isSafeInteger(Number(key))
+    ) {
+      return Number(key);
+    }
+    return key;
   }
 
   private claimEntry(): void {

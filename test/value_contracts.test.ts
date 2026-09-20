@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
+import { BridgeCodec } from '../src/runtime/bridge-codec.js';
+import { DecodedProvenance } from '../src/runtime/decoded-provenance.js';
 import {
   MAX_SAFE_JSON_INTEGER,
   VALUE_CONTRACT_REVISION,
@@ -15,7 +17,13 @@ import {
 
 const specification = JSON.parse(
   readFileSync(new URL('../docs/maintainers/value-contracts.v2.json', import.meta.url), 'utf8')
-) as { revision: number; rules: { integer: { minimum: number; maximum: number } } };
+) as {
+  revision: number;
+  rules: {
+    integer: { minimum: number; maximum: number };
+    bytes: { decodedAs: string };
+  };
+};
 const fixtures = JSON.parse(
   readFileSync(
     new URL('../docs/maintainers/value-contract-fixtures.v2.json', import.meta.url),
@@ -23,6 +31,12 @@ const fixtures = JSON.parse(
   )
 ) as {
   revision: number;
+  bytesCases: readonly {
+    logicalHex: string;
+    requestEnvelope: object;
+    responseEnvelope: object;
+    decodedAs: string;
+  }[];
   binary16Cases: readonly { wordHex: string; outcome: string }[];
 };
 
@@ -85,6 +99,23 @@ describe('frozen value policy', () => {
     expect(isSafeJsonInteger(-(2 ** 53))).toBe(false);
     expect(isSafeJsonInteger(1.5)).toBe(false);
   });
+
+  it('matches the shared bytes request and response fixtures', async () => {
+    const codec = new BridgeCodec();
+    expect(specification.rules.bytes.decodedAs).toBe('JavaScript Uint8Array');
+    for (const fixture of fixtures.bytesCases) {
+      const bytes = Uint8Array.from(Buffer.from(fixture.logicalHex, 'hex'));
+      const request = JSON.parse(codec.encodeRequest({ value: bytes }));
+      expect(request.value).toEqual(fixture.requestEnvelope);
+
+      const decoded = await codec.decodeResponseAsync<Uint8Array>(
+        JSON.stringify({ id: 1, protocol: 'tywrap/1', result: fixture.responseEnvelope })
+      );
+      expect(decoded).toBeInstanceOf(Uint8Array);
+      expect([...decoded]).toEqual([...bytes]);
+      expect(`Uint8Array[${[...decoded].join(',')}]`).toBe(fixture.decodedAs);
+    }
+  });
 });
 
 describe('Arrow float16 value contract', () => {
@@ -127,6 +158,13 @@ describe('Arrow float16 value contract', () => {
       [1.5, -2.25],
       [2 ** -24, -0],
     ]);
+  });
+
+  it('carries Arrow scalar float16 proof with the decoded number', async () => {
+    registerWords([0x3e00]);
+    const provenance = new DecodedProvenance();
+    expect(await decodeValueAsync(envelope([]), provenance)).toBe(1.5);
+    expect(provenance.atRoot()).toEqual({ marker: 'ndarray', dims: 0, dtype: 'float16' });
   });
 
   it('uses the ndarray rule inside nested Torch and record values', async () => {
