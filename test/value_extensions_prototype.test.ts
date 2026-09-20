@@ -211,6 +211,23 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
       });
       expect(encoded.status).toBe(0);
       expect(encoded.stdout.trim()).toBe(JSON.stringify(nested));
+      const wire = Buffer.from(JSON.stringify(nested), 'utf8');
+      const exact = spawnSync(pythonPath, [pythonScript, 'encode-integer-limited'], {
+        input: JSON.stringify({ value: nested, limit: wire.length }),
+      });
+      expect(exact.status).toBe(0);
+      expect(exact.stdout).toEqual(Buffer.concat([wire, Buffer.from('\n')]));
+      expect(exact.stdout.subarray(0, -1).length).toBe(wire.length);
+      const tooSmall = spawnSync(pythonPath, [pythonScript, 'encode-integer-limited'], {
+        input: JSON.stringify({ value: nested, limit: wire.length - 1 }),
+      });
+      expect(tooSmall.status).not.toBe(0);
+
+      const short = spawnSync(pythonPath, [pythonScript, 'encode-integer-limited'], {
+        input: JSON.stringify({ value: 'é', limit: 4 }),
+      });
+      expect(short.stdout).toEqual(Buffer.from('"é"\n', 'utf8'));
+      expect(short.stdout.subarray(0, -1).length).toBe(4);
       const bad = spawnSync(pythonPath, [pythonScript, 'encode-integer'], {
         input: JSON.stringify('\ud800'),
         encoding: 'utf8',
