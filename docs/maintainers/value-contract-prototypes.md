@@ -77,6 +77,12 @@ Each tagged integer adds 73 JSON bytes beyond its decimal digits. For example,
 Nested collections multiply that cost by their integer count. Teams must measure
 representative call payloads against the byte limit before enabling the option.
 
+For a compact `{"args": [...]}` payload with three integers, a boolean, and a
+float, the safe-value example grows from 28 to 247 UTF-8 bytes (8.82 times).
+Using one 81-bit and one 131-bit integer grows the same shape from 91 to 310
+bytes (3.41 times). These figures exclude the surrounding RPC envelope and do
+not estimate application traffic.
+
 The client must check the bridge capability before it sends tagged values. This
 requires a coordinated client and bridge rollout. Old bridges reject the opted
 call. Arrow int64 columns keep their current type and wire format.
