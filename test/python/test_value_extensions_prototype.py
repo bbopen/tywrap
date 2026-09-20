@@ -252,3 +252,13 @@ def test_dataclass_nested_values_and_failures() -> None:
         prototype.encode_dataclass(
             prototype.Point(1, 2), prototype.Point, max_payload_bytes=60
         )
+
+    @dataclass
+    class Nested:
+        value: object
+
+    deep: object = 1
+    for _ in range(prototype.MAX_DEPTH + 1):
+        deep = Nested(deep)
+    with pytest.raises(prototype.PrototypeError, match='maximum depth'):
+        prototype.encode_dataclass(deep, Nested)
