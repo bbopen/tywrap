@@ -6,7 +6,7 @@ import json
 import sys
 from typing import Any
 
-from value_contract_exact_integer import combine_exact
+from value_contract_exact_integer import combine_exact, echo_exact
 from value_extensions import (
     MAX_PAYLOAD_BYTES,
     PrototypeError,
@@ -19,13 +19,18 @@ from value_extensions import (
 def main() -> None:
     trusted_contract: dict[str, Any] = json.loads(sys.argv[1])
     bridge_meta: dict[str, Any] = json.loads(sys.argv[2])
+    function_name = sys.argv[3]
+    functions = {'combine_exact': combine_exact, 'echo_exact': echo_exact}
+    function = functions.get(function_name)
+    if function is None:
+        raise PrototypeError('unknown exact-integer callable')
     raw = sys.stdin.buffer.read(MAX_PAYLOAD_BYTES + 1)
     if len(raw) > MAX_PAYLOAD_BYTES:
         raise PrototypeError('input payload exceeds byte limit')
     request: dict[str, Any] = json.loads(raw)
     if (request.get('module'), request.get('functionName')) != (
         'value_contract_exact_integer',
-        'combine_exact',
+        function_name,
     ):
         raise PrototypeError('unexpected exact-integer callable')
     params = request.get('params')
@@ -46,7 +51,7 @@ def main() -> None:
     input_record = dict(zip(fields, args, strict=True))
     decoded = decode_exact_integers(input_record, trusted_contract)
     assert isinstance(decoded, dict)
-    result = combine_exact(**decoded)
+    result = function(**decoded)
     encoded = encode_exact_integers(result)
     wire = json.dumps(
         encoded, allow_nan=False, ensure_ascii=False, separators=(',', ':')

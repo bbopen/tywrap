@@ -83,9 +83,9 @@ function compileInteger(ir: unknown, exact: boolean, bound = false): CompiledCon
   });
 }
 
-function descriptorFrom(compiled: CompiledContract): ExactInvocationDescriptor {
-  const callable = compiled.callables.find(item => item.name === 'combine_exact');
-  const functionModel = compiled.module.functions.find(item => item.name === 'combine_exact');
+function descriptorFrom(compiled: CompiledContract, name: string): ExactInvocationDescriptor {
+  const callable = compiled.callables.find(item => item.name === name);
+  const functionModel = compiled.module.functions.find(item => item.name === name);
   if (!callable || !functionModel || callable.result.resolution.status !== 'supported') {
     throw new Error('Exact callable result is unresolved');
   }
@@ -114,6 +114,7 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(fixturePath) || !existsSync(pyt
       expect(ordinary.generated.declaration).toContain('value: number');
       expect(ordinary.generated.declaration).toContain('nested: number[]');
       expect(ordinary.generated.declaration).toContain('Promise<number>');
+      expect(ordinary.generated.declaration).toContain('Promise<number[][]>');
 
       const validated = validateIrContract(ir, 'exact integer capability control');
       expect(validated.ok).toBe(true);
@@ -131,13 +132,19 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(fixturePath) || !existsSync(pyt
 
     it('executes a bound bigint wrapper with pre-send capability checks', async () => {
       const compiled = compileInteger(analyzedIr(), true, true);
-      const descriptor = descriptorFrom(compiled);
-      expect(compiled.callables[0]?.requiredCapabilities).toContain('exact-integer-adapter');
+      const descriptors = {
+        combine_exact: descriptorFrom(compiled, 'combine_exact'),
+        echo_exact: descriptorFrom(compiled, 'echo_exact'),
+      };
+      for (const callable of compiled.callables) {
+        expect(callable.requiredCapabilities).toContain('exact-integer-adapter');
+      }
       expect(compiled.generated.declaration).toContain('value: bigint');
       expect(compiled.generated.declaration).toContain('nested: bigint[]');
       expect(compiled.generated.declaration).toContain('flag: boolean');
       expect(compiled.generated.declaration).toContain('ratio: number');
       expect(compiled.generated.declaration).toContain('Promise<bigint>');
+      expect(compiled.generated.declaration).toContain('Promise<bigint[][]>');
       expect(compiled.generated.typescript).toContain('"kind":"primitive","type":"bigint"');
       expect(compiled.generated.typescript).toContain('__tywrapRuntimeProvider().call');
 
@@ -148,6 +155,7 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(fixturePath) || !existsSync(pyt
         const consumerPath = join(temporary, 'consumer.ts');
         const binding = `
 import { getRuntimeBridge } from 'tywrap/runtime';
+const __tywrapExactDescriptors = ${JSON.stringify(descriptors)} as Record<string, unknown>;
 type PolicyCall = <T>(
   module: string,
   functionName: string,
@@ -176,8 +184,12 @@ function __tywrapRuntimeProvider() {
       kwargs?: Record<string, unknown>,
       validate?: (result: T) => void
     ): Promise<T> {
+      const descriptor = __tywrapExactDescriptors[functionName];
+      if (!descriptor) {
+        throw new Error('exact integer descriptor is missing');
+      }
       return bridge.callWithValuePolicy!<T>(
-        module, functionName, args, kwargs, validate, ${JSON.stringify(descriptor)}
+        module, functionName, args, kwargs, validate, descriptor
       );
     },
   };
@@ -190,18 +202,27 @@ function __tywrapRuntimeProvider() {
         await writeFile(declarationPath, compiled.generated.declaration, 'utf8');
         await writeFile(
           consumerPath,
-          `import { combineExact } from './value_contract_exact_integer.generated.js';
+          `import { combineExact, echoExact } from './value_contract_exact_integer.generated.js';
 const result: Promise<bigint> = combineExact(1n, [2n], true, 1.5);
+const nested: Promise<bigint[][]> = echoExact(1n, [2n]);
 result.then(value => {
   const valid: bigint = value;
   // @ts-expect-error Exact result is bigint.
   const wrong: number = value;
   return valid + BigInt(wrong);
 });
+nested.then(rows => {
+  const valid: bigint = rows[0]![0]!;
+  // @ts-expect-error Nested exact result is bigint.
+  const wrong: number = rows[0]![0]!;
+  return valid + BigInt(wrong);
+});
 // @ts-expect-error Exact input is bigint.
 combineExact(1, [2n], true, 1.5);
 // @ts-expect-error Nested exact input is bigint[].
-combineExact(1n, [2], true, 1.5);`,
+combineExact(1n, [2], true, 1.5);
+// @ts-expect-error Nested exact input is bigint[].
+echoExact(1n, [2]);`,
           'utf8'
         );
         const program = ts.createProgram([consumerPath], {
@@ -221,6 +242,7 @@ combineExact(1n, [2], true, 1.5);`,
 
         let sent = 0;
         let responseOverride: unknown;
+        let maxRequestBytes = 10 * 1024 * 1024;
         const bridge = {
           meta: { valueCapabilities: ['exactIntegerDecimalV2'] },
           async call<T>(): Promise<T> {
@@ -234,11 +256,9 @@ combineExact(1n, [2], true, 1.5);`,
             validate?: (result: T) => void,
             invocation?: ExactInvocationDescriptor
           ): Promise<T> {
-            expect([moduleName, functionName]).toEqual([
-              'value_contract_exact_integer',
-              'combine_exact',
-            ]);
-            expect(invocation).toEqual(descriptor);
+            expect(moduleName).toBe('value_contract_exact_integer');
+            expect(['combine_exact', 'echo_exact']).toContain(functionName);
+            expect(invocation).toEqual(descriptors[functionName as keyof typeof descriptors]);
             if (!invocation || invocation.args.kind !== 'record') {
               throw new Error('Exact invocation descriptor is missing');
             }
@@ -254,14 +274,19 @@ combineExact(1n, [2], true, 1.5);`,
               },
             };
             const raw = JSON.stringify(request);
-            if (new TextEncoder().encode(raw).length > 10 * 1024 * 1024) {
+            if (new TextEncoder().encode(raw).length > maxRequestBytes) {
               throw new Error('exact request exceeds byte limit');
             }
             sent += 1;
             const response = JSON.parse(
               execFileSync(
                 PYTHON ?? 'python3',
-                [pythonAdapter, JSON.stringify(invocation.args), JSON.stringify(this.meta)],
+                [
+                  pythonAdapter,
+                  JSON.stringify(invocation.args),
+                  JSON.stringify(this.meta),
+                  functionName,
+                ],
                 { input: raw, env: pythonEnvironment, encoding: 'utf8', maxBuffer: 1024 * 1024 }
               )
             ) as unknown;
@@ -282,6 +307,7 @@ combineExact(1n, [2], true, 1.5);`,
             flag: boolean,
             ratio: number
           ) => Promise<bigint>;
+          echoExact: (value: bigint, nested: bigint[]) => Promise<bigint[][]>;
         };
 
         const positive = 2n ** 80n + 1n;
@@ -292,6 +318,19 @@ combineExact(1n, [2], true, 1.5);`,
         await expect(generated.combineExact(7n, [2n], true, 0)).resolves.toBe(9n);
         await expect(generated.combineExact(7n, [2n], true, -0)).resolves.toBe(-9n);
         await expect(generated.combineExact(7n, [2n], false, 1.5)).resolves.toBe(-9n);
+        await expect(generated.echoExact(positive, [negative, 7n])).resolves.toEqual([
+          [positive],
+          [negative, 7n],
+          [-positive],
+        ]);
+
+        const beforeOversize = sent;
+        maxRequestBytes = 100;
+        await expect(generated.echoExact(7n, [2n])).rejects.toThrow(
+          /exact request exceeds byte limit/
+        );
+        expect(sent).toBe(beforeOversize);
+        maxRequestBytes = 10 * 1024 * 1024;
 
         const beforeMissing = sent;
         bridge.meta = { valueCapabilities: [] };
@@ -321,12 +360,13 @@ combineExact(1n, [2], true, 1.5);`,
           },
           async callWithValuePolicy<T>(
             _module: string,
-            _functionName: string,
+            functionName: string,
             _args: unknown[],
             _kwargs?: Record<string, unknown>,
             validate?: (result: T) => void
           ): Promise<T> {
-            const wrong = 9 as unknown as T;
+            const wrong =
+              functionName === 'echo_exact' ? ([[7n], [2, 3n]] as unknown as T) : (9 as T);
             validate?.(wrong);
             return wrong;
           },
@@ -336,6 +376,7 @@ combineExact(1n, [2], true, 1.5);`,
         await expect(generated.combineExact(7n, [2n], true, 1.5)).rejects.toThrow(
           BridgeValidationError
         );
+        await expect(generated.echoExact(7n, [2n])).rejects.toThrow(BridgeValidationError);
 
         const ordinary = compileInteger(analyzedIr(), false);
         const ordinaryPath = join(temporary, 'value_contract_integer_default.generated.mjs');
@@ -371,6 +412,28 @@ combineExact(1n, [2], true, 1.5);`,
         await expect(defaultGenerated.combineExact(7, [2], true, 1.5)).resolves.toBe(9);
         expect(ordinaryCalls).toBe(1);
         expect(exactCalls).toBe(0);
+
+        let serverLimitError = '';
+        try {
+          execFileSync(
+            PYTHON ?? 'python3',
+            [
+              pythonAdapter,
+              JSON.stringify(descriptors.echo_exact.args),
+              JSON.stringify(bridge.meta),
+              'echo_exact',
+            ],
+            {
+              input: Buffer.alloc(10 * 1024 * 1024 + 1, 0x20),
+              env: pythonEnvironment,
+              encoding: 'utf8',
+              maxBuffer: 1024 * 1024,
+            }
+          );
+        } catch (error) {
+          serverLimitError = String((error as { stderr?: string }).stderr ?? error);
+        }
+        expect(serverLimitError).toContain('input payload exceeds byte limit');
       } finally {
         clearRuntimeBridge();
         await rm(temporary, { recursive: true, force: true });

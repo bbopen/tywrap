@@ -66,12 +66,13 @@ checks do not prove equal byte counts for alternate numeric JSON spellings.
 The bounded tests round trip positive and negative values beyond 64 bits. They
 cover floats, booleans, nested records, malformed tags, digit limits, byte
 limits, and old bridges. `test/value_extensions_generated_integer.test.ts` uses
-analyzer IR to check `bigint` input, `bigint[]` input, `Promise<bigint>` output,
-and the generated bigint return validator. It also checks signed zero and that
-an incapable bridge receives no exact request. The same fixture under revision 2
-keeps `number` types and uses an ordinary call. Production still needs a public
-opt-in selector, bridge capability negotiation, and application migration
-measurements.
+analyzer IR to check `bigint` and `bigint[]` inputs, `Promise<bigint>` and
+`Promise<bigint[][]>` outputs, and generated bigint return validation at a
+nested index. It checks signed zero, a client request limit before dispatch,
+the Python raw input limit, and that an incapable bridge receives no exact
+request. The same fixture under revision 2 keeps `number` types and uses an
+ordinary call. Production still needs a public opt-in selector, bridge
+capability negotiation, and application migration measurements.
 
 ### Exact integer migration cost
 
