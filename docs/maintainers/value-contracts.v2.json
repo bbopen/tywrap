@@ -71,6 +71,6 @@
     "wireChange": false,
     "unknownVersion": "reject",
     "unsafeInteger": "previous clients could round; new producers reject",
-    "generatedWrappers": "regenerate when callable-contract code consumes revision 1"
+    "generatedWrappers": "regenerate when callable-contract code consumes revision 2"
   }
 }
