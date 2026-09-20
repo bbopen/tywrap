@@ -315,7 +315,9 @@ void wrong;
     try {
       const importDir = join(tempDir, 'py');
       await mkdir(importDir, { recursive: true });
-      await writeFile(join(importDir, 'generic_overload.py'), `from typing import TypeVar, overload
+      await writeFile(
+        join(importDir, 'generic_overload.py'),
+        `from typing import TypeVar, overload
 
 T = TypeVar("T")
 
@@ -327,7 +329,9 @@ def choose(value: None) -> None: ...
 
 def choose(value: object) -> object:
     return value
-`, 'utf8');
+`,
+        'utf8'
+      );
       const outDir = join(tempDir, 'generated');
       const result = await generate({
         pythonModules: { generic_overload: { runtime: 'node', typeHints: 'strict' } },
@@ -340,19 +344,39 @@ def choose(value: object) -> object:
       const declaration = await fsUtils.readFile(join(outDir, 'generic_overload.generated.d.ts'));
       expect(declaration).toContain('export function choose<T>(value: T): Promise<T>;');
       const consumerPath = join(tempDir, 'consumer.ts');
-      await writeFile(consumerPath, `import { choose } from './generated/generic_overload.generated.js';
+      await writeFile(
+        consumerPath,
+        `import { choose } from './generated/generic_overload.generated.js';
 
 const text: Promise<string> = choose('key');
 const integer: Promise<number> = choose(2);
 void text;
 void integer;
-`, 'utf8');
+`,
+        'utf8'
+      );
       const tscPath = join(process.cwd(), 'node_modules', 'typescript', 'lib', 'tsc.js');
-      const compile = await processUtils.exec(process.execPath, [
-        tscPath, '--ignoreConfig', '--noEmit', '--pretty', 'false', '--target', 'ES2022',
-        '--lib', 'ES2022,DOM,DOM.Iterable', '--module', 'ESNext', '--moduleResolution',
-        'bundler', '--skipLibCheck', consumerPath,
-      ], { cwd: process.cwd(), timeoutMs: 30_000 });
+      const compile = await processUtils.exec(
+        process.execPath,
+        [
+          tscPath,
+          '--ignoreConfig',
+          '--noEmit',
+          '--pretty',
+          'false',
+          '--target',
+          'ES2022',
+          '--lib',
+          'ES2022,DOM,DOM.Iterable',
+          '--module',
+          'ESNext',
+          '--moduleResolution',
+          'bundler',
+          '--skipLibCheck',
+          consumerPath,
+        ],
+        { cwd: process.cwd(), timeoutMs: 30_000 }
+      );
       expect(compile.code, `${compile.stdout}\n${compile.stderr}`).toBe(0);
       expect(compile.stderr).toBe('');
     } finally {

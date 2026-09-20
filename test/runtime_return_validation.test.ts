@@ -38,9 +38,7 @@ describe('generated return validators', () => {
     );
     expect(validator({ count: 42 })).toEqual({ count: 42 });
     expect(() => validator({ count: 1.5 })).toThrow(BridgeValidationError);
-    expect(() => validator({ count: Number.MAX_SAFE_INTEGER + 1 })).toThrow(
-      BridgeValidationError
-    );
+    expect(() => validator({ count: Number.MAX_SAFE_INTEGER + 1 })).toThrow(BridgeValidationError);
   });
 
   it('requires per-call provenance for a scalar float16 ndarray', () => {
@@ -69,13 +67,16 @@ describe('generated return validators', () => {
     const proof = new DecodedProvenance();
     proof.recordChild(rows[0]!, 0, { marker: 'ndarray', dims: 0, dtype: 'float16' });
     proof.recordChild(result, 'scalar', { marker: 'ndarray', dims: 0, dtype: 'float16' });
-    const validate = createReturnValidator({
-      kind: 'record',
-      fields: {
-        rows: { schema: { kind: 'array', element: { kind: 'tuple', elements: [scalar] } } },
-        scalar: { schema: scalar },
+    const validate = createReturnValidator(
+      {
+        kind: 'record',
+        fields: {
+          rows: { schema: { kind: 'array', element: { kind: 'tuple', elements: [scalar] } } },
+          scalar: { schema: scalar },
+        },
       },
-    }, 'fixture.nestedScalar');
+      'fixture.nestedScalar'
+    );
     expect(validate(result, proof)).toBe(result);
     expect(() => validate(result)).toThrow(BridgeValidationError);
 
@@ -114,8 +115,20 @@ describe('generated return validators', () => {
       },
     ] as const;
     const fallback = createReturnValidator({ kind: 'any' }, 'fixture.ambiguous');
-    const oneArg = selectOverloadReturnValidator(overloads, ['key'], undefined, fallback, 'fixture.ambiguous');
-    const twoArgs = selectOverloadReturnValidator(overloads, ['key', 2], undefined, fallback, 'fixture.ambiguous');
+    const oneArg = selectOverloadReturnValidator(
+      overloads,
+      ['key'],
+      undefined,
+      fallback,
+      'fixture.ambiguous'
+    );
+    const twoArgs = selectOverloadReturnValidator(
+      overloads,
+      ['key', 2],
+      undefined,
+      fallback,
+      'fixture.ambiguous'
+    );
     expect(() => oneArg(4)).toThrow(BridgeValidationError);
     expect(oneArg('text')).toBe('text');
     expect(twoArgs(4)).toBe(4);
