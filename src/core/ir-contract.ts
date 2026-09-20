@@ -205,7 +205,11 @@ function visitArray(
   }
 }
 
-function recordAt(value: unknown, path: string, state: ValidationState): Record<string, unknown> | null {
+function recordAt(
+  value: unknown,
+  path: string,
+  state: ValidationState
+): Record<string, unknown> | null {
   if (!isRecord(value)) {
     state.invalid(path, `${path} must be an object.`);
     return null;
@@ -358,7 +362,8 @@ function validateFunction(value: unknown, path: string, state: ValidationState):
   const parameters = requiredArray(callable, 'parameters', path, state);
   if (parameters) {
     visitArray(parameters, `${path}.parameters`, state, (parameter, entryPath) =>
-      validateParameter(parameter, entryPath, state));
+      validateParameter(parameter, entryPath, state)
+    );
   }
   requiredNullableString(callable, 'returns', path, state);
   requiredBoolean(callable, 'is_async', path, state);
@@ -366,7 +371,8 @@ function validateFunction(value: unknown, path: string, state: ValidationState):
   const typeParameters = requiredArray(callable, 'type_params', path, state);
   if (typeParameters) {
     visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
-      validateTypeParameter(parameter, entryPath, state));
+      validateTypeParameter(parameter, entryPath, state)
+    );
   }
   const methodKind = requiredString(callable, 'method_kind', path, state);
   if (methodKind !== null && !METHOD_KINDS.has(methodKind)) {
@@ -381,8 +387,12 @@ function validateFunction(value: unknown, path: string, state: ValidationState):
       }
       const overloadParameters = requiredArray(signature, 'parameters', overloadPath, state);
       if (overloadParameters) {
-        visitArray(overloadParameters, `${overloadPath}.parameters`, state,
-          (parameter, entryPath) => validateParameter(parameter, entryPath, state));
+        visitArray(
+          overloadParameters,
+          `${overloadPath}.parameters`,
+          state,
+          (parameter, entryPath) => validateParameter(parameter, entryPath, state)
+        );
       }
       requiredNullableString(signature, 'returns', overloadPath, state);
     });
@@ -416,7 +426,8 @@ function validateClass(value: unknown, path: string, state: ValidationState): vo
   const methods = requiredArray(cls, 'methods', path, state);
   if (methods) {
     visitArray(methods, `${path}.methods`, state, (method, entryPath) =>
-      validateFunction(method, entryPath, state));
+      validateFunction(method, entryPath, state)
+    );
   }
   requiredBoolean(cls, 'typed_dict', path, state);
   const total = requiredValue(cls, 'total', path, state);
@@ -426,7 +437,8 @@ function validateClass(value: unknown, path: string, state: ValidationState): vo
   const fields = requiredArray(cls, 'fields', path, state);
   if (fields) {
     visitArray(fields, `${path}.fields`, state, (field, entryPath) =>
-      validateParameter(field, entryPath, state, FIELD_KINDS));
+      validateParameter(field, entryPath, state, FIELD_KINDS)
+    );
   }
   requiredBoolean(cls, 'is_protocol', path, state);
   requiredBoolean(cls, 'is_namedtuple', path, state);
@@ -435,12 +447,14 @@ function validateClass(value: unknown, path: string, state: ValidationState): vo
   const typeParameters = requiredArray(cls, 'type_params', path, state);
   if (typeParameters) {
     visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
-      validateTypeParameter(parameter, entryPath, state));
+      validateTypeParameter(parameter, entryPath, state)
+    );
   }
   const accessors = requiredArray(cls, 'accessors', path, state);
   if (accessors) {
     visitArray(accessors, `${path}.accessors`, state, (accessor, entryPath) =>
-      validateAccessor(accessor, entryPath, state));
+      validateAccessor(accessor, entryPath, state)
+    );
   }
 }
 
@@ -466,7 +480,8 @@ function validateTypeAlias(value: unknown, path: string, state: ValidationState)
   const typeParameters = requiredArray(alias, 'type_params', path, state);
   if (typeParameters) {
     visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
-      validateTypeParameter(parameter, entryPath, state));
+      validateTypeParameter(parameter, entryPath, state)
+    );
   }
 }
 
@@ -495,22 +510,26 @@ export function validateIrContract(
   const functions = requiredArray(contract, 'functions', '$', state);
   if (functions) {
     visitArray(functions, '$.functions', state, (functionValue, entryPath) =>
-      validateFunction(functionValue, entryPath, state));
+      validateFunction(functionValue, entryPath, state)
+    );
   }
   const classes = requiredArray(contract, 'classes', '$', state);
   if (classes) {
     visitArray(classes, '$.classes', state, (classValue, entryPath) =>
-      validateClass(classValue, entryPath, state));
+      validateClass(classValue, entryPath, state)
+    );
   }
   const constants = requiredArray(contract, 'constants', '$', state);
   if (constants) {
     visitArray(constants, '$.constants', state, (constant, entryPath) =>
-      validateConstant(constant, entryPath, state));
+      validateConstant(constant, entryPath, state)
+    );
   }
   const aliases = requiredArray(contract, 'type_aliases', '$', state);
   if (aliases) {
     visitArray(aliases, '$.type_aliases', state, (alias, entryPath) =>
-      validateTypeAlias(alias, entryPath, state));
+      validateTypeAlias(alias, entryPath, state)
+    );
   }
   const metadata = contract.metadata;
   if (metadata === undefined && !options.allowOmittedMetadata) {
