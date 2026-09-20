@@ -1,12 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
-import { BridgeDisposedError, BridgeValidationError } from 'tywrap';
-import { createBridgeReloader } from 'tywrap/dev';
+import { BridgeDisposedError } from 'tywrap';
 import { HttpBridge } from 'tywrap/http';
 import { NodeBridge } from 'tywrap/node';
 import { clearRuntimeBridge, getRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
@@ -23,8 +22,9 @@ import {
 import { CodeGenerator } from '../src/core/generator.js';
 import { validateIrContract } from '../src/core/ir-contract.js';
 import { transformIrToTsModel } from '../src/core/ir-model.js';
+import { createBridgeReloader } from '../src/dev.js';
 import { generate } from '../src/tywrap.js';
-import type { GeneratedCode, RuntimeExecution } from '../src/types/index.js';
+import type { GeneratedCode, PythonModule, RuntimeExecution } from '../src/types/index.js';
 import { getDefaultPythonPath } from '../src/utils/python.js';
 import { processUtils } from '../src/utils/runtime.js';
 import { PYTHON_AVAILABLE } from './helpers/python-probe.js';
@@ -88,8 +88,19 @@ const fixtureA = resolve('test/fixtures/python/binding_a');
 const fixtureB = resolve('test/fixtures/python/binding_b');
 const bridgeScript = resolve('runtime/python_bridge.py');
 const pythonPath = getDefaultPythonPath();
+const defaultExcludedExports = new Set([
+  'dataclass',
+  'property',
+  'staticmethod',
+  'classmethod',
+  'abstractmethod',
+  'cached_property',
+]);
 
-async function bindingTemplate(outputDir: string, moduleName: string): Promise<GeneratedCode> {
+async function bindingTemplate(
+  outputDir: string,
+  moduleName: string
+): Promise<{ baseline: GeneratedCode; template: GeneratedCode; module: PythonModule }> {
   const contractPath = join(outputDir, `${moduleName}.contract.json`);
   const parsed: unknown = JSON.parse(await readFile(contractPath, 'utf8'));
   const validated = validateIrContract(parsed, contractPath, { allowOmittedMetadata: true });
@@ -97,8 +108,11 @@ async function bindingTemplate(outputDir: string, moduleName: string): Promise<G
     throw new Error(`Invalid generated contract: ${JSON.stringify(validated.diagnostics)}`);
   }
   const generator = new CodeGenerator();
+  const model = transformIrToTsModel(validated.contract);
+  model.functions = model.functions.filter(func => !defaultExcludedExports.has(func.name));
+  model.classes = model.classes.filter(cls => !defaultExcludedExports.has(cls.name));
   const compiled = compileContract(validated.contract, {
-    module: transformIrToTsModel(validated.contract),
+    module: model,
     generator,
     conversion: DEFAULT_VALUE_CONVERSION,
     capabilities: DEFAULT_CALLABLE_CAPABILITIES,
@@ -114,7 +128,11 @@ async function bindingTemplate(outputDir: string, moduleName: string): Promise<G
   ) {
     throw new Error('Compiled contract differs from default generated output');
   }
-  return generator.generateModuleBindingTemplate(compiled.module);
+  return {
+    baseline: compiled.generated,
+    template: generator.generateModuleBindingTemplate(compiled.module),
+    module: compiled.module,
+  };
 }
 
 describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype', () => {
@@ -122,6 +140,7 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
   let generatedDir = '';
   let originalSource = '';
   let originalDeclaration = '';
+  let compiledModule: PythonModule;
   let prototype: BindingPrototypeCode;
   let clientModule: ClientModule;
   let legacyModule: LegacyModule;
@@ -142,13 +161,17 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
       join(generatedDir, 'binding_fixture.generated.d.ts'),
       'utf8'
     );
+    const compiled = await bindingTemplate(generatedDir, 'binding_fixture');
+    compiledModule = compiled.module;
+    expect(compiled.baseline.typescript).toBe(originalSource);
+    expect(compiled.baseline.declaration).toBe(originalDeclaration);
     prototype = renderClientBindingPrototype(
       {
         typescript: originalSource,
         declaration: originalDeclaration,
         metadata: { generatedAt: new Date(0), sourceFiles: [], runtime: 'auto', optimizations: [] },
       },
-      await bindingTemplate(generatedDir, 'binding_fixture'),
+      compiled.template,
       'binding_fixture'
     );
 
@@ -188,7 +211,9 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
 
   it('uses one generated call implementation and keeps default bytes intact', () => {
     const core = prototype.bindingPrototype.core.typescript;
-    expect(core.match(/__tywrapRuntimeProvider\(\)\.call/g)).toHaveLength(11);
+    const callableCount = (originalSource.match(/getRuntimeBridge\(\)\.call/g) ?? []).length;
+    expect(callableCount).toBeGreaterThan(0);
+    expect(core.match(/__tywrapRuntimeProvider\(\)\.call/g)).toHaveLength(callableCount);
     expect(prototype.typescript).not.toContain('.call<');
     expect(prototype.bindingPrototype.client.typescript).not.toContain('.call<');
     expect(originalSource).toContain('getRuntimeBridge().call');
@@ -204,11 +229,12 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
       Buffer.byteLength(prototype.declaration) +
       Buffer.byteLength(prototype.bindingPrototype.core.declaration) +
       Buffer.byteLength(prototype.bindingPrototype.client.declaration);
-    const sourceDeltaPerCallable = (optInSourceBytes - sourceBytes) / 11;
+    const sourceDeltaPerCallable = (optInSourceBytes - sourceBytes) / callableCount;
     expect(sourceDeltaPerCallable).toBeGreaterThan(0);
     console.info(
       JSON.stringify({
         fixture: 'binding_fixture',
+        callableCount,
         sourceBytes,
         declarationBytes,
         optInSourceBytes,
@@ -216,6 +242,47 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
         sourceDeltaPerCallable,
       })
     );
+  });
+
+  it('executes an allocated runtime getter without falling back to the registry', async () => {
+    const getter = '__tywrapRuntimeProvider1';
+    const template = new CodeGenerator().generateModuleBindingTemplate(
+      compiledModule,
+      false,
+      getter
+    );
+    const allocated = renderClientBindingPrototype(
+      {
+        typescript: originalSource,
+        declaration: originalDeclaration,
+        metadata: { generatedAt: new Date(0), sourceFiles: [], runtime: 'auto', optimizations: [] },
+      },
+      template,
+      'binding_fixture',
+      getter
+    );
+    expect(allocated.bindingPrototype.core.typescript).toContain(`${getter}().call`);
+    expect(allocated.bindingPrototype.core.typescript).not.toContain('getRuntimeBridge().call');
+    const allocatedDir = join(temporary, 'allocated');
+    await mkdir(allocatedDir);
+    for (const [stem, source] of [
+      ['binding_fixture.generated.core', allocated.bindingPrototype.core.typescript],
+      ['binding_fixture.generated.client', allocated.bindingPrototype.client.typescript],
+    ] as const) {
+      const javascript = ts.transpileModule(source, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(join(allocatedDir, `${stem}.js`), javascript, 'utf8');
+    }
+    const module = (await import(
+      pathToFileURL(join(allocatedDir, 'binding_fixture.generated.client.js')).href
+    )) as ClientModule;
+    const handle = module.bindRuntime(new LabeledRuntime('allocated'));
+    try {
+      await expect(handle.api.environment()).resolves.toBe('allocated');
+    } finally {
+      handle.dispose();
+    }
   });
 
   it('keeps two Python environments separate across interleaved and concurrent calls', async () => {
@@ -251,7 +318,7 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
       expect(await a.api.kwOnly({ label: 'ok' })).toBe('A:ok');
       expect(await a.api.echoBytes(new Uint8Array([1, 2, 3]))).toEqual(new Uint8Array([1, 2, 3]));
 
-      await expect(a.api.invalidReturn()).rejects.toBeInstanceOf(BridgeValidationError);
+      await expect(a.api.invalidReturn()).rejects.toThrow('Return validation failed');
       await expect(a.api.kwOnly()).rejects.toThrow('Missing required keyword-only');
       await expect(a.api.fail()).rejects.toThrow('A-failure');
       await expect(a.api.scale('bad' as never)).rejects.toThrow();
@@ -291,7 +358,7 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
       expect(await legacyModule.kwOnly({ label: 'ok' })).toBe('A:ok');
       expect(await legacyModule.echoBytes(new Uint8Array([4, 5]))).toEqual(new Uint8Array([4, 5]));
       await expect(legacyModule.kwOnly()).rejects.toThrow('Missing required keyword-only');
-      await expect(legacyModule.invalidReturn()).rejects.toBeInstanceOf(BridgeValidationError);
+      await expect(legacyModule.invalidReturn()).rejects.toThrow('Return validation failed');
       expect(await legacyModule.Client.label('x')).toBe('A:x');
     } finally {
       clearRuntimeBridge();
@@ -433,11 +500,9 @@ void wrong;
         performance: { caching: false, batching: false, compression: 'none' },
       });
       expect(result.failures).toEqual([]);
-      const source = await readFile(join(comparisonDir, 'advanced_types.generated.ts'), 'utf8');
-      const declaration = await readFile(
-        join(comparisonDir, 'advanced_types.generated.d.ts'),
-        'utf8'
-      );
+      const compiled = await bindingTemplate(comparisonDir, 'advanced_types');
+      const source = compiled.baseline.typescript;
+      const declaration = compiled.baseline.declaration;
       const rendered = renderClientBindingPrototype(
         {
           typescript: source,
@@ -449,7 +514,7 @@ void wrong;
             optimizations: [],
           },
         },
-        await bindingTemplate(comparisonDir, 'advanced_types'),
+        compiled.template,
         'advanced_types'
       );
       const callableCount = (source.match(/getRuntimeBridge\(\)\.call/g) ?? []).length;
