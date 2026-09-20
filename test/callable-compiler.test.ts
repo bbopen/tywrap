@@ -246,6 +246,9 @@ describe('compileContract', () => {
     expect(compiled.generated.declaration).toContain(
       'export function select(key: number): Promise<number>;'
     );
+    expect(compiled.generated.typescript).toContain(
+      'export async function select(key: unknown): Promise<unknown>'
+    );
     const nested = compiled.callables.find(callable => callable.name === 'nested');
     expect(nested?.result.resolution).toMatchObject({
       status: 'supported',
@@ -439,6 +442,9 @@ describe('compileContract', () => {
     expect(compiled.diagnostics.some(item => item.path.endsWith('.parameters[0]'))).toBe(false);
     expect(compiled.generated.typescript).toContain('"selectable":true');
     expect(compiled.generated.declaration).toContain('static convert(key: string): Promise<string>;');
+    expect(compiled.generated.typescript).toContain(
+      'static async convert(key: unknown): Promise<unknown>'
+    );
 
     const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-class-overload-'));
     try {
@@ -529,6 +535,18 @@ describe('compileContract', () => {
     })).toMatchObject({
       status: 'supported',
       value: { kind: 'ndarray-float16', dtype: 'float16' },
+    });
+  });
+
+  it('keeps the existing bytes RPC shape in the value contract', () => {
+    const resolution = DEFAULT_VALUE_CONVERSION.resolve({
+      direction: 'output',
+      path: '$.functions[0].returns',
+      logicalType: { kind: 'primitive', name: 'bytes' },
+    });
+    expect(resolution).toMatchObject({
+      status: 'supported',
+      value: { kind: 'bytes', wire: 'base64-envelope', decodedAs: 'Uint8Array' },
     });
   });
 

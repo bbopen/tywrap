@@ -384,10 +384,16 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
         if (type.name === 'str') {
           return { status: 'supported', value: { kind: 'string', wire: 'json', decodedAs: 'string' } };
         }
+        if (type.name === 'bytes') {
+          return {
+            status: 'supported',
+            value: { kind: 'bytes', wire: 'base64-envelope', decodedAs: 'Uint8Array' },
+          };
+        }
         return {
           status: 'unsupported',
-          reason: 'The frozen value contract does not specify bytes conversion.',
-          guidance: 'Use an explicit string or ndarray adapter for byte data.',
+          reason: 'The value contract does not specify this primitive conversion.',
+          guidance: 'Use a supported primitive or an explicit value adapter.',
         };
       case 'annotated':
         return DEFAULT_VALUE_CONVERSION.resolve({ ...request, logicalType: type.base });
@@ -443,6 +449,7 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
               kind: 'torch-float16',
               wire: 'ndarray-envelope',
               decodedAs: 'tensor-record',
+              dtype: 'torch.float16',
               value: ndarray.value,
             },
           };

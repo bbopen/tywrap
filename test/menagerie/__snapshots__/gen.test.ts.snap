@@ -24,11 +24,11 @@ export async function asyncText(): Promise<unknown> {
   return getRuntimeBridge().call<unknown>('fixtures.typing_torture', 'async_text', __args, undefined, __validateasync_textResult);
 }
 
-const __validatebytes_echoResult = createReturnValidator({"kind":"any"}, "fixtures.typing_torture.bytes_echo", __tywrapReturnDefinitions);
+const __validatebytes_echoResult = createReturnValidator({"kind":"primitive","type":"Uint8Array"}, "fixtures.typing_torture.bytes_echo", __tywrapReturnDefinitions);
 
-export async function bytesEcho(value: unknown): Promise<unknown> {
+export async function bytesEcho(value: Uint8Array): Promise<Uint8Array> {
   const __args: unknown[] = [value];
-  return getRuntimeBridge().call<unknown>('fixtures.typing_torture', 'bytes_echo', __args, undefined, __validatebytes_echoResult);
+  return getRuntimeBridge().call<Uint8Array>('fixtures.typing_torture', 'bytes_echo', __args, undefined, __validatebytes_echoResult);
 }
 
 const __validatefrozen_valuesResult = createReturnValidator({"kind":"array","element":{"kind":"primitive","type":"string"}}, "fixtures.typing_torture.frozen_values", __tywrapReturnDefinitions);
@@ -188,7 +188,7 @@ export function annotatedEcho(value: number): Promise<number>;
 
 export function asyncText(): Promise<unknown>;
 
-export function bytesEcho(value: unknown): Promise<unknown>;
+export function bytesEcho(value: Uint8Array): Promise<Uint8Array>;
 
 export function frozenValues(value: string[]): Promise<string[]>;
 
@@ -260,11 +260,11 @@ export async function boolsAndInts(): Promise<boolean | number[]> {
   return getRuntimeBridge().call<boolean | number[]>('fixtures.values_torture', 'bools_and_ints', __args, undefined, __validatebools_and_intsResult);
 }
 
-const __validatebytes_echoResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.bytes_echo", __tywrapReturnDefinitions);
+const __validatebytes_echoResult = createReturnValidator({"kind":"primitive","type":"Uint8Array"}, "fixtures.values_torture.bytes_echo", __tywrapReturnDefinitions);
 
-export async function bytesEcho(value: unknown): Promise<unknown> {
+export async function bytesEcho(value: Uint8Array): Promise<Uint8Array> {
   const __args: unknown[] = [value];
-  return getRuntimeBridge().call<unknown>('fixtures.values_torture', 'bytes_echo', __args, undefined, __validatebytes_echoResult);
+  return getRuntimeBridge().call<Uint8Array>('fixtures.values_torture', 'bytes_echo', __args, undefined, __validatebytes_echoResult);
 }
 
 const __validatecomplex_valueResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.complex_value", __tywrapReturnDefinitions);
@@ -473,7 +473,7 @@ export class TrafficLight {
 
 export function boolsAndInts(): Promise<boolean | number[]>;
 
-export function bytesEcho(value: unknown): Promise<unknown>;
+export function bytesEcho(value: Uint8Array): Promise<Uint8Array>;
 
 export function complexValue(): Promise<unknown>;
 

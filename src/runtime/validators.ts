@@ -1,5 +1,8 @@
 import { BridgeValidationError } from './errors.js';
+import type { DecodedProvenance, DecodedShapeMetadata } from './decoded-provenance.js';
 import type { ScientificMarker } from '../utils/codec.js';
+
+export type { DecodedShapeMetadata } from './decoded-provenance.js';
 
 /**
  * Pure validation functions for runtime value checking.
@@ -43,7 +46,7 @@ export type ReturnSchema =
       dtype?: string;
     };
 
-export type ReturnValidator<T = unknown> = (result: T) => T;
+export type ReturnValidator<T = unknown> = (result: T, provenance?: DecodedProvenance) => T;
 
 /** One Python parameter used to select a declared overload after call binding. */
 export interface OverloadParameterSchema {
@@ -58,12 +61,6 @@ export interface OverloadReturnSchema {
   parameters: readonly OverloadParameterSchema[];
   result: ReturnSchema;
   selectable: boolean;
-}
-
-export interface DecodedShapeMetadata {
-  marker: ScientificMarker;
-  dims?: number;
-  dtype?: string;
 }
 
 const decodedShapeMetadata = new WeakMap<object, DecodedShapeMetadata>();
@@ -136,9 +133,20 @@ function renderSchema(schema: ReturnSchema): string {
 interface CheckState {
   readonly definitions: Readonly<Record<string, ReturnSchema>>;
   readonly pairs: WeakMap<object, Set<string>>;
+  readonly provenance?: DecodedProvenance;
 }
 
-function check(schema: ReturnSchema, value: unknown, state: CheckState): boolean {
+interface ValueLocation {
+  parent: object;
+  key: string | number;
+}
+
+function check(
+  schema: ReturnSchema,
+  value: unknown,
+  state: CheckState,
+  location?: ValueLocation
+): boolean {
   if (schema.kind === 'any') {
     return true;
   }
@@ -156,7 +164,7 @@ function check(schema: ReturnSchema, value: unknown, state: CheckState): boolean
       seen.add(schema.name);
       state.pairs.set(value, seen);
     }
-    return check(definition, value, state);
+    return check(definition, value, state, location);
   }
 
   switch (schema.kind) {
@@ -183,12 +191,14 @@ function check(schema: ReturnSchema, value: unknown, state: CheckState): boolean
     case 'literal':
       return Object.is(value, schema.value);
     case 'array':
-      return Array.isArray(value) && value.every(item => check(schema.element, item, state));
+      return Array.isArray(value) && value.every((item, index) =>
+        check(schema.element, item, state, { parent: value, key: index }));
     case 'tuple':
       return (
         Array.isArray(value) &&
         value.length === schema.elements.length &&
-        schema.elements.every((entry, index) => check(entry, value[index], state))
+        schema.elements.every((entry, index) =>
+          check(entry, value[index], state, { parent: value, key: index }))
       );
     case 'record': {
       if (!isPlainObject(value)) {
@@ -202,20 +212,25 @@ function check(schema: ReturnSchema, value: unknown, state: CheckState): boolean
             }
             return false;
           }
-          if (!check(field.schema, value[key], state)) {
+          if (!check(field.schema, value[key], state, { parent: value, key })) {
             return false;
           }
         }
       }
       return (
         !schema.values ||
-        Object.values(value).every(item => check(schema.values as ReturnSchema, item, state))
+        Object.entries(value).every(([key, item]) =>
+          check(schema.values as ReturnSchema, item, state, { parent: value, key }))
       );
     }
     case 'union':
-      return schema.options.some(option => check(option, value, state));
+      return schema.options.some(option => check(option, value, state, location));
     case 'marker': {
-      const metadata = isObjectLike(value) ? decodedShapeMetadata.get(value) : undefined;
+      const metadata = isObjectLike(value)
+        ? decodedShapeMetadata.get(value)
+        : location
+          ? state.provenance?.atChild(location.parent, location.key)
+          : state.provenance?.atRoot();
       if (metadata?.marker !== schema.marker) {
         return false;
       }
@@ -237,8 +252,8 @@ export function createReturnValidator<T = unknown>(
   definitions: Readonly<Record<string, ReturnSchema>> = {}
 ): ReturnValidator<T> {
   const declaredType = renderSchema(schema);
-  return (result: T): T => {
-    if (!check(schema, result, { definitions, pairs: new WeakMap<object, Set<string>>() })) {
+  return (result: T, provenance?: DecodedProvenance): T => {
+    if (!check(schema, result, { definitions, pairs: new WeakMap<object, Set<string>>(), provenance })) {
       throw new BridgeValidationError({
         declaredType,
         receivedShape: describeReceivedShape(result),

@@ -53,6 +53,8 @@ function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
       return { kind: 'primitive', type: 'number', constraint: value.constraint };
     case 'string':
       return { kind: 'primitive', type: 'string' };
+    case 'bytes':
+      return { kind: 'primitive', type: 'Uint8Array' };
     case 'sequence':
       return { kind: 'array', element: valueContractToReturnSchema(value.item) };
     case 'tuple':
@@ -75,7 +77,7 @@ function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
     case 'ndarray-float16':
       return { kind: 'marker', marker: 'ndarray', dtype: value.dtype, dims: value.rank };
     case 'torch-float16':
-      return { kind: 'marker', marker: 'torch.tensor', dtype: `torch.${value.value.dtype}` };
+      return { kind: 'marker', marker: 'torch.tensor', dtype: value.dtype };
     case 'unsupported':
       return { kind: 'any' };
   }
@@ -676,6 +678,7 @@ export class CodeGenerator {
       annotatedJSDoc ? func.parameters.map(p => String(p.type)) : undefined
     );
     const filteredParams = func.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
+    const hasDeclaredOverloads = (func.overloads?.length ?? 0) > 0;
     const keywordOnlyParams = filteredParams.filter(p => p.keywordOnly);
     const positionalOnlyNames = filteredParams.filter(p => p.positionalOnly).map(p => p.name);
     const hasVarKwArgs = filteredParams.some(p => p.kwArgs);
@@ -707,6 +710,9 @@ export class CodeGenerator {
       if (!needsKwargsParam) {
         return '';
       }
+      if (hasDeclaredOverloads) {
+        return 'Record<string, unknown>';
+      }
       if (keywordOnlyParams.length === 0 && hasVarKwArgs) {
         return 'Record<string, unknown>';
       }
@@ -723,7 +729,7 @@ export class CodeGenerator {
     ): string => {
       const pname = this.escapeIdentifier(p.name);
       const opt = !forceRequired && p.optional ? '?' : '';
-      return `${pname}${opt}: ${tsTypeForValue(p)}`;
+      return `${pname}${opt}: ${hasDeclaredOverloads ? 'unknown' : tsTypeForValue(p)}`;
     };
 
     const renderVarArgsParam = (forceRequired = false): string | null => {
@@ -762,6 +768,7 @@ export class CodeGenerator {
 
     const hasKwArgs = needsKwargsParam;
     const returnType = this.typeToTsFromPython(func.returnType, genericContext, 'return');
+    const implementationReturnType = hasDeclaredOverloads ? 'unknown' : returnType;
     const fname = this.escapeIdentifier(func.name);
     const moduleId = moduleName ?? '__main__';
     const validatorName = `__validate${this.escapeIdentifier(func.name, { preserveCase: true })}Result`;
@@ -960,8 +967,8 @@ export class CodeGenerator {
       : '';
     const selectedValidatorName = overloadValidator ? '__selectedReturnValidator' : validatorName;
 
-    const ts = `${jsdoc}${returnValidator}${overloadDecl}export async function ${fname}${typeParamDecl}(${paramDecl}): Promise<${returnType}> {
-${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${returnType}>('${moduleId}', '${func.name}', __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${selectedValidatorName});
+    const ts = `${jsdoc}${returnValidator}${overloadDecl}export async function ${fname}${hasDeclaredOverloads ? '' : typeParamDecl}(${paramDecl}): Promise<${implementationReturnType}> {
+${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${implementationReturnType}>('${moduleId}', '${func.name}', __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${selectedValidatorName});
 }
 `;
 
@@ -1094,6 +1101,7 @@ ${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${re
         // the ordinary module call path and never retain process-local state.
         const staticPrefix = 'static ';
         const fparams = method.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
+        const hasDeclaredOverloads = (method.overloads?.length ?? 0) > 0;
         const methodOwnGenericContext = this.buildGenericRenderContext(
           this.getTypeParameters(method.typeParameters),
           [method.returnType, ...fparams.map(param => param.type)],
@@ -1125,12 +1133,15 @@ ${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${re
         ): string => {
           const pname = this.escapeIdentifier(p.name);
           const opt = !forceRequired && p.optional ? '?' : '';
-          return `${pname}${opt}: ${methodTsValueType(p)}`;
+          return `${pname}${opt}: ${hasDeclaredOverloads ? 'unknown' : methodTsValueType(p)}`;
         };
 
         const kwargsType = (() => {
           if (!needsKwargsParam) {
             return '';
+          }
+          if (hasDeclaredOverloads) {
+            return 'Record<string, unknown>';
           }
           if (keywordOnlyParams.length === 0 && hasVarKwArgs) {
             return 'Record<string, unknown>';
@@ -1163,6 +1174,7 @@ ${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${re
           methodGenericContext,
           'return'
         );
+        const implementationReturnType = hasDeclaredOverloads ? 'unknown' : returnType;
         const mname = this.escapeIdentifier(method.name);
         const validatorName = `__validate${this.escapeIdentifier(cls.name, { preserveCase: true })}${this.escapeIdentifier(method.name, { preserveCase: true })}Result`;
         const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.resolvedReturnSchema(method, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n\n`;
@@ -1235,8 +1247,8 @@ ${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${re
           : '';
         const selectedValidatorName = overloadValidator ? '__selectedReturnValidator' : validatorName;
 
-        const callExpr = `getRuntimeBridge().call<${returnType}>('${moduleId}', '${cls.name}.${method.name}', __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${selectedValidatorName})`;
-        methodBodies.push(`${overloadDecl}  ${staticPrefix}async ${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}> {
+        const callExpr = `getRuntimeBridge().call<${implementationReturnType}>('${moduleId}', '${cls.name}.${method.name}', __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${selectedValidatorName})`;
+        methodBodies.push(`${overloadDecl}  ${staticPrefix}async ${mname}${hasDeclaredOverloads ? '' : methodTypeParamDecl}(${paramsDecl}): Promise<${implementationReturnType}> {
     ${returnValidator}${callPrelude}${guards}${overloadValidator}    return ${callExpr};
   }`);
         methodDeclarations.push(

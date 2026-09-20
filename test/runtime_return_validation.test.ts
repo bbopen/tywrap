@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BridgeValidationError } from '../src/runtime/errors.js';
+import { DecodedProvenance } from '../src/runtime/decoded-provenance.js';
 import { HttpBridge } from '../src/runtime/http.js';
 import { NodeBridge } from '../src/runtime/node.js';
 import {
@@ -40,6 +41,51 @@ describe('generated return validators', () => {
     expect(() => validator({ count: Number.MAX_SAFE_INTEGER + 1 })).toThrow(
       BridgeValidationError
     );
+  });
+
+  it('requires per-call provenance for a scalar float16 ndarray', () => {
+    const validate = createReturnValidator<number>(
+      { kind: 'marker', marker: 'ndarray', dims: 0, dtype: 'float16' },
+      'fixture.scalar'
+    );
+    const valid = new DecodedProvenance();
+    valid.recordRoot({ marker: 'ndarray', dims: 0, dtype: 'float16' });
+    const wrongDtype = new DecodedProvenance();
+    wrongDtype.recordRoot({ marker: 'ndarray', dims: 0, dtype: 'float32' });
+    const wrongShape = new DecodedProvenance();
+    wrongShape.recordRoot({ marker: 'ndarray', dims: 1, dtype: 'float16' });
+
+    expect(() => validate(1.5)).toThrow(BridgeValidationError);
+    expect(validate(1.5, valid)).toBe(1.5);
+    expect(() => validate(1.5, wrongDtype)).toThrow(BridgeValidationError);
+    expect(() => validate(1.5, wrongShape)).toThrow(BridgeValidationError);
+    expect(validate(1.5, valid)).toBe(1.5);
+  });
+
+  it('checks nested scalar proofs at array indices and record keys', () => {
+    const scalar = { kind: 'marker', marker: 'ndarray', dims: 0, dtype: 'float16' } as const;
+    const rows = [[1.5]];
+    const result = { rows, scalar: 1.5 };
+    const proof = new DecodedProvenance();
+    proof.recordChild(rows[0]!, 0, { marker: 'ndarray', dims: 0, dtype: 'float16' });
+    proof.recordChild(result, 'scalar', { marker: 'ndarray', dims: 0, dtype: 'float16' });
+    const validate = createReturnValidator({
+      kind: 'record',
+      fields: {
+        rows: { schema: { kind: 'array', element: { kind: 'tuple', elements: [scalar] } } },
+        scalar: { schema: scalar },
+      },
+    }, 'fixture.nestedScalar');
+    expect(validate(result, proof)).toBe(result);
+    expect(() => validate(result)).toThrow(BridgeValidationError);
+
+    const wrongIndex = new DecodedProvenance();
+    wrongIndex.recordChild(rows[0]!, '0', { marker: 'ndarray', dims: 0, dtype: 'float16' });
+    wrongIndex.recordChild(result, 'scalar', { marker: 'ndarray', dims: 0, dtype: 'float16' });
+    expect(() => validate(result, wrongIndex)).toThrow(BridgeValidationError);
+
+    const other = { rows: [[1.5]], scalar: 1.5 };
+    expect(() => validate(other, proof)).toThrow(BridgeValidationError);
   });
 
   it('uses declaration order when an optional-arity overload also matches', () => {
