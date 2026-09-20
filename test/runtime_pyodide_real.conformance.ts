@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -47,14 +47,24 @@ describe('real PyodideBridge', () => {
         'utf8'
       );
       const generated = await generate({
-        pythonModules: { tywrap_async_text: { runtime: 'pyodide', typeHints: 'strict' } },
+        pythonModules: { tywrap_async_text: { typeHints: 'strict' } },
         pythonImportPath: [tempDir],
-        output: { dir: join(tempDir, 'generated'), format: 'esm', declaration: false },
+        output: { dir: join(tempDir, 'generated'), format: 'esm', declaration: true },
+        runtime: { pyodide: { indexURL } },
         performance: { caching: false, batching: false, compression: 'none' },
       } as never);
       expect(generated.failures).toEqual([]);
+      expect(generated.warnings).toEqual([]);
       const generatedPath = generated.written.find(path => path.endsWith('.generated.ts'));
       expect(generatedPath).toBeDefined();
+      const declarationPath = generated.written.find(path => path.endsWith('.generated.d.ts'));
+      expect(declarationPath).toBeDefined();
+      expect(readFileSync(generatedPath as string, 'utf8')).toMatch(
+        /^export async function asyncText\(\): Promise<string> \{$/m
+      );
+      expect(readFileSync(declarationPath as string, 'utf8')).toMatch(
+        /^export function asyncText\(\): Promise<string>;$/m
+      );
 
       globals.loadPyodide = async options => {
         const py = await loadPyodide(options);
