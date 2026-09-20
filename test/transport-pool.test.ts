@@ -748,6 +748,7 @@ describe('PooledTransport', () => {
           removeWorker(worker: TransportLease): void;
         }
       ).removeWorker(worker);
+      await vi.waitFor(() => expect(transports).toHaveLength(2));
       await pool.dispose();
       await new Promise(resolve => setTimeout(resolve, 100));
 
