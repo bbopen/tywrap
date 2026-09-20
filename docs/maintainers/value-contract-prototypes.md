@@ -113,8 +113,15 @@ nested dataclasses by their observed runtime type and does not check a compiled
 field contract. The TypeScript decoder rejects unexpected nested identities or
 field values. Server-side field validation remains open.
 
-The bounded prototype still needs a generated `Promise<Point>` wrapper from the
-actual compiler model. It must return `{x: 1, y: 2}` and reject missing, extra,
-and wrong typed fields. It must test defaults, optional fields, nesting, cycles,
-unsupported fields, depth, and byte limits. Production work needs independent
-review of identity, generated types, and migration cost.
+The bounded Point proof in `test/value_extensions_generated_point.test.ts` uses
+analyzer IR from an importable Python module. The compiler emits
+`Promise<Point>` with required numeric `x` and `y`, including a defaulted `y`. A
+bound prototype adapter returns `{x: 1, y: 2}` and rejects missing, extra, wrong
+typed fields, and untagged records before the generated validator runs. The
+generated validator independently rejects wrong field types. The binding rejects
+a bridge without the Point policy adapter.
+
+The Python prototype tests optional fields, nesting, cycles, unsupported fields,
+depth, and byte limits separately. Production still needs bridge capability
+negotiation, a server-side compiled field contract, and an independent design
+review. The default runtime has no dataclass adapter.
