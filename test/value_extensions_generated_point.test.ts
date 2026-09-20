@@ -44,6 +44,12 @@ const pythonEnvironment = {
     .join(delimiter),
 };
 
+interface PointInvocationDescriptor {
+  requiredCapability: 'dataclassFieldsV2';
+  valuePolicy: { dataclass: 'fields-v2' };
+  result: PrototypeContract;
+}
+
 function analyzedPointIr(): unknown {
   return JSON.parse(
     execFileSync(
@@ -183,6 +189,11 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript) || !existsSync(fi
       const result = compilePoint(pointIr, true, true);
       const { compiled } = result;
       const pointContract = pointContractFrom(result);
+      const descriptor: PointInvocationDescriptor = {
+        requiredCapability: 'dataclassFieldsV2',
+        valuePolicy: { dataclass: 'fields-v2' },
+        result: pointContract,
+      };
       expect(compiled.diagnostics.filter(item => item.severity === 'error')).toEqual([]);
       expect(compiled.callables[0]?.requiredCapabilities).toContain('dataclass-adapter');
       expect(compiled.generated.declaration).toContain('makePoint(): Promise<Point>');
@@ -191,20 +202,56 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript) || !existsSync(fi
       );
       expect(result.ir.classes.find(cls => cls.name === 'Point')?.fields[1]?.default).toBe(true);
       expect(compiled.generated.typescript).toContain('"constraint":"safe-integer"');
+      const bound = new CodeGenerator().generateModuleBindingTemplate(compiled.module);
+      expect(bound.declaration).toBe(compiled.generated.declaration);
+      expect(bound.typescript).toContain('__tywrapRuntimeProvider().call');
+      expect(bound.typescript).not.toContain('getRuntimeBridge().call');
 
       const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-point-'));
       try {
-        const outputPath = join(temporary, 'value_extensions.generated.mjs');
-        const declarationPath = join(temporary, 'value_extensions.generated.d.ts');
+        const outputPath = join(temporary, 'value_contract_point.generated.mjs');
+        const declarationPath = join(temporary, 'value_contract_point.generated.d.ts');
         const consumerPath = join(temporary, 'consumer.ts');
-        const javascript = ts.transpileModule(compiled.generated.typescript, {
+        const binding = `
+import { getRuntimeBridge } from 'tywrap/runtime';
+type PolicyCall = <T>(
+  module: string,
+  functionName: string,
+  args: unknown[],
+  kwargs: Record<string, unknown> | undefined,
+  validate: ((result: T) => void) | undefined,
+  descriptor: unknown
+) => Promise<T>;
+function __tywrapRuntimeProvider() {
+  const bridge = getRuntimeBridge() as ReturnType<typeof getRuntimeBridge> & {
+    callWithValuePolicy?: PolicyCall;
+  };
+  if (typeof bridge.callWithValuePolicy !== 'function') {
+    throw new Error('bridge lacks the Point value-policy adapter');
+  }
+  return {
+    call<T>(
+      module: string,
+      functionName: string,
+      args: unknown[],
+      kwargs?: Record<string, unknown>,
+      validate?: (result: T) => void
+    ): Promise<T> {
+      return bridge.callWithValuePolicy!<T>(
+        module, functionName, args, kwargs, validate, ${JSON.stringify(descriptor)}
+      );
+    },
+  };
+}
+`;
+        const javascript = ts.transpileModule(bound.typescript + binding, {
           compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
         }).outputText;
         await writeFile(outputPath, javascript, 'utf8');
         await writeFile(declarationPath, compiled.generated.declaration, 'utf8');
         await writeFile(
           consumerPath,
-          `import { makePoint, type Point } from './value_extensions.generated.js';
+          `import { makePoint, type Point } from './value_contract_point.generated.js';
 const result: Promise<Point> = makePoint();
 result.then(point => {
   const x: number = point.x;
@@ -234,28 +281,47 @@ result.then(point => {
 
         let wire: unknown = pythonPoint();
         let bridgeMeta: unknown = { valueCapabilities: ['dataclassFieldsV2'] };
-        setRuntimeBridge({
-          async call<T>(
+        const adapterBridge = {
+          async call<T>(): Promise<T> {
+            throw new Error('the bound Point wrapper must use the policy adapter');
+          },
+          async callWithValuePolicy<T>(
             moduleName: string,
             functionName: string,
             _args: unknown[],
             _kwargs?: Record<string, unknown>,
-            validate?: (result: T) => void
+            validate?: (result: T) => void,
+            invocation?: PointInvocationDescriptor
           ): Promise<T> {
             expect([moduleName, functionName]).toEqual(['value_contract_point', 'make_point']);
-            requireCapability(bridgeMeta, 'dataclassFieldsV2', 'fields-v2');
-            const decoded = decodeExactResponse(wire, pointContract);
-            validateDataclassOrigin(decoded, pointContract);
+            expect(invocation).toEqual(descriptor);
+            if (!invocation) throw new Error('Point invocation descriptor is missing');
+            requireCapability(
+              bridgeMeta,
+              invocation.requiredCapability,
+              invocation.valuePolicy.dataclass
+            );
+            const decoded = decodeExactResponse(wire, invocation.result);
+            validateDataclassOrigin(decoded, invocation.result);
             validate?.(decoded as T);
             return decoded as T;
           },
           async dispose(): Promise<void> {},
-        });
+        };
+        setRuntimeBridge(adapterBridge);
         const generated = (await import(pathToFileURL(outputPath).href)) as {
           makePoint: () => Promise<{ x: number; y: number }>;
         };
 
         await expect(generated.makePoint()).resolves.toEqual({ x: 1, y: 2 });
+        setRuntimeBridge({
+          async call<T>(): Promise<T> {
+            throw new Error('ordinary bridge call must not run');
+          },
+          async dispose(): Promise<void> {},
+        });
+        await expect(generated.makePoint()).rejects.toThrow(/lacks the Point value-policy adapter/);
+        setRuntimeBridge(adapterBridge);
         bridgeMeta = {};
         await expect(generated.makePoint()).rejects.toThrow(/bridge lacks dataclassFieldsV2/);
         bridgeMeta = { valueCapabilities: ['dataclassFieldsV2'] };
@@ -264,6 +330,7 @@ result.then(point => {
           { ...valid, fields: { x: 1 } },
           { ...valid, fields: { x: 1, y: 2, z: 3 } },
           { ...valid, fields: { x: '1', y: 2 } },
+          { ...valid, type: 'other.Point' },
           { x: 1, y: 2 },
         ]) {
           wire = bad;
@@ -271,7 +338,10 @@ result.then(point => {
         }
 
         setRuntimeBridge({
-          async call<T>(
+          async call<T>(): Promise<T> {
+            throw new Error('ordinary bridge call must not run');
+          },
+          async callWithValuePolicy<T>(
             _module: string,
             _functionName: string,
             _args: unknown[],
