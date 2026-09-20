@@ -38,6 +38,9 @@ jobs:
         run: npm run test:types
       - name: Build
         run: npm run build
+      - name: Full release checks
+        if: github.event_name == 'workflow_dispatch'
+        run: CI=1 npm run check:all
 
   test:
     if: github.event_name != 'schedule'
