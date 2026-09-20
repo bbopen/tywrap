@@ -12,10 +12,11 @@ integers use the same type. Python `bool` remains `boolean`. Calls without the
 option keep the safe `number` rule.
 
 The default value-contract revision 2 represents Python `int` as a safe JSON
-`number`. The bounded revision 3 compiler proof selects
-`EXACT_INTEGER_VALUE_CONVERSION` for a module with one callable. It emits a
-`bigint` wrapper and validator through a test-only runtime binding. A public
-per-callable option and production bridge adapter are not implemented.
+`number`. The bounded revision 3 proof selects
+`EXACT_INTEGER_VALUE_CONVERSION` for an analyzed Python module. It emits
+`bigint` wrappers and validators for scalar and nested results through a
+test-only runtime binding. A public per-callable option and production bridge
+adapter are not implemented.
 
 The proposed generated wrapper must require `exactIntegerDecimalV2` in the
 bridge's `meta.valueCapabilities`. It must send
