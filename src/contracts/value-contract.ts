@@ -20,7 +20,6 @@ export type ValueContract =
       readonly constraint: 'finite';
     }
   | { readonly kind: 'string'; readonly wire: 'json'; readonly decodedAs: 'string' }
-  | { readonly kind: 'bytes'; readonly wire: 'base64-envelope'; readonly decodedAs: 'Uint8Array' }
   | {
       readonly kind: 'sequence';
       readonly wire: 'json';
@@ -58,7 +57,6 @@ export type ValueContract =
       readonly kind: 'torch-float16';
       readonly wire: 'ndarray-envelope';
       readonly decodedAs: 'tensor-record';
-      readonly dtype: 'torch.float16';
       readonly value: Extract<ValueContract, { kind: 'ndarray-float16' }>;
     }
   | {

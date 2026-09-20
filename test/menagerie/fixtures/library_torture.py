@@ -23,6 +23,16 @@ def numpy_adversarial() -> object:
     }
 
 
+def numpy_adversarial_safe_scalar() -> object:
+    import numpy as np
+
+    return {
+        "array": np.array([2**53 + 1, 2**63 - 1], dtype=np.int64),
+        "scalar": np.int64(2**53 - 1),
+        "float_column": np.array([1.0, 2.5]),
+    }
+
+
 def pandas_adversarial() -> object:
     import pandas as pd
 
@@ -343,6 +353,16 @@ def sklearn_simple_estimator() -> object:
     from sklearn.linear_model import LinearRegression
 
     return LinearRegression(fit_intercept=False, positive=True)
+
+
+def sklearn_unsafe_nested_estimator() -> object:
+    from sklearn.base import BaseEstimator
+
+    class NestedParams(BaseEstimator):
+        def __init__(self, config: object = None):
+            self.config = config
+
+    return NestedParams(config={'nested': {'unsafe': 2**53 + 1}})
 
 
 def sklearn_pipeline() -> object:

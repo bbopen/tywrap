@@ -6,12 +6,15 @@ import json
 import subprocess
 import sys
 import tracemalloc
+import types
 from pathlib import Path
 
 import pytest
 
 
 RUNTIME_DIR = Path(__file__).parent.parent.parent / 'runtime'
+VALUE_CONTRACT_PATH = RUNTIME_DIR.parent / 'docs' / 'maintainers' / 'value-contracts.v2.json'
+VALUE_FIXTURES_PATH = RUNTIME_DIR.parent / 'docs' / 'maintainers' / 'value-contract-fixtures.v2.json'
 
 sys.path.insert(0, str(RUNTIME_DIR))
 
@@ -28,8 +31,262 @@ from tywrap_bridge_core import (  # noqa: E402
     serialize,
     serialize_dataframe_json,
     serialize_ndarray_json,
+    serialize_series,
     serialize_series_json,
+    serialize_sparse_matrix,
 )
+
+
+def test_safe_integer_policy_matches_frozen_specification() -> None:
+    specification = json.loads(VALUE_CONTRACT_PATH.read_text())
+    assert specification['revision'] == 2
+    assert specification['codecVersion'] == bridge_core.CODEC_VERSION
+    assert specification['rules']['integer']['maximum'] == bridge_core.JS_SAFE_INTEGER_MAX
+    assert specification['rules']['integer']['minimum'] == -bridge_core.JS_SAFE_INTEGER_MAX
+
+
+def test_fixed_integer_proof_fixtures() -> None:
+    fixtures = json.loads(VALUE_FIXTURES_PATH.read_text())
+    assert fixtures['revision'] == 2
+    for case in fixtures['integerCases']:
+        value = int(case['decimal'])
+        if case['outcome'] == 'reject':
+            with pytest.raises(RuntimeError, match='Unsafe Python integer at result:'):
+                serialize(value, force_json_markers=True)
+        else:
+            assert serialize(value, force_json_markers=True) == value
+
+
+@pytest.mark.parametrize('value', [2**53, -(2**53), 2**63 - 1, -(2**63)])
+def test_unsafe_integer_rejection_names_root_and_nested_paths(value: int) -> None:
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result:.*return an explicit string'):
+        serialize(value, force_json_markers=True)
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.items\[0\]:'):
+        serialize({'items': [value]}, force_json_markers=True)
+
+
+def test_safe_integer_edges_and_finite_floats_still_encode() -> None:
+    value = [-(2**53 - 1), 2**53 - 1, True, False, -0.0, 1.5]
+    serialized = serialize(value, force_json_markers=True)
+    assert json.loads(encode_value(serialized, allow_nan=False)) == value
+
+
+def test_model_dump_values_follow_nested_integer_policy() -> None:
+    class Model:
+        def model_dump(self, **_kwargs: object) -> dict[str, object]:
+            return {'nested': {'value': 2**53 + 1}}
+
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.nested\.value:'):
+        serialize(Model(), force_json_markers=True)
+
+    class ScalarModel:
+        def model_dump(self, **_kwargs: object) -> int:
+            return 2**53
+
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result:'):
+        serialize(ScalarModel(), force_json_markers=True)
+
+
+def test_mapping_model_dump_keeps_alias_precedence() -> None:
+    class ModelMap(dict[str, int]):
+        def model_dump(self, **_kwargs: object) -> dict[str, int]:
+            return {'from_alias': self['internal']}
+
+    value = ModelMap(internal=7)
+    assert serialize(value, force_json_markers=True) == {'from_alias': 7}
+    assert serialize({'item': value}, force_json_markers=True) == {
+        'item': {'from_alias': 7}
+    }
+
+
+def test_model_dump_cycle_rejects_without_recursing_forever() -> None:
+    class Model:
+        other: object
+
+        def model_dump(self, **_kwargs: object) -> object:
+            return self.other
+
+    first = Model()
+    second = Model()
+    first.other = second
+    second.other = first
+
+    with pytest.raises(RuntimeError, match='Circular model conversion detected at result'):
+        serialize(first, force_json_markers=True)
+
+
+def test_long_model_dump_chain_obeys_depth_and_node_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Model:
+        def __init__(self, other: object):
+            self.other = other
+
+        def model_dump(self, **_kwargs: object) -> object:
+            return self.other
+
+    value: object = 1
+    for _ in range(10):
+        value = Model(value)
+
+    monkeypatch.setattr(bridge_core, 'MAX_SERIALIZE_DEPTH', 4)
+    with pytest.raises(RuntimeError, match='maximum depth 4 exceeded at result'):
+        serialize(value, force_json_markers=True)
+
+    monkeypatch.setattr(bridge_core, 'MAX_SERIALIZE_DEPTH', MAX_SERIALIZE_DEPTH)
+    monkeypatch.setattr(bridge_core, 'MAX_SERIALIZE_NODES', 4)
+    with pytest.raises(RuntimeError, match='maximum visited nodes 4 exceeded at result'):
+        serialize(value, force_json_markers=True)
+
+
+def test_nested_pydantic_models_keep_value_semantics() -> None:
+    pydantic = pytest.importorskip('pydantic')
+    if not hasattr(pydantic.BaseModel, 'model_dump'):
+        pytest.skip('Pydantic v2 is required')
+
+    class Child(pydantic.BaseModel):
+        count: int
+
+    class Parent(pydantic.BaseModel):
+        child: Child
+        items: list[int]
+
+    value = Parent(child=Child(count=3), items=[4, 5])
+    assert serialize(value, force_json_markers=True) == {
+        'child': {'count': 3},
+        'items': [4, 5],
+    }
+
+
+def test_numpy_scalar_follows_nested_integer_policy() -> None:
+    np = pytest.importorskip('numpy')
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.nested\[0\]:'):
+        serialize({'nested': [np.int64(2**53)]}, force_json_markers=True)
+
+
+def test_integer_subclass_cannot_bypass_policy() -> None:
+    class IntegerSubclass(int):
+        pass
+
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.value:'):
+        serialize({'value': IntegerSubclass(2**53)}, force_json_markers=True)
+
+    class RecordSubclass(dict[str, int]):
+        pass
+
+    class ListSubclass(list[int]):
+        pass
+
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.value:'):
+        serialize(RecordSubclass(value=2**53), force_json_markers=True)
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\[0\]:'):
+        serialize(ListSubclass([2**53]), force_json_markers=True)
+
+    class MisleadingInteger(int):
+        def __lt__(self, _other: object) -> bool:
+            return False
+
+        def __gt__(self, _other: object) -> bool:
+            return False
+
+        def __int__(self) -> int:
+            return 0
+
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.value:'):
+        serialize({'value': MisleadingInteger(2**53 + 1)}, force_json_markers=True)
+
+
+@pytest.mark.parametrize('container_type', [set, frozenset])
+def test_set_subclass_values_follow_nested_integer_policy(container_type: type) -> None:
+    class SetSubclass(container_type):
+        pass
+
+    for force_json_markers in (False, True):
+        with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.items\[0\]:'):
+            serialize({'items': SetSubclass([2**53 + 1])}, force_json_markers=force_json_markers)
+        with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\[0\]:'):
+            serialize(SetSubclass([2**53 + 1]), force_json_markers=force_json_markers)
+
+        safe = serialize({'items': SetSubclass([2**53 - 1])}, force_json_markers=force_json_markers)
+        assert json.loads(encode_value(safe, allow_nan=False)) == {
+            'items': [2**53 - 1]
+        }
+
+
+def test_estimator_metadata_rejects_nested_unsafe_integer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sklearn = types.ModuleType('sklearn')
+    sklearn.__version__ = 'stub'
+    sklearn_base = types.ModuleType('sklearn.base')
+
+    class BaseEstimator:
+        pass
+
+    sklearn_base.BaseEstimator = BaseEstimator
+    sklearn.base = sklearn_base
+    monkeypatch.setitem(sys.modules, 'sklearn', sklearn)
+    monkeypatch.setitem(sys.modules, 'sklearn.base', sklearn_base)
+
+    class Estimator(BaseEstimator):
+        def __init__(self, value: int):
+            self.value = value
+
+        def get_params(self, *, deep: bool) -> dict[str, object]:
+            assert deep is False
+            return {'config': {'nested': {'unsafe': self.value}}}
+
+    for force_json_markers in (False, True):
+        with pytest.raises(
+            RuntimeError,
+            match=r'Unsafe Python integer at result\.params\.config\.nested\.unsafe:',
+        ):
+            serialize(Estimator(2**53 + 1), force_json_markers=force_json_markers)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r'Unsafe Python integer at result\.fit\.params\.config\.nested\.unsafe:',
+    ):
+        serialize({'fit': Estimator(2**53)}, force_json_markers=True)
+
+    safe = serialize(Estimator(2**53 - 1), force_json_markers=True)
+    assert json.loads(encode_value(safe, allow_nan=False))['params']['config']['nested'][
+        'unsafe'
+    ] == 2**53 - 1
+
+
+def test_terminal_scientific_metadata_rejects_unsafe_integer() -> None:
+    class Series:
+        name = 2**53
+
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.name:'):
+        serialize_series(Series(), force_json_markers=False)
+
+    class EmptyData:
+        size = 0
+
+    class Sparse:
+        dtype = types.SimpleNamespace(kind='i')
+        data = EmptyData()
+        shape = (2**53, 1)
+
+        def getformat(self) -> str:
+            return 'coo'
+
+    with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.shape\[0\]:'):
+        serialize_sparse_matrix(Sparse())
+
+
+def test_json_scientific_values_report_unsafe_integer_path() -> None:
+    np = pytest.importorskip('numpy')
+    sparse = pytest.importorskip('scipy.sparse')
+    with pytest.raises(RuntimeError, match=r'failed at result:.*safe integer range'):
+        serialize(np.array([2**53], dtype=np.int64), force_json_markers=True)
+    with pytest.raises(RuntimeError, match=r'failed at result\.matrix:.*safe integer range'):
+        serialize(
+            {'matrix': sparse.csr_matrix([[2**53]])},
+            force_json_markers=True,
+        )
 
 
 def test_plain_values_do_not_import_scientific_codecs() -> None:
