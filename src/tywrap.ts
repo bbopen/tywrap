@@ -11,25 +11,14 @@ import {
 import {
   TYWRAP_IR_VERSION,
   validateIrContract,
-  type IrClass,
-  type IrFunction,
-  type IrParameter,
-  type IrTypeAlias,
-  type IrTypeParameter,
   type ValidatedIrContract,
 } from './core/ir-contract.js';
+import { transformIrToTsModel } from './core/ir-model.js';
 import { TypeMapper } from './core/mapper.js';
-import { parseAnnotationToPythonType } from './core/annotation-parser.js';
 import { createConfig } from './config/index.js';
 import type {
   TywrapOptions,
-  PythonGenericParameter,
-  PythonFunction,
   PythonModule as TSPythonModule,
-  PythonClass,
-  PythonTypeAlias,
-  Parameter,
-  PythonType,
   PythonModuleConfig,
 } from './types/index.js';
 import { fsUtils, pathUtils, processUtils, isWindows } from './utils/runtime.js';
@@ -450,22 +439,8 @@ export async function generate(
     const irWarnings = Array.isArray((ir as Record<string, unknown>).warnings)
       ? ((ir as Record<string, unknown>).warnings as unknown[])
       : [];
-    for (const warning of irWarnings) {
-      if (typeof warning !== 'string') {
-        continue;
-      }
-      // Only type-honesty degrades feed --fail-on-warn. Environment capability
-      // notices (e.g. typing.get_overloads missing on Python < 3.11) describe
-      // the analyzing interpreter, not the generated types, and must not fail
-      // an otherwise clean build.
-      if (warning.startsWith('Return annotation for ')) {
-        recordUnknown(`Python IR warning: ${warning}`);
-      } else {
-        logger.info(`Python IR notice: ${warning}`, { component: 'Generate' });
-      }
-    }
 
-    const moduleModel = transformIrToTsModel(ir);
+    const moduleModel = transformIrToTsModel(ir, recordUnknown);
 
     // Apply module-level export filtering (functions/classes + excludes).
     filterModuleExports(moduleModel, moduleConfig, moduleKey, warnings);
@@ -482,6 +457,51 @@ export async function generate(
     const gen = compiled.generated;
     for (const diagnostic of compiled.diagnostics) {
       warnings.push(diagnostic.message);
+    }
+    for (const warning of irWarnings) {
+      if (typeof warning !== 'string') {
+        continue;
+      }
+      const external = warning.match(
+        /^Return annotation for (.+) resolves outside analyzed module: (.+)\.$/
+      );
+      if (external) {
+        const qualname = external[1];
+        const candidate = external[2];
+        const functionIndex = ir.functions.findIndex(func => func.qualname === qualname);
+        const classIndex = ir.classes.findIndex(cls =>
+          cls.methods.some(method => method.qualname === qualname)
+        );
+        const methodIndex = classIndex < 0 ? -1 : ir.classes[classIndex]!.methods.findIndex(
+          method => method.qualname === qualname
+        );
+        const path = functionIndex >= 0
+          ? `$.functions[${functionIndex}]`
+          : methodIndex >= 0
+            ? `$.classes[${classIndex}].methods[${methodIndex}]`
+            : '';
+        const callableResult = compiled.callables.find(callable => callable.path === path)?.result;
+        const logicalType = callableResult?.logicalType;
+        const outerName = logicalType &&
+          (logicalType.kind === 'custom' || logicalType.kind === 'generic') &&
+          logicalType.module
+          ? `${logicalType.module}.${logicalType.name}`
+          : undefined;
+        const resolution = callableResult?.resolution;
+        if (resolution?.status === 'supported' && candidate === outerName && (
+          (resolution.value.kind === 'ndarray-float16' &&
+            (candidate === 'numpy.ndarray' || candidate === 'numpy.typing.NDArray')) ||
+          (resolution.value.kind === 'torch-float16' && candidate === 'torch.Tensor')
+        )) {
+          continue;
+        }
+      }
+      // Runtime notices do not fail strict mode. Type-honesty warnings do.
+      if (warning.startsWith('Return annotation for ')) {
+        recordUnknown(`Python IR warning: ${warning}`);
+      } else {
+        logger.info(`Python IR notice: ${warning}`, { component: 'Generate' });
+      }
     }
 
     const baseName = moduleModel.name || 'module';
@@ -630,170 +650,6 @@ async function fetchPythonIr(
   } catch (err) {
     return { ir: null, error: err instanceof Error ? err.message : String(err) };
   }
-}
-
-/**
- * Convert JSON IR from Python into the internal TypeScript model used by the generator.
- */
-function collectModuleTypeVarNames(obj: Record<string, unknown>): Set<string> {
-  const names = new Set<string>();
-  const constants = Array.isArray(obj.constants) ? (obj.constants as unknown[]) : [];
-
-  for (const constant of constants) {
-    const entry = constant as Record<string, unknown>;
-    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
-    if (!name) {
-      continue;
-    }
-
-    const valueRepr = typeof entry.value_repr === 'string' ? entry.value_repr.trim() : '';
-    if (/^~?[A-Za-z_][A-Za-z0-9_]*$/.test(valueRepr) && valueRepr.replace(/^~/, '') === name) {
-      names.add(name);
-      continue;
-    }
-
-    const annotation = typeof entry.annotation === 'string' ? entry.annotation.trim() : '';
-    if (/(^|\.)(TypeVar|ParamSpec|TypeVarTuple)(\[|\(|$)/.test(annotation)) {
-      names.add(name);
-    }
-  }
-
-  return names;
-}
-
-function transformIrToTsModel(ir: ValidatedIrContract): TSPythonModule {
-  const obj = ir;
-  const functions = ir.functions;
-  const classes = ir.classes;
-  const aliases = ir.type_aliases;
-  const moduleTypeVarNames = collectModuleTypeVarNames(obj);
-  const parseType = (
-    annotation: unknown,
-    typeParameters: readonly PythonGenericParameter[] = []
-  ): PythonType =>
-    parseAnnotationToPythonType(annotation, {
-      onUnknownTypeName: recordUnknown,
-      knownTypeVarNames: moduleTypeVarNames,
-      typeParameters,
-    });
-  const mapTypeParameters = (
-    typeParameters: readonly IrTypeParameter[]
-  ): PythonGenericParameter[] =>
-    typeParameters.map(param => ({
-      name: param.name,
-      kind: param.kind,
-      bound: param.bound ? parseType(param.bound) : undefined,
-      constraints: param.constraints ? param.constraints.map(item => parseType(item)) : undefined,
-      variance: param.variance ?? undefined,
-    }));
-  const mapParam = (
-    p: IrParameter,
-    typeParameters: readonly PythonGenericParameter[] = []
-  ): Parameter => ({
-    name: p.name,
-    type: parseType(p.annotation, typeParameters),
-    optional: p.default,
-    varArgs: p.kind === 'VAR_POSITIONAL',
-    kwArgs: p.kind === 'VAR_KEYWORD',
-    positionalOnly: p.kind === 'POSITIONAL_ONLY',
-    keywordOnly: p.kind === 'KEYWORD_ONLY',
-  });
-
-  const mapMethodKind = (value: unknown): PythonFunction['methodKind'] =>
-    value === 'class' || value === 'static' ? value : 'instance';
-
-  const mapFunc = (
-    f: IrFunction,
-    inheritedTypeParameters: readonly PythonGenericParameter[] = []
-  ): PythonFunction => {
-    const localTypeParameters = mapTypeParameters(f.type_params);
-    const annotationTypeParameters = [...inheritedTypeParameters, ...localTypeParameters];
-    return {
-      name: String(f.name ?? ''),
-      signature: {
-        parameters: f.parameters.map(parameter => mapParam(parameter, annotationTypeParameters)),
-        returnType: parseType(f.returns, annotationTypeParameters),
-        isAsync: Boolean(f.is_async),
-        isGenerator: Boolean(f.is_generator),
-      },
-      docstring: f.docstring ?? undefined,
-      decorators: [],
-      isAsync: Boolean(f.is_async),
-      isGenerator: Boolean(f.is_generator),
-      typeParameters: [...localTypeParameters],
-      returnType: parseType(f.returns, annotationTypeParameters),
-      parameters: f.parameters.map(parameter => mapParam(parameter, annotationTypeParameters)),
-      overloads: f.overloads.map(overload => ({
-        parameters: overload.parameters.map(parameter =>
-          mapParam(parameter, annotationTypeParameters)
-        ),
-        returnType: parseType(overload.returns, annotationTypeParameters),
-      })),
-      methodKind: mapMethodKind(f.method_kind),
-    };
-  };
-
-  const mapClass = (c: IrClass): PythonClass => {
-    const classTypeParameters = mapTypeParameters(c.type_params);
-    return {
-      name: c.name,
-      bases: c.bases,
-      methods: c.methods.map(method => mapFunc(method, classTypeParameters)),
-      properties: c.fields.map(p => ({
-        name: p.name,
-        type: parseType(p.annotation, classTypeParameters),
-        readonly: false,
-        setter: false,
-        getter: true,
-        optional: p.default,
-      })),
-      accessors: c.accessors.map(a => ({
-        name: a.name,
-        type: parseType(a.returns, classTypeParameters),
-        docstring: a.docstring ?? undefined,
-        readOnly: a.read_only ?? undefined,
-        isCached: a.is_cached,
-      })),
-      docstring: c.docstring ?? undefined,
-      decorators: c.typed_dict ? ['__typed_dict__'] : [],
-      kind: c.typed_dict
-        ? 'typed_dict'
-        : c.is_protocol
-          ? 'protocol'
-          : c.is_namedtuple
-            ? 'namedtuple'
-            : c.is_dataclass
-              ? 'dataclass'
-              : c.is_pydantic
-                ? 'pydantic'
-                : 'class',
-      typeParameters: classTypeParameters,
-    };
-  };
-
-  const mapTypeAlias = (alias: IrTypeAlias): PythonTypeAlias => {
-    const typeParameters = mapTypeParameters(alias.type_params);
-    return {
-      name: alias.name,
-      type: parseType(alias.definition, typeParameters),
-      typeParameters,
-    };
-  };
-
-  const moduleModel: TSPythonModule = {
-    name: obj.module,
-    path: undefined,
-    version:
-      typeof obj.metadata.package_version === 'string'
-        ? obj.metadata.package_version
-        : undefined,
-    functions: functions.map(functionValue => mapFunc(functionValue)),
-    classes: classes.map(mapClass),
-    typeAliases: aliases.map(mapTypeAlias),
-    imports: [],
-    exports: [],
-  };
-  return moduleModel;
 }
 
 /**

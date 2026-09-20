@@ -16,10 +16,14 @@ export function parseAnnotationToPythonType(
     (options.typeParameters ?? []).map(param => [param.name, param] as const)
   );
   const modulePrefixes = ['', 'typing.', 'typing_extensions.', 'collections.abc.'] as const;
+  let numpyShapeDepth = 0;
 
   const unknownType = (): PythonType => ({ kind: 'custom', name: 'Any', module: 'typing' });
 
   const recordUnknown = (name: string): void => {
+    if (numpyShapeDepth > 0) {
+      return;
+    }
     try {
       onUnknownTypeName?.(name);
     } catch {
@@ -495,8 +499,22 @@ export function parseAnnotationToPythonType(
 
     const generic = splitGenericInvocation(raw);
     if (generic) {
-      const typeArgs = splitTopLevel(generic.inner, ',').map(part => parse(part.trim(), depth + 1));
       const qualified = splitQualifiedName(generic.name);
+      const parts = splitTopLevel(generic.inner, ',');
+      const numpyArrayShape = qualified.module === 'numpy' &&
+        qualified.name === 'ndarray' && parts.length === 2;
+      const typeArgs = parts.map((part, index) => {
+        if (!numpyArrayShape || index !== 0) {
+          return parse(part.trim(), depth + 1);
+        }
+        // NumPy's first ndarray argument describes shape, not decoded value type.
+        numpyShapeDepth += 1;
+        try {
+          return parse(part.trim(), depth + 1);
+        } finally {
+          numpyShapeDepth -= 1;
+        }
+      });
       return {
         kind: 'generic',
         name: qualified.name,

@@ -96,6 +96,69 @@ describe('pinned IR contracts', () => {
     }
   });
 
+  it('keeps a supported NumPy float16 contract strict in offline and check modes', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-ir-float16-'));
+    try {
+      const contractPath = join(tempDir, 'scientific.contract.json');
+      await writeFile(contractPath, JSON.stringify({
+        ir_version: '0.4.0', module: 'scientific_fixture',
+        functions: [{
+          name: 'value', qualname: 'scientific_fixture.value', docstring: null,
+          parameters: [],
+          returns: 'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[numpy.float16]]',
+          is_async: false, is_generator: false, type_params: [],
+          method_kind: 'instance', overloads: [],
+        }],
+        classes: [], constants: [], type_aliases: [], metadata: {},
+        warnings: [
+          'Return annotation for scientific_fixture.value resolves outside analyzed module: numpy.ndarray.',
+        ],
+      }), 'utf8');
+      const configured = {
+        ...options(join(tempDir, 'generated')),
+        pythonModules: { scientific_fixture: { typeHints: 'strict' as const } },
+        contractInput: contractPath,
+      };
+      const first = await generate(configured);
+      expect(first.failures).toEqual([]);
+      expect(first.warnings).toEqual([]);
+      const emitted = await readFile(join(tempDir, 'generated', 'scientific_fixture.generated.ts'), 'utf8');
+      expect(emitted).toContain('value(): Promise<__tywrapFloat16Value>');
+      expect(emitted).toContain('"marker":"ndarray","dtype":"float16"');
+      const check = await generate(configured, { check: true });
+      expect(check.failures).toEqual([]);
+      expect(check.warnings).toEqual([]);
+      expect(check.outOfDate).toEqual([]);
+
+      const foreign = JSON.parse(await readFile(contractPath, 'utf8')) as {
+        functions: Array<{ returns: string }>;
+        warnings: string[];
+      };
+      foreign.functions[0]!.returns =
+        'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[external.float16]]';
+      await writeFile(contractPath, JSON.stringify(foreign), 'utf8');
+      const rejected = await generate(configured);
+      expect(rejected.warnings.some(warning =>
+        warning.includes('no value conversion is defined for numpy.ndarray')
+      )).toBe(true);
+      expect(rejected.warnings.some(warning =>
+        warning.includes('resolves outside analyzed module: numpy.ndarray')
+      )).toBe(true);
+
+      foreign.functions[0]!.returns =
+        'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[numpy.float16]]';
+      foreign.warnings[0] =
+        'Return annotation for scientific_fixture.value resolves outside analyzed module: numpy.Opaque.';
+      await writeFile(contractPath, JSON.stringify(foreign), 'utf8');
+      const unrelated = await generate(configured);
+      expect(unrelated.warnings.some(warning =>
+        warning.includes('resolves outside analyzed module: numpy.Opaque')
+      )).toBe(true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   // Windows cannot run the fake-interpreter shim: extensionless sh scripts
   // fail with ENOENT and .cmd files fail with EINVAL (Node's batch-file spawn
   // mitigation; the production spawn rightly never sets shell:true). The

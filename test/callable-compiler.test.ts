@@ -11,6 +11,7 @@ import {
   DEFAULT_VALUE_CONVERSION,
 } from '../src/core/callable-compiler.js';
 import { CodeGenerator } from '../src/core/generator.js';
+import { parseAnnotationToPythonType } from '../src/core/annotation-parser.js';
 import { validateIrContract } from '../src/core/ir-contract.js';
 import { BridgeValidationError } from '../src/runtime/errors.js';
 import { HttpBridge } from '../src/runtime/http.js';
@@ -375,6 +376,81 @@ describe('compileContract', () => {
     ]));
   });
 
+  it('warns when keyword-only overloads overlap despite declaration order', () => {
+    const source = rawIr.functions[0]!;
+    const x = { name: 'x', kind: 'KEYWORD_ONLY', annotation: 'str', default: false };
+    const y = { name: 'y', kind: 'KEYWORD_ONLY', annotation: 'int', default: false };
+    const ir = validateIrContract({
+      ...rawIr,
+      functions: [{
+        ...source,
+        name: 'choose', qualname: 'fixture.choose',
+        parameters: [x, y],
+        overloads: [
+          { parameters: [x, y], returns: 'str' },
+          { parameters: [y, x], returns: 'int' },
+        ],
+      }],
+      classes: [],
+    }, 'keyword overload contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        functions: [{ ...moduleModel.functions[0]!, name: 'choose' }],
+        classes: [],
+      },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'overload-ambiguous', path: '$.functions[0].overloads[1]' }),
+    ]));
+  });
+
+  it('takes callable types from validated IR, not from the export selection model', () => {
+    const source = rawIr.functions[1]!;
+    const ir = validateIrContract({
+      ...rawIr,
+      functions: [{
+        ...source,
+        name: 'echo', qualname: 'fixture.echo',
+        parameters: [{ name: 'value', kind: 'POSITIONAL_OR_KEYWORD', annotation: 'str', default: false }],
+        returns: 'str',
+      }],
+      classes: [],
+    }, 'IR authority contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const forged = {
+      ...moduleModel.functions[1]!,
+      name: 'echo',
+      parameters: [{
+        name: 'value', type: { kind: 'primitive', name: 'int' } as PythonType,
+        optional: false, varArgs: false, kwArgs: false,
+      }],
+      returnType: { kind: 'primitive', name: 'int' } as PythonType,
+    };
+    const compiled = compileContract(ir.contract, {
+      module: { ...moduleModel, functions: [forged], classes: [] },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.module.functions[0]?.parameters[0]?.type).toEqual({ kind: 'primitive', name: 'str' });
+    expect(compiled.callables[0]?.result.resolution).toMatchObject({
+      status: 'supported', value: { kind: 'string' },
+    });
+    expect(compiled.generated.declaration).toContain('echo(value: string): Promise<string>');
+    expect(compiled.generated.declaration).not.toContain('echo(value: number)');
+  });
+
   it('selects a class method overload without validating its implicit cls receiver', async () => {
     const source = rawIr.functions[0]!;
     const receiver = {
@@ -515,6 +591,9 @@ describe('compileContract', () => {
       capabilities: DEFAULT_CALLABLE_CAPABILITIES,
     });
     expect(compiled.generated.typescript).toContain('"marker":"ndarray","dtype":"float16"');
+    expect(compiled.generated.declaration).toContain(
+      'scalarValue(): Promise<__tywrapFloat16Value>'
+    );
 
     let dtype = 'float16';
     let requestId = 0;
@@ -614,6 +693,21 @@ describe('compileContract', () => {
       status: 'supported',
       value: { kind: 'ndarray-float16', dtype: 'float16' },
     });
+    expect(resolve(parseAnnotationToPythonType(
+      'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[numpy.float16]]'
+    ))).toMatchObject({
+      status: 'supported',
+      value: { kind: 'ndarray-float16', dtype: 'float16' },
+    });
+    expect(resolve(parseAnnotationToPythonType(
+      'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[numpy.float32]]'
+    ))).toMatchObject({ status: 'unresolved' });
+    expect(resolve(parseAnnotationToPythonType(
+      'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[external.float16]]'
+    ))).toMatchObject({ status: 'unresolved' });
+    expect(resolve(parseAnnotationToPythonType(
+      'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[torch.float16]]'
+    ))).toMatchObject({ status: 'unresolved' });
   });
 
   it('keeps the existing bytes RPC shape in the value contract', () => {
@@ -655,6 +749,16 @@ describe('compileContract', () => {
       }],
     });
     expect(generated.typescript).toContain('"marker":"torch.tensor","dtype":"torch.float16"');
+    expect(generated.declaration).toContain(
+      'tensorValue(): Promise<__tywrapFloat16Tensor>'
+    );
+    expect(DEFAULT_VALUE_CONVERSION.resolve({
+      direction: 'output', path: '$.functions[0].returns',
+      logicalType: {
+        ...tensorType,
+        typeArgs: [{ kind: 'custom', name: 'float16', module: 'external' }],
+      },
+    })).toMatchObject({ status: 'unresolved' });
   });
 
   it('rejects a Torch float16 response with a mismatched nested dtype', async () => {
@@ -768,5 +872,29 @@ describe('compileContract', () => {
       name: 'Any',
       module: 'typing',
     });
+  });
+
+  it('requires returned dataclass fields even when their constructor has defaults', () => {
+    const point = rawIr.classes[0]!;
+    const ir = validateIrContract({
+      ...rawIr,
+      functions: [],
+      classes: [{
+        ...point,
+        fields: [{ ...point.fields[0]!, default: true }, point.fields[1]!],
+      }],
+    }, 'Point default contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: { ...moduleModel, functions: [] },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.generated.declaration).toContain('x: number;');
+    expect(compiled.generated.declaration).not.toContain('x?: number;');
   });
 });
