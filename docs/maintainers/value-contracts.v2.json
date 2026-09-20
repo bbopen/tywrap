@@ -19,6 +19,13 @@
       "decodedAs": "JavaScript number",
       "failure": "reject NaN and Infinity"
     },
+    "bytes": {
+      "logicalKind": "Python bytes or bytearray",
+      "requestWire": "existing __tywrap_bytes__ base64 envelope",
+      "responseWire": "existing __type__: bytes base64 envelope",
+      "decodedAs": "JavaScript Uint8Array",
+      "failure": "reject malformed base64 or payloads above the existing byte limit"
+    },
     "sequence": {
       "logicalKind": "list or variadic tuple of one contracted item kind",
       "wire": "JSON array",
@@ -57,6 +64,8 @@
       "logicalKind": "Torch float16 tensor",
       "wire": "codecVersion 1 torch.tensor envelope containing ndarray envelope",
       "decodedAs": "tensor record with numeric data",
+      "outerDtype": "torch.float16",
+      "nestedDtype": "float16",
       "conversion": "reuse ndarray-float16 rule for nested value"
     }
   },
