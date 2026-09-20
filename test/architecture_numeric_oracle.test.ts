@@ -126,10 +126,14 @@ describe('architecture numeric oracle', () => {
     let nonFiniteCount = 0;
     for (let word = 0; word < oracle.words.length; word += 1) {
       const entry = oracle.words[word];
-      if (!entry) throw new Error(`Python oracle omitted word ${word}`);
+      if (!entry) {
+        throw new Error(`Python oracle omitted word ${word}`);
+      }
       if (isNonFinite(entry[0])) {
         nonFiniteCount += 1;
-        if (entry[1]) throw new Error(`Non-finite word 0x${word.toString(16)} has a zero flag`);
+        if (entry[1]) {
+          throw new Error(`Non-finite word 0x${word.toString(16)} has a zero flag`);
+        }
         continue;
       }
       const value = Number(entry[0]);
@@ -197,7 +201,9 @@ describe('architecture numeric oracle', () => {
 
   it('reuses float16 conversion inside Torch and records with a retained seed', async () => {
     const nested = fixture.nestedCases.find(testCase => testCase.float16Words);
-    if (!nested?.float16Words) throw new Error('Missing nested Torch fixture');
+    if (!nested?.float16Words) {
+      throw new Error('Missing nested Torch fixture');
+    }
     expect(nested.path).toBe('result.outer[0].tensor.value');
     const fixedWords = nested.float16Words.map(word => Number.parseInt(word, 16));
 
