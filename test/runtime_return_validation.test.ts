@@ -57,7 +57,9 @@ describe('generated return validators', () => {
       values: [1n, 18446744073709551617n],
     });
     expect(() => validator({ values: [1, 2n] })).toThrow(BridgeValidationError);
-    expect(() => validator({ values: ['1'] })).toThrow(/expected bigint, received string/);
+    expect(() => validator({ values: ['1'] })).toThrow(BridgeValidationError);
+    const leaf = createReturnValidator({ kind: 'primitive', type: 'bigint' }, 'fixture.exactValue');
+    expect(() => leaf('1')).toThrow(/expected bigint, received string/);
   });
 
   it('requires per-call provenance for a scalar float16 ndarray', () => {

@@ -409,6 +409,19 @@ function resolveTorchFloat16(): ValueResolution {
   };
 }
 
+function depthLimitResolution(
+  depth: number | undefined,
+  revision: ValueContractRevision
+): UnsupportedValueResolution | null {
+  return (depth ?? 0) > 64
+    ? {
+        status: 'unsupported',
+        reason: `Revision ${revision} limits value contracts to 64 nested nodes.`,
+        guidance: 'Flatten the value or provide a bounded adapter.',
+      }
+    : null;
+}
+
 /** The conversion set that #335 may use with the frozen value-contract revision. */
 export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
   revision: VALUE_CONTRACT_REVISION,
@@ -417,12 +430,9 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
     const nestedConversion: Pick<ValueConversionDescription, 'resolve'> = {
       resolve: request.resolveNested ?? DEFAULT_VALUE_CONVERSION.resolve,
     };
-    if ((request.depth ?? 0) > 64) {
-      return {
-        status: 'unsupported',
-        reason: 'Revision 2 limits value contracts to 64 nested nodes.',
-        guidance: 'Flatten the value or provide a bounded adapter.',
-      };
+    const depthFailure = depthLimitResolution(request.depth, VALUE_CONTRACT_REVISION);
+    if (depthFailure) {
+      return depthFailure;
     }
     switch (type.kind) {
       case 'primitive':
@@ -551,6 +561,10 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
 export const EXACT_INTEGER_VALUE_CONVERSION: ValueConversionDescription = {
   revision: VALUE_CONTRACT_V3_REVISION,
   resolve(request): ValueResolution {
+    const depthFailure = depthLimitResolution(request.depth, VALUE_CONTRACT_V3_REVISION);
+    if (depthFailure) {
+      return depthFailure;
+    }
     if (request.logicalType.kind === 'primitive' && request.logicalType.name === 'int') {
       return {
         status: 'supported',
@@ -853,6 +867,34 @@ function resolveCallable(
     ...visibleOverloadParameters.flat(),
     ...overloadResults,
   ];
+  const rejectMixedExactKwargs = (
+    source: readonly Parameter[],
+    resolved: readonly ResolvedCallableValue[],
+    sourcePath: string
+  ): void => {
+    if (!source.some(parameter => parameter.keywordOnly)) {
+      return;
+    }
+    const index = source.findIndex(parameter => parameter.kwArgs);
+    const resolution = resolved[index]?.resolution;
+    if (
+      index >= 0 &&
+      resolution?.status === 'supported' &&
+      containsExactInteger(resolution.value)
+    ) {
+      throw new Error(
+        `${sourcePath}.parameters[${index}]: exact **kwargs cannot share a signature with named keyword-only parameters.`
+      );
+    }
+  };
+  rejectMixedExactKwargs(func.parameters, parameters, path);
+  (func.overloads ?? []).forEach((overload, index) =>
+    rejectMixedExactKwargs(
+      overload.parameters,
+      overloadParameters[index] ?? [],
+      `${path}.overloads[${index}]`
+    )
+  );
   const requiredCapabilities = new Set<CallableCapability>();
   for (const value of values) {
     if (value.resolution.status === 'supported' && containsExactInteger(value.resolution.value)) {
@@ -1081,7 +1123,7 @@ export function compileContract(
         if ((request.depth ?? 0) >= 64) {
           return {
             status: 'unsupported',
-            reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+            reason: `Revision ${conversion.revision} limits value contracts to 64 nested nodes.`,
             guidance: 'Flatten the value or provide a bounded adapter.',
           };
         }
@@ -1113,7 +1155,7 @@ export function compileContract(
         if ((request.depth ?? 0) >= 64) {
           return {
             status: 'unsupported',
-            reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+            reason: `Revision ${conversion.revision} limits value contracts to 64 nested nodes.`,
             guidance: 'Flatten the value or provide a bounded adapter.',
           };
         }

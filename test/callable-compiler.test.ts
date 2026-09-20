@@ -1792,6 +1792,229 @@ describe('compileContract', () => {
     ).toMatchObject({ status: 'supported', value: { kind: 'union' } });
   });
 
+  it('keeps exact integer depth bounded before resolving a leaf', () => {
+    const request = {
+      direction: 'output' as const,
+      path: '$.returns',
+      logicalType: parseAnnotationToPythonType('int'),
+    };
+    expect(EXACT_INTEGER_VALUE_CONVERSION.resolve({ ...request, depth: 64 }).status).toBe(
+      'supported'
+    );
+    expect(EXACT_INTEGER_VALUE_CONVERSION.resolve({ ...request, depth: 65 })).toMatchObject({
+      status: 'unsupported',
+      reason: 'Revision 3 limits value contracts to 64 nested nodes.',
+    });
+  });
+
+  it('uses exact input types in static and class method declarations', () => {
+    const source = rawIr.functions[1]!;
+    const value = {
+      name: 'value',
+      kind: 'POSITIONAL_OR_KEYWORD',
+      annotation: 'int',
+      default: false,
+    };
+    const receiver = {
+      name: 'cls',
+      kind: 'POSITIONAL_OR_KEYWORD',
+      annotation: null,
+      default: false,
+    };
+    const methods = [
+      {
+        ...source,
+        name: 'static_echo',
+        qualname: 'fixture.Box.static_echo',
+        method_kind: 'static',
+        parameters: [value],
+        returns: 'int',
+      },
+      {
+        ...source,
+        name: 'class_echo',
+        qualname: 'fixture.Box.class_echo',
+        method_kind: 'class',
+        parameters: [receiver, value],
+        returns: 'int',
+        overloads: [
+          { parameters: [receiver, value], returns: 'int' },
+          {
+            parameters: [receiver, { ...value, annotation: 'str' }],
+            returns: 'str',
+          },
+        ],
+      },
+    ];
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: [],
+        classes: [
+          {
+            ...rawIr.classes[0]!,
+            name: 'Box',
+            qualname: 'fixture.Box',
+            methods,
+            fields: [],
+            is_dataclass: false,
+          },
+        ],
+      },
+      'exact integer method contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const original = moduleModel.functions[1]!;
+    const model: PythonModule = {
+      ...moduleModel,
+      functions: [],
+      classes: [
+        {
+          ...moduleModel.classes[0]!,
+          name: 'Box',
+          kind: 'class',
+          methods: methods.map(method => ({
+            ...original,
+            name: method.name,
+            methodKind: method.method_kind as 'class' | 'static',
+          })),
+          properties: [],
+        },
+      ],
+    };
+    const capabilities = DEFAULT_CALLABLE_CAPABILITIES.map(capability =>
+      capability.name === 'exact-integer-adapter' ? { ...capability, available: true } : capability
+    );
+    const compiled = compileContract(ir.contract, {
+      module: model,
+      generator: new CodeGenerator(),
+      conversion: EXACT_INTEGER_VALUE_CONVERSION,
+      capabilities,
+    });
+    expect(compiled.generated.declaration).toContain(
+      'static staticEcho(value: bigint): Promise<bigint>;'
+    );
+    expect(compiled.generated.declaration).toContain(
+      'static classEcho(value: bigint): Promise<bigint>;'
+    );
+    expect(compiled.generated.declaration).toContain(
+      'static classEcho(value: string): Promise<string>;'
+    );
+    expect(compiled.generated.typescript).toContain(
+      'static async staticEcho(value: bigint): Promise<bigint>'
+    );
+  });
+
+  it('types exact variadic inputs and rejects an unrepresentable mixed keyword shape', async () => {
+    const source = rawIr.functions[1]!;
+    const functions = [
+      {
+        ...source,
+        name: 'spread_exact',
+        qualname: 'fixture.spread_exact',
+        parameters: [{ name: 'values', kind: 'VAR_POSITIONAL', annotation: 'int', default: false }],
+        returns: 'int',
+      },
+      {
+        ...source,
+        name: 'keyword_exact',
+        qualname: 'fixture.keyword_exact',
+        parameters: [{ name: 'values', kind: 'VAR_KEYWORD', annotation: 'int', default: false }],
+        returns: 'int',
+      },
+    ];
+    const ir = validateIrContract({ ...rawIr, functions }, 'exact integer variadic contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const module = {
+      ...moduleModel,
+      functions: functions.map(func => ({ ...moduleModel.functions[1]!, name: func.name })),
+      classes: [],
+    };
+    const capabilities = DEFAULT_CALLABLE_CAPABILITIES.map(capability =>
+      capability.name === 'exact-integer-adapter' ? { ...capability, available: true } : capability
+    );
+    const compiled = compileContract(ir.contract, {
+      module,
+      generator: new CodeGenerator(),
+      conversion: EXACT_INTEGER_VALUE_CONVERSION,
+      capabilities,
+    });
+    expect(compiled.generated.declaration).toContain(
+      'spreadExact(...values: bigint[]): Promise<bigint>'
+    );
+    expect(compiled.generated.declaration).toContain(
+      'keywordExact(kwargs?: Record<string, bigint>): Promise<bigint>'
+    );
+    expect(compiled.generated.declaration).not.toContain('unknown[]');
+
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-exact-variadic-'));
+    try {
+      const declarationPath = join(temporary, 'fixture.generated.d.ts');
+      const consumerPath = join(temporary, 'consumer.ts');
+      await writeFile(declarationPath, compiled.generated.declaration, 'utf8');
+      await writeFile(
+        consumerPath,
+        [
+          "import { spreadExact, keywordExact } from './fixture.generated.js';",
+          'const spread: Promise<bigint> = spreadExact(1n, 2n);',
+          'const keyword: Promise<bigint> = keywordExact({ value: 1n });',
+          'void spread;',
+          'void keyword;',
+          '// @ts-expect-error exact spread values require bigint',
+          'spreadExact(1);',
+          '// @ts-expect-error exact keyword values require bigint',
+          'keywordExact({ value: 1 });',
+        ].join('\n'),
+        'utf8'
+      );
+      const program = ts.createProgram([consumerPath], {
+        noEmit: true,
+        strict: true,
+        skipLibCheck: true,
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        types: [],
+      });
+      expect(ts.getPreEmitDiagnostics(program)).toEqual([]);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+
+    const mixed = validateIrContract(
+      {
+        ...rawIr,
+        functions: [
+          {
+            ...functions[1]!,
+            parameters: [
+              { name: 'flag', kind: 'KEYWORD_ONLY', annotation: 'bool', default: false },
+              { name: 'values', kind: 'VAR_KEYWORD', annotation: 'int', default: false },
+            ],
+          },
+        ],
+      },
+      'mixed exact kwargs contract'
+    );
+    expect(mixed.ok).toBe(true);
+    if (mixed.ok) {
+      expect(() =>
+        compileContract(mixed.contract, {
+          module: { ...module, functions: [module.functions[1]!] },
+          generator: new CodeGenerator(),
+          conversion: EXACT_INTEGER_VALUE_CONVERSION,
+          capabilities,
+        })
+      ).toThrow(/exact \*\*kwargs cannot share a signature/);
+    }
+  });
+
   it('requires returned dataclass fields even when their constructor has defaults', () => {
     const point = rawIr.classes[0]!;
     const ir = validateIrContract(
