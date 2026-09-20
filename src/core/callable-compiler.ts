@@ -286,6 +286,93 @@ function resolveTuple(
   };
 }
 
+type WireRelation = 'disjoint' | 'same-decoding' | 'ambiguous';
+
+function combineWireRelations(relations: readonly WireRelation[]): WireRelation {
+  if (relations.includes('ambiguous')) {
+    return 'ambiguous';
+  }
+  return relations.includes('same-decoding') ? 'same-decoding' : 'disjoint';
+}
+
+function isTaggedValue(value: ValueContract): boolean {
+  return (
+    value.kind === 'bytes' || value.kind === 'ndarray-float16' || value.kind === 'torch-float16'
+  );
+}
+
+function recordWireRelation(left: ValueContract, right: ValueContract): WireRelation {
+  if (left.kind !== 'record' || right.kind !== 'record') {
+    return 'disjoint';
+  }
+  const relations: WireRelation[] = [];
+  for (const field of left.fields) {
+    const other =
+      right.fields.find(candidate => candidate.name === field.name)?.value ??
+      right.additionalValues;
+    if (other) {
+      relations.push(valueWireRelation(field.value, other));
+    }
+  }
+  for (const field of right.fields) {
+    if (left.fields.some(candidate => candidate.name === field.name)) {
+      continue;
+    }
+    if (left.additionalValues) {
+      relations.push(valueWireRelation(left.additionalValues, field.value));
+    }
+  }
+  if (left.additionalValues && right.additionalValues) {
+    relations.push(valueWireRelation(left.additionalValues, right.additionalValues));
+  }
+  return relations.includes('ambiguous') ? 'ambiguous' : 'same-decoding';
+}
+
+function valueWireRelation(left: ValueContract, right: ValueContract): WireRelation {
+  if (left.kind === 'unsupported' || right.kind === 'unsupported') {
+    return 'ambiguous';
+  }
+  if (left.kind === 'union') {
+    return combineWireRelations(left.options.map(option => valueWireRelation(option, right)));
+  }
+  if (right.kind === 'union') {
+    return combineWireRelations(right.options.map(option => valueWireRelation(left, option)));
+  }
+  if (left.kind === 'record' && right.kind === 'record') {
+    return recordWireRelation(left, right);
+  }
+  if (
+    (left.kind === 'record' && isTaggedValue(right)) ||
+    (right.kind === 'record' && isTaggedValue(left))
+  ) {
+    return 'ambiguous';
+  }
+  if (left.kind === 'sequence' && right.kind === 'sequence') {
+    return valueWireRelation(left.item, right.item) === 'ambiguous' ? 'ambiguous' : 'same-decoding';
+  }
+  if (left.kind === 'tuple' && right.kind === 'tuple') {
+    if (left.items.length !== right.items.length) {
+      return 'disjoint';
+    }
+    const relations = left.items.map((item, index) => valueWireRelation(item, right.items[index]!));
+    return relations.includes('disjoint') ? 'disjoint' : combineWireRelations(relations);
+  }
+  if (left.kind === 'sequence' && right.kind === 'tuple') {
+    const relations = right.items.map(item => valueWireRelation(left.item, item));
+    return relations.includes('disjoint') ? 'disjoint' : combineWireRelations(relations);
+  }
+  if (left.kind === 'tuple' && right.kind === 'sequence') {
+    return valueWireRelation(right, left);
+  }
+  if (
+    (left.kind === 'integer' && right.kind === 'float') ||
+    (left.kind === 'float' && right.kind === 'integer')
+  ) {
+    return 'same-decoding';
+  }
+  return left.kind === right.kind ? 'same-decoding' : 'disjoint';
+}
+
 function resolveUnion(
   options: readonly PythonType[],
   request: ValueConversionRequest,
@@ -319,6 +406,17 @@ function resolveUnion(
       reason: 'Revision 2 requires at least two supported union alternatives.',
       guidance: 'Provide two explicit value alternatives.',
     };
+  }
+  for (let index = 0; index < values.length; index += 1) {
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      if (valueWireRelation(values[earlier]!.value, values[index]!.value) === 'ambiguous') {
+        return {
+          status: 'unsupported',
+          reason: 'Union alternatives can share a wire value but decode differently.',
+          guidance: 'Use a disjoint tagged record or split the union.',
+        };
+      }
+    }
   }
   return {
     status: 'supported',

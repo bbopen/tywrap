@@ -1701,6 +1701,79 @@ describe('compileContract', () => {
     });
   });
 
+  it('rejects unions whose marker wire can decode as a different value', () => {
+    const annotations = [
+      'bytes | dict[str, str]',
+      'list[bytes] | list[dict[str, str]]',
+      'tuple[bytes] | tuple[dict[str, str]]',
+      'dict[str, bytes] | dict[str, dict[str, str]]',
+    ];
+    for (const annotation of annotations) {
+      expect(
+        DEFAULT_VALUE_CONVERSION.resolve({
+          direction: 'output',
+          path: '$.returns',
+          logicalType: parseAnnotationToPythonType(annotation),
+        })
+      ).toMatchObject({
+        status: 'unsupported',
+        reason: 'Union alternatives can share a wire value but decode differently.',
+      });
+    }
+    for (const annotation of ['int | float', 'bytes | str']) {
+      expect(
+        DEFAULT_VALUE_CONVERSION.resolve({
+          direction: 'output',
+          path: '$.returns',
+          logicalType: parseAnnotationToPythonType(annotation),
+        }).status
+      ).toBe('supported');
+    }
+
+    const source = rawIr.functions[1]!;
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: [
+          {
+            ...source,
+            name: 'ambiguous_wire',
+            qualname: 'fixture.ambiguous_wire',
+            returns: 'bytes | dict[str, str]',
+          },
+        ],
+      },
+      'ambiguous union wire contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const module = {
+      ...moduleModel,
+      functions: [{ ...moduleModel.functions[1]!, name: 'ambiguous_wire' }],
+      classes: [],
+    };
+    const compiled = compileContract(ir.contract, {
+      module,
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.callables[0]?.result.resolution.status).toBe('unsupported');
+    expect(compiled.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        code: 'conversion-unsupported',
+        path: '$.functions[0].returns',
+      })
+    );
+    expect(compiled.generated.declaration).toContain('ambiguousWire(): Promise<unknown>');
+    expect(compiled.generated.typescript).toContain(
+      'const __validateambiguous_wireResult = createReturnValidator({"kind":"any"}'
+    );
+  });
+
   it('requires returned dataclass fields even when their constructor has defaults', () => {
     const point = rawIr.classes[0]!;
     const ir = validateIrContract(
