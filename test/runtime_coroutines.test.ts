@@ -187,6 +187,95 @@ nodeSuite('Subprocess retirement reaps the child', () => {
     }
   }, 10_000);
 
+  it('keeps a replacement healthy after late errors from the retired child', async () => {
+    const transport = new SubprocessTransport({
+      bridgeScript: 'runtime/python_bridge.py',
+      pythonPath: PYTHON ?? 'python3',
+    });
+    const internals = transport as unknown as {
+      process: ChildProcess | null;
+      processExited: boolean;
+      processError: Error | null;
+      needsRestart: boolean;
+      draining: boolean;
+      pending: Map<number, { resolve: (value: string) => void; reject: (error: Error) => void }>;
+      restartProcess: () => Promise<void>;
+    };
+    try {
+      await transport.init();
+      const retired = internals.process;
+      expect(retired).not.toBeNull();
+      expect(retired?.stdin).not.toBeNull();
+      expect(retired?.stdout).not.toBeNull();
+      expect(retired?.stderr).not.toBeNull();
+      await internals.restartProcess();
+      expect(internals.process).not.toBe(retired);
+
+      expect(() =>
+        retired?.stdout?.emit('error', new Error('late retired stdout error'))
+      ).not.toThrow();
+      expect(() =>
+        retired?.stderr?.emit('error', new Error('late retired stderr error'))
+      ).not.toThrow();
+
+      internals.draining = true;
+      retired?.stdin?.emit('drain');
+      expect(internals.draining).toBe(true);
+
+      const reject = vi.fn();
+      internals.pending.set(900, { resolve: vi.fn(), reject });
+      retired?.emit('error', new Error('late retired process error'));
+      retired?.stdin?.emit('error', new Error('late retired stdin error'));
+
+      expect(reject).not.toHaveBeenCalled();
+      expect(internals.processExited).toBe(false);
+      expect(internals.processError).toBeNull();
+      expect(internals.needsRestart).toBe(false);
+    } finally {
+      internals.pending.delete(900);
+      await transport.dispose();
+    }
+  }, 10_000);
+
+  it('clears old backpressure without losing a reused request id', async () => {
+    const transport = new SubprocessTransport({
+      bridgeScript: 'runtime/python_bridge.py',
+      pythonPath: PYTHON ?? 'python3',
+      writeQueueTimeoutMs: 150,
+    });
+    const internals = transport as unknown as {
+      process: ChildProcess | null;
+      draining: boolean;
+      writeQueue: unknown[];
+    };
+    const pidRequest = (id: number): string =>
+      JSON.stringify({
+        id,
+        protocol: 'tywrap/1',
+        method: 'call',
+        params: { module: 'os', functionName: 'getpid', args: [], kwargs: {} },
+      });
+    try {
+      await transport.init();
+      const oldChild = internals.process;
+      internals.draining = true;
+      const first = transport.send(pidRequest(901), 5000);
+      const firstRejected = expect(first).rejects.toThrow('stdout error');
+      await vi.waitFor(() => expect(internals.writeQueue.length).toBe(1));
+      oldChild?.stdout?.emit('error', new Error('old stdout failed'));
+      await firstRejected;
+
+      const response = JSON.parse(await transport.send(pidRequest(901), 5000)) as {
+        result: number;
+      };
+      expect(response.result).toBeTypeOf('number');
+      expect(internals.process).not.toBe(oldChild);
+      expect(internals.writeQueue).toHaveLength(0);
+    } finally {
+      await transport.dispose();
+    }
+  }, 10_000);
+
   it.skipIf(process.platform === 'win32')(
     'forces exit when Python ignores SIGTERM',
     async () => {
