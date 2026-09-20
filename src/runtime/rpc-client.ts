@@ -340,21 +340,24 @@ export class RpcClient extends DisposableBase {
   ): Promise<T> {
     const fullMessage = this.stampMessage(message);
 
-    return this.execute(async () => {
-      // 1. Encode request (validates args)
-      const encoded = this.codec.encodeRequest(fullMessage);
+    return this.execute(
+      async () => {
+        // 1. Encode request (validates args)
+        const encoded = this.codec.encodeRequest(fullMessage);
 
-      // 2. Send via transport
-      const responseStr = await this.transport.send(
-        encoded,
-        options?.timeoutMs ?? this.defaultTimeoutMs,
-        options?.signal,
-        fullMessage.id
-      );
+        // 2. Send via transport
+        const responseStr = await this.transport.send(
+          encoded,
+          options?.timeoutMs ?? this.defaultTimeoutMs,
+          options?.signal,
+          fullMessage.id
+        );
 
-      // 3. Decode response (sync or Arrow-aware, per caller)
-      return decode(responseStr);
-    }, options);
+        // 3. Decode response (sync or Arrow-aware, per caller)
+        return decode(responseStr);
+      },
+      { ...options, timeoutMs: options?.timeoutMs ?? this.defaultTimeoutMs }
+    );
   }
 
   /**
