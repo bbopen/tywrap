@@ -23,7 +23,8 @@ constraint. Regenerate wrappers after that compiler change. Do not return
 The bytes leaf keeps the existing base64 envelopes. Requests use
 `__tywrap_bytes__`; responses use `__type__: bytes`. Both decode to
 `Uint8Array`. The Torch float16 contract names `torch.float16` on the outer
-tensor and `float16` on its nested ndarray.
+tensor and `float16` on its nested version 1 ndarray. The decoder rejects a
+different nested dtype before it decodes the data.
 
 Migration for users with large Python integers: convert them to strings in
 Python with an explicit return annotation, or keep integer columns in Arrow

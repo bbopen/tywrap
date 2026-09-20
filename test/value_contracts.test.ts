@@ -187,6 +187,62 @@ describe('Arrow float16 value contract', () => {
     });
   });
 
+  it.each([
+    { shape: [], encoding: 'json' },
+    { shape: [1], encoding: 'json' },
+    { shape: [], encoding: 'arrow' },
+    { shape: [1], encoding: 'arrow' },
+  ] as const)(
+    'requires a matching nested dtype for Torch float16 shape $shape with $encoding data',
+    async ({ shape, encoding }) => {
+      registerWords([0x3e00]);
+      const nested = {
+        __tywrap__: 'ndarray',
+        codecVersion: 1,
+        encoding,
+        shape,
+        dtype: 'float16',
+        ...(encoding === 'arrow' ? { b64: 'AA==' } : { data: shape.length ? [1.5] : 1.5 }),
+      };
+      const tensor = {
+        __tywrap__: 'torch.tensor',
+        codecVersion: 1,
+        encoding: 'ndarray',
+        value: nested,
+        shape,
+        dtype: 'torch.float16',
+        device: 'cpu',
+      };
+
+      await expect(decodeValueAsync(tensor)).resolves.toMatchObject({
+        data: shape.length ? [1.5] : 1.5,
+        dtype: 'torch.float16',
+      });
+      await expect(
+        decodeValueAsync({ ...tensor, value: { ...nested, dtype: 'float32' } })
+      ).rejects.toThrow(/value\.dtype.*must be "float16".*"torch\.float16"/);
+    }
+  );
+
+  it('requires the nested version 1 envelope for Torch float16', async () => {
+    await expect(
+      decodeValueAsync({
+        __tywrap__: 'torch.tensor',
+        codecVersion: 1,
+        encoding: 'ndarray',
+        shape: [],
+        dtype: 'torch.float16',
+        value: {
+          __tywrap__: 'ndarray',
+          encoding: 'json',
+          shape: [],
+          dtype: 'float16',
+          data: 1.5,
+        },
+      })
+    ).rejects.toThrow(/float16 value must use ndarray codecVersion 1/);
+  });
+
   it.each([0x7c00, 0xfc00, 0x7e00])('rejects non-finite word %s', word => {
     registerWords([word]);
     expect(() => decodeValue(envelope([1]))).toThrow(/non-finite float16 value at b64\[0\]/);

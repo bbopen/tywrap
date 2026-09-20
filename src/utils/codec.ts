@@ -1109,6 +1109,19 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
   if (strictV1 && 'dtype' in nested) {
     assertOptionalNonEmptyDtype(nested.dtype, 'torch.tensor', 'value.dtype', nestedShape);
   }
+  if (strictV1 && dtype === 'torch.float16') {
+    if (!isStrictV1Envelope(nested)) {
+      throw new Error(
+        'Invalid torch.tensor envelope: float16 value must use ndarray codecVersion 1'
+      );
+    }
+    if (nested.dtype !== 'float16') {
+      throw new Error(
+        `Invalid torch.tensor envelope: value.dtype at path value.dtype must be "float16" ` +
+          `for outer dtype "torch.float16"; got ${JSON.stringify(nested.dtype)}`
+      );
+    }
+  }
   const deviceValue = value.device;
   if (deviceValue !== undefined && (typeof deviceValue !== 'string' || deviceValue.length === 0)) {
     throw new Error(
