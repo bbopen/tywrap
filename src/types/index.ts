@@ -3,6 +3,7 @@
  */
 
 import type { ValueContract } from '../contracts/value-contract.js';
+import type { DecodedProvenance } from '../runtime/decoded-provenance.js';
 
 export interface PythonModule {
   name: string;
@@ -536,7 +537,7 @@ export interface PythonRuntime {
     functionName: string,
     args: unknown[],
     kwargs?: Record<string, unknown>,
-    validate?: (result: T) => void
+    validate?: (result: T, provenance?: DecodedProvenance) => void
   ): Promise<T>;
 }
 

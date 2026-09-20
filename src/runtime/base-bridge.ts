@@ -18,6 +18,7 @@
 import type { PythonRuntime, BridgeInfo } from '../types/index.js';
 
 import { DisposableBase } from './bounded-context.js';
+import type { DecodedProvenance } from './decoded-provenance.js';
 import type { RpcClient, GetBridgeInfoOptions } from './rpc-client.js';
 import type { TransportCapabilities } from './transport.js';
 
@@ -44,7 +45,7 @@ export abstract class BasePythonBridge extends DisposableBase implements PythonR
     functionName: string,
     args: unknown[],
     kwargs?: Record<string, unknown>,
-    validate?: (result: T) => void
+    validate?: (result: T, provenance?: DecodedProvenance) => void
   ): Promise<T> {
     await this.ensureReady();
     return this.getRpcClient().call<T>(module, functionName, args, kwargs, validate);

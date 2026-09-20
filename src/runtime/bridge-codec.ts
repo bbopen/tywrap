@@ -16,6 +16,7 @@ import {
   ScientificDecodeError,
 } from '../utils/codec.js';
 import { PROTOCOL_ID } from './transport.js';
+import type { DecodedProvenance } from './decoded-provenance.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -662,13 +663,13 @@ export class BridgeCodec {
    * @throws BridgeProtocolError if the RPC response is invalid
    * @throws BridgeExecutionError if response contains a Python error
    */
-  async decodeResponseAsync<T>(payload: string): Promise<T> {
+  async decodeResponseAsync<T>(payload: string, provenance?: DecodedProvenance): Promise<T> {
     const result = this.parseResponseResult(payload);
 
     // Decode scientific envelopes in the result.
     let decoded: unknown;
     try {
-      decoded = await decodeScientificValue(result);
+      decoded = await decodeScientificValue(result, provenance);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       const decodeError = err instanceof ScientificDecodeError ? err : undefined;
