@@ -22,6 +22,10 @@ process for later calls. Replacement runs the configured worker warmup. Python
 state held only in the retired process is lost. A request that times out before
 its first write does not retire the process.
 
+Retirement sends SIGTERM first. If the child stays alive, it sends SIGKILL
+after one second and waits for the child to exit. A failed kill blocks
+replacement of that process generation.
+
 Disposal kills the process and rejects pending requests. The caller receives
 one timeout, abort, or disposal error. A retired process cannot send a late
 response into a replacement process. A timeout does not cancel Python code in
