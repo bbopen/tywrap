@@ -733,20 +733,22 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     proc.stdout?.removeAllListeners();
     proc.stderr?.removeAllListeners();
 
-    const hasExited = (): boolean => proc.exitCode != null || proc.signalCode != null;
+    const hasExited = (): boolean => proc.exitCode !== null || proc.signalCode !== null;
     if (hasExited()) {
       return;
     }
 
     await new Promise<void>((resolve, reject) => {
-      let graceTimer: ReturnType<typeof setTimeout> | undefined;
-      let forceTimer: ReturnType<typeof setTimeout> | undefined;
+      const timers: {
+        grace?: ReturnType<typeof setTimeout>;
+        force?: ReturnType<typeof setTimeout>;
+      } = {};
       const finish = (error?: Error): void => {
-        if (graceTimer) {
-          clearTimeout(graceTimer);
+        if (timers.grace) {
+          clearTimeout(timers.grace);
         }
-        if (forceTimer) {
-          clearTimeout(forceTimer);
+        if (timers.force) {
+          clearTimeout(timers.force);
         }
         proc.removeListener('exit', onExit);
         if (error) {
@@ -771,7 +773,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
           // The force timer below still bounds shutdown.
         }
       }
-      graceTimer = setTimeout(() => {
+      timers.grace = setTimeout(() => {
         if (hasExited()) {
           finish();
           return;
@@ -781,7 +783,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         } catch {
           // Report an unreaped child after the force deadline.
         }
-        forceTimer = setTimeout(() => {
+        timers.force = setTimeout(() => {
           if (hasExited()) {
             finish();
           } else {
