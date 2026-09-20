@@ -1,5 +1,8 @@
 import { BridgeValidationError } from './errors.js';
+import type { DecodedProvenance, DecodedShapeMetadata } from './decoded-provenance.js';
 import type { ScientificMarker } from '../utils/codec.js';
+
+export type { DecodedShapeMetadata } from './decoded-provenance.js';
 
 /**
  * Pure validation functions for runtime value checking.
@@ -23,7 +26,16 @@ export type ReturnSchema =
   | { kind: 'any' }
   | {
       kind: 'primitive';
-      type: 'number' | 'string' | 'boolean' | 'null' | 'undefined' | 'Uint8Array' | 'object';
+      type:
+        | 'number'
+        | 'bigint'
+        | 'string'
+        | 'boolean'
+        | 'null'
+        | 'undefined'
+        | 'Uint8Array'
+        | 'object';
+      constraint?: 'safe-integer' | 'finite';
     }
   | { kind: 'literal'; value: string | number | boolean | null }
   | { kind: 'array'; element: ReturnSchema }
@@ -42,12 +54,26 @@ export type ReturnSchema =
       dtype?: string;
     };
 
-export type ReturnValidator<T = unknown> = (result: T) => T;
+export type ReturnValidator<T = unknown> = (result: T, provenance?: DecodedProvenance) => T;
 
-export interface DecodedShapeMetadata {
-  marker: ScientificMarker;
-  dims?: number;
-  dtype?: string;
+/** One Python parameter used to select a declared overload after call binding. */
+export interface OverloadParameterSchema {
+  name: string;
+  kind:
+    | 'positional-only'
+    | 'positional-or-keyword'
+    | 'var-positional'
+    | 'keyword-only'
+    | 'var-keyword';
+  optional: boolean;
+  value: ReturnSchema;
+}
+
+/** An overload is selectable only when all of its value rules are supported. */
+export interface OverloadReturnSchema {
+  parameters: readonly OverloadParameterSchema[];
+  result: ReturnSchema;
+  selectable: boolean;
 }
 
 const decodedShapeMetadata = new WeakMap<object, DecodedShapeMetadata>();
@@ -99,7 +125,7 @@ function renderSchema(schema: ReturnSchema): string {
     case 'any':
       return 'unknown';
     case 'primitive':
-      return schema.type;
+      return schema.constraint ?? schema.type;
     case 'literal':
       return JSON.stringify(schema.value);
     case 'array':
@@ -120,9 +146,20 @@ function renderSchema(schema: ReturnSchema): string {
 interface CheckState {
   readonly definitions: Readonly<Record<string, ReturnSchema>>;
   readonly pairs: WeakMap<object, Set<string>>;
+  readonly provenance?: DecodedProvenance;
 }
 
-function check(schema: ReturnSchema, value: unknown, state: CheckState): boolean {
+interface ValueLocation {
+  parent: object;
+  key: string | number;
+}
+
+function check(
+  schema: ReturnSchema,
+  value: unknown,
+  state: CheckState,
+  location?: ValueLocation
+): boolean {
   if (schema.kind === 'any') {
     return true;
   }
@@ -140,7 +177,7 @@ function check(schema: ReturnSchema, value: unknown, state: CheckState): boolean
       seen.add(schema.name);
       state.pairs.set(value, seen);
     }
-    return check(definition, value, state);
+    return check(definition, value, state, location);
   }
 
   switch (schema.kind) {
@@ -157,16 +194,29 @@ function check(schema: ReturnSchema, value: unknown, state: CheckState): boolean
       if (schema.type === 'object') {
         return isPlainObject(value);
       }
+      if (schema.type === 'number' && schema.constraint === 'safe-integer') {
+        return typeof value === 'number' && Number.isSafeInteger(value);
+      }
+      if (schema.type === 'number' && schema.constraint === 'finite') {
+        return typeof value === 'number' && Number.isFinite(value);
+      }
       return typeof value === schema.type;
     case 'literal':
       return Object.is(value, schema.value);
     case 'array':
-      return Array.isArray(value) && value.every(item => check(schema.element, item, state));
+      return (
+        Array.isArray(value) &&
+        value.every((item, index) =>
+          check(schema.element, item, state, { parent: value, key: index })
+        )
+      );
     case 'tuple':
       return (
         Array.isArray(value) &&
         value.length === schema.elements.length &&
-        schema.elements.every((entry, index) => check(entry, value[index], state))
+        schema.elements.every((entry, index) =>
+          check(entry, value[index], state, { parent: value, key: index })
+        )
       );
     case 'record': {
       if (!isPlainObject(value)) {
@@ -180,20 +230,26 @@ function check(schema: ReturnSchema, value: unknown, state: CheckState): boolean
             }
             return false;
           }
-          if (!check(field.schema, value[key], state)) {
+          if (!check(field.schema, value[key], state, { parent: value, key })) {
             return false;
           }
         }
       }
       return (
         !schema.values ||
-        Object.values(value).every(item => check(schema.values as ReturnSchema, item, state))
+        Object.entries(value).every(([key, item]) =>
+          check(schema.values as ReturnSchema, item, state, { parent: value, key })
+        )
       );
     }
     case 'union':
-      return schema.options.some(option => check(option, value, state));
+      return schema.options.some(option => check(option, value, state, location));
     case 'marker': {
-      const metadata = isObjectLike(value) ? decodedShapeMetadata.get(value) : undefined;
+      const metadata = isObjectLike(value)
+        ? decodedShapeMetadata.get(value)
+        : location
+          ? state.provenance?.atChild(location.parent, location.key)
+          : state.provenance?.atRoot();
       if (metadata?.marker !== schema.marker) {
         return false;
       }
@@ -215,8 +271,10 @@ export function createReturnValidator<T = unknown>(
   definitions: Readonly<Record<string, ReturnSchema>> = {}
 ): ReturnValidator<T> {
   const declaredType = renderSchema(schema);
-  return (result: T): T => {
-    if (!check(schema, result, { definitions, pairs: new WeakMap<object, Set<string>>() })) {
+  return (result: T, provenance?: DecodedProvenance): T => {
+    if (
+      !check(schema, result, { definitions, pairs: new WeakMap<object, Set<string>>(), provenance })
+    ) {
       throw new BridgeValidationError({
         declaredType,
         receivedShape: describeReceivedShape(result),
@@ -225,6 +283,81 @@ export function createReturnValidator<T = unknown>(
     }
     return result;
   };
+}
+
+function matchesOverload(
+  signature: OverloadReturnSchema,
+  args: readonly unknown[],
+  kwargs: Readonly<Record<string, unknown>> | undefined
+): boolean {
+  if (!signature.selectable) {
+    return false;
+  }
+  const keywords = kwargs ?? {};
+  const usedKeywords = new Set<string>();
+  let position = 0;
+  let acceptsOtherKeywords = false;
+  const matches = (schema: ReturnSchema, value: unknown): boolean =>
+    check(schema, value, { definitions: {}, pairs: new WeakMap<object, Set<string>>() });
+
+  for (const parameter of signature.parameters) {
+    if (parameter.kind === 'var-positional') {
+      while (position < args.length) {
+        if (!matches(parameter.value, args[position])) {
+          return false;
+        }
+        position += 1;
+      }
+      continue;
+    }
+    if (parameter.kind === 'var-keyword') {
+      acceptsOtherKeywords = true;
+      for (const [name, value] of Object.entries(keywords)) {
+        if (!usedKeywords.has(name) && !matches(parameter.value, value)) {
+          return false;
+        }
+      }
+      continue;
+    }
+    const hasPosition = parameter.kind !== 'keyword-only' && position < args.length;
+    const hasKeyword = Object.prototype.hasOwnProperty.call(keywords, parameter.name);
+    if (hasKeyword && parameter.kind === 'positional-only') {
+      return false;
+    }
+    if (hasPosition && hasKeyword) {
+      return false;
+    }
+    if (!hasPosition && !hasKeyword) {
+      if (!parameter.optional) {
+        return false;
+      }
+      continue;
+    }
+    const value = hasPosition ? args[position++] : keywords[parameter.name];
+    if (hasKeyword) {
+      usedKeywords.add(parameter.name);
+    }
+    if (!matches(parameter.value, value)) {
+      return false;
+    }
+  }
+  if (position < args.length) {
+    return false;
+  }
+  return acceptsOtherKeywords || Object.keys(keywords).every(name => usedKeywords.has(name));
+}
+
+/** Select the first supported match, as TypeScript does for declared overloads. */
+export function selectOverloadReturnValidator<T = unknown>(
+  overloads: readonly OverloadReturnSchema[],
+  args: readonly unknown[],
+  kwargs: Readonly<Record<string, unknown>> | undefined,
+  fallback: ReturnValidator<T>,
+  callSite: string,
+  definitions: Readonly<Record<string, ReturnSchema>> = {}
+): ReturnValidator<T> {
+  const selected = overloads.find(overload => matchesOverload(overload, args, kwargs));
+  return selected ? createReturnValidator<T>(selected.result, callSite, definitions) : fallback;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

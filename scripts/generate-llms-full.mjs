@@ -4,6 +4,7 @@ import { join } from 'node:path';
 const orderedDocs = [
   'docs/index.md',
   'docs/guide/getting-started.md',
+  'docs/guide/migrating-to-0-11.md',
   'docs/guide/agent-adoption.md',
   'docs/guide/configuration.md',
   'docs/guide/runtimes/comparison.md',
@@ -21,15 +22,22 @@ const orderedDocs = [
   'docs/transport-framing.md',
   'docs/reference/api/index.md',
   'docs/maintainers/architecture.md',
+  'docs/maintainers/callable-contracts.md',
   'docs/maintainers/menagerie.md',
   'docs/examples/index.md',
   'docs/troubleshooting/index.md',
 ];
 
-// Internal / forward-looking docs kept out of the agent-facing llms-full bundle.
+// Keep design proposals and review records outside the agent guide.
 const excludedDocs = new Set([
   'docs/perf-baselines.md',
   'docs/release.md',
+  'docs/maintainers/client-binding-design.md',
+  'docs/maintainers/client-binding-prototype-review.md',
+  'docs/maintainers/coroutines.md',
+  'docs/maintainers/value-contract-prototypes.md',
+  'docs/maintainers/value-contracts.md',
+  'docs/maintainers/architecture-decision-0.11.md',
 ]);
 
 async function collectDocs(dir) {

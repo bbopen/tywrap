@@ -10,8 +10,9 @@ the declared return schema.
 | Stage | Owners | Invariant |
 | --- | --- | --- |
 | Python analysis | `tywrap_ir/tywrap_ir/__main__.py`, `tywrap_ir/tywrap_ir/` | The extractor emits JSON typed IR for the requested module. |
-| IR contract | `src/tywrap.ts`, `src/types/` | A contract has the expected module and `ir_version`. The current version is `0.4.0`. |
-| Wrapper generation | `src/core/generator.ts`, `src/core/emit-call.ts`, `src/core/mapper.ts` | Generated calls carry a `ReturnSchema` that represents the Python return annotation. |
+| IR contract | `src/core/ir-contract.ts`, `src/tywrap.ts` | Pure validation checks the complete IR structure and schema version `0.4.0`; generation checks the requested module. |
+| Callable compilation | `src/core/callable-compiler.ts`, `src/contracts/value-contract.ts` | Resolved contracts describe arguments, overloads, conversion, validation, capabilities and diagnostics without I/O. |
+| Wrapper generation | `src/core/generator.ts`, `src/core/emit-call.ts` | Declarations, call wrappers and return validators consume the resolved callable contracts. |
 | Runtime transport | `src/runtime/node.ts`, `src/runtime/subprocess-transport.ts`, `src/runtime/frame-codec.ts`, `runtime/python_bridge.py` | Node subprocess requests use JSONL and use `tywrap-frame/1` when a message exceeds one line. |
 | Python dispatch and encoding | `runtime/tywrap_bridge_core.py`, `runtime/safe_codec.py` | The bridge validates protocol input, then dispatches the requested call and returns JSON-safe values or versioned envelopes. |
 | JavaScript decoding | `src/utils/codec.ts`, `src/runtime/bridge-codec.ts` | Envelope shape and payload domains are checked before a decoded value reaches application code. |
@@ -19,22 +20,32 @@ the declared return schema.
 
 ## IR and generated contracts
 
-`generate()` in `src/tywrap.ts` invokes `python -m tywrap_ir --module <name>`.
-It validates the returned object before passing it to `CodeGenerator`, which
-produces the wrapper source; `src/tywrap.ts` then writes
-`<module>.generated.ts` and the stable `<module>.contract.json` beside it. The contract omits extractor metadata,
-sorts object keys, and records the pinned IR representation.
+`generate()` in `src/tywrap.ts` owns Python discovery, IR caching and file writes.
+When it needs fresh IR, it invokes `python -m tywrap_ir --module <name>`.
+The pure IR validator checks the complete returned structure with located errors.
+`compileContract()` resolves that IR using explicit conversion rules and runtime
+capabilities. It does not access the filesystem, Python interpreter or runtime registry.
+
+The generator emits wrappers and declarations from those resolved contracts.
+`generate()` writes `<module>.generated.ts` and a stable `<module>.contract.json`.
+The saved contract contains canonical Python IR, not the resolved callable model.
+It omits extractor metadata and sorts object keys.
 
 `contractInput` changes the source of IR. Instead of starting Python, generation
-reads a saved contract and applies the same module and version validation. This
+reads a saved contract and applies the same complete IR validation. This
 supports reproducible generation. A version mismatch is a hard failure: update
 the matching package pair and regenerate the contract.
 
-`src/core/generator.ts` maps annotations to TypeScript and emits one
-`createReturnValidator()` call per generated callable. Return schemas cover
-primitive values, containers, definitions, and scientific markers. The
-wrapper calls the active bridge and validates the resolved value before its
-promise resolves.
+The callable contract connects a result's logical type, decoded representation
+and validator. A precise return declaration requires a supported conversion and
+validation path. Unresolved results become `unknown` with diagnostics while
+retaining available partial runtime checks.
+
+The generator emits `createReturnValidator()` calls from these contracts.
+Return schemas cover primitives, containers, definitions and scientific markers.
+Each wrapper calls the active bridge and validates the decoded result before its
+promise resolves. See [callable contracts](./callable-contracts.md) for compiler
+boundaries and [value contracts](./value-contracts.md) for conversion policy.
 
 ## Runtime bridges
 
@@ -48,6 +59,9 @@ bootstrap source lives in `src/runtime/pyodide-bootstrap-core.generated.ts`; do
 not edit it directly. Regenerate it from `runtime/tywrap_bridge_core.py` with
 the repository script. Pyodide uses JSON codec envelopes because pyarrow is not
 available in WASM.
+
+The bridge awaits Python call results under the event loop owned by each
+backend. See [coroutine calls](./coroutines.md) for timeout and disposal rules.
 
 `HttpBridge` sends the same RPC and codec concepts to a remote Python service.
 The transport owns HTTP concerns while the codec and return validator preserve
@@ -78,10 +92,12 @@ the required nested ndarray inside a torch envelope.
 
 `src/runtime/validators.ts` validates the value after decoding. A mismatch
 throws `BridgeValidationError` with the call site, declared type, and received
-shape. Scientific values retain non-enumerable provenance from their envelope.
+shape. Scientific values retain provenance from their envelope. Scalar scientific
+results use per-call provenance because a JavaScript number cannot hold metadata.
 The validator checks the marker and, when the schema declares them, dimensions
-and dtype without walking Arrow payload data. `unknown`, `void`, and `Any`
-returns deliberately receive no runtime check.
+and dtype without walking Arrow payload data. Explicit `unknown`, `void`, and
+`Any` schemas perform no check. A result whose declaration became `unknown` can
+still retain partial checks from its original annotation.
 
 ## One call end to end
 

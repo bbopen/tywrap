@@ -224,7 +224,163 @@ describe('IR-only integration', () => {
         { cwd: process.cwd(), timeoutMs: 30_000 }
       );
 
+      expect(compile.code, `${compile.stdout}\n${compile.stderr}`).toBe(0);
+      expect(compile.stderr).toBe('');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('preserves Python overload input-to-return relationships in generated declarations', async () => {
+    const support = await processUtils.exec(defaultPythonPath, [
+      '-c',
+      'import typing; raise SystemExit(0 if hasattr(typing, "get_overloads") else 1)',
+    ]);
+    if (support.code !== 0) {
+      return;
+    }
+    const tempDir = await mkdtemp(join(process.cwd(), 'test', '.tywrap-overload-contract-'));
+    try {
+      const outDir = join(tempDir, 'generated');
+      const result = await generate({
+        pythonModules: { advanced_types: { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: ['test/fixtures/python'],
+        output: { dir: outDir, format: 'esm', declaration: true, sourceMap: false },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+      } as any);
+
+      expect(result.failures).toEqual([]);
+      const generated = await fsUtils.readFile(join(outDir, 'advanced_types.generated.d.ts'));
+      expect(generated).toContain('export function getValue(key: string): Promise<string>;');
+      expect(generated).toContain('export function getValue(key: number): Promise<number>;');
+
+      const consumerPath = join(tempDir, 'consumer.ts');
+      await writeFile(
+        consumerPath,
+        `import { getValue } from './generated/advanced_types.generated.js';
+
+const text: Promise<string> = getValue('key');
+const integer: Promise<number> = getValue(1);
+// @ts-expect-error boolean has no declared Python overload
+void getValue(true);
+// @ts-expect-error string overload cannot return Promise<number>
+const wrong: Promise<number> = getValue('key');
+
+void text;
+void integer;
+void wrong;
+`,
+        'utf8'
+      );
+      const tscPath = join(process.cwd(), 'node_modules', 'typescript', 'lib', 'tsc.js');
+      const compile = await processUtils.exec(
+        process.execPath,
+        [
+          tscPath,
+          '--ignoreConfig',
+          '--noEmit',
+          '--pretty',
+          'false',
+          '--target',
+          'ES2022',
+          '--lib',
+          'ES2022,DOM,DOM.Iterable',
+          '--module',
+          'ESNext',
+          '--moduleResolution',
+          'bundler',
+          '--skipLibCheck',
+          consumerPath,
+        ],
+        { cwd: process.cwd(), timeoutMs: 30_000 }
+      );
+
       expect(compile.code).toBe(0);
+      expect(compile.stderr).toBe('');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('preserves type variables declared only by overload signatures', async () => {
+    const support = await processUtils.exec(defaultPythonPath, [
+      '-c',
+      'import typing; raise SystemExit(0 if hasattr(typing, "get_overloads") else 1)',
+    ]);
+    if (support.code !== 0) {
+      return;
+    }
+    const tempDir = await mkdtemp(join(process.cwd(), 'test', '.tywrap-generic-overload-'));
+    try {
+      const importDir = join(tempDir, 'py');
+      await mkdir(importDir, { recursive: true });
+      await writeFile(
+        join(importDir, 'generic_overload.py'),
+        `from typing import TypeVar, overload
+
+T = TypeVar("T")
+
+@overload
+def choose(value: T) -> T: ...
+
+@overload
+def choose(value: None) -> None: ...
+
+def choose(value: object) -> object:
+    return value
+`,
+        'utf8'
+      );
+      const outDir = join(tempDir, 'generated');
+      const result = await generate({
+        pythonModules: { generic_overload: { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: [importDir],
+        output: { dir: outDir, format: 'esm', declaration: true, sourceMap: false },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+      } as any);
+      expect(result.failures).toEqual([]);
+      const declaration = await fsUtils.readFile(join(outDir, 'generic_overload.generated.d.ts'));
+      expect(declaration).toContain('export function choose<T>(value: T): Promise<unknown>;');
+      const consumerPath = join(tempDir, 'consumer.ts');
+      await writeFile(
+        consumerPath,
+        `import { choose } from './generated/generic_overload.generated.js';
+
+const text: Promise<unknown> = choose('key');
+const integer: Promise<unknown> = choose(2);
+// @ts-expect-error An unresolved TypeVar does not validate the decoded result.
+const unsafe: Promise<string> = choose('key');
+void text;
+void integer;
+void unsafe;
+`,
+        'utf8'
+      );
+      const tscPath = join(process.cwd(), 'node_modules', 'typescript', 'lib', 'tsc.js');
+      const compile = await processUtils.exec(
+        process.execPath,
+        [
+          tscPath,
+          '--ignoreConfig',
+          '--noEmit',
+          '--pretty',
+          'false',
+          '--target',
+          'ES2022',
+          '--lib',
+          'ES2022,DOM,DOM.Iterable',
+          '--module',
+          'ESNext',
+          '--moduleResolution',
+          'bundler',
+          '--skipLibCheck',
+          consumerPath,
+        ],
+        { cwd: process.cwd(), timeoutMs: 30_000 }
+      );
+      expect(compile.code, `${compile.stdout}\n${compile.stderr}`).toBe(0);
       expect(compile.stderr).toBe('');
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -302,9 +458,9 @@ class Container(Generic[T]):
       const typescript = await fsUtils.readFile(join(outDir, 'generic_module.generated.ts'));
       const declaration = await fsUtils.readFile(join(outDir, 'generic_module.generated.d.ts'));
 
-      expect(typescript).toContain('export function identity<T>(x: T): Promise<T>;');
+      expect(typescript).toContain('export function identity<T>(x: T): Promise<unknown>;');
       expect(typescript).toContain(
-        'export async function forward<T>(container: Container<T>): Promise<Container<T>>'
+        'export async function forward<T>(container: Container<T>): Promise<unknown>'
       );
       expect(typescript).toContain(
         'export async function acceptTransform<P extends unknown[], T>('
@@ -354,9 +510,11 @@ export declare function createReturnValidator<T = unknown>(schema: ReturnSchema,
 const pair: Pair<string> = ['a', 'b'];
 const transform: Transform<[number], string> = (...args) => String(args[0]);
 const container = {} as Container<number>;
-const accepted: Promise<Transform<[number], string>> = acceptTransform<[number], string>(transform);
-const forwarded: Promise<Container<number>> = forward<number>(container);
-const resolved: Promise<number> = identity<number>(1);
+const accepted: Promise<unknown> = acceptTransform<[number], string>(transform);
+const forwarded: Promise<unknown> = forward<number>(container);
+const resolved: Promise<unknown> = identity<number>(1);
+// @ts-expect-error The decoded generic result has no supported value contract.
+const unsafe: Promise<number> = identity<number>(1);
 const passthroughResult: Promise<void> = passthrough([1, 2], { flag: true });
 
 void pair;
@@ -364,6 +522,7 @@ void transform;
 void accepted;
 void forwarded;
 void resolved;
+void unsafe;
 void passthroughResult;
 `,
         'utf-8'

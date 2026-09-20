@@ -9,9 +9,12 @@ import type {
   PythonModule,
   PythonType,
   PythonTypeAlias,
+  Parameter,
   GeneratedCode,
   TypescriptType,
 } from '../types/index.js';
+import { containsExactInteger, type ValueContractV3 } from '../contracts/value-contract.js';
+import type { OverloadReturnSchema, ReturnSchema } from '../runtime/validators.js';
 import { globalCache } from '../utils/cache.js';
 
 import {
@@ -36,7 +39,122 @@ interface GenericRenderContext {
   emittedParamSpecs: Set<string>;
 }
 
-type ReturnDefinitionNames = ReadonlySet<string>;
+type ReturnDefinitionNames = ReadonlySet<string> & { readonly moduleName?: string };
+
+function valueContractToReturnSchema(value: ValueContractV3): ReturnSchema {
+  switch (value.kind) {
+    case 'null':
+      return { kind: 'primitive', type: 'null' };
+    case 'boolean':
+      return { kind: 'primitive', type: 'boolean' };
+    case 'integer':
+      return { kind: 'primitive', type: 'number', constraint: value.constraint };
+    case 'integer-exact':
+      return { kind: 'primitive', type: 'bigint' };
+    case 'float':
+      return { kind: 'primitive', type: 'number', constraint: value.constraint };
+    case 'string':
+      return { kind: 'primitive', type: 'string' };
+    case 'bytes':
+      return { kind: 'primitive', type: 'Uint8Array' };
+    case 'sequence':
+      return { kind: 'array', element: valueContractToReturnSchema(value.item) };
+    case 'tuple':
+      return { kind: 'tuple', elements: value.items.map(valueContractToReturnSchema) };
+    case 'union':
+      return { kind: 'union', options: value.options.map(valueContractToReturnSchema) };
+    case 'record':
+      return {
+        kind: 'record',
+        fields: Object.fromEntries(
+          value.fields.map(field => [
+            field.name,
+            { schema: valueContractToReturnSchema(field.value), optional: !field.required },
+          ])
+        ),
+        values: value.additionalValues
+          ? valueContractToReturnSchema(value.additionalValues)
+          : undefined,
+      };
+    case 'ndarray-float16':
+      return { kind: 'marker', marker: 'ndarray', dtype: value.dtype, dims: value.rank };
+    case 'torch-float16':
+      return { kind: 'marker', marker: 'torch.tensor', dtype: value.dtype };
+    case 'unsupported':
+      return { kind: 'any' };
+  }
+}
+
+function valueContractToTsType(value: ValueContractV3): string {
+  switch (value.kind) {
+    case 'null':
+      return 'null';
+    case 'boolean':
+      return 'boolean';
+    case 'integer':
+    case 'float':
+      return 'number';
+    case 'integer-exact':
+      return 'bigint';
+    case 'string':
+      return 'string';
+    case 'bytes':
+      return 'Uint8Array';
+    case 'sequence': {
+      const item = valueContractToTsType(value.item);
+      return `${value.item.kind === 'union' ? `(${item})` : item}[]`;
+    }
+    case 'tuple':
+      return `[${value.items.map(valueContractToTsType).join(', ')}]`;
+    case 'union':
+      return value.options.map(valueContractToTsType).join(' | ');
+    case 'record': {
+      const fields = value.fields
+        .map(
+          field =>
+            `${JSON.stringify(field.name)}${field.required ? '' : '?'}: ${valueContractToTsType(field.value)};`
+        )
+        .join(' ');
+      const record = `{ ${fields} }`;
+      if (!value.additionalValues) {
+        return record;
+      }
+      const additional = `Record<string, ${valueContractToTsType(value.additionalValues)}>`;
+      return value.fields.length === 0 ? additional : `(${record} & ${additional})`;
+    }
+    case 'ndarray-float16':
+      return '__tywrapFloat16Value';
+    case 'torch-float16':
+      return '__tywrapFloat16Tensor';
+    case 'unsupported':
+      return 'unknown';
+  }
+}
+
+function containsScientificValue(
+  value: ValueContractV3,
+  kind: 'ndarray-float16' | 'torch-float16'
+): boolean {
+  if (value.kind === kind) {
+    return true;
+  }
+  switch (value.kind) {
+    case 'sequence':
+      return containsScientificValue(value.item, kind);
+    case 'tuple':
+      return value.items.some(item => containsScientificValue(item, kind));
+    case 'union':
+      return value.options.some(option => containsScientificValue(option, kind));
+    case 'record':
+      return (
+        value.fields.some(field => containsScientificValue(field.value, kind)) ||
+        (value.additionalValues !== undefined &&
+          containsScientificValue(value.additionalValues, kind))
+      );
+    default:
+      return false;
+  }
+}
 
 export interface CodeGeneratorOptions {
   /** Reports a generated annotation that cannot be represented by emitted declarations. */
@@ -99,6 +217,60 @@ export class CodeGenerator {
   constructor(mapper: TypeMapper = new TypeMapper(), options: CodeGeneratorOptions = {}) {
     this.mapper = mapper;
     this.onTypeDegrade = options.onTypeDegrade;
+  }
+
+  private assertRuntimeGetterIdentifier(identifier: string): void {
+    if (
+      identifier !== 'getRuntimeBridge' &&
+      !/^__tywrapRuntimeProvider(?:[1-9][0-9]*)?$/.test(identifier)
+    ) {
+      throw new Error(`Invalid runtime getter identifier: ${identifier}`);
+    }
+  }
+
+  private assertBindingGetterAvailable(module: PythonModule, identifier: string): void {
+    const occupied = new Set([
+      'getRuntimeBridge',
+      'createReturnValidator',
+      'selectOverloadReturnValidator',
+      'ReturnSchema',
+      '__tywrapReturnDefinitions',
+      '__tywrapFloat16Value',
+      '__tywrapFloat16Tensor',
+      '__tywrapCreateApi',
+      '__args',
+      '__kwargs',
+      '__candidate',
+      '__varargs',
+      '__positionalOnly',
+      '__requiredKwOnly',
+      '__missing',
+      '__selectedReturnValidator',
+      'kwargs',
+      'key',
+    ]);
+    const includeCallable = (func: PythonFunction, owner = ''): void => {
+      occupied.add(this.escapeIdentifier(func.name));
+      occupied.add(
+        `__validate${owner}${this.escapeIdentifier(func.name, { preserveCase: true })}Result`
+      );
+      for (const parameter of [
+        ...func.parameters,
+        ...(func.overloads ?? []).flatMap(overload => overload.parameters),
+      ]) {
+        occupied.add(this.escapeIdentifier(parameter.name));
+      }
+    };
+    module.functions.forEach(func => includeCallable(func));
+    for (const cls of module.classes) {
+      occupied.add(this.escapeIdentifier(cls.name));
+      const owner = this.escapeIdentifier(cls.name, { preserveCase: true });
+      cls.methods.forEach(method => includeCallable(method, owner));
+    }
+    (module.typeAliases ?? []).forEach(alias => occupied.add(this.escapeIdentifier(alias.name)));
+    if (occupied.has(identifier)) {
+      throw new Error(`Runtime getter identifier ${identifier} conflicts with a generated binding`);
+    }
   }
 
   /**
@@ -349,6 +521,33 @@ export class CodeGenerator {
     );
   }
 
+  private resolvedReturnType(
+    contract: ValueContractV3 | undefined,
+    logicalType: PythonType,
+    ctx: GenericRenderContext
+  ): string {
+    if (contract && containsExactInteger(contract)) {
+      return valueContractToTsType(contract);
+    }
+    if (contract?.kind === 'ndarray-float16') {
+      return '__tywrapFloat16Value';
+    }
+    if (contract?.kind === 'torch-float16') {
+      return '__tywrapFloat16Tensor';
+    }
+    return this.typeToTsFromPython(logicalType, ctx, 'return');
+  }
+
+  private resolvedParameterType(
+    contract: ValueContractV3 | undefined,
+    logicalType: PythonType,
+    ctx: GenericRenderContext
+  ): string {
+    return contract && containsExactInteger(contract)
+      ? valueContractToTsType(contract)
+      : this.typeToTsFromPython(logicalType, ctx, 'value');
+  }
+
   private isLocalTypeIdentity(
     type: { name: string; module?: string },
     ctx: GenericRenderContext
@@ -492,7 +691,10 @@ export class CodeGenerator {
               values: schema(current.typeArgs[1] ?? { kind: 'custom', name: 'Any' }),
             };
           }
-          return definitions.has(leaf) ? { kind: 'ref', name: leaf } : { kind: 'any' };
+          return definitions.has(leaf) &&
+            (current.module === undefined || current.module === definitions.moduleName)
+            ? { kind: 'ref', name: leaf }
+            : { kind: 'any' };
         }
         case 'custom': {
           const leaf = current.name.split('.').at(-1) ?? current.name;
@@ -527,7 +729,10 @@ export class CodeGenerator {
           ) {
             return { kind: 'marker', marker: 'sklearn.estimator' };
           }
-          return definitions.has(leaf) ? { kind: 'ref', name: leaf } : { kind: 'any' };
+          return definitions.has(leaf) &&
+            (current.module === undefined || current.module === definitions.moduleName)
+            ? { kind: 'ref', name: leaf }
+            : { kind: 'any' };
         }
         case 'typevar':
         case 'paramspec':
@@ -542,12 +747,71 @@ export class CodeGenerator {
     return schema(type);
   }
 
+  private resolvedReturnSchema(
+    func: PythonFunction,
+    definitions: ReturnDefinitionNames
+  ): ReturnSchema {
+    const value = func.callableContract?.returnValue;
+    return value
+      ? valueContractToReturnSchema(value)
+      : (this.returnSchema(
+          func.callableContract?.returnValidationType ?? func.returnType,
+          definitions
+        ) as ReturnSchema);
+  }
+
+  private overloadReturnSchemas(
+    func: PythonFunction,
+    definitions: ReturnDefinitionNames
+  ): OverloadReturnSchema[] {
+    return (func.overloads ?? []).map((overload, overloadIndex) => {
+      const contract = func.callableContract?.overloads[overloadIndex];
+      return {
+        parameters: overload.parameters
+          .map((parameter, parameterIndex) => ({ parameter, parameterIndex }))
+          .filter(({ parameter }) => parameter.name !== 'self' && parameter.name !== 'cls')
+          .map(({ parameter, parameterIndex }) => ({
+            name: parameter.name,
+            kind: parameter.varArgs
+              ? ('var-positional' as const)
+              : parameter.kwArgs
+                ? ('var-keyword' as const)
+                : parameter.keywordOnly
+                  ? ('keyword-only' as const)
+                  : parameter.positionalOnly
+                    ? ('positional-only' as const)
+                    : ('positional-or-keyword' as const),
+            optional: parameter.optional,
+            value: contract?.parameterValues[parameterIndex]
+              ? valueContractToReturnSchema(contract.parameterValues[parameterIndex])
+              : (this.returnSchema(parameter.type, definitions) as ReturnSchema),
+          })),
+        result: contract?.returnValue
+          ? valueContractToReturnSchema(contract.returnValue)
+          : (this.returnSchema(
+              contract?.returnValidationType ?? overload.returnType,
+              definitions
+            ) as ReturnSchema),
+        selectable:
+          contract !== undefined &&
+          contract.returnValue !== undefined &&
+          overload.parameters.every(
+            (parameter, index) =>
+              parameter.name === 'self' ||
+              parameter.name === 'cls' ||
+              contract.parameterValues[index] !== undefined
+          ),
+      };
+    });
+  }
+
   private returnDefinitions(module: PythonModule): ReturnDefinitionNames {
-    return new Set(
+    const names = new Set(
       module.classes
         .filter(cls => cls.kind === 'typed_dict' || cls.decorators.includes('__typed_dict__'))
         .map(cls => cls.name)
     );
+    return Object.assign(names, { moduleName: module.name });
   }
 
   private emitReturnDefinitions(module: PythonModule): string {
@@ -574,16 +838,20 @@ export class CodeGenerator {
     moduleName?: string,
     annotatedJSDoc = false,
     localDeclaredNames: Set<string> = new Set(),
-    returnDefinitions: ReturnDefinitionNames = new Set()
+    returnDefinitions: ReturnDefinitionNames = new Set(),
+    runtimeGetterIdentifier = 'getRuntimeBridge'
   ): GeneratedCode {
+    this.assertRuntimeGetterIdentifier(runtimeGetterIdentifier);
     const jsdoc = this.generateJsDoc(
       func.docstring,
       annotatedJSDoc ? func.parameters.map(p => String(p.type)) : undefined
     );
     const filteredParams = func.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
+    const hasDeclaredOverloads = (func.overloads?.length ?? 0) > 0;
     const keywordOnlyParams = filteredParams.filter(p => p.keywordOnly);
     const positionalOnlyNames = filteredParams.filter(p => p.positionalOnly).map(p => p.name);
     const hasVarKwArgs = filteredParams.some(p => p.kwArgs);
+    const varKwArgsParam = filteredParams.find(p => p.kwArgs);
     const needsKwargsParam = keywordOnlyParams.length > 0 || hasVarKwArgs;
 
     const varArgsParam = filteredParams.find(p => p.varArgs);
@@ -592,27 +860,70 @@ export class CodeGenerator {
     const positionalParams = filteredParams.filter(p => !p.keywordOnly && !p.varArgs && !p.kwArgs);
     const genericContext = this.buildGenericRenderContext(
       this.getTypeParameters(func.typeParameters),
-      [func.returnType, ...filteredParams.map(param => param.type)],
+      [
+        func.returnType,
+        ...filteredParams.map(param => param.type),
+        ...(func.overloads ?? []).flatMap(overload => [
+          overload.returnType,
+          ...overload.parameters.map(parameter => parameter.type),
+        ]),
+      ],
       moduleName,
       localDeclaredNames
     );
     const typeParamDecl = genericContext.declaration;
 
-    const tsTypeForValue = (p: (typeof filteredParams)[number]): string =>
-      this.typeToTsFromPython(p.type, genericContext, 'value');
+    const parameterContracts = new WeakMap<Parameter, ValueContractV3>();
+    func.parameters.forEach((parameter, index) => {
+      const value = func.callableContract?.parameterValues[index];
+      if (value) {
+        parameterContracts.set(parameter, value);
+      }
+    });
+    func.overloads?.forEach((overload, overloadIndex) => {
+      overload.parameters.forEach((parameter, parameterIndex) => {
+        const value =
+          func.callableContract?.overloads[overloadIndex]?.parameterValues[parameterIndex];
+        if (value) {
+          parameterContracts.set(parameter, value);
+        }
+      });
+    });
+    const tsTypeForValue = (p: Parameter): string => {
+      const value = parameterContracts.get(p);
+      return this.resolvedParameterType(value, p.type, genericContext);
+    };
+    const hasExactParameter = (parameter: Parameter): boolean => {
+      const value = parameterContracts.get(parameter);
+      return value !== undefined && containsExactInteger(value);
+    };
+    const varArgsType = (parameter: Parameter): string => {
+      if (!hasExactParameter(parameter)) {
+        return 'unknown[]';
+      }
+      const item = tsTypeForValue(parameter);
+      return `${parameterContracts.get(parameter)?.kind === 'union' ? `(${item})` : item}[]`;
+    };
+    const varKwargsType = (parameter: Parameter): string =>
+      hasExactParameter(parameter) ? tsTypeForValue(parameter) : 'unknown';
 
     const kwargsType = (() => {
       if (!needsKwargsParam) {
         return '';
       }
-      if (keywordOnlyParams.length === 0 && hasVarKwArgs) {
+      if (hasDeclaredOverloads) {
         return 'Record<string, unknown>';
+      }
+      if (keywordOnlyParams.length === 0 && hasVarKwArgs) {
+        return `Record<string, ${varKwArgsParam ? varKwargsType(varKwArgsParam) : 'unknown'}>`;
       }
       const props = keywordOnlyParams
         .map(p => `${JSON.stringify(p.name)}${p.optional ? '?' : ''}: ${tsTypeForValue(p)};`)
         .join(' ');
       const obj = `{ ${props} }`;
-      return hasVarKwArgs ? `(${obj} & Record<string, unknown>)` : obj;
+      return hasVarKwArgs
+        ? `(${obj} & Record<string, ${varKwArgsParam ? varKwargsType(varKwArgsParam) : 'unknown'}>)`
+        : obj;
     })();
 
     const renderPositionalParam = (
@@ -621,7 +932,7 @@ export class CodeGenerator {
     ): string => {
       const pname = this.escapeIdentifier(p.name);
       const opt = !forceRequired && p.optional ? '?' : '';
-      return `${pname}${opt}: ${tsTypeForValue(p)}`;
+      return `${pname}${opt}: ${hasDeclaredOverloads ? 'unknown' : tsTypeForValue(p)}`;
     };
 
     const renderVarArgsParam = (forceRequired = false): string | null => {
@@ -629,11 +940,12 @@ export class CodeGenerator {
         return null;
       }
       const pname = this.escapeIdentifier(varArgsParam.name);
+      const values = hasDeclaredOverloads ? 'unknown[]' : varArgsType(varArgsParam);
       if (!needsVarArgsArray) {
-        return `...${pname}: unknown[]`;
+        return `...${pname}: ${values}`;
       }
       const opt = forceRequired ? '' : '?';
-      return `${pname}${opt}: unknown[]`;
+      return `${pname}${opt}: ${values}`;
     };
 
     const renderKwargsParam = (forceRequired = false): string | null => {
@@ -659,13 +971,123 @@ export class CodeGenerator {
     const paramDecl = implParams.join(', ');
 
     const hasKwArgs = needsKwargsParam;
-    const returnType = this.typeToTsFromPython(func.returnType, genericContext, 'return');
+    const returnType = this.resolvedReturnType(
+      func.callableContract?.returnValue,
+      func.returnType,
+      genericContext
+    );
+    const implementationReturnType = hasDeclaredOverloads ? 'unknown' : returnType;
     const fname = this.escapeIdentifier(func.name);
     const moduleId = moduleName ?? '__main__';
     const validatorName = `__validate${this.escapeIdentifier(func.name, { preserveCase: true })}Result`;
-    const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.returnSchema(func.returnType, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n\n`;
+    const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.resolvedReturnSchema(func, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n\n`;
 
-    // Overloads: generate trailing optional parameter drop variants (exclude *args/**kwargs).
+    const renderDeclaredOverload = (
+      overload: NonNullable<typeof func.overloads>[number],
+      overloadIndex: number
+    ): string[] => {
+      const overloadParams = overload.parameters.filter(
+        parameter => parameter.name !== 'self' && parameter.name !== 'cls'
+      );
+      const overloadPositional = overloadParams.filter(
+        parameter => !parameter.keywordOnly && !parameter.varArgs && !parameter.kwArgs
+      );
+      const overloadKeywordOnly = overloadParams.filter(parameter => parameter.keywordOnly);
+      const overloadVarArgs = overloadParams.find(parameter => parameter.varArgs);
+      const overloadHasVarKwArgs = overloadParams.some(parameter => parameter.kwArgs);
+      const overloadVarKwArgs = overloadParams.find(parameter => parameter.kwArgs);
+      const overloadNeedsKwargs = overloadKeywordOnly.length > 0 || overloadHasVarKwArgs;
+      const overloadNeedsVarArgsArray = Boolean(overloadVarArgs) && overloadNeedsKwargs;
+      const overloadKwargsType = (() => {
+        if (!overloadNeedsKwargs) {
+          return '';
+        }
+        if (overloadKeywordOnly.length === 0 && overloadHasVarKwArgs) {
+          return `Record<string, ${overloadVarKwArgs ? varKwargsType(overloadVarKwArgs) : 'unknown'}>`;
+        }
+        const properties = overloadKeywordOnly
+          .map(
+            parameter =>
+              `${JSON.stringify(parameter.name)}${parameter.optional ? '?' : ''}: ${tsTypeForValue(parameter)};`
+          )
+          .join(' ');
+        const object = `{ ${properties} }`;
+        return overloadHasVarKwArgs
+          ? `(${object} & Record<string, ${overloadVarKwArgs ? varKwargsType(overloadVarKwArgs) : 'unknown'}>)`
+          : object;
+      })();
+      const renderPositional = (parameter: Parameter, forceRequired = false): string =>
+        `${this.escapeIdentifier(parameter.name)}${!forceRequired && parameter.optional ? '?' : ''}: ${tsTypeForValue(parameter)}`;
+      const renderVarArgs = (forceRequired = false): string | null => {
+        if (!overloadVarArgs) {
+          return null;
+        }
+        if (!overloadNeedsVarArgsArray) {
+          return `...${this.escapeIdentifier(overloadVarArgs.name)}: ${varArgsType(overloadVarArgs)}`;
+        }
+        return `${this.escapeIdentifier(overloadVarArgs.name)}${forceRequired ? '' : '?'}: ${varArgsType(overloadVarArgs)}`;
+      };
+      const renderKwargs = (forceRequired = false): string | null =>
+        overloadNeedsKwargs ? `kwargs${forceRequired ? '' : '?'}: ${overloadKwargsType}` : null;
+      const overloadReturnType = this.resolvedReturnType(
+        func.callableContract?.overloads[overloadIndex]?.returnValue,
+        overload.returnType,
+        genericContext
+      );
+      const signatures: string[] = [];
+      const addSignature = (parameters: string[]): void => {
+        signatures.push(
+          `export function ${fname}${typeParamDecl}(${parameters.join(', ')}): Promise<${overloadReturnType}>;`
+        );
+      };
+      const firstOptional = overloadPositional.findIndex(parameter => parameter.optional);
+      const requiredPositionalCount =
+        firstOptional >= 0 ? firstOptional : overloadPositional.length;
+      const requiredKwOnly = overloadKeywordOnly.some(parameter => !parameter.optional);
+
+      if (requiredKwOnly) {
+        for (let count = requiredPositionalCount; count <= overloadPositional.length; count += 1) {
+          const head = overloadPositional
+            .slice(0, count)
+            .map(parameter => renderPositional(parameter, true));
+          const rest: string[] = [];
+          if (overloadVarArgs) {
+            if (overloadNeedsVarArgsArray) {
+              rest.push(
+                `${this.escapeIdentifier(overloadVarArgs.name)}: ${varArgsType(overloadVarArgs)} | undefined`
+              );
+            } else {
+              rest.push(
+                `...${this.escapeIdentifier(overloadVarArgs.name)}: ${varArgsType(overloadVarArgs)}`
+              );
+            }
+          }
+          const kwargs = renderKwargs(true);
+          if (kwargs) {
+            rest.push(kwargs);
+          }
+          addSignature([...head, ...rest]);
+          if (overloadVarArgs && overloadNeedsVarArgsArray && kwargs) {
+            addSignature([...head, kwargs]);
+          }
+        }
+        return signatures;
+      }
+
+      const parameters = overloadPositional.map(parameter => renderPositional(parameter));
+      const varArgs = renderVarArgs();
+      if (varArgs) {
+        parameters.push(varArgs);
+      }
+      const kwargs = renderKwargs();
+      if (kwargs) {
+        parameters.push(kwargs);
+      }
+      addSignature(parameters);
+      return signatures;
+    };
+
+    // Optional parameter overloads make Python's trailing defaults available to TypeScript callers.
     // Why: Python APIs frequently have many optional tail params. TypeScript callers expect
     // `fn(a)`, `fn(a, b)`, ... all to typecheck. We emit a family of overloads that progressively
     // "drop" optional tail args, but also include the full positional signature (<= length) so a
@@ -673,8 +1095,8 @@ export class CodeGenerator {
     const firstOptionalIndex = positionalParams.findIndex(p => p.optional);
     const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
     const keywordOnlyNames = keywordOnlyParams.map(p => p.name);
-    const overloads: string[] = [];
-    if (requiredKwOnlyNames.length > 0) {
+    const overloads: string[] = (func.overloads ?? []).flatMap(renderDeclaredOverload);
+    if ((func.overloads?.length ?? 0) === 0 && requiredKwOnlyNames.length > 0) {
       // Required keyword-only params must be represented with a required `kwargs` parameter.
       // Avoid "required after optional" by emitting overloads where all preceding parameters are required.
       const requiredPosCount =
@@ -687,12 +1109,13 @@ export class CodeGenerator {
             return null;
           }
           const pname = this.escapeIdentifier(varArgsParam.name);
+          const values = varArgsType(varArgsParam);
           if (!needsVarArgsArray) {
-            return `...${pname}: unknown[]`;
+            return `...${pname}: ${values}`;
           }
           // In overloads where `kwargs` is required, keep the `args` surrogate parameter required,
           // but allow `undefined` as a placeholder so callers can omit varargs while still passing kwargs.
-          return `${pname}: unknown[] | undefined`;
+          return `${pname}: ${values} | undefined`;
         })();
         if (v) {
           rest.push(v);
@@ -711,7 +1134,12 @@ export class CodeGenerator {
           );
         }
       }
-    } else if (firstOptionalIndex >= 0 && !varArgsParam && !needsKwargsParam) {
+    } else if (
+      (func.overloads?.length ?? 0) === 0 &&
+      firstOptionalIndex >= 0 &&
+      !varArgsParam &&
+      !needsKwargsParam
+    ) {
       for (let i = firstOptionalIndex; i <= positionalParams.length; i++) {
         const head = positionalParams.slice(0, i).map(p => renderPositionalParam(p));
         const rest: string[] = [];
@@ -751,9 +1179,14 @@ export class CodeGenerator {
     const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
     const callPreludeLines = emitCallPrelude(callDescriptor, this.callEmitHelpers());
     const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
+    const overloadValidator =
+      (func.overloads?.length ?? 0) > 0
+        ? `  const __selectedReturnValidator = selectOverloadReturnValidator(${JSON.stringify(this.overloadReturnSchemas(func, returnDefinitions))}, __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${validatorName}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n`
+        : '';
+    const selectedValidatorName = overloadValidator ? '__selectedReturnValidator' : validatorName;
 
-    const ts = `${jsdoc}${returnValidator}${overloadDecl}export async function ${fname}${typeParamDecl}(${paramDecl}): Promise<${returnType}> {
-${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${moduleId}', '${func.name}', __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${validatorName});
+    const ts = `${jsdoc}${returnValidator}${overloadDecl}export async function ${fname}${hasDeclaredOverloads ? '' : typeParamDecl}(${paramDecl}): Promise<${implementationReturnType}> {
+${callPrelude}${guards}${overloadValidator}  return ${runtimeGetterIdentifier}().call<${implementationReturnType}>('${moduleId}', '${func.name}', __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${selectedValidatorName});
 }
 `;
 
@@ -770,8 +1203,10 @@ ${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${module
     moduleName?: string,
     _annotatedJSDoc = false,
     localDeclaredNames: Set<string> = new Set(),
-    returnDefinitions: ReturnDefinitionNames = new Set()
+    returnDefinitions: ReturnDefinitionNames = new Set(),
+    runtimeGetterIdentifier = 'getRuntimeBridge'
   ): GeneratedCode {
+    this.assertRuntimeGetterIdentifier(runtimeGetterIdentifier);
     const moduleDeclaredNames = new Set(localDeclaredNames);
     moduleDeclaredNames.add(cls.name);
     const jsdoc = this.generateJsDoc(cls.docstring);
@@ -886,6 +1321,7 @@ ${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${module
         // the ordinary module call path and never retain process-local state.
         const staticPrefix = 'static ';
         const fparams = method.parameters.filter(p => p.name !== 'self' && p.name !== 'cls');
+        const hasDeclaredOverloads = (method.overloads?.length ?? 0) > 0;
         const methodOwnGenericContext = this.buildGenericRenderContext(
           this.getTypeParameters(method.typeParameters),
           [method.returnType, ...fparams.map(param => param.type)],
@@ -897,11 +1333,31 @@ ${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${module
           methodOwnGenericContext
         );
         const methodTypeParamDecl = methodOwnGenericContext.declaration;
-        const methodTsValueType = (p: (typeof fparams)[number]): string =>
-          this.typeToTsFromPython(p.type, methodGenericContext, 'value');
+        const methodParameterContracts = new WeakMap<Parameter, ValueContractV3>();
+        method.parameters.forEach((parameter, index) => {
+          const value = method.callableContract?.parameterValues[index];
+          if (value) {
+            methodParameterContracts.set(parameter, value);
+          }
+        });
+        const methodTsValueType = (p: Parameter): string =>
+          this.resolvedParameterType(methodParameterContracts.get(p), p.type, methodGenericContext);
+        const methodVarArgsType = (p: Parameter): string => {
+          const value = methodParameterContracts.get(p);
+          if (!value || !containsExactInteger(value)) {
+            return 'unknown[]';
+          }
+          const item = methodTsValueType(p);
+          return `${value.kind === 'union' ? `(${item})` : item}[]`;
+        };
+        const methodVarKwargsType = (p: Parameter): string => {
+          const value = methodParameterContracts.get(p);
+          return value && containsExactInteger(value) ? methodTsValueType(p) : 'unknown';
+        };
         const keywordOnlyParams = fparams.filter(p => p.keywordOnly);
         const positionalOnlyNames = fparams.filter(p => p.positionalOnly).map(p => p.name);
         const hasVarKwArgs = fparams.some(p => p.kwArgs);
+        const varKwArgsParam = fparams.find(p => p.kwArgs);
         const needsKwargsParam = keywordOnlyParams.length > 0 || hasVarKwArgs;
         const varArgsParam = fparams.find(p => p.varArgs);
         const needsVarArgsArray = Boolean(varArgsParam) && needsKwargsParam;
@@ -917,21 +1373,26 @@ ${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${module
         ): string => {
           const pname = this.escapeIdentifier(p.name);
           const opt = !forceRequired && p.optional ? '?' : '';
-          return `${pname}${opt}: ${methodTsValueType(p)}`;
+          return `${pname}${opt}: ${hasDeclaredOverloads ? 'unknown' : methodTsValueType(p)}`;
         };
 
         const kwargsType = (() => {
           if (!needsKwargsParam) {
             return '';
           }
-          if (keywordOnlyParams.length === 0 && hasVarKwArgs) {
+          if (hasDeclaredOverloads) {
             return 'Record<string, unknown>';
+          }
+          if (keywordOnlyParams.length === 0 && hasVarKwArgs) {
+            return `Record<string, ${varKwArgsParam ? methodVarKwargsType(varKwArgsParam) : 'unknown'}>`;
           }
           const props = keywordOnlyParams
             .map(p => `${JSON.stringify(p.name)}${p.optional ? '?' : ''}: ${methodTsValueType(p)};`)
             .join(' ');
           const obj = `{ ${props} }`;
-          return hasVarKwArgs ? `(${obj} & Record<string, unknown>)` : obj;
+          return hasVarKwArgs
+            ? `(${obj} & Record<string, ${varKwArgsParam ? methodVarKwargsType(varKwArgsParam) : 'unknown'}>)`
+            : obj;
         })();
 
         const paramsDeclParts: string[] = [];
@@ -941,7 +1402,9 @@ ${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${module
         if (varArgsParam) {
           const vname = this.escapeIdentifier(varArgsParam.name);
           paramsDeclParts.push(
-            needsVarArgsArray ? `${vname}?: unknown[]` : `...${vname}: unknown[]`
+            needsVarArgsArray
+              ? `${vname}?: ${hasDeclaredOverloads ? 'unknown[]' : methodVarArgsType(varArgsParam)}`
+              : `...${vname}: ${hasDeclaredOverloads ? 'unknown[]' : methodVarArgsType(varArgsParam)}`
           );
         }
         if (needsKwargsParam) {
@@ -950,17 +1413,59 @@ ${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${module
         const paramsDecl = paramsDeclParts.join(', ');
 
         const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
-        const returnType = this.typeToTsFromPython(
+        const returnType = this.resolvedReturnType(
+          method.callableContract?.returnValue,
           method.returnType,
-          methodGenericContext,
-          'return'
+          methodGenericContext
         );
+        const implementationReturnType = hasDeclaredOverloads ? 'unknown' : returnType;
         const mname = this.escapeIdentifier(method.name);
         const validatorName = `__validate${this.escapeIdentifier(cls.name, { preserveCase: true })}${this.escapeIdentifier(method.name, { preserveCase: true })}Result`;
-        const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.returnSchema(method.returnType, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n\n`;
+        const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.resolvedReturnSchema(method, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n\n`;
 
-        const overloads: string[] = [];
-        if (needsKwargsParam && requiredKwOnlyNames.length > 0) {
+        const declaredOverloads =
+          (method.overloads?.length ?? 0) > 0
+            ? (this.generateFunctionWrapper(
+                {
+                  ...method,
+                  parameters: fparams,
+                  callableContract: method.callableContract
+                    ? {
+                        ...method.callableContract,
+                        parameterValues: method.callableContract.parameterValues.filter(
+                          (_, index) =>
+                            method.parameters[index]?.name !== 'self' &&
+                            method.parameters[index]?.name !== 'cls'
+                        ),
+                        overloads: method.callableContract.overloads.map((contract, index) => ({
+                          ...contract,
+                          parameterValues: contract.parameterValues.filter(
+                            (_, parameterIndex) =>
+                              method.overloads?.[index]?.parameters[parameterIndex]?.name !==
+                                'self' &&
+                              method.overloads?.[index]?.parameters[parameterIndex]?.name !== 'cls'
+                          ),
+                        })),
+                      }
+                    : undefined,
+                  overloads: method.overloads?.map(overload => ({
+                    ...overload,
+                    parameters: overload.parameters.filter(
+                      p => p.name !== 'self' && p.name !== 'cls'
+                    ),
+                  })),
+                },
+                moduleName,
+                false,
+                moduleDeclaredNames,
+                returnDefinitions,
+                runtimeGetterIdentifier
+              )
+                .declaration.match(/^export function .*;$/gm)
+                ?.map(line => `  static ${line.slice('export function '.length)}`) ?? [])
+            : [];
+        const overloads: string[] = [...declaredOverloads];
+        if (declaredOverloads.length === 0 && needsKwargsParam && requiredKwOnlyNames.length > 0) {
           const firstOptionalIndex = positionalParams.findIndex(p => p.optional);
           const requiredPosCount =
             firstOptionalIndex >= 0 ? firstOptionalIndex : positionalParams.length;
@@ -970,7 +1475,9 @@ ${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${module
             if (varArgsParam) {
               const vname = this.escapeIdentifier(varArgsParam.name);
               rest.push(
-                needsVarArgsArray ? `${vname}: unknown[] | undefined` : `...${vname}: unknown[]`
+                needsVarArgsArray
+                  ? `${vname}: ${methodVarArgsType(varArgsParam)} | undefined`
+                  : `...${vname}: ${methodVarArgsType(varArgsParam)}`
               );
             }
             rest.push(`kwargs: ${kwargsType}`);
@@ -1004,10 +1511,17 @@ ${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${module
 
         const guardLines = emitArgGuards(callDescriptor);
         const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
+        const overloadValidator =
+          declaredOverloads.length > 0
+            ? `    const __selectedReturnValidator = selectOverloadReturnValidator(${JSON.stringify(this.overloadReturnSchemas(method, returnDefinitions))}, __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${validatorName}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n`
+            : '';
+        const selectedValidatorName = overloadValidator
+          ? '__selectedReturnValidator'
+          : validatorName;
 
-        const callExpr = `getRuntimeBridge().call<${returnType}>('${moduleId}', '${cls.name}.${method.name}', __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${validatorName})`;
-        methodBodies.push(`${overloadDecl}  ${staticPrefix}async ${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}> {
-    ${returnValidator}${callPrelude}${guards}    return ${callExpr};
+        const callExpr = `${runtimeGetterIdentifier}().call<${implementationReturnType}>('${moduleId}', '${cls.name}.${method.name}', __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${selectedValidatorName})`;
+        methodBodies.push(`${overloadDecl}  ${staticPrefix}async ${mname}${hasDeclaredOverloads ? '' : methodTypeParamDecl}(${paramsDecl}): Promise<${implementationReturnType}> {
+    ${returnValidator}${callPrelude}${guards}${overloadValidator}    return ${callExpr};
   }`);
         methodDeclarations.push(
           `${overloadDecl}${overloads.length > 0 ? '' : `  ${staticPrefix}${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}>;\n`}`
@@ -1081,6 +1595,30 @@ ${migrationNote}${declarationMethodsSection}
   }
 
   generateModuleDefinition(module: PythonModule, annotatedJSDoc = false): GeneratedCode {
+    return this.generateModuleWithGetter(module, annotatedJSDoc, 'getRuntimeBridge', true);
+  }
+
+  /** Build an intermediate template. The caller must bind its provider before emission. */
+  generateModuleBindingTemplate(
+    module: PythonModule,
+    annotatedJSDoc = false,
+    runtimeGetterIdentifier = '__tywrapRuntimeProvider'
+  ): GeneratedCode {
+    if (runtimeGetterIdentifier === 'getRuntimeBridge') {
+      throw new Error('Binding templates require a distinct runtime getter');
+    }
+    this.assertRuntimeGetterIdentifier(runtimeGetterIdentifier);
+    this.assertBindingGetterAvailable(module, runtimeGetterIdentifier);
+    return this.generateModuleWithGetter(module, annotatedJSDoc, runtimeGetterIdentifier, false);
+  }
+
+  private generateModuleWithGetter(
+    module: PythonModule,
+    annotatedJSDoc: boolean,
+    runtimeGetterIdentifier: string,
+    importRuntimeGetter: boolean
+  ): GeneratedCode {
+    this.assertRuntimeGetterIdentifier(runtimeGetterIdentifier);
     const localDeclaredNames = new Set([
       ...module.classes.map(cls => cls.name),
       ...(module.typeAliases ?? []).map(alias => alias.name),
@@ -1093,7 +1631,8 @@ ${migrationNote}${declarationMethodsSection}
           module.name,
           annotatedJSDoc,
           localDeclaredNames,
-          this.returnDefinitions(module)
+          this.returnDefinitions(module),
+          runtimeGetterIdentifier
         )
       );
     const classResults = [...module.classes]
@@ -1104,7 +1643,8 @@ ${migrationNote}${declarationMethodsSection}
           module.name,
           annotatedJSDoc,
           localDeclaredNames,
-          this.returnDefinitions(module)
+          this.returnDefinitions(module),
+          runtimeGetterIdentifier
         )
       );
     const typeAliasResults = [...(module.typeAliases ?? [])]
@@ -1122,12 +1662,48 @@ ${migrationNote}${declarationMethodsSection}
       return kind === 'class' && !c.decorators.includes('__typed_dict__');
     });
     const needsRuntime = module.functions.length > 0 || hasRuntimeClasses;
+    const hasOverloads =
+      module.functions.some(func => (func.overloads?.length ?? 0) > 0) ||
+      module.classes.some(cls => cls.methods.some(method => (method.overloads?.length ?? 0) > 0));
+    const emittedCallables = [
+      ...module.functions,
+      ...module.classes.flatMap(cls =>
+        cls.methods.filter(
+          method =>
+            method.name !== '__init__' &&
+            (method.methodKind === 'class' || method.methodKind === 'static')
+        )
+      ),
+    ];
+    const resolvedValues = emittedCallables.flatMap(func => [
+      ...(func.callableContract?.parameterValues ?? []),
+      func.callableContract?.returnValue,
+      ...(func.callableContract?.overloads.flatMap(overload => [
+        ...overload.parameterValues,
+        overload.returnValue,
+      ]) ?? []),
+    ]);
+    const needsTorchFloat16 = resolvedValues.some(
+      value => value !== undefined && containsScientificValue(value, 'torch-float16')
+    );
+    const needsFloat16 =
+      needsTorchFloat16 ||
+      resolvedValues.some(
+        value => value !== undefined && containsScientificValue(value, 'ndarray-float16')
+      );
+    const scientificTypes = needsFloat16
+      ? `type __tywrapFloat16Value = number | __tywrapFloat16Value[];\n${
+          needsTorchFloat16
+            ? `type __tywrapFloat16Tensor = { data: __tywrapFloat16Value; shape: number[]; dtype: 'torch.float16'; device?: string; sourceDtype?: string; sourceDevice?: string };\n`
+            : ''
+        }\n`
+      : '';
     const bridgeDecl = needsRuntime
-      ? `import { createReturnValidator, getRuntimeBridge, type ReturnSchema } from 'tywrap/runtime';\n\n${this.emitReturnDefinitions(module)}`
+      ? `import { createReturnValidator, ${hasOverloads ? 'selectOverloadReturnValidator, ' : ''}${importRuntimeGetter ? 'getRuntimeBridge, ' : ''}type ReturnSchema } from 'tywrap/runtime';\n\n${this.emitReturnDefinitions(module)}`
       : '';
 
-    const ts = `${`${header}${bridgeDecl}${functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd()}\n`;
-    const declaration = `${`${declarationHeader}${functionResults
+    const ts = `${`${header}${bridgeDecl}${scientificTypes}${functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd()}\n`;
+    const declaration = `${`${declarationHeader}${scientificTypes}${functionResults
       .map(result => result.declaration)
       .join('\n')}\n${classResults
       .map(result => result.declaration)
@@ -1158,7 +1734,7 @@ ${migrationNote}${declarationMethodsSection}
       declaration,
       sourceMap: undefined,
       metadata: {
-        generatedAt: new Date(),
+        generatedAt: new Date(0),
         sourceFiles: [],
         runtime: 'auto',
         optimizations: [],

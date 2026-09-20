@@ -10,6 +10,8 @@
  */
 
 import { tagDecodedShape } from '../runtime/validators.js';
+import type { DecodedProvenance } from '../runtime/decoded-provenance.js';
+import { isSafeJsonInteger, MAX_SAFE_JSON_INTEGER } from '../contracts/value-contract.js';
 
 const SCIENTIFIC_MARKERS = [
   'dataframe',
@@ -376,17 +378,20 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
  * @param arr - Typed array or plain array
  * @returns Plain JavaScript array with values converted (BigInt → Number where safe)
  */
-function typedArrayToPlain(arr: unknown): unknown[] | null {
+function typedArrayToPlain(arr: unknown, dtype?: string): unknown[] | null {
   if (Array.isArray(arr)) {
-    return arr;
+    return dtype === 'float16' ? arr.map(decodeFloat16StorageWord) : arr;
   }
   // Handle typed arrays (Int32Array, Float64Array, BigInt64Array, etc.)
   if (ArrayBuffer.isView(arr) && 'length' in arr) {
+    if (dtype === 'float16') {
+      return Array.from(arr as unknown as ArrayLike<unknown>, decodeFloat16StorageWord);
+    }
     const values = Array.from(arr as unknown as ArrayLike<unknown>);
     return values.map(value => {
       // Convert BigInt to Number if within safe integer range
       if (typeof value === 'bigint') {
-        if (value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)) {
+        if (value >= BigInt(-MAX_SAFE_JSON_INTEGER) && value <= BigInt(MAX_SAFE_JSON_INTEGER)) {
           return Number(value);
         }
       }
@@ -395,7 +400,8 @@ function typedArrayToPlain(arr: unknown): unknown[] | null {
   }
   // Fallback: check if iterable before converting
   if (arr !== null && arr !== undefined && typeof arr === 'object' && Symbol.iterator in arr) {
-    return Array.from(arr as Iterable<unknown>);
+    const values = Array.from(arr as Iterable<unknown>);
+    return dtype === 'float16' ? values.map(decodeFloat16StorageWord) : values;
   }
   return null;
 }
@@ -406,16 +412,30 @@ function typedArrayToPlain(arr: unknown): unknown[] | null {
  * Why: Arrow decoding returns Table objects, not raw arrays. We need to extract
  * the column values and convert any typed arrays to plain arrays.
  */
-function extractArrowValues(data: unknown): unknown[] | null {
+function extractArrowValues(data: unknown, dtype?: string): unknown[] | null {
   if (Array.isArray(data)) {
-    return data;
+    return typedArrayToPlain(data, dtype);
   }
   // Arrow table - extract values from first column
-  const table = data as ArrowTable & { getChildAt?: (i: number) => { toArray?: () => unknown } };
+  const table = data as ArrowTable & {
+    getChildAt?: (i: number) => {
+      toArray?: () => unknown;
+      type?: unknown;
+      nullCount?: number;
+    };
+  };
   if (typeof table.getChildAt === 'function') {
     const column = table.getChildAt(0);
     if (column && typeof column.toArray === 'function') {
-      return typedArrayToPlain(column.toArray());
+      if (dtype === 'float16') {
+        if (column.type !== undefined && String(column.type) !== 'Float16') {
+          throw new Error('float16 Arrow column type does not match envelope dtype');
+        }
+        if (column.nullCount !== undefined && column.nullCount > 0) {
+          throw new Error('float16 Arrow column contains null values');
+        }
+      }
+      return typedArrayToPlain(column.toArray(), dtype);
     }
   }
   return null;
@@ -427,7 +447,7 @@ function extractNdarrayArrowValues(
   dtype: string | undefined
 ): unknown[] {
   try {
-    const values = extractArrowValues(data);
+    const values = extractArrowValues(data, dtype);
     if (values) {
       return values;
     }
@@ -646,6 +666,31 @@ function assertArrowCount(
   }
 }
 
+/** Decode one IEEE 754 binary16 storage word. Keep negative zero. */
+function float16StorageToNumber(bits: number): number {
+  const sign = bits & 0x8000 ? -1 : 1;
+  const exponent = (bits >>> 10) & 0x1f;
+  const fraction = bits & 0x03ff;
+  if (exponent === 0) {
+    return sign * fraction * 2 ** -24;
+  }
+  if (exponent === 0x1f) {
+    return fraction === 0 ? sign * Infinity : NaN;
+  }
+  return sign * (1024 + fraction) * 2 ** (exponent - 25);
+}
+
+function decodeFloat16StorageWord(bits: unknown, index: number): number {
+  if (typeof bits !== 'number' || !isSafeJsonInteger(bits) || bits < 0 || bits > 0xffff) {
+    throw new Error(`Invalid ndarray envelope: float16 storage at b64[${index}] must be a uint16`);
+  }
+  const number = float16StorageToNumber(bits);
+  if (!Number.isFinite(number)) {
+    throw new Error(`Invalid ndarray envelope: non-finite float16 value at b64[${index}]`);
+  }
+  return number;
+}
+
 function assertCodecVersion(envelope: { codecVersion?: unknown }, typeTag: string): void {
   if (!('codecVersion' in envelope)) {
     return;
@@ -723,7 +768,7 @@ function finishNdarrayDecode(
 ): unknown {
   const values = strictV1
     ? extractNdarrayArrowValues(data, shape, dtype)
-    : extractArrowValues(data);
+    : extractArrowValues(data, dtype);
   if (!values) {
     return tagDecodedShape(data, metadata);
   }
@@ -1064,6 +1109,19 @@ const decodeTorchTensorEnvelope: EnvelopeHandler = <T>(
   if (strictV1 && 'dtype' in nested) {
     assertOptionalNonEmptyDtype(nested.dtype, 'torch.tensor', 'value.dtype', nestedShape);
   }
+  if (strictV1 && dtype === 'torch.float16') {
+    if (!isStrictV1Envelope(nested)) {
+      throw new Error(
+        'Invalid torch.tensor envelope: float16 value must use ndarray codecVersion 1'
+      );
+    }
+    if (nested.dtype !== 'float16') {
+      throw new Error(
+        `Invalid torch.tensor envelope: value.dtype at path value.dtype must be "float16" ` +
+          `for outer dtype "torch.float16"; got ${JSON.stringify(nested.dtype)}`
+      );
+    }
+  }
   const deviceValue = value.device;
   if (deviceValue !== undefined && (typeof deviceValue !== 'string' || deviceValue.length === 0)) {
     throw new Error(
@@ -1290,7 +1348,8 @@ function decodeEnvelope<T>(
 
 async function decodeEnvelopeAsync<T>(
   value: unknown,
-  decodeArrow: (bytes: Uint8Array, marker: ScientificMarker) => Promise<T>
+  decodeArrow: (bytes: Uint8Array, marker: ScientificMarker) => Promise<T>,
+  provenance?: DecodedProvenance
 ): Promise<T | unknown> {
   let visitedNodes = 0;
 
@@ -1353,6 +1412,34 @@ async function decodeEnvelopeAsync<T>(
     }
   };
 
+  const recordScalarProvenance = (
+    original: unknown,
+    decoded: unknown,
+    target?: DecodeTarget
+  ): void => {
+    if (
+      !provenance ||
+      typeof decoded !== 'number' ||
+      !isPlainObject(original) ||
+      original.__tywrap__ !== 'ndarray' ||
+      !isStrictV1Envelope(original) ||
+      !Array.isArray(original.shape) ||
+      original.shape.length !== 0
+    ) {
+      return;
+    }
+    const metadata = {
+      marker: 'ndarray' as const,
+      dims: 0,
+      dtype: typeof original.dtype === 'string' ? original.dtype : undefined,
+    };
+    if (target) {
+      provenance.recordChild(target.container, target.key, metadata);
+    } else {
+      provenance.recordRoot(metadata);
+    }
+  };
+
   const settleDecoded = async (
     decoded: PromiseLike<T | unknown>,
     original: unknown,
@@ -1365,6 +1452,7 @@ async function decodeEnvelopeAsync<T>(
     } catch (error) {
       return prefixHandlerError(error, path);
     }
+    recordScalarProvenance(original, resolved, path === 'result' ? undefined : target);
     assignDecoded(target, original, resolved);
   };
 
@@ -1411,8 +1499,10 @@ async function decodeEnvelopeAsync<T>(
           pending.push(settleDecoded(decoded, current, { container: root, key: 'value' }, path));
         }
       } else if (target) {
+        recordScalarProvenance(current, decoded, target);
         assignDecoded(target, current, decoded);
       } else if (decoded !== current) {
+        recordScalarProvenance(current, decoded);
         root.value = decoded;
       }
       return;
@@ -1486,9 +1576,12 @@ async function decodeEnvelopeAsync<T>(
 /**
  * Decode values produced by the Python bridge.
  */
-export async function decodeValueAsync(value: unknown): Promise<DecodedValue> {
+export async function decodeValueAsync(
+  value: unknown,
+  provenance?: DecodedProvenance
+): Promise<DecodedValue> {
   try {
-    return await decodeEnvelopeAsync(value, tryDecodeArrowTable);
+    return await decodeEnvelopeAsync(value, tryDecodeArrowTable, provenance);
   } catch (error) {
     throw asScientificDecodeError(error, 'unknown');
   }

@@ -19,6 +19,16 @@ async def process_items(items: List[str]) -> List[str]:
     return results
 
 
+async def delayed_value(delay: float) -> str:
+    await asyncio.sleep(delay)
+    return "finished"
+
+
+async def raise_after_await() -> str:
+    await asyncio.sleep(0)
+    raise ValueError("async failure")
+
+
 async def async_generator(count: int) -> AsyncIterator[int]:
     """Async generator yielding numbers."""
     for i in range(count):

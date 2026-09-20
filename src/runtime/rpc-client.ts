@@ -23,6 +23,7 @@ import type { BridgeBackend, BridgeInfo } from '../types/index.js';
 import { DisposableBase, type ExecuteOptions } from './bounded-context.js';
 import { BridgeProtocolError } from './errors.js';
 import { BridgeCodec, type CodecOptions } from './bridge-codec.js';
+import { DecodedProvenance } from './decoded-provenance.js';
 import {
   PROTOCOL_ID,
   TYWRAP_PROTOCOL_VERSION,
@@ -329,9 +330,8 @@ export class RpcClient extends DisposableBase {
    * supplies auto-init and exactly-one-attempt timeout/abort handling), where the only difference between
    * the sync and Arrow-aware paths is the supplied `decode` step.
    *
-   * Behavior-preserving extraction of the two twins; ordering, the
-   * `options?.timeoutMs ?? this.defaultTimeoutMs` fallback, and the
-   * `this.execute(..., options)` wrapping are unchanged.
+   * The transport gets the configured timeout. The outer bound adds one
+   * second so transport errors can include details such as Python stderr.
    */
   private async sendVia<T>(
     message: Omit<ProtocolMessage, 'id' | 'protocol'>,
@@ -339,22 +339,28 @@ export class RpcClient extends DisposableBase {
     decode: (responseStr: string) => T | Promise<T>
   ): Promise<T> {
     const fullMessage = this.stampMessage(message);
+    const transportTimeoutMs = options?.timeoutMs ?? this.defaultTimeoutMs;
+    // Let the transport report its own timeout, including Python stderr.
+    const executionTimeoutMs = transportTimeoutMs > 0 ? transportTimeoutMs + 1_000 : 0;
 
-    return this.execute(async () => {
-      // 1. Encode request (validates args)
-      const encoded = this.codec.encodeRequest(fullMessage);
+    return this.execute(
+      async () => {
+        // 1. Encode request (validates args)
+        const encoded = this.codec.encodeRequest(fullMessage);
 
-      // 2. Send via transport
-      const responseStr = await this.transport.send(
-        encoded,
-        options?.timeoutMs ?? this.defaultTimeoutMs,
-        options?.signal,
-        fullMessage.id
-      );
+        // 2. Send via transport
+        const responseStr = await this.transport.send(
+          encoded,
+          transportTimeoutMs,
+          options?.signal,
+          fullMessage.id
+        );
 
-      // 3. Decode response (sync or Arrow-aware, per caller)
-      return decode(responseStr);
-    }, options);
+        // 3. Decode response (sync or Arrow-aware, per caller)
+        return decode(responseStr);
+      },
+      { ...options, timeoutMs: executionTimeoutMs }
+    );
   }
 
   /**
@@ -431,9 +437,10 @@ export class RpcClient extends DisposableBase {
     functionName: string,
     args: unknown[],
     kwargs?: Record<string, unknown>,
-    validate?: (result: T) => void
+    validate?: (result: T, provenance?: DecodedProvenance) => void
   ): Promise<T> {
-    return this.sendMessageAsync<T>(
+    const provenance = validate ? new DecodedProvenance() : undefined;
+    return this.sendVia<T>(
       {
         method: 'call',
         params: {
@@ -446,11 +453,12 @@ export class RpcClient extends DisposableBase {
       validate
         ? {
             validate: result => {
-              validate(result);
+              validate(result, provenance);
               return result;
             },
           }
-        : undefined
+        : undefined,
+      responseStr => this.codec.decodeResponseAsync<T>(responseStr, provenance)
     );
   }
 

@@ -27,6 +27,7 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Getting Started', link: '/guide/getting-started' },
+          { text: 'Migrating to 0.11', link: '/guide/migrating-to-0-11' },
           { text: 'Agent Adoption', link: '/guide/agent-adoption' },
           { text: 'Configuration', link: '/guide/configuration' },
           { text: 'Watch & Reload', link: '/guide/dev-reload' },

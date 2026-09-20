@@ -748,6 +748,7 @@ describe('PooledTransport', () => {
           removeWorker(worker: TransportLease): void;
         }
       ).removeWorker(worker);
+      await vi.waitFor(() => expect(transports).toHaveLength(2));
       await pool.dispose();
       await new Promise(resolve => setTimeout(resolve, 100));
 
@@ -779,6 +780,78 @@ describe('PooledTransport', () => {
       expect(transports).toHaveLength(1);
       expect(transports[0]?.disposeCalled).toBe(true);
     });
+
+    it('retains a late worker when its cleanup fails after pool disposal', async () => {
+      let releaseInit!: () => void;
+      const initGate = new Promise<void>(resolve => {
+        releaseInit = resolve;
+      });
+      const cleanupError = new BridgeProtocolError('Late worker cleanup failed');
+      const transport = new MockTransport();
+      let disposalAttempts = 0;
+      transport.init = async () => {
+        await initGate;
+        transport.initCalled = true;
+      };
+      transport.dispose = async () => {
+        disposalAttempts++;
+        if (disposalAttempts === 1) {
+          throw cleanupError;
+        }
+        transport.disposeCalled = true;
+      };
+      pool = new PooledTransport({ createTransport: () => transport, maxWorkers: 1 });
+
+      await pool.init();
+      const acquisition = pool.acquire().then(
+        () => undefined,
+        error => error as Error
+      );
+      await pool.dispose();
+      releaseInit();
+      await expect(acquisition).resolves.toBe(cleanupError);
+      expect(disposalAttempts).toBe(1);
+      await expect(pool.dispose()).resolves.toBeUndefined();
+      expect(disposalAttempts).toBe(2);
+      expect(transport.disposeCalled).toBe(true);
+    });
+
+    it.each(['init', 'warmup'] as const)(
+      'retains an unpublished worker after failed %s cleanup',
+      async stage => {
+        const transport = new MockTransport();
+        let disposalAttempts = 0;
+        const failure = new Error(`${stage} failed`);
+        if (stage === 'init') {
+          transport.init = async () => {
+            throw failure;
+          };
+        }
+        transport.dispose = async () => {
+          disposalAttempts++;
+          if (disposalAttempts === 1) {
+            throw new BridgeProtocolError('Worker cleanup failed');
+          }
+          transport.disposeCalled = true;
+        };
+        pool = new PooledTransport({
+          createTransport: () => transport,
+          minWorkers: 1,
+          maxWorkers: 1,
+          onWorkerReady: async () => {
+            if (stage === 'warmup') {
+              throw failure;
+            }
+          },
+        });
+
+        await expect(pool.init()).rejects.toThrow();
+        expect(disposalAttempts).toBe(1);
+        await expect(pool.dispose()).resolves.toBeUndefined();
+        expect(disposalAttempts).toBe(2);
+        expect(transport.disposeCalled).toBe(true);
+      }
+    );
   });
 
   // ===========================================================================

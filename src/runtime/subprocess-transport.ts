@@ -117,6 +117,7 @@ interface PendingRequest {
   resolve: (value: string) => void;
   reject: (error: Error) => void;
   timer?: NodeJS.Timeout;
+  written?: boolean;
 }
 
 /**
@@ -137,6 +138,7 @@ interface QueuedWrite {
    * (and so never executes on) Python.
    */
   isLive?: () => boolean;
+  onWrite?: () => void;
   /** True while this entry is waiting to be flushed. */
   isQueued?: boolean;
 }
@@ -264,6 +266,17 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private process: ChildProcess | null = null;
   private processExited = false;
   private processError: Error | null = null;
+  private readonly shutdownHandlers = new WeakSet<ChildProcess>();
+  private readonly processErrorListener = (error: Error): void => this.handleProcessError(error);
+  private readonly stdoutDataListener = (chunk: Buffer | string): void =>
+    this.handleStdoutData(chunk);
+  private readonly stdoutErrorListener = (error: Error): void => this.handleStdoutError(error);
+  private readonly stderrDataListener = (chunk: Buffer | string): void =>
+    this.handleStderrData(chunk);
+  private readonly stderrErrorListener = (error: Error): void => this.handleStderrError(error);
+  private readonly stdinErrorListener = (error: Error): void => this.handleStdinError(error);
+  private readonly stdinDrainListener = (): void => this.handleStdinDrain();
+  private disposalInFlight?: Promise<void>;
 
   // Stream buffers
   private stdoutBuffer = '';
@@ -277,6 +290,8 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   });
   private requestCount = 0;
   private needsRestart = false;
+  private retiredGeneration = false;
+  private retirement?: Promise<void>;
   /** Serializes restart decisions with dispatch reservations. */
   private dispatchMutex: Promise<void> = Promise.resolve();
   private activeDispatches = 0;
@@ -321,6 +336,11 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     });
   }
 
+  /** Whether a timed-out or aborted request retired this process generation. */
+  get requiresReplacement(): boolean {
+    return this.retiredGeneration;
+  }
+
   // ===========================================================================
   // TRANSPORT INTERFACE
   // ===========================================================================
@@ -350,7 +370,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     }
 
     // Check if process is alive
-    if (this.processExited || !this.process) {
+    if ((this.processExited || !this.process) && !this.needsRestart) {
       const stderrTail = this.getStderrTail();
       const baseMsg = 'Python process is not running';
       const msg = stderrTail ? `${baseMsg}. Stderr:\n${stderrTail}` : baseMsg;
@@ -382,35 +402,36 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       // Set up timeout if specified
       let timer: NodeJS.Timeout | undefined;
 
-      // Defined before the timer so the timeout path can also detach it.
-      const abortHandler = (): void => {
+      const abandon = (error: BridgeTimeoutError): void => {
+        if (this.pending.get(messageId) !== pendingEntry) {
+          return;
+        }
         if (timer) {
           clearTimeout(timer);
         }
+        signal?.removeEventListener('abort', abortHandler);
         this.pending.delete(messageId);
         this.timedOutRequests.mark(messageId);
-        // Same late-frame discard as the timeout path (see below).
         this.responseReassembler?.discard(messageId);
-        reject(new BridgeTimeoutError('Operation aborted'));
+        reject(error);
+        // A request that reached Python may run forever. Retire only that
+        // process generation; a queued, unwritten request leaves it intact.
+        if (pendingEntry.written) {
+          this.retireProcessGeneration();
+        }
+      };
+
+      // Defined before the timer so the timeout path can also detach it.
+      const abortHandler = (): void => {
+        abandon(new BridgeTimeoutError('Operation aborted'));
       };
 
       if (timeoutMs > 0) {
         timer = setTimeout(() => {
-          this.pending.delete(messageId);
-          this.timedOutRequests.mark(messageId);
-          // Discard any in-flight chunked response stream for this id so late
-          // frames are dropped rather than desyncing stdout (the single-line
-          // timedOutRequests.consume above is one-shot and insufficient for a
-          // multi-frame stream).
-          this.responseReassembler?.discard(messageId);
-          // Detach the abort listener: on timeout the abort never fires, so
-          // without this it would leak on a long-lived AbortSignal and could
-          // re-enter abortHandler after this promise has already settled.
-          signal?.removeEventListener('abort', abortHandler);
           const stderrTail = this.getStderrTail();
           const baseMsg = `Operation timed out after ${timeoutMs}ms`;
           const msg = stderrTail ? `${baseMsg}. Recent stderr:\n${stderrTail}` : baseMsg;
-          reject(new BridgeTimeoutError(msg));
+          abandon(new BridgeTimeoutError(msg));
         }, timeoutMs);
       }
 
@@ -466,7 +487,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
           return this.writeRequest(message, messageId, signal, pendingEntry);
         })
         .catch(err => {
-          this.pending.delete(messageId);
+          if (this.pending.get(messageId) === pendingEntry) {
+            this.pending.delete(messageId);
+          }
           if (timer) {
             clearTimeout(timer);
           }
@@ -576,6 +599,27 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     await this.spawnProcess();
   }
 
+  /** Retry cleanup if the first disposal could not reap the child. */
+  override dispose(): Promise<void> {
+    if (this.disposalInFlight) {
+      return this.disposalInFlight;
+    }
+    const disposal =
+      this.isDisposed && this.process
+        ? this.withDispatchMutex(() => this.killProcess())
+        : super.dispose();
+    this.disposalInFlight = disposal;
+    disposal.then(
+      () => {
+        this.disposalInFlight = undefined;
+      },
+      () => {
+        this.disposalInFlight = undefined;
+      }
+    );
+    return disposal;
+  }
+
   /**
    * Dispose the transport by killing the Python process.
    */
@@ -599,7 +643,14 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     // Fence queued restart work before killing the process. A restart already
     // holding the mutex observes the disposing state before it can spawn; if it
     // spawned just before disposal began, this barrier kills that child too.
-    await this.withDispatchMutex(() => this.killProcess());
+    await this.withDispatchMutex(async () => {
+      try {
+        await this.retirement;
+      } catch {
+        // Retry the retained process handle during final disposal.
+      }
+      await this.killProcess();
+    });
 
     // Clear buffers
     this.stdoutBuffer = '';
@@ -660,22 +711,22 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.processError = null;
 
     // Set up event handlers
-    this.process.on('error', this.handleProcessError.bind(this));
+    this.process.on('error', this.processErrorListener);
     this.process.on('exit', this.handleProcessExit.bind(this));
 
     if (this.process.stdout) {
-      this.process.stdout.on('data', this.handleStdoutData.bind(this));
-      this.process.stdout.on('error', this.handleStdoutError.bind(this));
+      this.process.stdout.on('data', this.stdoutDataListener);
+      this.process.stdout.on('error', this.stdoutErrorListener);
     }
 
     if (this.process.stderr) {
-      this.process.stderr.on('data', this.handleStderrData.bind(this));
-      this.process.stderr.on('error', this.handleStderrError.bind(this));
+      this.process.stderr.on('data', this.stderrDataListener);
+      this.process.stderr.on('error', this.stderrErrorListener);
     }
 
     if (this.process.stdin) {
-      this.process.stdin.on('drain', this.handleStdinDrain.bind(this));
-      this.process.stdin.on('error', this.handleStdinError.bind(this));
+      this.process.stdin.on('drain', this.stdinDrainListener);
+      this.process.stdin.on('error', this.stdinErrorListener);
     }
 
     // Wait for process to be ready (first heartbeat could be here)
@@ -693,14 +744,26 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
     const proc = this.process;
     this.process = null;
+    this.processExited = true;
 
-    // Add a catch-all error handler to prevent uncaught exceptions during shutdown
-    // This must be added BEFORE removing other listeners and ending stdin
-    const noopErrorHandler = (): void => {
-      // Ignore errors during shutdown (e.g., EPIPE)
-    };
-    proc.stdin?.on('error', noopErrorHandler);
-    proc.on('error', noopErrorHandler);
+    // Keep shutdown errors handled without letting the retired child change a new process.
+    if (!this.shutdownHandlers.has(proc)) {
+      const noopErrorHandler = (): void => {
+        // Ignore errors during shutdown (e.g., EPIPE)
+      };
+      proc.stdin?.on('error', noopErrorHandler);
+      proc.on('error', noopErrorHandler);
+      proc.stdout?.on('error', noopErrorHandler);
+      proc.stderr?.on('error', noopErrorHandler);
+      proc.stdin?.removeListener('error', this.stdinErrorListener);
+      proc.removeListener('error', this.processErrorListener);
+      proc.stdin?.removeListener('drain', this.stdinDrainListener);
+      proc.stdout?.removeListener('data', this.stdoutDataListener);
+      proc.stdout?.removeListener('error', this.stdoutErrorListener);
+      proc.stderr?.removeListener('data', this.stderrDataListener);
+      proc.stderr?.removeListener('error', this.stderrErrorListener);
+      this.shutdownHandlers.add(proc);
+    }
 
     // Gracefully end stdin to prevent EPIPE on pending writes
     try {
@@ -709,31 +772,71 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       // Ignore errors ending stdin
     }
 
-    // Remove other listeners to prevent callbacks after disposal
+    // Remove live exit callbacks before waiting for this child to exit.
     proc.removeAllListeners('exit');
     proc.removeAllListeners('close');
-    proc.stdout?.removeAllListeners();
-    proc.stderr?.removeAllListeners();
 
-    // Kill the process
-    if (!proc.killed) {
-      proc.kill('SIGTERM');
-
-      // Wait briefly for graceful exit
-      await new Promise<void>(resolve => {
-        const timeout = setTimeout(() => {
-          if (!proc.killed) {
-            proc.kill('SIGKILL');
-          }
-          resolve();
-        }, 1000);
-
-        proc.once('exit', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
+    const hasExited = (): boolean =>
+      (proc.exitCode !== null && proc.exitCode !== undefined) ||
+      (proc.signalCode !== null && proc.signalCode !== undefined);
+    if (hasExited()) {
+      return;
     }
+
+    await new Promise<void>((resolve, reject) => {
+      const timers: {
+        grace?: ReturnType<typeof setTimeout>;
+        force?: ReturnType<typeof setTimeout>;
+      } = {};
+      const finish = (error?: Error): void => {
+        if (timers.grace) {
+          clearTimeout(timers.grace);
+        }
+        if (timers.force) {
+          clearTimeout(timers.force);
+        }
+        proc.removeListener('exit', onExit);
+        if (error) {
+          // Keep the handle for a later disposal retry. Never publish a new
+          // generation while the old child may still be alive.
+          this.process = proc;
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
+      const onExit = (): void => finish();
+      proc.once('exit', onExit);
+      if (hasExited()) {
+        finish();
+        return;
+      }
+      if (!proc.killed) {
+        try {
+          proc.kill('SIGTERM');
+        } catch {
+          // The force timer below still bounds shutdown.
+        }
+      }
+      timers.grace = setTimeout(() => {
+        if (hasExited()) {
+          finish();
+          return;
+        }
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          // Report an unreaped child after the force deadline.
+        }
+        timers.force = setTimeout(() => {
+          if (hasExited()) {
+            finish();
+          } else {
+            finish(new BridgeProtocolError('Python process did not exit after SIGKILL'));
+          }
+        }, 1000);
+      }, 1000);
+    });
   }
 
   /**
@@ -744,6 +847,14 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       throw new BridgeDisposedError('Transport has been disposed');
     }
 
+    await this.retirement;
+    this.retirement = undefined;
+
+    // Old queued writes belong to the old stdin, even if it never drained.
+    this.rejectAllQueuedWrites(
+      new BridgeProtocolError('Python worker restarted before queued writes completed')
+    );
+
     // Kill existing process
     await this.killProcess();
 
@@ -753,6 +864,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.stderrBuffer = '';
     this.requestCount = 0;
     this.needsRestart = false;
+    this.draining = false;
     // Drop any partial reassembly + discard tracking: the new process owns a
     // fresh stdout stream, so stale per-id state from the dead process must not
     // leak across the restart boundary.
@@ -772,6 +884,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
     // Spawn a fresh process with the packaged always-on framing protocol.
     await this.spawnProcess();
+    this.retiredGeneration = false;
   }
 
   /**
@@ -781,6 +894,22 @@ export class SubprocessTransport extends DisposableBase implements Transport {
    */
   private markForRestart(): void {
     this.needsRestart = true;
+  }
+
+  private retireProcessGeneration(): void {
+    if (this.retiredGeneration || this.isLifecycleEnding()) {
+      return;
+    }
+    this.retiredGeneration = true;
+    this.needsRestart = true;
+    const error = new BridgeProtocolError('Python worker retired after request timeout or abort');
+    this.rejectAllPending(error);
+    this.rejectAllQueuedWrites(error);
+    // killProcess removes old stdout listeners before a replacement can start.
+    this.retirement = this.killProcess();
+    this.retirement.catch(() => {
+      this.processExited = true;
+    });
   }
 
   // ===========================================================================
@@ -1073,10 +1202,11 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     data: string,
     resolve: () => void,
     reject: (error: Error) => void,
-    isLive?: () => boolean
+    isLive?: () => boolean,
+    onWrite?: () => void
   ): QueuedWrite {
     const queuedAt = Date.now();
-    const entry: QueuedWrite = { data, resolve, reject, queuedAt, isLive, isQueued: true };
+    const entry: QueuedWrite = { data, resolve, reject, queuedAt, isLive, onWrite, isQueued: true };
 
     // Set up timeout timer that fires if drain never happens
     entry.timeoutHandle = setTimeout(() => {
@@ -1111,7 +1241,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   /**
    * Write data to stdin with backpressure handling.
    */
-  private writeToStdin(data: string, isLive?: () => boolean): Promise<void> {
+  private writeToStdin(data: string, isLive?: () => boolean, onWrite?: () => void): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       if (!this.process?.stdin || this.processExited) {
         reject(new BridgeProtocolError(this.withStderrTail('Process stdin not available')));
@@ -1121,7 +1251,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       if (this.draining || this.writeQueue.length > this.writeQueueHead) {
         // Queue the write with timestamp, timeout timer, and liveness predicate
         // (checked again at flush — see processQueuedWrite).
-        this.writeQueue.push(this.createQueuedWrite(data, resolve, reject, isLive));
+        this.writeQueue.push(this.createQueuedWrite(data, resolve, reject, isLive, onWrite));
         return;
       }
 
@@ -1134,6 +1264,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
       // Try direct write (wrap in try-catch for synchronous EPIPE errors)
       try {
+        onWrite?.();
         const canWrite = this.process.stdin.write(data);
 
         if (canWrite) {
@@ -1193,6 +1324,11 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       (pendingEntry !== undefined
         ? this.pending.get(messageId) === pendingEntry
         : this.pending.has(messageId));
+    const onWrite = (): void => {
+      if (pendingEntry) {
+        pendingEntry.written = true;
+      }
+    };
     const run = (): Promise<void> => {
       if (!isLive()) {
         return Promise.resolve();
@@ -1200,9 +1336,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       // Chunk when the encoded request exceeds the fixed per-frame ceiling
       // supplied to the packaged Python peer. Otherwise use one JSONL line.
       if (utf8ByteLength(message) > this.frameBytes) {
-        return this.writeChunkedRequest(message, messageId, signal, isLive);
+        return this.writeChunkedRequest(message, messageId, signal, isLive, onWrite);
       }
-      return this.writeToStdin(`${message}\n`, isLive);
+      return this.writeToStdin(`${message}\n`, isLive, onWrite);
     };
 
     // Serialize the whole logical write onto the mutex tail. We chain the next
@@ -1231,7 +1367,8 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     message: string,
     messageId: number,
     signal?: AbortSignal,
-    isLive?: () => boolean
+    isLive?: () => boolean,
+    onWrite?: () => void
   ): Promise<void> {
     const frames = encodeFrames(message, {
       id: messageId,
@@ -1252,7 +1389,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       // One frame per JSONL line; await each so stdin backpressure is honored.
       // isLive gates a frame that ends up queued under backpressure past a late
       // cancellation, so an abandoned chunked request never completes on Python.
-      await this.writeToStdin(`${JSON.stringify(frame)}\n`, isLive);
+      await this.writeToStdin(`${JSON.stringify(frame)}\n`, isLive, onWrite);
     }
   }
 
@@ -1307,6 +1444,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     }
 
     try {
+      queued.onWrite?.();
       const canWrite = stdin.write(queued.data);
 
       if (canWrite) {

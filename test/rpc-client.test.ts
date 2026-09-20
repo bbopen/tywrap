@@ -503,6 +503,71 @@ describe('BridgeProtocol', () => {
       const parsed = JSON.parse(transport.lastMessage!);
       expect(parsed.params.kwargs).toEqual({ key: 'value' });
     });
+
+    it('keeps equal scalar proof with each concurrent call', async () => {
+      transport.send = async message => {
+        const request = JSON.parse(message);
+        const dtype = request.params.functionName === 'half' ? 'float16' : 'float32';
+        await new Promise(resolve => setTimeout(resolve, dtype === 'float16' ? 5 : 0));
+        return JSON.stringify({
+          id: request.id,
+          protocol: 'tywrap/1',
+          result: {
+            __tywrap__: 'ndarray',
+            codecVersion: 1,
+            encoding: 'json',
+            data: 1.5,
+            shape: [],
+            dtype,
+          },
+        });
+      };
+
+      const seen: string[] = [];
+      const [half, full] = await Promise.all([
+        protocol.call<number>('module', 'half', [], undefined, (value, provenance) => {
+          expect(value).toBe(1.5);
+          expect(provenance?.atRoot()?.dtype).toBe('float16');
+          seen.push('half');
+        }),
+        protocol.call<number>('module', 'full', [], undefined, (value, provenance) => {
+          expect(value).toBe(1.5);
+          expect(provenance?.atRoot()?.dtype).toBe('float32');
+          seen.push('full');
+        }),
+      ]);
+      expect([half, full]).toEqual([1.5, 1.5]);
+      expect(seen).toHaveLength(2);
+    });
+
+    it('does not pass rejected decode proof to validation or a later call', async () => {
+      let bad = true;
+      transport.setDynamicResponse(() =>
+        bad
+          ? {
+              __tywrap__: 'ndarray',
+              codecVersion: 1,
+              encoding: 'json',
+              data: 1.5,
+              shape: [1],
+              dtype: 'float16',
+            }
+          : 1.5
+      );
+      const validate = vi.fn((_value: number, provenance?: { atRoot(): unknown }) => {
+        expect(provenance?.atRoot()).toBeUndefined();
+      });
+
+      await expect(protocol.call<number>('module', 'bad', [], undefined, validate)).rejects.toThrow(
+        /must be an array at depth 0/
+      );
+      expect(validate).not.toHaveBeenCalled();
+      bad = false;
+      await expect(protocol.call<number>('module', 'plain', [], undefined, validate)).resolves.toBe(
+        1.5
+      );
+      expect(validate).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

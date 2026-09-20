@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CodeGenerator } from '../src/core/generator.js';
+import type { Parameter, PythonFunction, PythonModule, PythonType } from '../src/types/index.js';
 
 describe('CodeGenerator', () => {
   const gen = new CodeGenerator();
@@ -57,6 +58,76 @@ describe('CodeGenerator', () => {
     expect(code.typescript).toContain('Add two numbers');
     expect(code.typescript).toContain("getRuntimeBridge().call<number>('math', 'add'");
     expect(code.typescript).toContain('createReturnValidator');
+  });
+
+  it('uses one opt-in runtime provider for free and static wrappers', () => {
+    const ping = {
+      name: 'ping',
+      signature: {
+        parameters: [],
+        returnType: { kind: 'primitive', name: 'int' },
+        isAsync: false,
+        isGenerator: false,
+      },
+      decorators: [],
+      isAsync: false,
+      isGenerator: false,
+      returnType: { kind: 'primitive', name: 'int' },
+      parameters: [],
+    } satisfies PythonFunction;
+    const module = {
+      name: 'binding_fixture',
+      functions: [ping],
+      classes: [
+        {
+          name: 'Box',
+          kind: 'class',
+          bases: [],
+          properties: [],
+          decorators: [],
+          methods: [{ ...ping, name: 'pong', methodKind: 'static' }],
+        },
+      ],
+      typeAliases: [],
+      imports: [],
+      exports: [],
+    } satisfies PythonModule;
+    const normal = gen.generateModuleDefinition(module);
+    const bound = gen.generateModuleBindingTemplate(module);
+    expect(normal.typescript).toContain(
+      "getRuntimeBridge().call<number>('binding_fixture', 'ping'"
+    );
+    expect(normal.typescript).toContain(
+      "getRuntimeBridge().call<number>('binding_fixture', 'Box.pong'"
+    );
+    expect(bound.typescript).toContain(
+      "__tywrapRuntimeProvider().call<number>('binding_fixture', 'ping'"
+    );
+    expect(bound.typescript).toContain(
+      "__tywrapRuntimeProvider().call<number>('binding_fixture', 'Box.pong'"
+    );
+    expect(bound.typescript).not.toContain('getRuntimeBridge');
+    expect(bound.declaration).toBe(normal.declaration);
+    for (const identifier of [
+      'ping',
+      'provider',
+      'createReturnValidator',
+      '__tywrapReturnDefinitions',
+      '__args',
+      'for',
+      'super',
+      'this',
+      'arguments',
+      'undefined',
+      'provider;inject',
+    ]) {
+      expect(() => gen.generateModuleBindingTemplate(module, false, identifier)).toThrow(
+        /Invalid runtime getter identifier/
+      );
+    }
+    expect(
+      gen.generateModuleBindingTemplate(module, false, '__tywrapRuntimeProvider1').typescript
+    ).toContain('__tywrapRuntimeProvider1().call');
   });
 
   it('emits a null union member for X | None returns, not an accept-everything any', () => {
@@ -225,14 +296,13 @@ describe('CodeGenerator', () => {
   });
 
   it('degrades iterator-protocol returns to unknown with a no-op validator', () => {
-    // A generator/iterator object can never cross the bridge (serialization
-    // rejects it loudly), so Generator<...> as a return type could never
-    // carry a value.
+    // The serializer rejects generator and iterator objects.
+    // The wrapper cannot return a Generator value.
     const degraded: string[] = [];
     const honestGenerator = new CodeGenerator(undefined, {
       onTypeDegrade: typeName => degraded.push(typeName),
     });
-    const returnType = {
+    const returnType: PythonType = {
       kind: 'generic',
       name: 'Generator',
       module: 'typing',
@@ -267,12 +337,12 @@ describe('CodeGenerator', () => {
     expect(degraded).toEqual(['typing.Generator']);
   });
 
-  it('keeps Iterable returns as arrays — a decoded list satisfies them honestly', () => {
+  it('keeps Iterable returns as decoded arrays', () => {
     const degraded: string[] = [];
     const honestGenerator = new CodeGenerator(undefined, {
       onTypeDegrade: typeName => degraded.push(typeName),
     });
-    const returnType = {
+    const returnType: PythonType = {
       kind: 'generic',
       name: 'Iterable',
       module: 'typing',
@@ -559,6 +629,153 @@ describe('CodeGenerator', () => {
     expect(code.typescript).toMatch(
       /export async function f\(a: number, b\?: number, kwargs\?: \{ "c": number; \}\): Promise<number>/
     );
+  });
+
+  it('preserves declared overload input-to-return relationships', () => {
+    const code = gen.generateFunctionWrapper(
+      {
+        name: 'get_value',
+        signature: {
+          parameters: [
+            {
+              name: 'key',
+              type: {
+                kind: 'union',
+                types: [
+                  { kind: 'primitive', name: 'str' },
+                  { kind: 'primitive', name: 'int' },
+                ],
+              },
+              optional: false,
+              varArgs: false,
+              kwArgs: false,
+            },
+          ],
+          returnType: {
+            kind: 'union',
+            types: [
+              { kind: 'primitive', name: 'str' },
+              { kind: 'primitive', name: 'int' },
+            ],
+          },
+          isAsync: false,
+          isGenerator: false,
+        },
+        decorators: [],
+        isAsync: false,
+        isGenerator: false,
+        returnType: {
+          kind: 'union',
+          types: [
+            { kind: 'primitive', name: 'str' },
+            { kind: 'primitive', name: 'int' },
+          ],
+        },
+        parameters: [
+          {
+            name: 'key',
+            type: {
+              kind: 'union',
+              types: [
+                { kind: 'primitive', name: 'str' },
+                { kind: 'primitive', name: 'int' },
+              ],
+            },
+            optional: false,
+            varArgs: false,
+            kwArgs: false,
+          },
+        ],
+        overloads: [
+          {
+            parameters: [
+              {
+                name: 'key',
+                type: { kind: 'primitive', name: 'str' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+            returnType: { kind: 'primitive', name: 'str' },
+          },
+          {
+            parameters: [
+              {
+                name: 'key',
+                type: { kind: 'primitive', name: 'int' },
+                optional: false,
+                varArgs: false,
+                kwArgs: false,
+              },
+            ],
+            returnType: { kind: 'primitive', name: 'int' },
+          },
+        ],
+      } satisfies PythonFunction,
+      'advanced_types'
+    );
+
+    expect(code.typescript).toContain('export function getValue(key: string): Promise<string>;');
+    expect(code.typescript).toContain('export function getValue(key: number): Promise<number>;');
+    expect(code.typescript).toContain(
+      'export async function getValue(key: unknown): Promise<unknown>'
+    );
+    expect(code.declaration).toContain('export function getValue(key: string): Promise<string>;');
+    expect(code.declaration).toContain('export function getValue(key: number): Promise<number>;');
+  });
+
+  it('does not expose the implementation signature beside declared overloads', () => {
+    const key: Parameter = {
+      name: 'key',
+      type: { kind: 'primitive', name: 'str' },
+      optional: false,
+      varArgs: false,
+      kwArgs: false,
+    };
+    const fallback: Parameter = {
+      name: 'fallback',
+      type: { kind: 'primitive', name: 'int' },
+      optional: true,
+      varArgs: false,
+      kwArgs: false,
+    };
+    const method = {
+      name: 'get_value',
+      signature: {
+        parameters: [key, fallback],
+        returnType: { kind: 'primitive', name: 'str' },
+        isAsync: false,
+        isGenerator: false,
+      },
+      decorators: [],
+      isAsync: false,
+      isGenerator: false,
+      parameters: [key, fallback],
+      returnType: { kind: 'primitive', name: 'str' },
+      methodKind: 'static',
+      overloads: [{ parameters: [key], returnType: { kind: 'primitive', name: 'str' } }],
+    } satisfies PythonFunction;
+
+    const functionCode = gen.generateFunctionWrapper(method, 'fixture');
+    expect(functionCode.declaration).toContain(
+      'export function getValue(key: string): Promise<string>;'
+    );
+    expect(functionCode.declaration).not.toContain('fallback');
+
+    const classCode = gen.generateClassWrapper(
+      {
+        name: 'Catalog',
+        bases: [],
+        methods: [method],
+        properties: [],
+        decorators: [],
+        kind: 'class',
+      },
+      'fixture'
+    );
+    expect(classCode.declaration).toContain('static getValue(key: string): Promise<string>;');
+    expect(classCode.declaration).not.toContain('fallback');
   });
 
   it('models *args as an array parameter when kwargs are present', () => {
