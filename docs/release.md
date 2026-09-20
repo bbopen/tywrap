@@ -52,8 +52,10 @@ workflow tags, releases, and publishes.
    ```sh
    python -m venv .venv-release
    ./.venv-release/bin/python -m pip install -e tywrap_ir
-   PATH="$PWD/.venv-release/bin:$PATH" python -m unittest discover -s tywrap_ir/tests -p 'test_*.py' -v
+   ./.venv-release/bin/python -I -m unittest discover -s tywrap_ir/tests -p 'test_*.py' -v
    ```
+
+   Isolated mode prevents the repository directory from shadowing the installed package.
 
 4. Tag the merged `main` commit and push the tag:
    ```sh
