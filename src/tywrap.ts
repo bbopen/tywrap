@@ -439,20 +439,6 @@ export async function generate(
     const irWarnings = Array.isArray((ir as Record<string, unknown>).warnings)
       ? ((ir as Record<string, unknown>).warnings as unknown[])
       : [];
-    for (const warning of irWarnings) {
-      if (typeof warning !== 'string') {
-        continue;
-      }
-      // Only type-honesty degrades feed --fail-on-warn. Environment capability
-      // notices (e.g. typing.get_overloads missing on Python < 3.11) describe
-      // the analyzing interpreter, not the generated types, and must not fail
-      // an otherwise clean build.
-      if (warning.startsWith('Return annotation for ')) {
-        recordUnknown(`Python IR warning: ${warning}`);
-      } else {
-        logger.info(`Python IR notice: ${warning}`, { component: 'Generate' });
-      }
-    }
 
     const moduleModel = transformIrToTsModel(ir, recordUnknown);
 
@@ -471,6 +457,43 @@ export async function generate(
     const gen = compiled.generated;
     for (const diagnostic of compiled.diagnostics) {
       warnings.push(diagnostic.message);
+    }
+    for (const warning of irWarnings) {
+      if (typeof warning !== 'string') {
+        continue;
+      }
+      const external = warning.match(
+        /^Return annotation for (.+) resolves outside analyzed module: (.+)\.$/
+      );
+      if (external) {
+        const qualname = external[1];
+        const candidate = external[2];
+        const functionIndex = ir.functions.findIndex(func => func.qualname === qualname);
+        const classIndex = ir.classes.findIndex(cls =>
+          cls.methods.some(method => method.qualname === qualname)
+        );
+        const methodIndex = classIndex < 0 ? -1 : ir.classes[classIndex]!.methods.findIndex(
+          method => method.qualname === qualname
+        );
+        const path = functionIndex >= 0
+          ? `$.functions[${functionIndex}]`
+          : methodIndex >= 0
+            ? `$.classes[${classIndex}].methods[${methodIndex}]`
+            : '';
+        const result = compiled.callables.find(callable => callable.path === path)?.result.resolution;
+        if (result?.status === 'supported' && (
+          (result.value.kind === 'ndarray-float16' && candidate?.startsWith('numpy.')) ||
+          (result.value.kind === 'torch-float16' && candidate?.startsWith('torch.'))
+        )) {
+          continue;
+        }
+      }
+      // Runtime notices do not fail strict mode. Type-honesty warnings do.
+      if (warning.startsWith('Return annotation for ')) {
+        recordUnknown(`Python IR warning: ${warning}`);
+      } else {
+        logger.info(`Python IR notice: ${warning}`, { component: 'Generate' });
+      }
     }
 
     const baseName = moduleModel.name || 'module';

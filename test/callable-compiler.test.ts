@@ -11,6 +11,7 @@ import {
   DEFAULT_VALUE_CONVERSION,
 } from '../src/core/callable-compiler.js';
 import { CodeGenerator } from '../src/core/generator.js';
+import { parseAnnotationToPythonType } from '../src/core/annotation-parser.js';
 import { validateIrContract } from '../src/core/ir-contract.js';
 import { BridgeValidationError } from '../src/runtime/errors.js';
 import { HttpBridge } from '../src/runtime/http.js';
@@ -590,6 +591,9 @@ describe('compileContract', () => {
       capabilities: DEFAULT_CALLABLE_CAPABILITIES,
     });
     expect(compiled.generated.typescript).toContain('"marker":"ndarray","dtype":"float16"');
+    expect(compiled.generated.declaration).toContain(
+      'scalarValue(): Promise<__tywrapFloat16Value>'
+    );
 
     let dtype = 'float16';
     let requestId = 0;
@@ -689,6 +693,15 @@ describe('compileContract', () => {
       status: 'supported',
       value: { kind: 'ndarray-float16', dtype: 'float16' },
     });
+    expect(resolve(parseAnnotationToPythonType(
+      'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[numpy.float16]]'
+    ))).toMatchObject({
+      status: 'supported',
+      value: { kind: 'ndarray-float16', dtype: 'float16' },
+    });
+    expect(resolve(parseAnnotationToPythonType(
+      'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[numpy.float32]]'
+    ))).toMatchObject({ status: 'unresolved' });
   });
 
   it('keeps the existing bytes RPC shape in the value contract', () => {
@@ -730,6 +743,9 @@ describe('compileContract', () => {
       }],
     });
     expect(generated.typescript).toContain('"marker":"torch.tensor","dtype":"torch.float16"');
+    expect(generated.declaration).toContain(
+      'tensorValue(): Promise<__tywrapFloat16Tensor>'
+    );
   });
 
   it('rejects a Torch float16 response with a mismatched nested dtype', async () => {

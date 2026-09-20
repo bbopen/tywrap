@@ -96,6 +96,44 @@ describe('pinned IR contracts', () => {
     }
   });
 
+  it('keeps a supported NumPy float16 contract strict in offline and check modes', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-ir-float16-'));
+    try {
+      const contractPath = join(tempDir, 'scientific.contract.json');
+      await writeFile(contractPath, JSON.stringify({
+        ir_version: '0.4.0', module: 'scientific_fixture',
+        functions: [{
+          name: 'value', qualname: 'scientific_fixture.value', docstring: null,
+          parameters: [],
+          returns: 'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[numpy.float16]]',
+          is_async: false, is_generator: false, type_params: [],
+          method_kind: 'instance', overloads: [],
+        }],
+        classes: [], constants: [], type_aliases: [], metadata: {},
+        warnings: [
+          'Return annotation for scientific_fixture.value resolves outside analyzed module: numpy.ndarray.',
+        ],
+      }), 'utf8');
+      const configured = {
+        ...options(join(tempDir, 'generated')),
+        pythonModules: { scientific_fixture: { typeHints: 'strict' as const } },
+        contractInput: contractPath,
+      };
+      const first = await generate(configured);
+      expect(first.failures).toEqual([]);
+      expect(first.warnings).toEqual([]);
+      const emitted = await readFile(join(tempDir, 'generated', 'scientific_fixture.generated.ts'), 'utf8');
+      expect(emitted).toContain('value(): Promise<__tywrapFloat16Value>');
+      expect(emitted).toContain('"marker":"ndarray","dtype":"float16"');
+      const check = await generate(configured, { check: true });
+      expect(check.failures).toEqual([]);
+      expect(check.warnings).toEqual([]);
+      expect(check.outOfDate).toEqual([]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   // Windows cannot run the fake-interpreter shim: extensionless sh scripts
   // fail with ENOENT and .cmd files fail with EINVAL (Node's batch-file spawn
   // mitigation; the production spawn rightly never sets shell:true). The

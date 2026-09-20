@@ -321,7 +321,16 @@ function resolveUnion(
 }
 
 function resolveNdarray(type: PythonType): ValueResolution {
-  const typeArgument = type.kind === 'generic' ? type.typeArgs[0] : undefined;
+  const typeArgument = type.kind === 'generic' && type.typeArgs.length === 2 &&
+    type.typeArgs[1]?.kind === 'generic' &&
+    type.typeArgs[1].name === 'dtype' &&
+    type.typeArgs[1].module === 'numpy' &&
+    (type.typeArgs[0]?.kind === 'collection' ||
+      (type.typeArgs[0]?.kind === 'custom' && type.typeArgs[0].name === 'Any'))
+    ? type.typeArgs[1].typeArgs[0]
+    : type.kind === 'generic' && type.typeArgs.length === 1
+      ? type.typeArgs[0]
+      : undefined;
   const dtype = typeArgument ? leafName(typeArgument) : undefined;
   const normalizedDtype = dtype?.toLowerCase();
   if (normalizedDtype !== 'float16') {

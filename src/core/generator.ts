@@ -394,6 +394,20 @@ export class CodeGenerator {
     );
   }
 
+  private resolvedReturnType(
+    contract: ValueContract | undefined,
+    logicalType: PythonType,
+    ctx: GenericRenderContext
+  ): string {
+    if (contract?.kind === 'ndarray-float16') {
+      return '__tywrapFloat16Value';
+    }
+    if (contract?.kind === 'torch-float16') {
+      return '__tywrapFloat16Tensor';
+    }
+    return this.typeToTsFromPython(logicalType, ctx, 'return');
+  }
+
   private isLocalTypeIdentity(
     type: { name: string; module?: string },
     ctx: GenericRenderContext
@@ -767,14 +781,21 @@ export class CodeGenerator {
     const paramDecl = implParams.join(', ');
 
     const hasKwArgs = needsKwargsParam;
-    const returnType = this.typeToTsFromPython(func.returnType, genericContext, 'return');
+    const returnType = this.resolvedReturnType(
+      func.callableContract?.returnValue,
+      func.returnType,
+      genericContext
+    );
     const implementationReturnType = hasDeclaredOverloads ? 'unknown' : returnType;
     const fname = this.escapeIdentifier(func.name);
     const moduleId = moduleName ?? '__main__';
     const validatorName = `__validate${this.escapeIdentifier(func.name, { preserveCase: true })}Result`;
     const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.resolvedReturnSchema(func, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n\n`;
 
-    const renderDeclaredOverload = (overload: NonNullable<typeof func.overloads>[number]): string[] => {
+    const renderDeclaredOverload = (
+      overload: NonNullable<typeof func.overloads>[number],
+      overloadIndex: number
+    ): string[] => {
       const overloadParams = overload.parameters.filter(
         parameter => parameter.name !== 'self' && parameter.name !== 'cls'
       );
@@ -817,10 +838,10 @@ export class CodeGenerator {
         overloadNeedsKwargs
           ? `kwargs${forceRequired ? '' : '?'}: ${overloadKwargsType}`
           : null;
-      const overloadReturnType = this.typeToTsFromPython(
+      const overloadReturnType = this.resolvedReturnType(
+        func.callableContract?.overloads[overloadIndex]?.returnValue,
         overload.returnType,
-        genericContext,
-        'return'
+        genericContext
       );
       const signatures: string[] = [];
       const addSignature = (parameters: string[]): void => {
@@ -1169,10 +1190,10 @@ ${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${im
         const paramsDecl = paramsDeclParts.join(', ');
 
         const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
-        const returnType = this.typeToTsFromPython(
+        const returnType = this.resolvedReturnType(
+          method.callableContract?.returnValue,
           method.returnType,
-          methodGenericContext,
-          'return'
+          methodGenericContext
         );
         const implementationReturnType = hasDeclaredOverloads ? 'unknown' : returnType;
         const mname = this.escapeIdentifier(method.name);
@@ -1369,12 +1390,31 @@ ${migrationNote}${declarationMethodsSection}
       module.classes.some(cls =>
         cls.methods.some(method => (method.overloads?.length ?? 0) > 0)
       );
+    const emittedCallables = [
+      ...module.functions,
+      ...module.classes.flatMap(cls => cls.methods.filter(method =>
+        method.name !== '__init__' &&
+        (method.methodKind === 'class' || method.methodKind === 'static')
+      )),
+    ];
+    const resolvedReturns = emittedCallables.flatMap(func => [
+      func.callableContract?.returnValue,
+      ...(func.callableContract?.overloads.map(overload => overload.returnValue) ?? []),
+    ]);
+    const needsTorchFloat16 = resolvedReturns.some(value => value?.kind === 'torch-float16');
+    const needsFloat16 = needsTorchFloat16 ||
+      resolvedReturns.some(value => value?.kind === 'ndarray-float16');
+    const scientificTypes = needsFloat16
+      ? `type __tywrapFloat16Value = number | __tywrapFloat16Value[];\n${needsTorchFloat16
+        ? `type __tywrapFloat16Tensor = { data: __tywrapFloat16Value; shape: number[]; dtype: 'torch.float16'; device?: string; sourceDtype?: string; sourceDevice?: string };\n`
+        : ''}\n`
+      : '';
     const bridgeDecl = needsRuntime
       ? `import { createReturnValidator, ${hasOverloads ? 'selectOverloadReturnValidator, ' : ''}getRuntimeBridge, type ReturnSchema } from 'tywrap/runtime';\n\n${this.emitReturnDefinitions(module)}`
       : '';
 
-    const ts = `${`${header}${bridgeDecl}${functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd()}\n`;
-    const declaration = `${`${declarationHeader}${functionResults
+    const ts = `${`${header}${bridgeDecl}${scientificTypes}${functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd()}\n`;
+    const declaration = `${`${declarationHeader}${scientificTypes}${functionResults
       .map(result => result.declaration)
       .join('\n')}\n${classResults
       .map(result => result.declaration)

@@ -26,6 +26,8 @@ Each value conversion uses revision 2 of [value-contracts.v2.json](value-contrac
 
 The compiler requires an explicit float16 dtype. An untyped ndarray or Torch tensor stays unresolved.
 
+NumPy can spell `NDArray[np.float16]` as `numpy.ndarray[tuple[Any, ...], numpy.dtype[numpy.float16]]`. The compiler reads the dtype argument, not the shape wildcard. Only a supported scientific result clears its matching external-annotation IR warning. Other external annotations remain warnings.
+
 The codec records scalar ndarray dtype and rank for one call. A generated return validator accepts a scalar only with matching proof. Nested proof follows its parent and array index or record key. Array index `0` and `"0"` refer to the same child. Equal numbers from separate calls do not share proof. Array and tensor objects keep their identity-based marker proof.
 
 The compiler keeps Arrow int64 behavior outside this prototype. Existing Arrow int64 values can decode as `bigint`.
