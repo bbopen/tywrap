@@ -75,7 +75,7 @@ function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
     case 'ndarray-float16':
       return { kind: 'marker', marker: 'ndarray', dtype: value.dtype, dims: value.rank };
     case 'torch-float16':
-      return { kind: 'marker', marker: 'torch.tensor', dtype: value.value.dtype };
+      return { kind: 'marker', marker: 'torch.tensor', dtype: `torch.${value.value.dtype}` };
     case 'unsupported':
       return { kind: 'any' };
   }

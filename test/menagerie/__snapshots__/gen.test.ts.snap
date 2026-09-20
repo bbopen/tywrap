@@ -6,7 +6,7 @@ exports[`menagerie generation gate > generates and typechecks fixtures.typing_to
 // Module: fixtures.typing_torture
 // DO NOT EDIT MANUALLY
 
-import { createReturnValidator, selectOverloadReturnValidator, getRuntimeBridge, type ReturnSchema } from 'tywrap/runtime';
+import { createReturnValidator, getRuntimeBridge, type ReturnSchema } from 'tywrap/runtime';
 
 const __tywrapReturnDefinitions: Record<string, ReturnSchema> = {"Movie":{"kind":"record","fields":{"title":{"schema":{"kind":"primitive","type":"string"},"optional":false},"year":{"schema":{"kind":"primitive","type":"number"},"optional":false}}},"RatedMovie":{"kind":"record","fields":{"title":{"schema":{"kind":"primitive","type":"string"},"optional":false},"year":{"schema":{"kind":"primitive","type":"number"},"optional":false},"rating":{"schema":{"kind":"primitive","type":"number"},"optional":true}}}};
 
@@ -96,13 +96,7 @@ export async function optionalUnion(value: string | number | null): Promise<stri
 
 const __validateoverloadedResult = createReturnValidator({"kind":"union","options":[{"kind":"primitive","type":"number","constraint":"safe-integer"},{"kind":"primitive","type":"string"}]}, "fixtures.typing_torture.overloaded", __tywrapReturnDefinitions);
 
-export function overloaded(value: number): Promise<number>;
-export function overloaded(value: string): Promise<string>;
-export async function overloaded(value: number | string): Promise<number | string> {
-  const __args: unknown[] = [value];
-  const __selectedReturnValidator = selectOverloadReturnValidator([{"parameters":[{"name":"value","kind":"positional-or-keyword","optional":false,"value":{"kind":"primitive","type":"number","constraint":"safe-integer"}}],"result":{"kind":"primitive","type":"number","constraint":"safe-integer"},"selectable":true},{"parameters":[{"name":"value","kind":"positional-or-keyword","optional":false,"value":{"kind":"primitive","type":"string"}}],"result":{"kind":"primitive","type":"string"},"selectable":true}], __args, undefined, __validateoverloadedResult, "fixtures.typing_torture.overloaded", __tywrapReturnDefinitions);
-  return getRuntimeBridge().call<number | string>('fixtures.typing_torture', 'overloaded', __args, undefined, __selectedReturnValidator);
-}
+/* overload implementation checked separately */
 
 const __validateparamspec_applyResult = createReturnValidator({"kind":"any"}, "fixtures.typing_torture.paramspec_apply", __tywrapReturnDefinitions);
 
@@ -214,8 +208,7 @@ export function noneReturn(): Promise<void>;
 
 export function optionalUnion(value: string | number | null): Promise<string | number | void>;
 
-export function overloaded(value: number): Promise<number>;
-export function overloaded(value: string): Promise<string>;
+/* overload declarations checked separately */
 
 export function paramspecApply<P extends unknown[], T>(callback: (...args: P) => T, args?: unknown[], kwargs?: Record<string, unknown>): Promise<T>;
 

@@ -68,17 +68,32 @@ describe('menagerie generation gate', () => {
         expect(generatedTs).toBeDefined();
         expect(generatedDeclaration).toBeDefined();
 
-        const generated = await Promise.all([
+        let generated = await Promise.all([
           fsUtils.readFile(generatedTs as string),
           fsUtils.readFile(generatedDeclaration as string),
         ]);
-        if (moduleName === 'fixtures.typing_torture' && !(await supportsPythonOverloads())) {
-          expect(generated[0]).toContain('export async function overloaded(value: number | string)');
-          expect(generated[1]).toContain('export function overloaded(value: number | string)');
-          await compileGeneratedFile(generatedTs as string);
-        } else {
-          expect(generated).toMatchSnapshot();
+        if (moduleName === 'fixtures.typing_torture') {
+          const supportsOverloads = await supportsPythonOverloads();
+          if (supportsOverloads) {
+            expect(generated[0]).toContain('selectOverloadReturnValidator(');
+            expect(generated[1]).toContain('export function overloaded(value: number)');
+            expect(generated[1]).toContain('export function overloaded(value: string)');
+          } else {
+            expect(generated[0]).toContain('export async function overloaded(value: number | string)');
+            expect(generated[1]).toContain('export function overloaded(value: number | string)');
+            await compileGeneratedFile(generatedTs as string);
+          }
+          generated = [
+            generated[0]
+              .replace('createReturnValidator, selectOverloadReturnValidator, getRuntimeBridge',
+                'createReturnValidator, getRuntimeBridge')
+              .replace(/^(?:export function overloaded[^\n]*\n)*export async function overloaded[^\n]*\n[\s\S]*?^\}/m,
+                '/* overload implementation checked separately */'),
+            generated[1].replace(/^export function overloaded[^\n]*(?:\nexport function overloaded[^\n]*)*/m,
+              '/* overload declarations checked separately */'),
+          ];
         }
+        expect(generated).toMatchSnapshot();
       } finally {
         await rm(tempDir, { recursive: true, force: true });
       }

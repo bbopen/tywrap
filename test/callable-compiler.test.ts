@@ -532,6 +532,35 @@ describe('compileContract', () => {
     });
   });
 
+  it('matches the outer Torch dtype recorded by the decoder', () => {
+    const tensorType: PythonType = {
+      kind: 'generic',
+      name: 'Tensor',
+      module: 'torch',
+      typeArgs: [{ kind: 'custom', name: 'float16', module: 'torch' }],
+    };
+    const resolution = DEFAULT_VALUE_CONVERSION.resolve({
+      direction: 'output', path: '$.functions[0].returns', logicalType: tensorType,
+    });
+    expect(resolution.status).toBe('supported');
+    if (resolution.status !== 'supported') {
+      return;
+    }
+    const generated = new CodeGenerator().generateModuleDefinition({
+      ...moduleModel,
+      classes: [],
+      functions: [{
+        ...moduleModel.functions[1]!,
+        name: 'tensorValue',
+        returnType: tensorType,
+        callableContract: {
+          parameterValues: [], returnValue: resolution.value, overloads: [],
+        },
+      }],
+    });
+    expect(generated.typescript).toContain('"marker":"torch.tensor","dtype":"torch.float16"');
+  });
+
   it('degrades unimplemented dataclass and coroutine outputs with local diagnostics', () => {
     const validation = validateIrContract(rawIr, 'fixture contract');
     expect(validation.ok).toBe(true);

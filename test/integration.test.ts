@@ -224,7 +224,7 @@ describe('IR-only integration', () => {
         { cwd: process.cwd(), timeoutMs: 30_000 }
       );
 
-      expect(compile.code).toBe(0);
+      expect(compile.code, `${compile.stdout}\n${compile.stderr}`).toBe(0);
       expect(compile.stderr).toBe('');
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -353,7 +353,7 @@ void integer;
         '--lib', 'ES2022,DOM,DOM.Iterable', '--module', 'ESNext', '--moduleResolution',
         'bundler', '--skipLibCheck', consumerPath,
       ], { cwd: process.cwd(), timeoutMs: 30_000 });
-      expect(compile.code).toBe(0);
+      expect(compile.code, `${compile.stdout}\n${compile.stderr}`).toBe(0);
       expect(compile.stderr).toBe('');
     } finally {
       await rm(tempDir, { recursive: true, force: true });
