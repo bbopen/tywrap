@@ -41,6 +41,27 @@ describe('generated return validators', () => {
     expect(() => validator({ count: Number.MAX_SAFE_INTEGER + 1 })).toThrow(BridgeValidationError);
   });
 
+  it('requires bigint at each exact integer position', () => {
+    const validator = createReturnValidator(
+      {
+        kind: 'record',
+        fields: {
+          values: {
+            schema: { kind: 'array', element: { kind: 'primitive', type: 'bigint' } },
+          },
+        },
+      },
+      'fixture.exactValues'
+    );
+    expect(validator({ values: [1n, 18446744073709551617n] })).toEqual({
+      values: [1n, 18446744073709551617n],
+    });
+    expect(() => validator({ values: [1, 2n] })).toThrow(BridgeValidationError);
+    expect(() => validator({ values: ['1'] })).toThrow(BridgeValidationError);
+    const leaf = createReturnValidator({ kind: 'primitive', type: 'bigint' }, 'fixture.exactValue');
+    expect(() => leaf('1')).toThrow(/expected bigint, received string/);
+  });
+
   it('requires per-call provenance for a scalar float16 ndarray', () => {
     const validate = createReturnValidator<number>(
       { kind: 'marker', marker: 'ndarray', dims: 0, dtype: 'float16' },

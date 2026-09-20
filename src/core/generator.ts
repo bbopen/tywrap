@@ -13,7 +13,7 @@ import type {
   GeneratedCode,
   TypescriptType,
 } from '../types/index.js';
-import type { ValueContract } from '../contracts/value-contract.js';
+import { containsExactInteger, type ValueContractV3 } from '../contracts/value-contract.js';
 import type { OverloadReturnSchema, ReturnSchema } from '../runtime/validators.js';
 import { globalCache } from '../utils/cache.js';
 
@@ -41,7 +41,7 @@ interface GenericRenderContext {
 
 type ReturnDefinitionNames = ReadonlySet<string> & { readonly moduleName?: string };
 
-function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
+function valueContractToReturnSchema(value: ValueContractV3): ReturnSchema {
   switch (value.kind) {
     case 'null':
       return { kind: 'primitive', type: 'null' };
@@ -49,6 +49,8 @@ function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
       return { kind: 'primitive', type: 'boolean' };
     case 'integer':
       return { kind: 'primitive', type: 'number', constraint: value.constraint };
+    case 'integer-exact':
+      return { kind: 'primitive', type: 'bigint' };
     case 'float':
       return { kind: 'primitive', type: 'number', constraint: value.constraint };
     case 'string':
@@ -80,6 +82,77 @@ function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
       return { kind: 'marker', marker: 'torch.tensor', dtype: value.dtype };
     case 'unsupported':
       return { kind: 'any' };
+  }
+}
+
+function valueContractToTsType(value: ValueContractV3): string {
+  switch (value.kind) {
+    case 'null':
+      return 'null';
+    case 'boolean':
+      return 'boolean';
+    case 'integer':
+    case 'float':
+      return 'number';
+    case 'integer-exact':
+      return 'bigint';
+    case 'string':
+      return 'string';
+    case 'bytes':
+      return 'Uint8Array';
+    case 'sequence': {
+      const item = valueContractToTsType(value.item);
+      return `${value.item.kind === 'union' ? `(${item})` : item}[]`;
+    }
+    case 'tuple':
+      return `[${value.items.map(valueContractToTsType).join(', ')}]`;
+    case 'union':
+      return value.options.map(valueContractToTsType).join(' | ');
+    case 'record': {
+      const fields = value.fields
+        .map(
+          field =>
+            `${JSON.stringify(field.name)}${field.required ? '' : '?'}: ${valueContractToTsType(field.value)};`
+        )
+        .join(' ');
+      const record = `{ ${fields} }`;
+      if (!value.additionalValues) {
+        return record;
+      }
+      const additional = `Record<string, ${valueContractToTsType(value.additionalValues)}>`;
+      return value.fields.length === 0 ? additional : `(${record} & ${additional})`;
+    }
+    case 'ndarray-float16':
+      return '__tywrapFloat16Value';
+    case 'torch-float16':
+      return '__tywrapFloat16Tensor';
+    case 'unsupported':
+      return 'unknown';
+  }
+}
+
+function containsScientificValue(
+  value: ValueContractV3,
+  kind: 'ndarray-float16' | 'torch-float16'
+): boolean {
+  if (value.kind === kind) {
+    return true;
+  }
+  switch (value.kind) {
+    case 'sequence':
+      return containsScientificValue(value.item, kind);
+    case 'tuple':
+      return value.items.some(item => containsScientificValue(item, kind));
+    case 'union':
+      return value.options.some(option => containsScientificValue(option, kind));
+    case 'record':
+      return (
+        value.fields.some(field => containsScientificValue(field.value, kind)) ||
+        (value.additionalValues !== undefined &&
+          containsScientificValue(value.additionalValues, kind))
+      );
+    default:
+      return false;
   }
 }
 
@@ -449,10 +522,13 @@ export class CodeGenerator {
   }
 
   private resolvedReturnType(
-    contract: ValueContract | undefined,
+    contract: ValueContractV3 | undefined,
     logicalType: PythonType,
     ctx: GenericRenderContext
   ): string {
+    if (contract && containsExactInteger(contract)) {
+      return valueContractToTsType(contract);
+    }
     if (contract?.kind === 'ndarray-float16') {
       return '__tywrapFloat16Value';
     }
@@ -460,6 +536,16 @@ export class CodeGenerator {
       return '__tywrapFloat16Tensor';
     }
     return this.typeToTsFromPython(logicalType, ctx, 'return');
+  }
+
+  private resolvedParameterType(
+    contract: ValueContractV3 | undefined,
+    logicalType: PythonType,
+    ctx: GenericRenderContext
+  ): string {
+    return contract && containsExactInteger(contract)
+      ? valueContractToTsType(contract)
+      : this.typeToTsFromPython(logicalType, ctx, 'value');
   }
 
   private isLocalTypeIdentity(
@@ -765,6 +851,7 @@ export class CodeGenerator {
     const keywordOnlyParams = filteredParams.filter(p => p.keywordOnly);
     const positionalOnlyNames = filteredParams.filter(p => p.positionalOnly).map(p => p.name);
     const hasVarKwArgs = filteredParams.some(p => p.kwArgs);
+    const varKwArgsParam = filteredParams.find(p => p.kwArgs);
     const needsKwargsParam = keywordOnlyParams.length > 0 || hasVarKwArgs;
 
     const varArgsParam = filteredParams.find(p => p.varArgs);
@@ -786,8 +873,39 @@ export class CodeGenerator {
     );
     const typeParamDecl = genericContext.declaration;
 
-    const tsTypeForValue = (p: Parameter): string =>
-      this.typeToTsFromPython(p.type, genericContext, 'value');
+    const parameterContracts = new WeakMap<Parameter, ValueContractV3>();
+    func.parameters.forEach((parameter, index) => {
+      const value = func.callableContract?.parameterValues[index];
+      if (value) {
+        parameterContracts.set(parameter, value);
+      }
+    });
+    func.overloads?.forEach((overload, overloadIndex) => {
+      overload.parameters.forEach((parameter, parameterIndex) => {
+        const value =
+          func.callableContract?.overloads[overloadIndex]?.parameterValues[parameterIndex];
+        if (value) {
+          parameterContracts.set(parameter, value);
+        }
+      });
+    });
+    const tsTypeForValue = (p: Parameter): string => {
+      const value = parameterContracts.get(p);
+      return this.resolvedParameterType(value, p.type, genericContext);
+    };
+    const hasExactParameter = (parameter: Parameter): boolean => {
+      const value = parameterContracts.get(parameter);
+      return value !== undefined && containsExactInteger(value);
+    };
+    const varArgsType = (parameter: Parameter): string => {
+      if (!hasExactParameter(parameter)) {
+        return 'unknown[]';
+      }
+      const item = tsTypeForValue(parameter);
+      return `${parameterContracts.get(parameter)?.kind === 'union' ? `(${item})` : item}[]`;
+    };
+    const varKwargsType = (parameter: Parameter): string =>
+      hasExactParameter(parameter) ? tsTypeForValue(parameter) : 'unknown';
 
     const kwargsType = (() => {
       if (!needsKwargsParam) {
@@ -797,13 +915,15 @@ export class CodeGenerator {
         return 'Record<string, unknown>';
       }
       if (keywordOnlyParams.length === 0 && hasVarKwArgs) {
-        return 'Record<string, unknown>';
+        return `Record<string, ${varKwArgsParam ? varKwargsType(varKwArgsParam) : 'unknown'}>`;
       }
       const props = keywordOnlyParams
         .map(p => `${JSON.stringify(p.name)}${p.optional ? '?' : ''}: ${tsTypeForValue(p)};`)
         .join(' ');
       const obj = `{ ${props} }`;
-      return hasVarKwArgs ? `(${obj} & Record<string, unknown>)` : obj;
+      return hasVarKwArgs
+        ? `(${obj} & Record<string, ${varKwArgsParam ? varKwargsType(varKwArgsParam) : 'unknown'}>)`
+        : obj;
     })();
 
     const renderPositionalParam = (
@@ -820,11 +940,12 @@ export class CodeGenerator {
         return null;
       }
       const pname = this.escapeIdentifier(varArgsParam.name);
+      const values = hasDeclaredOverloads ? 'unknown[]' : varArgsType(varArgsParam);
       if (!needsVarArgsArray) {
-        return `...${pname}: unknown[]`;
+        return `...${pname}: ${values}`;
       }
       const opt = forceRequired ? '' : '?';
-      return `${pname}${opt}: unknown[]`;
+      return `${pname}${opt}: ${values}`;
     };
 
     const renderKwargsParam = (forceRequired = false): string | null => {
@@ -874,6 +995,7 @@ export class CodeGenerator {
       const overloadKeywordOnly = overloadParams.filter(parameter => parameter.keywordOnly);
       const overloadVarArgs = overloadParams.find(parameter => parameter.varArgs);
       const overloadHasVarKwArgs = overloadParams.some(parameter => parameter.kwArgs);
+      const overloadVarKwArgs = overloadParams.find(parameter => parameter.kwArgs);
       const overloadNeedsKwargs = overloadKeywordOnly.length > 0 || overloadHasVarKwArgs;
       const overloadNeedsVarArgsArray = Boolean(overloadVarArgs) && overloadNeedsKwargs;
       const overloadKwargsType = (() => {
@@ -881,7 +1003,7 @@ export class CodeGenerator {
           return '';
         }
         if (overloadKeywordOnly.length === 0 && overloadHasVarKwArgs) {
-          return 'Record<string, unknown>';
+          return `Record<string, ${overloadVarKwArgs ? varKwargsType(overloadVarKwArgs) : 'unknown'}>`;
         }
         const properties = overloadKeywordOnly
           .map(
@@ -890,7 +1012,9 @@ export class CodeGenerator {
           )
           .join(' ');
         const object = `{ ${properties} }`;
-        return overloadHasVarKwArgs ? `(${object} & Record<string, unknown>)` : object;
+        return overloadHasVarKwArgs
+          ? `(${object} & Record<string, ${overloadVarKwArgs ? varKwargsType(overloadVarKwArgs) : 'unknown'}>)`
+          : object;
       })();
       const renderPositional = (parameter: Parameter, forceRequired = false): string =>
         `${this.escapeIdentifier(parameter.name)}${!forceRequired && parameter.optional ? '?' : ''}: ${tsTypeForValue(parameter)}`;
@@ -899,9 +1023,9 @@ export class CodeGenerator {
           return null;
         }
         if (!overloadNeedsVarArgsArray) {
-          return `...${this.escapeIdentifier(overloadVarArgs.name)}: unknown[]`;
+          return `...${this.escapeIdentifier(overloadVarArgs.name)}: ${varArgsType(overloadVarArgs)}`;
         }
-        return `${this.escapeIdentifier(overloadVarArgs.name)}${forceRequired ? '' : '?'}: unknown[]`;
+        return `${this.escapeIdentifier(overloadVarArgs.name)}${forceRequired ? '' : '?'}: ${varArgsType(overloadVarArgs)}`;
       };
       const renderKwargs = (forceRequired = false): string | null =>
         overloadNeedsKwargs ? `kwargs${forceRequired ? '' : '?'}: ${overloadKwargsType}` : null;
@@ -929,9 +1053,13 @@ export class CodeGenerator {
           const rest: string[] = [];
           if (overloadVarArgs) {
             if (overloadNeedsVarArgsArray) {
-              rest.push(`${this.escapeIdentifier(overloadVarArgs.name)}: unknown[] | undefined`);
+              rest.push(
+                `${this.escapeIdentifier(overloadVarArgs.name)}: ${varArgsType(overloadVarArgs)} | undefined`
+              );
             } else {
-              rest.push(`...${this.escapeIdentifier(overloadVarArgs.name)}: unknown[]`);
+              rest.push(
+                `...${this.escapeIdentifier(overloadVarArgs.name)}: ${varArgsType(overloadVarArgs)}`
+              );
             }
           }
           const kwargs = renderKwargs(true);
@@ -981,12 +1109,13 @@ export class CodeGenerator {
             return null;
           }
           const pname = this.escapeIdentifier(varArgsParam.name);
+          const values = varArgsType(varArgsParam);
           if (!needsVarArgsArray) {
-            return `...${pname}: unknown[]`;
+            return `...${pname}: ${values}`;
           }
           // In overloads where `kwargs` is required, keep the `args` surrogate parameter required,
           // but allow `undefined` as a placeholder so callers can omit varargs while still passing kwargs.
-          return `${pname}: unknown[] | undefined`;
+          return `${pname}: ${values} | undefined`;
         })();
         if (v) {
           rest.push(v);
@@ -1204,11 +1333,31 @@ ${callPrelude}${guards}${overloadValidator}  return ${runtimeGetterIdentifier}()
           methodOwnGenericContext
         );
         const methodTypeParamDecl = methodOwnGenericContext.declaration;
-        const methodTsValueType = (p: (typeof fparams)[number]): string =>
-          this.typeToTsFromPython(p.type, methodGenericContext, 'value');
+        const methodParameterContracts = new WeakMap<Parameter, ValueContractV3>();
+        method.parameters.forEach((parameter, index) => {
+          const value = method.callableContract?.parameterValues[index];
+          if (value) {
+            methodParameterContracts.set(parameter, value);
+          }
+        });
+        const methodTsValueType = (p: Parameter): string =>
+          this.resolvedParameterType(methodParameterContracts.get(p), p.type, methodGenericContext);
+        const methodVarArgsType = (p: Parameter): string => {
+          const value = methodParameterContracts.get(p);
+          if (!value || !containsExactInteger(value)) {
+            return 'unknown[]';
+          }
+          const item = methodTsValueType(p);
+          return `${value.kind === 'union' ? `(${item})` : item}[]`;
+        };
+        const methodVarKwargsType = (p: Parameter): string => {
+          const value = methodParameterContracts.get(p);
+          return value && containsExactInteger(value) ? methodTsValueType(p) : 'unknown';
+        };
         const keywordOnlyParams = fparams.filter(p => p.keywordOnly);
         const positionalOnlyNames = fparams.filter(p => p.positionalOnly).map(p => p.name);
         const hasVarKwArgs = fparams.some(p => p.kwArgs);
+        const varKwArgsParam = fparams.find(p => p.kwArgs);
         const needsKwargsParam = keywordOnlyParams.length > 0 || hasVarKwArgs;
         const varArgsParam = fparams.find(p => p.varArgs);
         const needsVarArgsArray = Boolean(varArgsParam) && needsKwargsParam;
@@ -1235,13 +1384,15 @@ ${callPrelude}${guards}${overloadValidator}  return ${runtimeGetterIdentifier}()
             return 'Record<string, unknown>';
           }
           if (keywordOnlyParams.length === 0 && hasVarKwArgs) {
-            return 'Record<string, unknown>';
+            return `Record<string, ${varKwArgsParam ? methodVarKwargsType(varKwArgsParam) : 'unknown'}>`;
           }
           const props = keywordOnlyParams
             .map(p => `${JSON.stringify(p.name)}${p.optional ? '?' : ''}: ${methodTsValueType(p)};`)
             .join(' ');
           const obj = `{ ${props} }`;
-          return hasVarKwArgs ? `(${obj} & Record<string, unknown>)` : obj;
+          return hasVarKwArgs
+            ? `(${obj} & Record<string, ${varKwArgsParam ? methodVarKwargsType(varKwArgsParam) : 'unknown'}>)`
+            : obj;
         })();
 
         const paramsDeclParts: string[] = [];
@@ -1251,7 +1402,9 @@ ${callPrelude}${guards}${overloadValidator}  return ${runtimeGetterIdentifier}()
         if (varArgsParam) {
           const vname = this.escapeIdentifier(varArgsParam.name);
           paramsDeclParts.push(
-            needsVarArgsArray ? `${vname}?: unknown[]` : `...${vname}: unknown[]`
+            needsVarArgsArray
+              ? `${vname}?: ${hasDeclaredOverloads ? 'unknown[]' : methodVarArgsType(varArgsParam)}`
+              : `...${vname}: ${hasDeclaredOverloads ? 'unknown[]' : methodVarArgsType(varArgsParam)}`
           );
         }
         if (needsKwargsParam) {
@@ -1276,6 +1429,25 @@ ${callPrelude}${guards}${overloadValidator}  return ${runtimeGetterIdentifier}()
                 {
                   ...method,
                   parameters: fparams,
+                  callableContract: method.callableContract
+                    ? {
+                        ...method.callableContract,
+                        parameterValues: method.callableContract.parameterValues.filter(
+                          (_, index) =>
+                            method.parameters[index]?.name !== 'self' &&
+                            method.parameters[index]?.name !== 'cls'
+                        ),
+                        overloads: method.callableContract.overloads.map((contract, index) => ({
+                          ...contract,
+                          parameterValues: contract.parameterValues.filter(
+                            (_, parameterIndex) =>
+                              method.overloads?.[index]?.parameters[parameterIndex]?.name !==
+                                'self' &&
+                              method.overloads?.[index]?.parameters[parameterIndex]?.name !== 'cls'
+                          ),
+                        })),
+                      }
+                    : undefined,
                   overloads: method.overloads?.map(overload => ({
                     ...overload,
                     parameters: overload.parameters.filter(
@@ -1303,7 +1475,9 @@ ${callPrelude}${guards}${overloadValidator}  return ${runtimeGetterIdentifier}()
             if (varArgsParam) {
               const vname = this.escapeIdentifier(varArgsParam.name);
               rest.push(
-                needsVarArgsArray ? `${vname}: unknown[] | undefined` : `...${vname}: unknown[]`
+                needsVarArgsArray
+                  ? `${vname}: ${methodVarArgsType(varArgsParam)} | undefined`
+                  : `...${vname}: ${methodVarArgsType(varArgsParam)}`
               );
             }
             rest.push(`kwargs: ${kwargsType}`);
@@ -1501,13 +1675,22 @@ ${migrationNote}${declarationMethodsSection}
         )
       ),
     ];
-    const resolvedReturns = emittedCallables.flatMap(func => [
+    const resolvedValues = emittedCallables.flatMap(func => [
+      ...(func.callableContract?.parameterValues ?? []),
       func.callableContract?.returnValue,
-      ...(func.callableContract?.overloads.map(overload => overload.returnValue) ?? []),
+      ...(func.callableContract?.overloads.flatMap(overload => [
+        ...overload.parameterValues,
+        overload.returnValue,
+      ]) ?? []),
     ]);
-    const needsTorchFloat16 = resolvedReturns.some(value => value?.kind === 'torch-float16');
+    const needsTorchFloat16 = resolvedValues.some(
+      value => value !== undefined && containsScientificValue(value, 'torch-float16')
+    );
     const needsFloat16 =
-      needsTorchFloat16 || resolvedReturns.some(value => value?.kind === 'ndarray-float16');
+      needsTorchFloat16 ||
+      resolvedValues.some(
+        value => value !== undefined && containsScientificValue(value, 'ndarray-float16')
+      );
     const scientificTypes = needsFloat16
       ? `type __tywrapFloat16Value = number | __tywrapFloat16Value[];\n${
           needsTorchFloat16

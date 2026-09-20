@@ -1,0 +1,51 @@
+{
+  "revision": 3,
+  "status": "bounded-internal-prototype",
+  "base": {
+    "file": "value-contracts.v2.json",
+    "revision": 2,
+    "hashCanonicalization": "UTF-8 with LF line endings",
+    "sha256": "554f84b75126513250a7eb773294347fe4dc42262e4ac52f86e7aa19cc65bb4e"
+  },
+  "transport": "tywrap/1 value RPC",
+  "exactIntegerEnvelopeCodecVersion": 2,
+  "callPolicy": "bigint-v2",
+  "requiredCapability": "exactIntegerDecimalV2",
+  "rules": {
+    "integer-exact": {
+      "logicalKind": "Python int, excluding bool, on an opted call",
+      "contract": {
+        "kind": "integer-exact",
+        "wire": "decimal-string-envelope",
+        "decodedAs": "bigint",
+        "constraint": "exact-integer"
+      },
+      "wire": {
+        "__tywrap__": "integer",
+        "codecVersion": 2,
+        "encoding": "decimal",
+        "value": "canonical signed decimal string"
+      },
+      "decimalGrammar": "^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$",
+      "maximumDigitsWithoutSign": 4096,
+      "composition": "apply the exact integer rule at every selected sequence, tuple, union, and record node"
+    },
+    "float-negative-zero": {
+      "logicalKind": "Python float equal to negative zero on an opted call",
+      "wire": {
+        "__tywrap__": "float",
+        "codecVersion": 2,
+        "encoding": "negative-zero"
+      },
+      "decodedAs": "JavaScript negative zero",
+      "otherFiniteFloats": "JSON number under the inherited finite float rule"
+    }
+  },
+  "compatibility": {
+    "revision2Default": "unchanged safe-number integer rule",
+    "unknownRevision": "reject",
+    "missingCapability": "reject before sending a tagged request",
+    "oldClientNewProvider": "revision 2 behavior unless the call opts in",
+    "arrowInt64": "keep the existing Arrow rule"
+  }
+}

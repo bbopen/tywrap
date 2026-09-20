@@ -7,8 +7,11 @@
 
 import {
   VALUE_CONTRACT_REVISION,
-  type ValueContract,
+  VALUE_CONTRACT_V3_REVISION,
+  containsExactInteger,
   type ValueContractField,
+  type ValueContractRevision,
+  type ValueContractV3,
 } from '../contracts/value-contract.js';
 import type {
   GeneratedCode,
@@ -29,7 +32,8 @@ export type CallableCapability =
   | 'scientific-ndarray'
   | 'scientific-torch'
   | 'coroutine-execution'
-  | 'dataclass-adapter';
+  | 'dataclass-adapter'
+  | 'exact-integer-adapter';
 
 export interface CapabilityDescription {
   name: CallableCapability;
@@ -51,7 +55,7 @@ export interface ValueConversionRequest {
 
 export interface SupportedValueResolution {
   status: 'supported';
-  value: ValueContract;
+  value: ValueContractV3;
 }
 
 export interface UnsupportedValueResolution {
@@ -76,7 +80,7 @@ export type ValueResolution =
  * The compiler does not infer wire behavior from a TypeScript spelling.
  */
 export interface ValueConversionDescription {
-  revision: typeof VALUE_CONTRACT_REVISION;
+  revision: ValueContractRevision;
   resolve(request: ValueConversionRequest): ValueResolution;
 }
 
@@ -170,6 +174,11 @@ export const DEFAULT_CALLABLE_CAPABILITIES: readonly CapabilityDescription[] = [
     guidance:
       'Use a TypedDict or an explicit record adapter until #339 defines dataclass conversion.',
   },
+  {
+    name: 'exact-integer-adapter',
+    available: false,
+    guidance: 'Bind a revision-3 exact integer provider before generating this callable.',
+  },
 ];
 
 function leafName(type: PythonType): string | null {
@@ -197,10 +206,14 @@ function firstUnresolvedChild(
   return resolutions.find(resolution => resolution.status !== 'supported') ?? null;
 }
 
+function rootWireKinds(value: ValueContractV3): ValueContractV3['kind'][] {
+  return value.kind === 'union' ? value.options.flatMap(rootWireKinds) : [value.kind];
+}
+
 function resolveSequence(
   item: PythonType,
   request: ValueConversionRequest,
-  conversion: ValueConversionDescription
+  conversion: Pick<ValueConversionDescription, 'resolve'>
 ): ValueResolution {
   const child = conversion.resolve({
     ...request,
@@ -220,7 +233,7 @@ function resolveSequence(
 function resolveRecord(
   valueType: PythonType,
   request: ValueConversionRequest,
-  conversion: ValueConversionDescription
+  conversion: Pick<ValueConversionDescription, 'resolve'>
 ): ValueResolution {
   const child = conversion.resolve({
     ...request,
@@ -246,7 +259,7 @@ function resolveRecord(
 function resolveTuple(
   items: readonly PythonType[],
   request: ValueConversionRequest,
-  conversion: ValueConversionDescription
+  conversion: Pick<ValueConversionDescription, 'resolve'>
 ): ValueResolution {
   if (items.length === 0) {
     return {
@@ -289,7 +302,7 @@ function resolveTuple(
 function resolveUnion(
   options: readonly PythonType[],
   request: ValueConversionRequest,
-  conversion: ValueConversionDescription
+  conversion: Pick<ValueConversionDescription, 'resolve'>
 ): ValueResolution {
   if (options.length < 2 || options.length > 32) {
     return {
@@ -318,6 +331,14 @@ function resolveUnion(
       status: 'unsupported',
       reason: 'Revision 2 requires at least two supported union alternatives.',
       guidance: 'Provide two explicit value alternatives.',
+    };
+  }
+  const wireKinds = values.flatMap(entry => rootWireKinds(entry.value));
+  if (wireKinds.includes('integer-exact') && wireKinds.includes('record')) {
+    return {
+      status: 'unsupported',
+      reason: 'An exact integer tag can overlap a record wire value.',
+      guidance: 'Use a disjoint tagged record instead of this union.',
     };
   }
   return {
@@ -388,20 +409,30 @@ function resolveTorchFloat16(): ValueResolution {
   };
 }
 
+function depthLimitResolution(
+  depth: number | undefined,
+  revision: ValueContractRevision
+): UnsupportedValueResolution | null {
+  return (depth ?? 0) > 64
+    ? {
+        status: 'unsupported',
+        reason: `Revision ${revision} limits value contracts to 64 nested nodes.`,
+        guidance: 'Flatten the value or provide a bounded adapter.',
+      }
+    : null;
+}
+
 /** The conversion set that #335 may use with the frozen value-contract revision. */
 export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
   revision: VALUE_CONTRACT_REVISION,
   resolve(request): ValueResolution {
     const { logicalType: type } = request;
-    const nestedConversion: ValueConversionDescription = request.resolveNested
-      ? { revision: VALUE_CONTRACT_REVISION, resolve: request.resolveNested }
-      : DEFAULT_VALUE_CONVERSION;
-    if ((request.depth ?? 0) > 64) {
-      return {
-        status: 'unsupported',
-        reason: 'Revision 2 limits value contracts to 64 nested nodes.',
-        guidance: 'Flatten the value or provide a bounded adapter.',
-      };
+    const nestedConversion: Pick<ValueConversionDescription, 'resolve'> = {
+      resolve: request.resolveNested ?? DEFAULT_VALUE_CONVERSION.resolve,
+    };
+    const depthFailure = depthLimitResolution(request.depth, VALUE_CONTRACT_REVISION);
+    if (depthFailure) {
+      return depthFailure;
     }
     switch (type.kind) {
       case 'primitive':
@@ -526,10 +557,39 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
   },
 };
 
-function capabilityNamesFor(value: ValueContract): CallableCapability[] {
+/** Explicit revision-3 mode uses the revision-2 rules for every other value. */
+export const EXACT_INTEGER_VALUE_CONVERSION: ValueConversionDescription = {
+  revision: VALUE_CONTRACT_V3_REVISION,
+  resolve(request): ValueResolution {
+    const depthFailure = depthLimitResolution(request.depth, VALUE_CONTRACT_V3_REVISION);
+    if (depthFailure) {
+      return depthFailure;
+    }
+    if (request.logicalType.kind === 'primitive' && request.logicalType.name === 'int') {
+      return {
+        status: 'supported',
+        value: {
+          kind: 'integer-exact',
+          wire: 'decimal-string-envelope',
+          decodedAs: 'bigint',
+          constraint: 'exact-integer',
+        },
+      };
+    }
+    return DEFAULT_VALUE_CONVERSION.resolve({
+      ...request,
+      resolveNested: request.resolveNested ?? EXACT_INTEGER_VALUE_CONVERSION.resolve,
+    });
+  },
+};
+
+function capabilityNamesFor(value: ValueContractV3): CallableCapability[] {
   const names = new Set<CallableCapability>(['value-rpc', 'return-validation']);
-  const collect = (current: ValueContract): void => {
+  const collect = (current: ValueContractV3): void => {
     switch (current.kind) {
+      case 'integer-exact':
+        names.add('exact-integer-adapter');
+        break;
       case 'sequence':
         collect(current.item);
         break;
@@ -613,7 +673,7 @@ function outputType(value: ResolvedCallableValue): PythonType {
   return value.resolution.status === 'supported' ? value.logicalType : UNKNOWN_TYPE;
 }
 
-function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {
+function valuesMayOverlap(left: ValueContractV3, right: ValueContractV3): boolean {
   if (left.kind === 'unsupported' || right.kind === 'unsupported') {
     return true;
   }
@@ -807,8 +867,44 @@ function resolveCallable(
     ...visibleOverloadParameters.flat(),
     ...overloadResults,
   ];
+  const rejectMixedExactKwargs = (
+    source: readonly Parameter[],
+    resolved: readonly ResolvedCallableValue[],
+    sourcePath: string
+  ): void => {
+    if (!source.some(parameter => parameter.keywordOnly)) {
+      return;
+    }
+    const index = source.findIndex(parameter => parameter.kwArgs);
+    const resolution = resolved[index]?.resolution;
+    if (
+      index >= 0 &&
+      resolution?.status === 'supported' &&
+      containsExactInteger(resolution.value)
+    ) {
+      throw new Error(
+        `${sourcePath}.parameters[${index}]: exact **kwargs cannot share a signature with named keyword-only parameters.`
+      );
+    }
+  };
+  rejectMixedExactKwargs(func.parameters, parameters, path);
+  (func.overloads ?? []).forEach((overload, index) =>
+    rejectMixedExactKwargs(
+      overload.parameters,
+      overloadParameters[index] ?? [],
+      `${path}.overloads[${index}]`
+    )
+  );
   const requiredCapabilities = new Set<CallableCapability>();
   for (const value of values) {
+    if (value.resolution.status === 'supported' && containsExactInteger(value.resolution.value)) {
+      if (conversion.revision !== VALUE_CONTRACT_V3_REVISION) {
+        throw new Error(`${value.path}: exact integers require value contract revision 3.`);
+      }
+      if (capabilities.get('exact-integer-adapter')?.available !== true) {
+        throw new Error(`${value.path}: exact-integer-adapter is unavailable.`);
+      }
+    }
     const diagnostic = diagnosticForResolution(value.resolution, value.path);
     if (diagnostic) {
       diagnostics.push(diagnostic);
@@ -913,7 +1009,7 @@ function resolveCallable(
     })),
     returnType: overloadResults[index] ? outputType(overloadResults[index]) : overload.returnType,
   }));
-  const supportedValue = (value: ResolvedCallableValue): ValueContract | undefined =>
+  const supportedValue = (value: ResolvedCallableValue): ValueContractV3 | undefined =>
     value.resolution.status === 'supported' ? value.resolution.value : undefined;
   const resolvedFunction: PythonFunction = {
     ...func,
@@ -961,6 +1057,12 @@ export function compileContract(
   ir: ValidatedIrContract,
   options: CompileContractOptions
 ): CompiledContract {
+  if (
+    options.conversion.revision !== VALUE_CONTRACT_REVISION &&
+    options.conversion.revision !== VALUE_CONTRACT_V3_REVISION
+  ) {
+    throw new Error(`Unsupported value contract revision ${options.conversion.revision}.`);
+  }
   if (ir.module !== options.module.name) {
     throw new Error(
       `Compiled module ${options.module.name} does not match IR module ${ir.module}.`
@@ -1021,11 +1123,11 @@ export function compileContract(
         if ((request.depth ?? 0) >= 64) {
           return {
             status: 'unsupported',
-            reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+            reason: `Revision ${conversion.revision} limits value contracts to 64 nested nodes.`,
             guidance: 'Flatten the value or provide a bounded adapter.',
           };
         }
-        const fields: ValueContractField[] = [];
+        const fields: ValueContractField<ValueContractV3>[] = [];
         for (const property of typedDict.properties) {
           const field = conversion.resolve({
             ...request,
@@ -1053,7 +1155,7 @@ export function compileContract(
         if ((request.depth ?? 0) >= 64) {
           return {
             status: 'unsupported',
-            reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+            reason: `Revision ${conversion.revision} limits value contracts to 64 nested nodes.`,
             guidance: 'Flatten the value or provide a bounded adapter.',
           };
         }
