@@ -449,7 +449,7 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
     }
   });
 
-  it('typechecks overloads, generics, optional arguments, and the class namespace', async () => {
+  it('typechecks overloads, generic inputs, optional arguments, and class calls', async () => {
     const consumer = join(generatedDir, 'binding-consumer.ts');
     const selectSignatures = (originalDeclaration.match(/^export function select\(/gm) ?? [])
       .length;
@@ -465,16 +465,24 @@ const c: Promise<string | number> = client.api.select('x');`;
     await writeFile(
       consumer,
       `import { bindRuntime, type RuntimeExecution } from './binding_fixture.generated.client.js';
+import { identity as legacyIdentity } from './binding_fixture.generated.js';
 declare const runtime: RuntimeExecution;
 const client = bindRuntime(runtime);
-const a: Promise<string> = client.api.identity<string>('x');
+const a: Promise<unknown> = client.api.identity<string>('x');
+const legacyA: Promise<unknown> = legacyIdentity<string>('x');
+// @ts-expect-error the explicit generic input type is string
+client.api.identity<string>(3);
+// @ts-expect-error an unresolved type variable cannot promise a string result
+const unsafeResult: Promise<string> = client.api.identity<string>('x');
+// @ts-expect-error legacy calls use the same unresolved return contract
+const unsafeLegacy: Promise<string> = legacyIdentity<string>('x');
 ${selectChecks}
 const d: Promise<number> = client.api.scale(2);
 const e: Promise<number> = client.api.scale(2, 3);
 const f: Promise<string> = client.api.Client.label('x');
 const g: Promise<string> = client.api.kwOnly({ label: 'x' });
 const h: Promise<Uint8Array> = client.api.echoBytes(new Uint8Array([1]));
-void [a, b, c, d, e, f, g, h];
+void [a, legacyA, unsafeResult, unsafeLegacy, b, c, d, e, f, g, h];
 `,
       'utf8'
     );
