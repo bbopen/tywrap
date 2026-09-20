@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { delimiter, join } from 'node:path';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
@@ -54,15 +54,24 @@ nodeSuite('Coroutine RPC through Node', () => {
       );
       const outputDir = join(tempDir, 'generated');
       const generated = await generate({
-        pythonModules: { coroutine_fixture: { runtime: 'node', typeHints: 'strict' } },
+        pythonModules: { coroutine_fixture: { typeHints: 'strict' } },
         pythonImportPath: [tempDir],
-        output: { dir: outputDir, format: 'esm', declaration: false, sourceMap: false },
+        output: { dir: outputDir, format: 'esm', declaration: true, sourceMap: false },
         runtime: { node: { pythonPath: PYTHON ?? 'python3' } },
         performance: { caching: false, batching: false, compression: 'none' },
       } as never);
       expect(generated.failures).toEqual([]);
+      expect(generated.warnings).toEqual([]);
       const generatedPath = generated.written.find(path => path.endsWith('.generated.ts'));
       expect(generatedPath).toBeDefined();
+      const declarationPath = generated.written.find(path => path.endsWith('.generated.d.ts'));
+      expect(declarationPath).toBeDefined();
+      expect(await readFile(generatedPath as string, 'utf8')).toMatch(
+        /^export async function asyncText\(\): Promise<string> \{$/m
+      );
+      expect(await readFile(declarationPath as string, 'utf8')).toMatch(
+        /^export function asyncText\(\): Promise<string>;$/m
+      );
 
       bridge = new NodeBridge({
         scriptPath: 'runtime/python_bridge.py',
