@@ -117,7 +117,8 @@ export function transformIrToTsModel(
         readonly: false,
         setter: false,
         getter: true,
-        optional: field.default,
+        // A constructor default does not make the returned dataclass field absent.
+        optional: cls.is_dataclass ? false : field.default,
       })),
       accessors: cls.accessors.map(accessor => ({
         name: accessor.name,
