@@ -3,9 +3,10 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { loadPyodide } from 'pyodide';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { PyodideBridge } from '../src/runtime/pyodide.js';
+import { PyodideTransport } from '../src/runtime/pyodide-transport.js';
 import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 import { generate } from '../src/tywrap.js';
 
@@ -86,6 +87,68 @@ sys.modules['tywrap_async_text'] = tywrap_async_text
         delete globals.loadPyodide;
       }
       rmSync(tempDir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it('cancels a timed-out coroutine and accepts the next real Pyodide request', async () => {
+    const globals = globalThis as typeof globalThis & { loadPyodide?: typeof loadPyodide };
+    const previousLoader = globals.loadPyodide;
+    const transport = new PyodideTransport({ indexURL });
+    let py: Awaited<ReturnType<typeof loadPyodide>> | undefined;
+    const request = (id: number, module: string, functionName: string, args: unknown[]): string =>
+      JSON.stringify({
+        id,
+        protocol: 'tywrap/1',
+        method: 'call',
+        params: { module, functionName, args, kwargs: {} },
+      });
+
+    try {
+      globals.loadPyodide = async options => {
+        py = await loadPyodide(options);
+        py.runPython(`
+import sys, types, asyncio
+tywrap_slow = types.ModuleType('tywrap_slow')
+async def slow():
+    await asyncio.sleep(10)
+    return 'too late'
+tywrap_slow.slow = slow
+sys.modules['tywrap_slow'] = tywrap_slow
+`);
+        return py;
+      };
+
+      await transport.init();
+      const settlements: string[] = [];
+      const first = transport.send(request(71, 'tywrap_slow', 'slow', []), 100).then(
+        () => settlements.push('resolved'),
+        error => {
+          settlements.push('rejected');
+          return error as Error;
+        }
+      );
+      await expect(first).resolves.toMatchObject({ name: 'BridgeTimeoutError' });
+
+      await vi.waitFor(
+        () => {
+          expect(py?.runPython('len(__tywrap_tasks)')).toBe(0);
+          expect(
+            (transport as unknown as { activeCalls: Map<number, unknown> }).activeCalls.size
+          ).toBe(0);
+        },
+        { timeout: 5000 }
+      );
+
+      const next = JSON.parse(await transport.send(request(71, 'math', 'sqrt', [16]), 5000)) as {
+        result: number;
+      };
+      expect(next.result).toBe(4);
+      expect(settlements).toEqual(['rejected']);
+      expect(py?.runPython('len(__tywrap_tasks)')).toBe(0);
+    } finally {
+      await transport.dispose();
+      if (previousLoader) globals.loadPyodide = previousLoader;
+      else delete globals.loadPyodide;
     }
   }, 180_000);
 
