@@ -129,6 +129,20 @@ describe('pinned IR contracts', () => {
       expect(check.failures).toEqual([]);
       expect(check.warnings).toEqual([]);
       expect(check.outOfDate).toEqual([]);
+
+      const foreign = JSON.parse(await readFile(contractPath, 'utf8')) as {
+        functions: Array<{ returns: string }>;
+      };
+      foreign.functions[0]!.returns =
+        'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[external.float16]]';
+      await writeFile(contractPath, JSON.stringify(foreign), 'utf8');
+      const rejected = await generate(configured);
+      expect(rejected.warnings.some(warning =>
+        warning.includes('no value conversion is defined for numpy.ndarray')
+      )).toBe(true);
+      expect(rejected.warnings.some(warning =>
+        warning.includes('resolves outside analyzed module: numpy.ndarray')
+      )).toBe(true);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

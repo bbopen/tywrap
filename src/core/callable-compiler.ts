@@ -331,9 +331,8 @@ function resolveNdarray(type: PythonType): ValueResolution {
     : type.kind === 'generic' && type.typeArgs.length === 1
       ? type.typeArgs[0]
       : undefined;
-  const dtype = typeArgument ? leafName(typeArgument) : undefined;
-  const normalizedDtype = dtype?.toLowerCase();
-  if (normalizedDtype !== 'float16') {
+  if (typeArgument?.kind !== 'custom' || typeArgument.name !== 'float16' ||
+      typeArgument.module !== 'numpy') {
     return {
       status: 'unresolved',
       annotation: annotationName(type),
@@ -444,11 +443,16 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
           return resolveNdarray(type);
         }
         if (leaf === 'Tensor' && type.module?.startsWith('torch')) {
+          const tensorDtype = type.typeArgs[0];
+          if (type.typeArgs.length !== 1 || tensorDtype?.kind !== 'custom' ||
+              tensorDtype.name !== 'float16' || tensorDtype.module !== 'torch') {
+            return { status: 'unresolved', annotation: annotationName(type) };
+          }
           const ndarray = resolveNdarray({
             kind: 'generic',
             name: 'ndarray',
             module: 'numpy',
-            typeArgs: type.typeArgs,
+            typeArgs: [{ kind: 'custom', name: 'float16', module: 'numpy' }],
           });
           if (ndarray.status !== 'supported' || ndarray.value.kind !== 'ndarray-float16') {
             return ndarray;

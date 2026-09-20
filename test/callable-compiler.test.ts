@@ -702,6 +702,12 @@ describe('compileContract', () => {
     expect(resolve(parseAnnotationToPythonType(
       'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[numpy.float32]]'
     ))).toMatchObject({ status: 'unresolved' });
+    expect(resolve(parseAnnotationToPythonType(
+      'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[external.float16]]'
+    ))).toMatchObject({ status: 'unresolved' });
+    expect(resolve(parseAnnotationToPythonType(
+      'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[torch.float16]]'
+    ))).toMatchObject({ status: 'unresolved' });
   });
 
   it('keeps the existing bytes RPC shape in the value contract', () => {
@@ -746,6 +752,13 @@ describe('compileContract', () => {
     expect(generated.declaration).toContain(
       'tensorValue(): Promise<__tywrapFloat16Tensor>'
     );
+    expect(DEFAULT_VALUE_CONVERSION.resolve({
+      direction: 'output', path: '$.functions[0].returns',
+      logicalType: {
+        ...tensorType,
+        typeArgs: [{ kind: 'custom', name: 'float16', module: 'external' }],
+      },
+    })).toMatchObject({ status: 'unresolved' });
   });
 
   it('rejects a Torch float16 response with a mismatched nested dtype', async () => {
