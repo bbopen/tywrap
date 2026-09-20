@@ -105,6 +105,8 @@ def encode_exact_integers(
                 if isinstance(current, dict):
                     if any(not isinstance(key, str) for key in current):
                         raise PrototypeError(f'non-string record key at {path}')
+                    if '__tywrap__' in current:
+                        raise PrototypeError(f'reserved record key at {path}.__tywrap__')
                     return {
                         key: visit(item, _child(path, key), depth + 1)
                         for key, item in current.items()
@@ -151,6 +153,7 @@ def decode_exact_integers(
                         if (
                             set(current) != INTEGER_FIELDS
                             or current.get('__tywrap__') != 'integer'
+                            or type(current.get('codecVersion')) is not int
                             or current.get('codecVersion') != 2
                             or current.get('encoding') != 'decimal'
                         ):
@@ -228,6 +231,8 @@ def encode_dataclass(
                 if isinstance(current, dict):
                     if any(not isinstance(key, str) for key in current):
                         raise PrototypeError(f'non-string record key at {path}')
+                    if '__tywrap__' in current:
+                        raise PrototypeError(f'reserved record key at {path}.__tywrap__')
                     return {
                         key: visit(item, _child(path, key), depth + 1)
                         for key, item in current.items()

@@ -173,6 +173,9 @@ function walk(
     }
     if (contract.kind === 'record') {
       if (!isRecord(value)) throw new PrototypeError(`expected record at ${path}`);
+      if (Object.hasOwn(value, '__tywrap__')) {
+        throw new PrototypeError(`reserved record key at ${path}.__tywrap__`);
+      }
       exactKeys(value, Object.keys(contract.fields), path);
       return Object.fromEntries(
         Object.entries(contract.fields).map(([key, field]) => [
