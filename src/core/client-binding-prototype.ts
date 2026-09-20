@@ -184,10 +184,14 @@ export declare function bindRuntime(runtime: RuntimeExecution): BoundHandle;
 export function renderClientBindingPrototype(
   generated: GeneratedCode,
   bindingTemplate: GeneratedCode,
-  moduleName: string
+  moduleName: string,
+  runtimeGetterIdentifier = '__tywrapRuntimeProvider'
 ): BindingPrototypeCode {
   if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(moduleName)) {
     throw new Error(`Invalid Python module name: ${moduleName}`);
+  }
+  if (!/^__tywrapRuntimeProvider(?:[1-9][0-9]*)?$/.test(runtimeGetterIdentifier)) {
+    throw new Error(`Invalid runtime getter identifier: ${runtimeGetterIdentifier}`);
   }
   const source = ts.createSourceFile(
     `${moduleName}.generated.ts`,
@@ -207,7 +211,7 @@ export function renderClientBindingPrototype(
   const callableCount =
     calls.functions.length + calls.classes.reduce((count, cls) => count + cls.methods.length, 0);
   if (
-    countCalls(source, '__tywrapRuntimeProvider') !== callableCount ||
+    countCalls(source, runtimeGetterIdentifier) !== callableCount ||
     countCalls(source, 'getRuntimeBridge') !== 0 ||
     bindingTemplate.declaration !== generated.declaration
   ) {
@@ -224,7 +228,7 @@ export function renderClientBindingPrototype(
   usedNames.add(legacyValue);
   const registryImport = allocateName('__tywrapRegistry', usedNames);
   usedNames.add(registryImport);
-  const providerName = '__tywrapRuntimeProvider';
+  const providerName = runtimeGetterIdentifier;
   if (usedNames.has(providerName)) {
     throw new Error(`Generated module defines reserved provider name ${providerName}`);
   }
