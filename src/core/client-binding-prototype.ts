@@ -1,0 +1,351 @@
+/** Opt-in generated client binding for the issue #340 prototype. */
+
+import ts from 'typescript';
+
+import type { GeneratedCode } from '../types/index.js';
+
+export interface BindingPrototypeCode extends GeneratedCode {
+  bindingPrototype: {
+    core: Pick<GeneratedCode, 'typescript' | 'declaration'>;
+    client: Pick<GeneratedCode, 'typescript' | 'declaration'>;
+  };
+}
+
+interface ClassExport {
+  name: string;
+  methods: string[];
+}
+
+interface ExportedCalls {
+  functions: string[];
+  classes: ClassExport[];
+  typeAliases: string[];
+}
+
+function quotedProperty(name: string): string {
+  return `[${JSON.stringify(name)}]`;
+}
+
+function allocateName(base: string, used: ReadonlySet<string>): string {
+  let name = base;
+  let suffix = 2;
+  while (used.has(name)) {
+    name = `${base}${suffix++}`;
+  }
+  return name;
+}
+
+function stripExport(
+  source: ts.SourceFile,
+  node: ts.FunctionDeclaration | ts.ClassDeclaration
+): string {
+  const start = node.getFullStart();
+  const end = node.getEnd();
+  let text = source.text.slice(start, end);
+  const exportModifier = node.modifiers?.find(
+    modifier => modifier.kind === ts.SyntaxKind.ExportKeyword
+  );
+  if (exportModifier) {
+    const from = exportModifier.getStart(source) - start;
+    const to = exportModifier.getEnd() - start;
+    text = `${text.slice(0, from)}${text.slice(to).replace(/^\s/, '')}`;
+  }
+  return text;
+}
+
+function rewriteRuntimeCalls(
+  source: ts.SourceFile,
+  node: ts.FunctionDeclaration | ts.ClassDeclaration,
+  providerName: string
+): string {
+  const start = node.getFullStart();
+  let text = stripExport(source, node);
+  const exportLength = node.modifiers?.some(
+    modifier => modifier.kind === ts.SyntaxKind.ExportKeyword
+  )
+    ? 'export '.length
+    : 0;
+  const replacements: Array<{ start: number; end: number }> = [];
+  const visit = (child: ts.Node): void => {
+    if (
+      ts.isCallExpression(child) &&
+      ts.isIdentifier(child.expression) &&
+      child.expression.text === 'getRuntimeBridge' &&
+      child.arguments.length === 0
+    ) {
+      replacements.push({
+        start: child.expression.getStart(source) - start - exportLength,
+        end: child.expression.getEnd() - start - exportLength,
+      });
+    }
+    ts.forEachChild(child, visit);
+  };
+  visit(node);
+  for (const range of replacements.sort((left, right) => right.start - left.start)) {
+    text = `${text.slice(0, range.start)}${providerName}${text.slice(range.end)}`;
+  }
+  return text;
+}
+
+function runtimeImport(source: ts.SourceFile, node: ts.ImportDeclaration): string {
+  const text = node.getText(source);
+  if (!ts.isStringLiteral(node.moduleSpecifier) || node.moduleSpecifier.text !== 'tywrap/runtime') {
+    return text;
+  }
+  return text.replace(/\bgetRuntimeBridge\s*,\s*/, '').replace(/,\s*getRuntimeBridge\b/, '');
+}
+
+function inspectExports(source: ts.SourceFile): ExportedCalls {
+  const functions: string[] = [];
+  const classes: ClassExport[] = [];
+  const typeAliases: string[] = [];
+  for (const node of source.statements) {
+    if (ts.isFunctionDeclaration(node) && node.body && node.name) {
+      functions.push(node.name.text);
+    } else if (ts.isClassDeclaration(node) && node.name) {
+      const methods = node.members
+        .filter(
+          (member): member is ts.MethodDeclaration =>
+            ts.isMethodDeclaration(member) &&
+            member.body !== undefined &&
+            member.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.StaticKeyword) ===
+              true
+        )
+        .map(member => {
+          if (!ts.isIdentifier(member.name)) {
+            throw new Error(`Cannot bind computed method in ${node.name?.text}`);
+          }
+          return member.name.text;
+        });
+      classes.push({ name: node.name.text, methods });
+    } else if (ts.isTypeAliasDeclaration(node)) {
+      typeAliases.push(node.name.text);
+    }
+  }
+  const names = [...functions, ...classes.map(cls => cls.name), ...typeAliases];
+  if (new Set(names).size !== names.length) {
+    throw new Error('Generated module has duplicate exported names');
+  }
+  return { functions, classes, typeAliases };
+}
+
+function countCalls(source: ts.SourceFile, identifier: string): number {
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === identifier
+    ) {
+      count++;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return count;
+}
+
+function functionKeyUnion(names: readonly string[]): string {
+  return names.length > 0 ? names.map(JSON.stringify).join(' | ') : 'never';
+}
+
+function renderClient(
+  moduleName: string,
+  coreFactory: string,
+  calls: ExportedCalls
+): Pick<GeneratedCode, 'typescript' | 'declaration'> {
+  const coreFile = `./${moduleName}.generated.core.js`;
+  const functionFields = calls.functions.map(
+    name => `    ${quotedProperty(name)}: core${quotedProperty(name)},`
+  );
+  const classFields = calls.classes
+    .filter(cls => cls.methods.length > 0)
+    .map(
+      cls =>
+        `    ${quotedProperty(cls.name)}: { ${cls.methods
+          .map(
+            method =>
+              `${quotedProperty(method)}: core${quotedProperty(cls.name)}${quotedProperty(method)}`
+          )
+          .join(', ')} },`
+    );
+  const classTypes = calls.classes
+    .filter(cls => cls.methods.length > 0)
+    .map(
+      cls =>
+        `  ${quotedProperty(cls.name)}: Pick<__CoreApi[${JSON.stringify(cls.name)}], ${functionKeyUnion(cls.methods)}>;`
+    )
+    .join('\n');
+  const types = `export type RuntimeExecution = ReturnType<typeof import('tywrap/runtime').getRuntimeBridge>;
+type __CoreApi = ReturnType<typeof ${coreFactory}>;
+export type BoundApi = Pick<__CoreApi, ${functionKeyUnion(calls.functions)}> & {
+${classTypes}
+};
+export interface BoundHandle {
+  api: BoundApi;
+  dispose(): void;
+}`;
+  const typescript = `// Generated by tywrap: explicit runtime binding prototype
+import { ${coreFactory} } from '${coreFile}';
+import { BridgeDisposedError } from 'tywrap';
+
+${types}
+
+export function bindRuntime(runtime: RuntimeExecution): BoundHandle {
+  let disposed = false;
+  const core = ${coreFactory}(() => {
+    if (disposed) throw new BridgeDisposedError('Bound client has been disposed');
+    return runtime;
+  });
+  const api: BoundApi = {
+${[...functionFields, ...classFields].join('\n')}
+  };
+  return {
+    api,
+    dispose(): void { disposed = true; },
+  };
+}
+`;
+  const declaration = `// Generated by tywrap: explicit runtime binding prototype
+import { ${coreFactory} } from '${coreFile}';
+
+${types}
+
+export declare function bindRuntime(runtime: RuntimeExecution): BoundHandle;
+`;
+  return { typescript, declaration };
+}
+
+/**
+ * Split one compiled wrapper into a shared core and two call providers.
+ * This function does not change the default generator output.
+ */
+export function renderClientBindingPrototype(
+  generated: GeneratedCode,
+  moduleName: string
+): BindingPrototypeCode {
+  if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(moduleName)) {
+    throw new Error(`Invalid Python module name: ${moduleName}`);
+  }
+  const source = ts.createSourceFile(
+    `${moduleName}.generated.ts`,
+    generated.typescript,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const declarations = ts.createSourceFile(
+    `${moduleName}.generated.d.ts`,
+    generated.declaration,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const calls = inspectExports(source);
+  const callableCount =
+    calls.functions.length + calls.classes.reduce((count, cls) => count + cls.methods.length, 0);
+  if (countCalls(source, 'getRuntimeBridge') !== callableCount) {
+    throw new Error('Generated call sites differ from exported callable count');
+  }
+  const usedNames = new Set([
+    ...calls.functions,
+    ...calls.classes.map(cls => cls.name),
+    ...calls.typeAliases,
+  ]);
+  const coreFactory = allocateName('__tywrapCreateApi', usedNames);
+  usedNames.add(coreFactory);
+  const legacyValue = allocateName('__tywrapLegacy', usedNames);
+  usedNames.add(legacyValue);
+  const registryImport = allocateName('__tywrapRegistry', usedNames);
+  usedNames.add(registryImport);
+  const providerName = allocateName('__tywrapRuntimeProvider', usedNames);
+  usedNames.add(providerName);
+  const runtimeType = allocateName('__TywrapRuntime', usedNames);
+  const imports: string[] = [];
+  const typeAliases: string[] = [];
+  const body: string[] = [];
+  for (const node of source.statements) {
+    if (ts.isImportDeclaration(node)) {
+      imports.push(runtimeImport(source, node));
+    } else if (ts.isTypeAliasDeclaration(node)) {
+      typeAliases.push(node.getText(source));
+    } else if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
+      body.push(rewriteRuntimeCalls(source, node, providerName));
+    } else {
+      body.push(node.getFullText(source));
+    }
+  }
+  const returned = [...calls.functions, ...calls.classes.map(cls => cls.name)]
+    .map(name => `${quotedProperty(name)}: ${name}`)
+    .join(', ');
+  const coreTypescript = `// Generated by tywrap: shared call implementation
+${imports.join('\n')}
+${typeAliases.join('\n')}
+
+type ${runtimeType} = ReturnType<typeof import('tywrap/runtime').getRuntimeBridge>;
+export function ${coreFactory}(${providerName}: () => ${runtimeType}) {
+${body.join('\n')}
+  return { ${returned} };
+}
+`;
+  const coreSource = ts.createSourceFile(
+    `${moduleName}.generated.core.ts`,
+    coreTypescript,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  if (
+    countCalls(coreSource, providerName) !== callableCount ||
+    countCalls(coreSource, 'getRuntimeBridge') !== 0
+  ) {
+    throw new Error('Generated core did not bind every call site');
+  }
+  const declarationBodies = declarations.statements
+    .filter(
+      (node): node is ts.FunctionDeclaration | ts.ClassDeclaration =>
+        ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)
+    )
+    .map(node => stripExport(declarations, node))
+    .join('\n');
+  const returnedTypes = [...calls.functions, ...calls.classes.map(cls => cls.name)]
+    .map(name => `  ${quotedProperty(name)}: typeof ${name};`)
+    .join('\n');
+  const coreDeclaration = `// Generated by tywrap: shared call implementation
+${typeAliases.join('\n')}
+type ${runtimeType} = ReturnType<typeof import('tywrap/runtime').getRuntimeBridge>;
+${declarationBodies}
+export declare function ${coreFactory}(${providerName}: () => ${runtimeType}): {
+${returnedTypes}
+};
+`;
+  const coreFile = `./${moduleName}.generated.core.js`;
+  const legacyFunctions = calls.functions.map(
+    name => `export const ${name} = ${legacyValue}${quotedProperty(name)};`
+  );
+  const legacyClasses = calls.classes.flatMap(cls => [
+    `export const ${cls.name} = ${legacyValue}${quotedProperty(cls.name)};`,
+    `export type ${cls.name} = InstanceType<typeof ${cls.name}>;`,
+  ]);
+  const legacyTypes =
+    calls.typeAliases.length > 0
+      ? `export type { ${calls.typeAliases.join(', ')} } from '${coreFile}';\n`
+      : '';
+  const legacyTypescript = `// Generated by tywrap: registry-backed wrapper prototype
+import { ${coreFactory} } from '${coreFile}';
+import { getRuntimeBridge as ${registryImport} } from 'tywrap/runtime';
+${legacyTypes}
+const ${legacyValue} = ${coreFactory}(${registryImport});
+${[...legacyFunctions, ...legacyClasses].join('\n')}
+`;
+  return {
+    ...generated,
+    typescript: legacyTypescript,
+    declaration: generated.declaration,
+    sourceMap: undefined,
+    bindingPrototype: {
+      core: { typescript: coreTypescript, declaration: coreDeclaration },
+      client: renderClient(moduleName, coreFactory, calls),
+    },
+  };
+}
