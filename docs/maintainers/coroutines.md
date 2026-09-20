@@ -1,8 +1,8 @@
 # Coroutine calls
 
 A `call` request returns one result or one error envelope. The bridge awaits a
-Python awaitable before it serializes the result. It rejects generators and async
-generators. It does not expose tasks, streams, retries, or cached results.
+Python awaitable before it serializes the result. It rejects generators and
+async generators. It does not expose tasks, streams, retries, or cached results.
 
 ## Node subprocess
 
@@ -22,30 +22,34 @@ process for later calls. Replacement runs the configured worker warmup. Python
 state held only in the retired process is lost. A request that times out before
 its first write does not retire the process.
 
-Retirement sends SIGTERM first. If the child stays alive, it sends SIGKILL
-after one second and waits for the child to exit. A failed kill blocks
-replacement of that process generation.
+Retirement sends SIGTERM first. If the child stays alive, it sends SIGKILL after
+one second and waits for the child to exit. A failed kill blocks replacement of
+that process generation. The pool keeps the worker slot until disposal succeeds.
+If cleanup fails, the pool rejects new leases and keeps the child handle for a
+later disposal retry.
 
-Disposal kills the process and rejects pending requests. The caller receives
-one timeout, abort, or disposal error. A retired process cannot send a late
-response into a replacement process. A timeout does not cancel Python code in
-place; process retirement stops code that does not cooperate with cancellation.
+Disposal kills the process and rejects pending requests. The caller receives one
+timeout, abort, or disposal error. A retired process cannot send a late response
+into a replacement process. A timeout does not cancel Python code in place;
+process retirement stops code that does not cooperate with cancellation.
 
 ## Pyodide
 
-Pyodide owns its [WebLoop](https://pyodide.org/en/0.28.1/usage/api/python-api/webloop.html).
-The bootstrap registers a task by request ID before it returns the task to
-JavaScript. The transport awaits the task and destroys its Pyodide proxies
-after the task settles. Timeout, abort, and disposal call `Task.cancel()` for
-that request. The task map removes settled and cancelled tasks.
+Pyodide owns its
+[WebLoop](https://pyodide.org/en/0.28.1/usage/api/python-api/webloop.html). The
+bootstrap registers a task by request ID before it returns the task to
+JavaScript. The transport awaits the task and destroys its Pyodide proxies after
+the task settles. Timeout, abort, and disposal call `Task.cancel()` for that
+request. The task map removes settled and cancelled tasks.
 
-Cancellation is cooperative. Python receives `CancelledError` at an await.
-The caller receives one timeout, abort, or disposal error. The transport
-consumes a late task rejection without sending another response.
+Cancellation is cooperative. Python receives `CancelledError` at an await. The
+caller receives one timeout, abort, or disposal error. The transport consumes a
+late task rejection without sending another response.
 
-CPU-bound Python on the browser thread can block both the JavaScript timer
-and the Pyodide event loop. This transport cannot stop it at a deadline.
-Pyodide documents [interrupt buffers](https://pyodide.org/en/0.28.1/usage/api/js-api.html#pyodide.setInterruptBuffer)
-for web workers. The bridge does not install an interrupt buffer or terminate
-a worker. Host applications must manage their own worker lifecycle if they
-need that limit.
+CPU-bound Python on the browser thread can block both the JavaScript timer and
+the Pyodide event loop. This transport cannot stop it at a deadline. Pyodide
+documents
+[interrupt buffers](https://pyodide.org/en/0.28.1/usage/api/js-api.html#pyodide.setInterruptBuffer)
+for web workers. The bridge does not install an interrupt buffer or terminate a
+worker. Host applications must manage their own worker lifecycle if they need
+that limit.
