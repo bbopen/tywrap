@@ -79,8 +79,13 @@ describe('generated return validators', () => {
     expect(validate(result, proof)).toBe(result);
     expect(() => validate(result)).toThrow(BridgeValidationError);
 
+    const stringIndex = new DecodedProvenance();
+    stringIndex.recordChild(rows[0]!, '0', { marker: 'ndarray', dims: 0, dtype: 'float16' });
+    stringIndex.recordChild(result, 'scalar', { marker: 'ndarray', dims: 0, dtype: 'float16' });
+    expect(validate(result, stringIndex)).toBe(result);
+
     const wrongIndex = new DecodedProvenance();
-    wrongIndex.recordChild(rows[0]!, '0', { marker: 'ndarray', dims: 0, dtype: 'float16' });
+    wrongIndex.recordChild(rows[0]!, 1, { marker: 'ndarray', dims: 0, dtype: 'float16' });
     wrongIndex.recordChild(result, 'scalar', { marker: 'ndarray', dims: 0, dtype: 'float16' });
     expect(() => validate(result, wrongIndex)).toThrow(BridgeValidationError);
 
