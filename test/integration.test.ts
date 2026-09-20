@@ -342,16 +342,19 @@ def choose(value: object) -> object:
       } as any);
       expect(result.failures).toEqual([]);
       const declaration = await fsUtils.readFile(join(outDir, 'generic_overload.generated.d.ts'));
-      expect(declaration).toContain('export function choose<T>(value: T): Promise<T>;');
+      expect(declaration).toContain('export function choose<T>(value: T): Promise<unknown>;');
       const consumerPath = join(tempDir, 'consumer.ts');
       await writeFile(
         consumerPath,
         `import { choose } from './generated/generic_overload.generated.js';
 
-const text: Promise<string> = choose('key');
-const integer: Promise<number> = choose(2);
+const text: Promise<unknown> = choose('key');
+const integer: Promise<unknown> = choose(2);
+// @ts-expect-error An unresolved TypeVar does not validate the decoded result.
+const unsafe: Promise<string> = choose('key');
 void text;
 void integer;
+void unsafe;
 `,
         'utf8'
       );
@@ -455,9 +458,9 @@ class Container(Generic[T]):
       const typescript = await fsUtils.readFile(join(outDir, 'generic_module.generated.ts'));
       const declaration = await fsUtils.readFile(join(outDir, 'generic_module.generated.d.ts'));
 
-      expect(typescript).toContain('export function identity<T>(x: T): Promise<T>;');
+      expect(typescript).toContain('export function identity<T>(x: T): Promise<unknown>;');
       expect(typescript).toContain(
-        'export async function forward<T>(container: Container<T>): Promise<Container<T>>'
+        'export async function forward<T>(container: Container<T>): Promise<unknown>'
       );
       expect(typescript).toContain(
         'export async function acceptTransform<P extends unknown[], T>('
@@ -507,9 +510,11 @@ export declare function createReturnValidator<T = unknown>(schema: ReturnSchema,
 const pair: Pair<string> = ['a', 'b'];
 const transform: Transform<[number], string> = (...args) => String(args[0]);
 const container = {} as Container<number>;
-const accepted: Promise<Transform<[number], string>> = acceptTransform<[number], string>(transform);
-const forwarded: Promise<Container<number>> = forward<number>(container);
-const resolved: Promise<number> = identity<number>(1);
+const accepted: Promise<unknown> = acceptTransform<[number], string>(transform);
+const forwarded: Promise<unknown> = forward<number>(container);
+const resolved: Promise<unknown> = identity<number>(1);
+// @ts-expect-error The decoded generic result has no supported value contract.
+const unsafe: Promise<number> = identity<number>(1);
 const passthroughResult: Promise<void> = passthrough([1, 2], { flag: true });
 
 void pair;
@@ -517,6 +522,7 @@ void transform;
 void accepted;
 void forwarded;
 void resolved;
+void unsafe;
 void passthroughResult;
 `,
         'utf-8'
