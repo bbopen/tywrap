@@ -12,11 +12,13 @@ Run Python in the browser using Pyodide WebAssembly.
 ## Quick Start
 
 ### Install
+
 ```bash
 npm install tywrap pyodide
 ```
 
 ### Configure
+
 ```json
 {
   "pythonModules": {
@@ -33,14 +35,15 @@ npm install tywrap pyodide
 ```
 
 ### Use
+
 ```ts
 import { PyodideBridge } from 'tywrap/pyodide';
 import { setRuntimeBridge } from 'tywrap/runtime';
 import { array } from './generated/numpy.generated.js';
 
 const bridge = new PyodideBridge({
-  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
-  packages: ['numpy']
+  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.1/full/',
+  packages: ['numpy'],
 });
 
 setRuntimeBridge(bridge);
@@ -63,7 +66,8 @@ loading, rely on Pyodide directly.
 
 ## Data Transport
 
-Arrow envelopes are supported in the browser if you register an Arrow decoder (Node auto-registers when `apache-arrow` is installed):
+Arrow envelopes are supported in the browser if you register an Arrow decoder
+(Node auto-registers when `apache-arrow` is installed):
 
 ```ts
 import { registerArrowDecoder } from 'tywrap';
@@ -73,4 +77,14 @@ registerArrowDecoder(bytes => bytes);
 
 ## Build Integration
 
-Run `tywrap generate` during your build and load Pyodide at runtime (CDN or self-hosted).
+Run `tywrap generate` during your build and load Pyodide at runtime (CDN or
+self-hosted).
+
+## Test coverage
+
+The unit tests mock the Pyodide loader. The cross-backend suite runs the shared
+Python bootstrap under CPython. Neither check proves browser execution.
+
+Required CI also runs the pinned Pyodide package in Node WebAssembly and a
+Chromium smoke test. The browser test loads local Pyodide assets and executes a
+generated wrapper.
