@@ -107,7 +107,7 @@ function countCalls(source: ts.SourceFile, identifier: string): number {
 }
 
 function functionKeyUnion(names: readonly string[]): string {
-  return names.length > 0 ? names.map(JSON.stringify).join(' | ') : 'never';
+  return names.length > 0 ? names.map(name => JSON.stringify(name)).join(' | ') : 'never';
 }
 
 function renderClient(
