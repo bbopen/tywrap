@@ -30,8 +30,6 @@ const orderedDocs = [
 const excludedDocs = new Set([
   'docs/perf-baselines.md',
   'docs/release.md',
-  'docs/maintainers/callable-contracts.md',
-  'docs/maintainers/value-contracts.md',
 ]);
 
 async function collectDocs(dir) {
@@ -55,6 +53,11 @@ async function collectDocs(dir) {
     }
 
     if (!normalized.endsWith('.md') || excludedDocs.has(normalized)) {
+      continue;
+    }
+
+    // Include only the maintainer guides selected above, not internal review reports.
+    if (normalized.startsWith('docs/maintainers/') && !orderedDocs.includes(normalized)) {
       continue;
     }
 
