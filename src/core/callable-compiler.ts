@@ -933,11 +933,14 @@ function resolveCallable(
     callableContract: {
       parameterValues: parameters.map(supportedValue),
       returnValue: supportedValue(result),
-      returnValidationType: func.returnType,
+      returnValidationType: result.resolution.status === 'unresolved' ? func.returnType : undefined,
       overloads: overloadResults.map((overload, index) => ({
         parameterValues: overloadParameters[index]!.map(supportedValue),
         returnValue: supportedValue(overload),
-        returnValidationType: func.overloads![index]!.returnType,
+        returnValidationType:
+          overload.resolution.status === 'unresolved'
+            ? func.overloads![index]!.returnType
+            : undefined,
       })),
     },
   };

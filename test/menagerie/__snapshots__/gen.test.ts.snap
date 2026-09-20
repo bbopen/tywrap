@@ -47,9 +47,9 @@ export async function generatorValues(): Promise<unknown> {
 
 const __validategeneric_identityResult = createReturnValidator({"kind":"any"}, "fixtures.typing_torture.generic_identity", __tywrapReturnDefinitions);
 
-export async function genericIdentity<T>(value: T): Promise<T> {
+export async function genericIdentity<T>(value: T): Promise<unknown> {
   const __args: unknown[] = [value];
-  return getRuntimeBridge().call<T>('fixtures.typing_torture', 'generic_identity', __args, undefined, __validategeneric_identityResult);
+  return getRuntimeBridge().call<unknown>('fixtures.typing_torture', 'generic_identity', __args, undefined, __validategeneric_identityResult);
 }
 
 const __validateint_key_dictResult = createReturnValidator({"kind":"any"}, "fixtures.typing_torture.int_key_dict", __tywrapReturnDefinitions);
@@ -68,9 +68,9 @@ export async function iteratorValues(): Promise<unknown> {
 
 const __validateliteral_echoResult = createReturnValidator({"kind":"union","options":[{"kind":"literal","value":"red"},{"kind":"literal","value":"blue"},{"kind":"literal","value":7}]}, "fixtures.typing_torture.literal_echo", __tywrapReturnDefinitions);
 
-export async function literalEcho(value: "red" | "blue" | 7): Promise<"red" | "blue" | 7> {
+export async function literalEcho(value: "red" | "blue" | 7): Promise<unknown> {
   const __args: unknown[] = [value];
-  return getRuntimeBridge().call<"red" | "blue" | 7>('fixtures.typing_torture', 'literal_echo', __args, undefined, __validateliteral_echoResult);
+  return getRuntimeBridge().call<unknown>('fixtures.typing_torture', 'literal_echo', __args, undefined, __validateliteral_echoResult);
 }
 
 const __validatenested_containersResult = createReturnValidator({"kind":"array","element":{"kind":"record","fields":{},"values":{"kind":"array","element":{"kind":"tuple","elements":[{"kind":"primitive","type":"number","constraint":"safe-integer"},{"kind":"primitive","type":"string"}]}}}}, "fixtures.typing_torture.nested_containers", __tywrapReturnDefinitions);
@@ -100,7 +100,7 @@ const __validateoverloadedResult = createReturnValidator({"kind":"union","option
 
 const __validateparamspec_applyResult = createReturnValidator({"kind":"any"}, "fixtures.typing_torture.paramspec_apply", __tywrapReturnDefinitions);
 
-export async function paramspecApply<P extends unknown[], T>(callback: (...args: P) => T, args?: unknown[], kwargs?: Record<string, unknown>): Promise<T> {
+export async function paramspecApply<P extends unknown[], T>(callback: (...args: P) => T, args?: unknown[], kwargs?: Record<string, unknown>): Promise<unknown> {
   let __kwargs = kwargs;
   const __args: unknown[] = [callback];
   let __varargs: unknown[] = [];
@@ -114,17 +114,17 @@ export async function paramspecApply<P extends unknown[], T>(callback: (...args:
     }
   }
   __args.push(...__varargs);
-  return getRuntimeBridge().call<T>('fixtures.typing_torture', 'paramspec_apply', __args, __kwargs, __validateparamspec_applyResult);
+  return getRuntimeBridge().call<unknown>('fixtures.typing_torture', 'paramspec_apply', __args, __kwargs, __validateparamspec_applyResult);
 }
 
 const __validateprotocol_identityResult = createReturnValidator({"kind":"any"}, "fixtures.typing_torture.protocol_identity", __tywrapReturnDefinitions);
 
-export async function protocolIdentity(value: SupportsClose): Promise<SupportsClose> {
+export async function protocolIdentity(value: SupportsClose): Promise<unknown> {
   const __args: unknown[] = [value];
-  return getRuntimeBridge().call<SupportsClose>('fixtures.typing_torture', 'protocol_identity', __args, undefined, __validateprotocol_identityResult);
+  return getRuntimeBridge().call<unknown>('fixtures.typing_torture', 'protocol_identity', __args, undefined, __validateprotocol_identityResult);
 }
 
-const __validaterated_movieResult = createReturnValidator({"kind":"ref","name":"RatedMovie"}, "fixtures.typing_torture.rated_movie", __tywrapReturnDefinitions);
+const __validaterated_movieResult = createReturnValidator({"kind":"record","fields":{"title":{"schema":{"kind":"primitive","type":"string"},"optional":false},"year":{"schema":{"kind":"primitive","type":"number","constraint":"safe-integer"},"optional":false},"rating":{"schema":{"kind":"primitive","type":"number","constraint":"safe-integer"},"optional":true}}}, "fixtures.typing_torture.rated_movie", __tywrapReturnDefinitions);
 
 export async function ratedMovie(): Promise<RatedMovie> {
   const __args: unknown[] = [];
@@ -145,14 +145,14 @@ export async function tupleKeyDict(value: unknown): Promise<unknown> {
   return getRuntimeBridge().call<unknown>('fixtures.typing_torture', 'tuple_key_dict', __args, undefined, __validatetuple_key_dictResult);
 }
 
-const __validatetyped_dict_echoResult = createReturnValidator({"kind":"ref","name":"Movie"}, "fixtures.typing_torture.typed_dict_echo", __tywrapReturnDefinitions);
+const __validatetyped_dict_echoResult = createReturnValidator({"kind":"record","fields":{"title":{"schema":{"kind":"primitive","type":"string"},"optional":false},"year":{"schema":{"kind":"primitive","type":"number","constraint":"safe-integer"},"optional":false}}}, "fixtures.typing_torture.typed_dict_echo", __tywrapReturnDefinitions);
 
 export async function typedDictEcho(value: Movie): Promise<Movie> {
   const __args: unknown[] = [value];
   return getRuntimeBridge().call<Movie>('fixtures.typing_torture', 'typed_dict_echo', __args, undefined, __validatetyped_dict_echoResult);
 }
 
-const __validateuser_id_echoResult = createReturnValidator({"kind":"any"}, "fixtures.typing_torture.user_id_echo", __tywrapReturnDefinitions);
+const __validateuser_id_echoResult = createReturnValidator({"kind":"primitive","type":"number","constraint":"safe-integer"}, "fixtures.typing_torture.user_id_echo", __tywrapReturnDefinitions);
 
 export async function userIdEcho(value: UserId): Promise<UserId> {
   const __args: unknown[] = [value];
@@ -194,13 +194,13 @@ export function frozenValues(value: string[]): Promise<string[]>;
 
 export function generatorValues(): Promise<unknown>;
 
-export function genericIdentity<T>(value: T): Promise<T>;
+export function genericIdentity<T>(value: T): Promise<unknown>;
 
 export function intKeyDict(value: unknown): Promise<unknown>;
 
 export function iteratorValues(): Promise<unknown>;
 
-export function literalEcho(value: "red" | "blue" | 7): Promise<"red" | "blue" | 7>;
+export function literalEcho(value: "red" | "blue" | 7): Promise<unknown>;
 
 export function nestedContainers(value: Record<string, [number, string][]>[]): Promise<Record<string, [number, string][]>[]>;
 
@@ -210,9 +210,9 @@ export function optionalUnion(value: string | number | null): Promise<string | n
 
 /* overload declarations checked separately */
 
-export function paramspecApply<P extends unknown[], T>(callback: (...args: P) => T, args?: unknown[], kwargs?: Record<string, unknown>): Promise<T>;
+export function paramspecApply<P extends unknown[], T>(callback: (...args: P) => T, args?: unknown[], kwargs?: Record<string, unknown>): Promise<unknown>;
 
-export function protocolIdentity(value: SupportsClose): Promise<SupportsClose>;
+export function protocolIdentity(value: SupportsClose): Promise<unknown>;
 
 export function ratedMovie(): Promise<RatedMovie>;
 
@@ -290,12 +290,12 @@ export async function dataclassInstance(): Promise<unknown> {
 
 const __validatedecimal_valuesResult = createReturnValidator({"kind":"array","element":{"kind":"any"}}, "fixtures.values_torture.decimal_values", __tywrapReturnDefinitions);
 
-export async function decimalValues(): Promise<unknown[]> {
+export async function decimalValues(): Promise<unknown> {
   const __args: unknown[] = [];
-  return getRuntimeBridge().call<unknown[]>('fixtures.values_torture', 'decimal_values', __args, undefined, __validatedecimal_valuesResult);
+  return getRuntimeBridge().call<unknown>('fixtures.values_torture', 'decimal_values', __args, undefined, __validatedecimal_valuesResult);
 }
 
-const __validatedeeply_nestedResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.deeply_nested", __tywrapReturnDefinitions);
+const __validatedeeply_nestedResult = createReturnValidator({"kind":"array","element":{"kind":"any"}}, "fixtures.values_torture.deeply_nested", __tywrapReturnDefinitions);
 
 export async function deeplyNested(): Promise<unknown> {
   const __args: unknown[] = [];
@@ -309,7 +309,7 @@ export async function echoInt(value: number): Promise<number> {
   return getRuntimeBridge().call<number>('fixtures.values_torture', 'echo_int', __args, undefined, __validateecho_intResult);
 }
 
-const __validateempty_valuesResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.empty_values", __tywrapReturnDefinitions);
+const __validateempty_valuesResult = createReturnValidator({"kind":"tuple","elements":[{"kind":"tuple","elements":[{"kind":"any"}]},{"kind":"array","element":{"kind":"any"}},{"kind":"record","values":{"kind":"any"}},{"kind":"array","element":{"kind":"any"}}]}, "fixtures.values_torture.empty_values", __tywrapReturnDefinitions);
 
 export async function emptyValues(): Promise<unknown> {
   const __args: unknown[] = [];
@@ -426,7 +426,7 @@ export async function specialFloats(include?: boolean): Promise<number[]> {
   return getRuntimeBridge().call<number[]>('fixtures.values_torture', 'special_floats', __args, undefined, __validatespecial_floatsResult);
 }
 
-const __validatetemporal_valuesResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.temporal_values", __tywrapReturnDefinitions);
+const __validatetemporal_valuesResult = createReturnValidator({"kind":"record","values":{"kind":"any"}}, "fixtures.values_torture.temporal_values", __tywrapReturnDefinitions);
 
 export async function temporalValues(): Promise<unknown> {
   const __args: unknown[] = [];
@@ -447,7 +447,7 @@ export async function unicodeText(): Promise<string> {
   return getRuntimeBridge().call<string>('fixtures.values_torture', 'unicode_text', __args, undefined, __validateunicode_textResult);
 }
 
-const __validateuuid_and_pathResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.uuid_and_path", __tywrapReturnDefinitions);
+const __validateuuid_and_pathResult = createReturnValidator({"kind":"record","values":{"kind":"any"}}, "fixtures.values_torture.uuid_and_path", __tywrapReturnDefinitions);
 
 export async function uuidAndPath(): Promise<unknown> {
   const __args: unknown[] = [];
@@ -481,7 +481,7 @@ export function coroutineValue(): Promise<string>;
 
 export function dataclassInstance(): Promise<unknown>;
 
-export function decimalValues(): Promise<unknown[]>;
+export function decimalValues(): Promise<unknown>;
 
 export function deeplyNested(): Promise<unknown>;
 
