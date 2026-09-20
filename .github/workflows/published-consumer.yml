@@ -1,0 +1,46 @@
+name: Published consumer
+
+# Run only after both exact versions are public on npm and PyPI.
+# From the released repository ref:
+# gh workflow run published-consumer.yml --ref <release-ref> \
+#   -f npm_version=<exact-npm-version> -f pypi_version=<exact-pypi-version>
+on:
+  workflow_dispatch:
+    inputs:
+      npm_version:
+        description: Exact published tywrap version on npm
+        required: true
+        type: string
+      pypi_version:
+        description: Exact published tywrap-ir version on PyPI
+        required: true
+        type: string
+
+run-name: npm ${{ inputs.npm_version }} and PyPI ${{ inputs.pypi_version }}
+
+permissions:
+  contents: read
+
+jobs:
+  published-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install test runner
+        run: npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
+      - name: Check published packages in a clean consumer
+        env:
+          CI: '1'
+          TYWRAP_CONSUMER_MODE: published
+          TYWRAP_PUBLISHED_NPM_VERSION: ${{ inputs.npm_version }}
+          TYWRAP_PUBLISHED_PYPI_VERSION: ${{ inputs.pypi_version }}
+        run: npx vitest run --config vitest.isolated-consumer.config.ts
