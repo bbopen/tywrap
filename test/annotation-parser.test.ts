@@ -84,7 +84,11 @@ describe('annotation parser', () => {
       ],
     });
     expect(unknown).toEqual([]);
-    parseAnnotationToPythonType('list[typing.Any]', {
+    parseAnnotationToPythonType('numpy.ndarray[tuple[Any, ...], numpy.dtype[numpy.float16]]', {
+      onUnknownTypeName: name => unknown.push(name),
+    });
+    expect(unknown).toEqual([]);
+    parseAnnotationToPythonType('list[Any]', {
       onUnknownTypeName: name => unknown.push(name),
     });
     expect(unknown).toEqual(['Any']);

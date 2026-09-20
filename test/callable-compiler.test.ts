@@ -860,4 +860,28 @@ describe('compileContract', () => {
       module: 'typing',
     });
   });
+
+  it('requires returned dataclass fields even when their constructor has defaults', () => {
+    const point = rawIr.classes[0]!;
+    const ir = validateIrContract({
+      ...rawIr,
+      functions: [],
+      classes: [{
+        ...point,
+        fields: [{ ...point.fields[0]!, default: true }, point.fields[1]!],
+      }],
+    }, 'Point default contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: { ...moduleModel, functions: [] },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.generated.declaration).toContain('x: number;');
+    expect(compiled.generated.declaration).not.toContain('x?: number;');
+  });
 });
