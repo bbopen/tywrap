@@ -649,7 +649,7 @@ describe('CodeGenerator', () => {
     expect(code.typescript).toContain('export function getValue(key: string): Promise<string>;');
     expect(code.typescript).toContain('export function getValue(key: number): Promise<number>;');
     expect(code.typescript).toContain(
-      'export async function getValue(key: string | number): Promise<string | number>'
+      'export async function getValue(key: unknown): Promise<unknown>'
     );
     expect(code.declaration).toContain('export function getValue(key: string): Promise<string>;');
     expect(code.declaration).toContain('export function getValue(key: number): Promise<number>;');
