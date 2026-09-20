@@ -17,7 +17,7 @@ from value_extensions import (
 
 
 def main() -> None:
-    trusted_contracts: list[dict[str, Any]] = json.loads(sys.argv[1])
+    trusted_contract: dict[str, Any] = json.loads(sys.argv[1])
     bridge_meta: dict[str, Any] = json.loads(sys.argv[2])
     raw = sys.stdin.buffer.read(MAX_PAYLOAD_BYTES + 1)
     if len(raw) > MAX_PAYLOAD_BYTES:
@@ -35,13 +35,18 @@ def main() -> None:
     policy = value_policy.get('integer') if isinstance(value_policy, dict) else None
     require_capability(bridge_meta, 'exactIntegerDecimalV2', policy)
     args = params.get('args')
-    if not isinstance(args, list) or len(args) != len(trusted_contracts):
+    fields = trusted_contract.get('fields')
+    if (
+        trusted_contract.get('kind') != 'record'
+        or not isinstance(fields, dict)
+        or not isinstance(args, list)
+        or len(args) != len(fields)
+    ):
         raise PrototypeError('exact-integer arguments differ from the contract')
-    decoded = [
-        decode_exact_integers(value, contract)
-        for value, contract in zip(args, trusted_contracts, strict=True)
-    ]
-    result = combine_exact(*decoded)
+    input_record = dict(zip(fields, args, strict=True))
+    decoded = decode_exact_integers(input_record, trusted_contract)
+    assert isinstance(decoded, dict)
+    result = combine_exact(**decoded)
     encoded = encode_exact_integers(result)
     wire = json.dumps(
         encoded, allow_nan=False, ensure_ascii=False, separators=(',', ':')
