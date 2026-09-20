@@ -15,6 +15,7 @@ import { CodeGenerator } from '../src/core/generator.js';
 import { parseAnnotationToPythonType } from '../src/core/annotation-parser.js';
 import { validateIrContract } from '../src/core/ir-contract.js';
 import { BridgeValidationError } from '../src/runtime/errors.js';
+import { BridgeCodec } from '../src/runtime/bridge-codec.js';
 import { HttpBridge } from '../src/runtime/http.js';
 import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 import type { PythonModule, PythonType } from '../src/types/index.js';
@@ -1700,6 +1701,336 @@ describe('compileContract', () => {
         item: { kind: 'integer', constraint: 'safe-integer' },
       },
     });
+  });
+  it('rejects unions whose marker wire can decode as a different value', async () => {
+    const annotations = [
+      'bytes | dict[str, str]',
+      'list[bytes] | list[dict[str, str]]',
+      'tuple[bytes] | tuple[dict[str, str]]',
+      'dict[str, bytes] | dict[str, dict[str, str]]',
+    ];
+    for (const annotation of annotations) {
+      expect(
+        DEFAULT_VALUE_CONVERSION.resolve({
+          direction: 'output',
+          path: '$.returns',
+          logicalType: parseAnnotationToPythonType(annotation),
+        })
+      ).toMatchObject({
+        status: 'unsupported',
+        reason: 'Union alternatives can share a wire value but decode differently.',
+      });
+    }
+    for (const annotation of ['int | float', 'bytes | str', 'bytes | dict[str, int]']) {
+      expect(
+        DEFAULT_VALUE_CONVERSION.resolve({
+          direction: 'output',
+          path: '$.returns',
+          logicalType: parseAnnotationToPythonType(annotation),
+        }).status
+      ).toBe('supported');
+    }
+    const tagged: typeof DEFAULT_VALUE_CONVERSION = {
+      revision: DEFAULT_VALUE_CONVERSION.revision,
+      resolve(request) {
+        if (request.logicalType.kind === 'custom' && request.logicalType.name === 'IntTag') {
+          return {
+            status: 'supported',
+            value: {
+              kind: 'record',
+              wire: 'json',
+              decodedAs: 'object',
+              fields: [
+                {
+                  name: 'tag',
+                  required: true,
+                  value: {
+                    kind: 'integer',
+                    wire: 'json',
+                    decodedAs: 'number',
+                    constraint: 'safe-integer',
+                  },
+                },
+                {
+                  name: 'payload',
+                  required: true,
+                  value: { kind: 'bytes', wire: 'base64-envelope', decodedAs: 'Uint8Array' },
+                },
+              ],
+            },
+          };
+        }
+        if (request.logicalType.kind === 'custom' && request.logicalType.name === 'StringTag') {
+          return {
+            status: 'supported',
+            value: {
+              kind: 'record',
+              wire: 'json',
+              decodedAs: 'object',
+              fields: [
+                {
+                  name: 'tag',
+                  required: true,
+                  value: { kind: 'string', wire: 'json', decodedAs: 'string' },
+                },
+                {
+                  name: 'payload',
+                  required: true,
+                  value: {
+                    kind: 'record',
+                    wire: 'json',
+                    decodedAs: 'object',
+                    fields: [],
+                    additionalValues: { kind: 'string', wire: 'json', decodedAs: 'string' },
+                  },
+                },
+              ],
+            },
+          };
+        }
+        if (
+          request.logicalType.kind === 'custom' &&
+          (request.logicalType.name === 'ExtraRecord' ||
+            request.logicalType.name === 'ExtraRecordValues')
+        ) {
+          return {
+            status: 'supported',
+            value: {
+              kind: 'record',
+              wire: 'json',
+              decodedAs: 'object',
+              fields: [
+                {
+                  name: '__type__',
+                  required: true,
+                  value: { kind: 'string', wire: 'json', decodedAs: 'string' },
+                },
+                {
+                  name: 'encoding',
+                  required: true,
+                  value: { kind: 'string', wire: 'json', decodedAs: 'string' },
+                },
+                {
+                  name: 'data',
+                  required: true,
+                  value: { kind: 'string', wire: 'json', decodedAs: 'string' },
+                },
+                {
+                  name: 'extra',
+                  required: true,
+                  value: {
+                    kind: 'integer',
+                    wire: 'json',
+                    decodedAs: 'number',
+                    constraint: 'safe-integer',
+                  },
+                },
+              ],
+              additionalValues:
+                request.logicalType.name === 'ExtraRecordValues'
+                  ? {
+                      kind: 'union',
+                      wire: 'selected-option',
+                      decodedAs: 'selected-option',
+                      options: [
+                        { kind: 'string', wire: 'json', decodedAs: 'string' },
+                        {
+                          kind: 'integer',
+                          wire: 'json',
+                          decodedAs: 'number',
+                          constraint: 'safe-integer',
+                        },
+                      ],
+                    }
+                  : undefined,
+            },
+          };
+        }
+        if (
+          request.logicalType.kind === 'custom' &&
+          (request.logicalType.name === 'NdarrayRecord' ||
+            request.logicalType.name === 'NdarrayVersionRecord' ||
+            request.logicalType.name === 'TorchRecord')
+        ) {
+          const stringValue = { kind: 'string', wire: 'json', decodedAs: 'string' } as const;
+          const integerValue = {
+            kind: 'integer',
+            wire: 'json',
+            decodedAs: 'number',
+            constraint: 'safe-integer',
+          } as const;
+          const scientific = request.logicalType.name !== 'TorchRecord';
+          return {
+            status: 'supported',
+            value: {
+              kind: 'record',
+              wire: 'json',
+              decodedAs: 'object',
+              fields: [
+                { name: '__tywrap__', required: true, value: stringValue },
+                { name: 'encoding', required: true, value: stringValue },
+                {
+                  name: scientific ? 'data' : 'value',
+                  required: true,
+                  value: scientific
+                    ? { kind: 'sequence', wire: 'json', decodedAs: 'array', item: integerValue }
+                    : { kind: 'record', wire: 'json', decodedAs: 'object', fields: [] },
+                },
+                {
+                  name: 'codecVersion',
+                  required: request.logicalType.name === 'NdarrayVersionRecord',
+                  value: stringValue,
+                },
+                ...(scientific
+                  ? [
+                      {
+                        name: 'shape',
+                        required: true,
+                        value: {
+                          kind: 'sequence' as const,
+                          wire: 'json' as const,
+                          decodedAs: 'array' as const,
+                          item: integerValue,
+                        },
+                      },
+                      { name: 'dtype', required: true, value: stringValue },
+                    ]
+                  : [{ name: 'device', required: false, value: integerValue }]),
+              ],
+            },
+          };
+        }
+        return DEFAULT_VALUE_CONVERSION.resolve({ ...request, resolveNested: tagged.resolve });
+      },
+    };
+    expect(
+      tagged.resolve({
+        direction: 'output',
+        path: '$.returns',
+        logicalType: parseAnnotationToPythonType('IntTag | StringTag'),
+      }).status
+    ).toBe('supported');
+    for (const annotation of ['bytes | ExtraRecord', 'bytes | ExtraRecordValues']) {
+      expect(
+        tagged.resolve({
+          direction: 'output',
+          path: '$.returns',
+          logicalType: parseAnnotationToPythonType(annotation),
+        })
+      ).toMatchObject({
+        status: 'unsupported',
+        reason: 'Union alternatives can share a wire value but decode differently.',
+      });
+    }
+    for (const annotation of [
+      'numpy.NDArray[numpy.float16] | NdarrayRecord',
+      'torch.Tensor[torch.float16] | TorchRecord',
+    ]) {
+      expect(
+        tagged.resolve({
+          direction: 'output',
+          path: '$.returns',
+          logicalType: parseAnnotationToPythonType(annotation),
+        })
+      ).toMatchObject({
+        status: 'unsupported',
+        reason: 'Union alternatives can share a wire value but decode differently.',
+      });
+    }
+    expect(
+      tagged.resolve({
+        direction: 'output',
+        path: '$.returns',
+        logicalType: parseAnnotationToPythonType(
+          'numpy.NDArray[numpy.float16] | NdarrayVersionRecord'
+        ),
+      }).status
+    ).toBe('supported');
+    const decoded = await new BridgeCodec().decodeResponseAsync<Uint8Array>(
+      JSON.stringify({
+        id: 1,
+        protocol: 'tywrap/1',
+        result: { __type__: 'bytes', encoding: 'base64', data: 'eA==', extra: 1 },
+      })
+    );
+    expect(decoded).toEqual(Uint8Array.from([120]));
+    const ndarrayDecoded = await new BridgeCodec().decodeResponseAsync<number[]>(
+      JSON.stringify({
+        id: 2,
+        protocol: 'tywrap/1',
+        result: {
+          __tywrap__: 'ndarray',
+          encoding: 'json',
+          data: [1],
+          shape: [1],
+          dtype: 'float16',
+        },
+      })
+    );
+    expect(ndarrayDecoded).toEqual([1]);
+    const torchDecoded = await new BridgeCodec().decodeResponseAsync(
+      JSON.stringify({
+        id: 3,
+        protocol: 'tywrap/1',
+        result: {
+          __tywrap__: 'torch.tensor',
+          encoding: 'ndarray',
+          value: {
+            __tywrap__: 'ndarray',
+            encoding: 'json',
+            data: [1],
+            shape: [1],
+            dtype: 'float16',
+          },
+          shape: [1],
+          dtype: 'torch.float16',
+        },
+      })
+    );
+    expect(torchDecoded).toMatchObject({ data: [1], shape: [1], dtype: 'torch.float16' });
+
+    const source = rawIr.functions[1]!;
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: [
+          {
+            ...source,
+            name: 'ambiguous_wire',
+            qualname: 'fixture.ambiguous_wire',
+            returns: 'bytes | dict[str, str]',
+          },
+        ],
+      },
+      'ambiguous union wire contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const module = {
+      ...moduleModel,
+      functions: [{ ...moduleModel.functions[1]!, name: 'ambiguous_wire' }],
+      classes: [],
+    };
+    const compiled = compileContract(ir.contract, {
+      module,
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.callables[0]?.result.resolution.status).toBe('unsupported');
+    expect(compiled.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        code: 'conversion-unsupported',
+        path: '$.functions[0].returns',
+      })
+    );
+    expect(compiled.generated.declaration).toContain('ambiguousWire(): Promise<unknown>');
+    expect(compiled.generated.typescript).toContain(
+      'const __validateambiguous_wireResult = createReturnValidator({"kind":"any"}'
+    );
   });
 
   it('uses revision 3 for explicit nested bigint callables only', () => {
