@@ -224,6 +224,15 @@ def test_dataclass_nested_values_and_failures() -> None:
         prototype.encode_dataclass(OrdinaryPoint(1, 2), prototype.Point)
 
     @dataclass
+    class UnsupportedAnnotation:
+        x: object
+        y: int
+
+    assert prototype.encode_dataclass(
+        UnsupportedAnnotation(1, 2), UnsupportedAnnotation
+    )['fields'] == {'x': 1, 'y': 2}
+
+    @dataclass
     class Unsupported:
         value: object
 
