@@ -1,4 +1,4 @@
-# Browser Runtime Guide
+# Browser runtime guide
 
 Run Python in the browser using Pyodide WebAssembly.
 
@@ -9,7 +9,7 @@ Run Python in the browser using Pyodide WebAssembly.
 - Pre-built packages via Pyodide
 - Works well for notebooks, demos, and client-side analysis
 
-## Quick Start
+## Quick start
 
 ### Install
 
@@ -27,7 +27,7 @@ npm install tywrap pyodide
   },
   "runtime": {
     "pyodide": {
-      "indexURL": "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/",
+      "indexURL": "https://cdn.jsdelivr.net/pyodide/v0.28.1/full/",
       "packages": ["numpy", "matplotlib", "scipy"]
     }
   }
@@ -52,7 +52,7 @@ const arr = await array([1, 2, 3]);
 console.log(arr);
 ```
 
-## Configuration Options
+## Configuration options
 
 ```ts
 interface PyodideBridgeOptions {
@@ -61,24 +61,19 @@ interface PyodideBridgeOptions {
 }
 ```
 
-The `packages` array is loaded during initialization. For additional package
+The bridge loads the `packages` array during initialization. For additional package
 loading, rely on Pyodide directly.
 
-## Data Transport
+## Data transport
 
-Arrow envelopes are supported in the browser if you register an Arrow decoder
-(Node auto-registers when `apache-arrow` is installed):
+PyodideBridge uses JSON transport. It converts supported NumPy arrays and pandas
+tables to JSON envelopes. It does not send Arrow payloads.
 
-```ts
-import { registerArrowDecoder } from 'tywrap';
+See [codec envelopes](../../codec-envelopes.md) for supported values and transport limits.
 
-registerArrowDecoder(bytes => bytes);
-```
+## Build integration
 
-## Build Integration
-
-Run `tywrap generate` during your build and load Pyodide at runtime (CDN or
-self-hosted).
+Run `tywrap generate` during your build. Load Pyodide at runtime from a CDN or your own server.
 
 ## Test coverage
 

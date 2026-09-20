@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CodeGenerator } from '../src/core/generator.js';
+import type { Parameter, PythonFunction, PythonModule, PythonType } from '../src/types/index.js';
 
 describe('CodeGenerator', () => {
   const gen = new CodeGenerator();
@@ -73,7 +74,7 @@ describe('CodeGenerator', () => {
       isGenerator: false,
       returnType: { kind: 'primitive', name: 'int' },
       parameters: [],
-    } as any;
+    } satisfies PythonFunction;
     const module = {
       name: 'binding_fixture',
       functions: [ping],
@@ -90,7 +91,7 @@ describe('CodeGenerator', () => {
       typeAliases: [],
       imports: [],
       exports: [],
-    } as any;
+    } satisfies PythonModule;
     const normal = gen.generateModuleDefinition(module);
     const bound = gen.generateModuleBindingTemplate(module);
     expect(normal.typescript).toContain(
@@ -295,14 +296,13 @@ describe('CodeGenerator', () => {
   });
 
   it('degrades iterator-protocol returns to unknown with a no-op validator', () => {
-    // A generator/iterator object can never cross the bridge (serialization
-    // rejects it loudly), so Generator<...> as a return type could never
-    // carry a value.
+    // The serializer rejects generator and iterator objects.
+    // The wrapper cannot return a Generator value.
     const degraded: string[] = [];
     const honestGenerator = new CodeGenerator(undefined, {
       onTypeDegrade: typeName => degraded.push(typeName),
     });
-    const returnType = {
+    const returnType: PythonType = {
       kind: 'generic',
       name: 'Generator',
       module: 'typing',
@@ -337,12 +337,12 @@ describe('CodeGenerator', () => {
     expect(degraded).toEqual(['typing.Generator']);
   });
 
-  it('keeps Iterable returns as arrays — a decoded list satisfies them honestly', () => {
+  it('keeps Iterable returns as decoded arrays', () => {
     const degraded: string[] = [];
     const honestGenerator = new CodeGenerator(undefined, {
       onTypeDegrade: typeName => degraded.push(typeName),
     });
-    const returnType = {
+    const returnType: PythonType = {
       kind: 'generic',
       name: 'Iterable',
       module: 'typing',
@@ -712,7 +712,7 @@ describe('CodeGenerator', () => {
             returnType: { kind: 'primitive', name: 'int' },
           },
         ],
-      } as any,
+      } satisfies PythonFunction,
       'advanced_types'
     );
 
@@ -726,14 +726,14 @@ describe('CodeGenerator', () => {
   });
 
   it('does not expose the implementation signature beside declared overloads', () => {
-    const key = {
+    const key: Parameter = {
       name: 'key',
       type: { kind: 'primitive', name: 'str' },
       optional: false,
       varArgs: false,
       kwArgs: false,
     };
-    const fallback = {
+    const fallback: Parameter = {
       name: 'fallback',
       type: { kind: 'primitive', name: 'int' },
       optional: true,
@@ -755,7 +755,7 @@ describe('CodeGenerator', () => {
       returnType: { kind: 'primitive', name: 'str' },
       methodKind: 'static',
       overloads: [{ parameters: [key], returnType: { kind: 'primitive', name: 'str' } }],
-    } as any;
+    } satisfies PythonFunction;
 
     const functionCode = gen.generateFunctionWrapper(method, 'fixture');
     expect(functionCode.declaration).toContain(

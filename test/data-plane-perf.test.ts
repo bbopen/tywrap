@@ -16,10 +16,8 @@
  *     Apple-Silicon numbers in docs/perf-baselines.md (which are indicative
  *     only and machine-dependent). CI baselines are stored/compared separately
  *     from the local doc.
- *       - chunk overhead vs a same-run HIGH-CEILING single-frame median: bounded
- *         by a CALIBRATED ratio (the plan's "~2.0x" strawman; the actual,
- *         inherent fragmentation cost on this machine is ~3.0x — see
- *         CHUNK_OVERHEAD_MAX_RATIO for the calibration rationale)
+ *       - chunk overhead vs a same-run high-ceiling single-frame median:
+ *         bounded by the existing 3.5x ratio (see CHUNK_OVERHEAD_MAX_RATIO)
  *       - small-call PooledTransport throughput: >= ~70% of a same-run baseline
  *       - existing Arrow ndarray/DataFrame + 100k-decode benches: <= ~2.0x of a
  *         same-run warm baseline
@@ -84,18 +82,10 @@ const RUNTIME_DIR = resolve(process.cwd(), 'runtime');
 // process, NOT absolute numbers — deliberately generous to absorb CI noise
 // while still catching order-of-magnitude regressions.
 //
-// CHUNK_OVERHEAD_MAX_RATIO is CALIBRATED, not the plan's strawman "~2.0x". On
-// this machine the chunked-vs-single-frame median ratio is a stable ~2.9-3.0x.
-// That overhead is INHERENT to fragmentation, not a regression: a 20 MiB
-// response splits into ~20 frames, each a separate json.dumps + stdout flush on
-// the Python side and a separate JSON.parse on the TS side (~20x the per-line
-// work vs one big line), PLUS the spec-mandated full-payload integrity re-passes
-// the reassembler must run (exact byte-count check + strict UTF-8 re-decode,
-// frame-codec.ts:337/349). None of that is avoidable without weakening the
-// framing contract. The budget is set at 3.5x: comfortably above the observed
-// ~3.0x (CI-noise headroom) yet far below the >=10x an accidental O(n^2)
-// reassembly would produce — which is the regression class this gate exists to
-// catch. (Plan #233 wrote the figure as "~1.8-2.0x"; the tilde means calibrate.)
+// Keep the existing 3.5x budget for this change. A chunked response needs
+// separate frame encoding, stdout flushes, and parsing. Reassembly checks its
+// byte count and UTF-8. GitHub runner measurements vary, so one passing run
+// does not establish a stable ratio after the Python ASCII fast path.
 const CHUNK_OVERHEAD_MAX_RATIO = 3.5; // chunked median <= 3.5x single-frame median (calibrated)
 const POOL_THROUGHPUT_MIN_RATIO = 0.7; // pooled throughput >= 70% of baseline
 const ARROW_BENCH_MAX_RATIO = 2.0; // warm Arrow bench median <= 2.0x baseline

@@ -139,6 +139,21 @@ class TestRoundTrip:
         assert {f['totalBytes'] for f in frames} == {utf8_byte_length(logical)}
         assert round_trip(logical, 256) == logical
 
+    def test_ascii_exact_and_partial_frame_boundaries(self) -> None:
+        logical = 'x' * 2049
+        frames = encode_frames(logical, id=1, stream='response', max_frame_bytes=1024)
+        assert [len(frame['data']) for frame in frames] == [1024, 1024, 1]
+        assert [frame['seq'] for frame in frames] == [0, 1, 2]
+        assert {frame['totalBytes'] for frame in frames} == {2049}
+        assert round_trip(logical, 1024) == logical
+
+    def test_non_ascii_near_frame_boundary(self) -> None:
+        logical = 'x' * 1023 + 'é' + 'y'
+        frames = encode_frames(logical, id=1, stream='response', max_frame_bytes=1024)
+        assert [frame['data'] for frame in frames] == ['x' * 1023, 'éy']
+        assert [utf8_byte_length(frame['data']) for frame in frames] == [1023, 3]
+        assert round_trip(logical, 1024) == logical
+
     def test_empty_payload_one_empty_frame(self) -> None:
         frames = encode_frames('', id=1, stream='response', max_frame_bytes=64)
         assert len(frames) == 1
