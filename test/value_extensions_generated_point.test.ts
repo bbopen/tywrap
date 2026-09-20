@@ -326,15 +326,15 @@ result.then(point => {
         await expect(generated.makePoint()).rejects.toThrow(/bridge lacks dataclassFieldsV2/);
         bridgeMeta = { valueCapabilities: ['dataclassFieldsV2'] };
         const valid = pythonPoint() as { fields: Record<string, unknown> };
-        for (const bad of [
-          { ...valid, fields: { x: 1 } },
-          { ...valid, fields: { x: 1, y: 2, z: 3 } },
-          { ...valid, fields: { x: '1', y: 2 } },
-          { ...valid, type: 'other.Point' },
-          { x: 1, y: 2 },
-        ]) {
+        for (const [bad, error] of [
+          [{ ...valid, fields: { x: 1 } }, /fields differ at result\.fields/],
+          [{ ...valid, fields: { x: 1, y: 2, z: 3 } }, /fields differ at result\.fields/],
+          [{ ...valid, fields: { x: '1', y: 2 } }, /expected safe integer at result\.fields\.x/],
+          [{ ...valid, type: 'other.Point' }, /invalid dataclass identity at result/],
+          [{ x: 1, y: 2 }, /fields differ at result/],
+        ] as const) {
           wire = bad;
-          await expect(generated.makePoint()).rejects.toThrow();
+          await expect(generated.makePoint()).rejects.toThrow(error);
         }
 
         setRuntimeBridge({
