@@ -559,7 +559,9 @@ If you enable caching again, first remove the old generated IR files from
 `.tywrap/cache` so generation extracts and caches the updated contracts.
 
 If you use `contractInput`, temporarily omit it to extract fresh contracts with
-the updated Python package. Review those contracts before restoring `contractInput`.
+the updated Python package. Review each new `<module>.contract.json` in your
+output directory. Replace the corresponding pinned input file with that contract,
+or point `contractInput` to the new file. Then restore the setting.
 The `--no-cache` option does not replace a pinned input contract.
 
 Regenerate wrappers with the upgraded generator. Python `int` return validators
