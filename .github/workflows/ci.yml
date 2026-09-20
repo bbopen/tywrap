@@ -123,6 +123,8 @@ jobs:
         run: npm run build
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
+      - name: Fetch locked NumPy asset
+        run: node scripts/fetch-pyodide-package.mjs numpy
       - name: Record pinned runtime evidence
         run: node scripts/print-pyodide-ci-evidence.mjs
       - name: Run real Pyodide and browser checks
