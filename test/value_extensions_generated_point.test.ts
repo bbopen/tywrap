@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -30,69 +30,48 @@ import {
 } from './prototypes/value_extensions.js';
 
 const pythonScript = join(process.cwd(), 'test', 'prototypes', 'value_extensions.py');
-const pointContract: PrototypeContract = {
-  kind: 'dataclass',
-  typeId: '__main__.Point',
-  fields: { x: { kind: 'safe-integer' }, y: { kind: 'safe-integer' } },
+const fixtureDir = join(process.cwd(), 'test', 'fixtures', 'python');
+const fixturePath = join(fixtureDir, 'value_contract_point.py');
+const pythonEnvironment = {
+  ...process.env,
+  PYTHONPATH: [
+    fixtureDir,
+    join(process.cwd(), 'tywrap_ir'),
+    join(process.cwd(), 'test', 'prototypes'),
+    process.env.PYTHONPATH,
+  ]
+    .filter(Boolean)
+    .join(delimiter),
 };
 
-const pointIr = {
-  ir_version: '0.4.0',
-  module: 'value_extensions',
-  functions: [
-    {
-      name: 'make_point',
-      qualname: 'value_extensions.make_point',
-      docstring: null,
-      parameters: [],
-      returns: 'Point',
-      is_async: false,
-      is_generator: false,
-      type_params: [],
-      method_kind: 'instance',
-      overloads: [],
-    },
-  ],
-  classes: [
-    {
-      name: 'Point',
-      qualname: 'value_extensions.Point',
-      docstring: null,
-      bases: ['object'],
-      methods: [],
-      typed_dict: false,
-      total: null,
-      fields: [
-        { name: 'x', kind: 'FIELD', annotation: 'int', default: false },
-        { name: 'y', kind: 'FIELD', annotation: 'int', default: false },
+function analyzedPointIr(): unknown {
+  return JSON.parse(
+    execFileSync(
+      PYTHON ?? 'python3',
+      [
+        '-c',
+        "from tywrap_ir.ir import emit_ir_json; print(emit_ir_json('value_contract_point', pretty=False))",
       ],
-      is_protocol: false,
-      is_namedtuple: false,
-      is_dataclass: true,
-      is_pydantic: false,
-      type_params: [],
-      accessors: [],
-    },
-  ],
-  constants: [],
-  type_aliases: [],
-  metadata: {},
-  warnings: [],
-};
+      { env: pythonEnvironment, encoding: 'utf8' }
+    )
+  ) as unknown;
+}
 
 function pointConversion(module: PythonModule): ValueConversionDescription {
+  const point = module.classes.find(cls => cls.name === 'Point' && cls.kind === 'dataclass');
+  if (!point) throw new Error('Analyzed Point dataclass is missing');
   return {
     revision: VALUE_CONTRACT_REVISION,
     resolve(request) {
       if (
         request.direction !== 'output' ||
         request.logicalType.kind !== 'custom' ||
-        request.logicalType.name !== 'Point'
+        request.logicalType.name.split('.').at(-1) !== point.name
       ) {
         return DEFAULT_VALUE_CONVERSION.resolve(request);
       }
       const fields: ValueContractField[] = [];
-      for (const property of module.classes[0]!.properties) {
+      for (const property of point.properties) {
         const resolved = DEFAULT_VALUE_CONVERSION.resolve({
           ...request,
           logicalType: property.type,
@@ -115,12 +94,17 @@ function pointConversion(module: PythonModule): ValueConversionDescription {
   };
 }
 
-function compilePoint(sourceIr: typeof pointIr, useAdapter: boolean, enableAdapter: boolean) {
-  const validated = validateIrContract(sourceIr, 'Point prototype IR');
+function compilePoint(sourceIr: unknown, useAdapter: boolean, enableAdapter: boolean) {
+  const validated = validateIrContract(sourceIr, 'analyzed Point IR');
   expect(validated.ok).toBe(true);
-  if (!validated.ok) throw new Error('Point prototype IR is invalid');
-  const module = transformIrToTsModel(validated.contract);
-  return compileContract(validated.contract, {
+  if (!validated.ok) throw new Error('Analyzed Point IR is invalid');
+  const canonical = transformIrToTsModel(validated.contract);
+  const module = {
+    ...canonical,
+    functions: canonical.functions.filter(func => func.name === 'make_point'),
+    classes: canonical.classes.filter(cls => cls.name === 'Point'),
+  };
+  const compiled = compileContract(validated.contract, {
     module,
     generator: new CodeGenerator(),
     conversion: useAdapter ? pointConversion(module) : DEFAULT_VALUE_CONVERSION,
@@ -130,53 +114,82 @@ function compilePoint(sourceIr: typeof pointIr, useAdapter: boolean, enableAdapt
         : capability
     ),
   });
+  return { compiled, ir: validated.contract };
 }
 
 function pythonPoint(): unknown {
   return JSON.parse(
-    execFileSync(PYTHON ?? 'python3', [pythonScript, 'encode-point'], {
-      input: JSON.stringify({ x: 1, y: 2 }),
-      encoding: 'utf8',
-    })
+    execFileSync(
+      PYTHON ?? 'python3',
+      [
+        '-c',
+        "import json; from value_contract_point import Point, make_point; from value_extensions import encode_dataclass; print(json.dumps(encode_dataclass(make_point(), Point), separators=(',', ':')))",
+      ],
+      {
+        env: pythonEnvironment,
+        encoding: 'utf8',
+      }
+    )
   ) as unknown;
 }
 
-describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
+function pointContractFrom(result: ReturnType<typeof compilePoint>): PrototypeContract {
+  const point = result.ir.classes.find(cls => cls.name === 'Point');
+  const resolution = result.compiled.callables.find(item => item.name === 'make_point')?.result
+    .resolution;
+  if (
+    !point ||
+    !resolution ||
+    resolution.status !== 'supported' ||
+    resolution.value.kind !== 'record'
+  ) {
+    throw new Error('Analyzed Point output did not resolve to a record');
+  }
+  const fields: Record<string, PrototypeContract> = {};
+  for (const field of resolution.value.fields) {
+    if (field.value.kind !== 'integer' || field.value.constraint !== 'safe-integer') {
+      throw new Error(`Unsupported Point field ${field.name}`);
+    }
+    fields[field.name] = { kind: 'safe-integer' };
+  }
+  return { kind: 'dataclass', typeId: point.qualname, fields };
+}
+
+describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript) || !existsSync(fixturePath))(
   'generated Point output prototype',
   () => {
     it('keeps defaults, missing capability, and unsupported fields unresolved', () => {
-      const defaultResult = compilePoint(pointIr, false, false);
+      const pointIr = analyzedPointIr();
+      const defaultResult = compilePoint(pointIr, false, false).compiled;
       expect(defaultResult.callables[0]?.result.resolution.status).toBe('unsupported');
       expect(defaultResult.generated.declaration).toContain('Promise<unknown>');
 
-      const missingCapability = compilePoint(pointIr, true, false);
+      const missingCapability = compilePoint(pointIr, true, false).compiled;
       expect(missingCapability.callables[0]?.result.resolution.status).toBe('unsupported');
 
-      const unsupportedIr = {
-        ...pointIr,
-        classes: [
-          {
-            ...pointIr.classes[0]!,
-            fields: [
-              { ...pointIr.classes[0]!.fields[0]!, annotation: 'object' },
-              pointIr.classes[0]!.fields[1]!,
-            ],
-          },
-        ],
+      const unsupportedIr = structuredClone(pointIr) as {
+        classes: Array<{ name: string; fields: Array<{ annotation: string }> }>;
       };
-      const unsupported = compilePoint(unsupportedIr, true, true);
+      const point = unsupportedIr.classes.find(cls => cls.name === 'Point');
+      if (!point) throw new Error('Analyzed Point dataclass is missing');
+      point.fields[0]!.annotation = 'object';
+      const unsupported = compilePoint(unsupportedIr, true, true).compiled;
       expect(unsupported.callables[0]?.result.resolution.status).toBe('unsupported');
       expect(unsupported.generated.declaration).toContain('Promise<unknown>');
     });
 
     it('executes a generated Promise<Point> through the Python prototype adapter', async () => {
-      const compiled = compilePoint(pointIr, true, true);
+      const pointIr = analyzedPointIr();
+      const result = compilePoint(pointIr, true, true);
+      const { compiled } = result;
+      const pointContract = pointContractFrom(result);
       expect(compiled.diagnostics.filter(item => item.severity === 'error')).toEqual([]);
       expect(compiled.callables[0]?.requiredCapabilities).toContain('dataclass-adapter');
       expect(compiled.generated.declaration).toContain('makePoint(): Promise<Point>');
       expect(compiled.generated.declaration).toContain(
         'export type Point = { x: number; y: number; }'
       );
+      expect(result.ir.classes.find(cls => cls.name === 'Point')?.fields[1]?.default).toBe(true);
       expect(compiled.generated.typescript).toContain('"constraint":"safe-integer"');
 
       const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-point-'));
@@ -229,7 +242,7 @@ result.then(point => {
             _kwargs?: Record<string, unknown>,
             validate?: (result: T) => void
           ): Promise<T> {
-            expect([moduleName, functionName]).toEqual(['value_extensions', 'make_point']);
+            expect([moduleName, functionName]).toEqual(['value_contract_point', 'make_point']);
             requireCapability(bridgeMeta, 'dataclassFieldsV2', 'fields-v2');
             const decoded = decodeExactResponse(wire, pointContract);
             validateDataclassOrigin(decoded, pointContract);
