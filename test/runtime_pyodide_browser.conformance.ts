@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
@@ -29,9 +29,14 @@ function contentType(path: string): string {
   return 'application/octet-stream';
 }
 
-async function run(command: string, args: string[], cwd: string): Promise<void> {
+async function run(command: string, args: string[], cwd: string): Promise<string> {
   try {
-    await execFileAsync(command, args, { cwd, timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+    const { stdout } = await execFileAsync(command, args, {
+      cwd,
+      timeout: 180_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return stdout;
   } catch (error: unknown) {
     const failure = error as Error & { stdout?: string; stderr?: string; code?: number | string };
     throw new Error(
@@ -42,7 +47,10 @@ async function run(command: string, args: string[], cwd: string): Promise<void> 
   }
 }
 
-function createStaticServer(compiled: string): Promise<{ server: Server; origin: string }> {
+function createStaticServer(
+  compiled: string,
+  installedPackage: string
+): Promise<{ server: Server; origin: string }> {
   return new Promise((resolveServer, reject) => {
     const server = createServer((request, response) => {
       const path = new URL(request.url ?? '/', 'http://localhost').pathname;
@@ -54,7 +62,7 @@ function createStaticServer(compiled: string): Promise<{ server: Server; origin:
       }
 
       const roots: Array<[prefix: string, root: string]> = [
-        ['/dist/', join(repoRoot, 'dist')],
+        ['/dist/', join(installedPackage, 'dist')],
         ['/pyodide/', join(repoRoot, 'node_modules', 'pyodide')],
         ['/generated/', compiled],
       ];
@@ -96,11 +104,36 @@ describe('real browser PyodideBridge', () => {
   it('loads the pinned local runtime and executes an actual generated wrapper in Chromium', async () => {
     const generated = join(tempRoot, 'source');
     const compiled = join(tempRoot, 'compiled');
-    symlinkSync(join(repoRoot, 'node_modules'), join(tempRoot, 'node_modules'), 'dir');
+    writeFileSync(
+      join(tempRoot, 'package.json'),
+      JSON.stringify({ name: 'tywrap-browser-smoke', private: true, type: 'module' }),
+      'utf8'
+    );
+    const packOutput = await run(
+      'npm',
+      ['pack', '--ignore-scripts', '--json', '--pack-destination', tempRoot],
+      repoRoot
+    );
+    const pack = JSON.parse(packOutput) as Array<{ filename?: string }>;
+    if (!pack[0]?.filename) throw new Error('npm pack returned no filename');
+    await run(
+      'npm',
+      [
+        'install',
+        '--ignore-scripts',
+        '--legacy-peer-deps',
+        '--no-audit',
+        '--no-fund',
+        join(tempRoot, pack[0].filename),
+      ],
+      tempRoot
+    );
+    const installedPackage = join(tempRoot, 'node_modules', 'tywrap');
+    expect(existsSync(join(installedPackage, 'dist', 'runtime', 'index.js'))).toBe(true);
     await run(
       process.execPath,
       [
-        join(repoRoot, 'dist', 'cli.js'),
+        join(installedPackage, 'dist', 'cli.js'),
         'generate',
         '--modules',
         'math',
@@ -109,12 +142,12 @@ describe('real browser PyodideBridge', () => {
         '--output-dir',
         generated,
       ],
-      repoRoot
+      tempRoot
     );
     await run(
       process.execPath,
       [
-        join(repoRoot, 'node_modules', 'typescript', 'lib', 'tsc.js'),
+        join(tempRoot, 'node_modules', 'typescript', 'lib', 'tsc.js'),
         '--ignoreConfig',
         '--target',
         'ES2022',
@@ -127,10 +160,10 @@ describe('real browser PyodideBridge', () => {
         compiled,
         join(generated, 'math.generated.ts'),
       ],
-      repoRoot
+      tempRoot
     );
 
-    const { server, origin } = await createStaticServer(compiled);
+    const { server, origin } = await createStaticServer(compiled, installedPackage);
     let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
     try {
       browser = await chromium.launch();
@@ -148,7 +181,7 @@ describe('real browser PyodideBridge', () => {
         try {
           return {
             result: await math.sqrt(81),
-            pythonVersion: await bridge.call('sys', 'version', []),
+            pythonVersion: await bridge.call('platform', 'python_version', []),
           };
         } finally {
           clearRuntimeBridge();

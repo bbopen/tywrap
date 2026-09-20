@@ -146,6 +146,9 @@ describe('isolated npm consumer', () => {
         'def safe_max() -> int:',
         '    return 2**53 - 1',
         '',
+        'def safe_min() -> int:',
+        '    return -(2**53 - 1)',
+        '',
         'def wrong_return() -> int:',
         '    return "not an integer"',
         '',
@@ -249,10 +252,9 @@ describe('isolated npm consumer', () => {
 import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 import * as fixture from './built/generated/consumer_fixture.generated.js';
 
-const [pythonPath, scriptPath, fixtures] = process.argv.slice(2);
+const [pythonPath, fixtures] = process.argv.slice(2);
 const bridge = new NodeBridge({
   pythonPath,
-  scriptPath,
   cwd: process.cwd(),
   env: {
     PYTHONNOUSERSITE: '1',
@@ -265,6 +267,7 @@ setRuntimeBridge({ call: bridge.call.bind(bridge), dispose: bridge.dispose.bind(
 try {
   const add = await fixture.add(2, 3);
   const safeMax = await fixture.safeMax();
+  const safeMin = await fixture.safeMin();
   let validationError;
   try {
     await fixture.wrongReturn();
@@ -274,7 +277,7 @@ try {
   if (validationError?.name !== 'BridgeValidationError') {
     throw new Error('wrong_return did not throw BridgeValidationError');
   }
-  process.stdout.write(JSON.stringify({ add, safeMax }));
+  process.stdout.write(JSON.stringify({ add, safeMax, safeMin }));
 } finally {
   clearRuntimeBridge();
   await bridge.dispose();
@@ -282,11 +285,15 @@ try {
 `,
       'utf8'
     );
-    const execution = await run(
-      process.execPath,
-      [runner, isolatedPython, join(installedPackage, 'runtime', 'python_bridge.py'), fixtures],
-      { cwd: consumer, env: isolatedPythonEnv, timeout: 60_000 }
-    );
-    expect(JSON.parse(execution)).toEqual({ add: 5, safeMax: Number.MAX_SAFE_INTEGER });
+    const execution = await run(process.execPath, [runner, isolatedPython, fixtures], {
+      cwd: consumer,
+      env: isolatedPythonEnv,
+      timeout: 60_000,
+    });
+    expect(JSON.parse(execution)).toEqual({
+      add: 5,
+      safeMax: Number.MAX_SAFE_INTEGER,
+      safeMin: Number.MIN_SAFE_INTEGER,
+    });
   }, 240_000);
 });
