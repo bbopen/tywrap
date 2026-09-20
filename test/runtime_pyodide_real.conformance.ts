@@ -50,7 +50,6 @@ describe('real PyodideBridge', () => {
         pythonModules: { tywrap_async_text: { typeHints: 'strict' } },
         pythonImportPath: [tempDir],
         output: { dir: join(tempDir, 'generated'), format: 'esm', declaration: true },
-        runtime: { pyodide: { indexURL } },
         performance: { caching: false, batching: false, compression: 'none' },
       } as never);
       expect(generated.failures).toEqual([]);
