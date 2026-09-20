@@ -83,8 +83,15 @@ describe('CodeGenerator', () => {
     expect(bound.typescript).toContain("__tywrapRuntimeProvider().call<number>('binding_fixture', 'Box.pong'");
     expect(bound.typescript).not.toContain('getRuntimeBridge');
     expect(bound.declaration).toBe(normal.declaration);
-    expect(() => gen.generateModuleBindingTemplate(module, false, 'provider;inject'))
-      .toThrow(/Invalid runtime getter identifier/);
+    for (const identifier of [
+      'ping', 'provider', 'createReturnValidator', '__tywrapReturnDefinitions',
+      '__args', 'for', 'super', 'this', 'arguments', 'undefined', 'provider;inject',
+    ]) {
+      expect(() => gen.generateModuleBindingTemplate(module, false, identifier))
+        .toThrow(/Invalid runtime getter identifier/);
+    }
+    expect(gen.generateModuleBindingTemplate(module, false, '__tywrapRuntimeProvider1').typescript)
+      .toContain('__tywrapRuntimeProvider1().call');
   });
 
   it('emits a null union member for X | None returns, not an accept-everything any', () => {

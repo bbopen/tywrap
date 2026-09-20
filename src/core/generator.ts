@@ -147,9 +147,52 @@ export class CodeGenerator {
   }
 
   private assertRuntimeGetterIdentifier(identifier: string): void {
-    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(identifier) ||
-        this.reservedTsIdentifiers.has(identifier)) {
+    if (identifier !== 'getRuntimeBridge' &&
+        !/^__tywrapRuntimeProvider(?:[1-9][0-9]*)?$/.test(identifier)) {
       throw new Error(`Invalid runtime getter identifier: ${identifier}`);
+    }
+  }
+
+  private assertBindingGetterAvailable(module: PythonModule, identifier: string): void {
+    const occupied = new Set([
+      'getRuntimeBridge',
+      'createReturnValidator',
+      'selectOverloadReturnValidator',
+      'ReturnSchema',
+      '__tywrapReturnDefinitions',
+      '__tywrapFloat16Value',
+      '__tywrapFloat16Tensor',
+      '__tywrapCreateApi',
+      '__args',
+      '__kwargs',
+      '__candidate',
+      '__varargs',
+      '__positionalOnly',
+      '__requiredKwOnly',
+      '__missing',
+      '__selectedReturnValidator',
+      'kwargs',
+      'key',
+    ]);
+    const includeCallable = (func: PythonFunction, owner = ''): void => {
+      occupied.add(this.escapeIdentifier(func.name));
+      occupied.add(`__validate${owner}${this.escapeIdentifier(func.name, { preserveCase: true })}Result`);
+      for (const parameter of [
+        ...func.parameters,
+        ...(func.overloads ?? []).flatMap(overload => overload.parameters),
+      ]) {
+        occupied.add(this.escapeIdentifier(parameter.name));
+      }
+    };
+    module.functions.forEach(func => includeCallable(func));
+    for (const cls of module.classes) {
+      occupied.add(this.escapeIdentifier(cls.name));
+      const owner = this.escapeIdentifier(cls.name, { preserveCase: true });
+      cls.methods.forEach(method => includeCallable(method, owner));
+    }
+    (module.typeAliases ?? []).forEach(alias => occupied.add(this.escapeIdentifier(alias.name)));
+    if (occupied.has(identifier)) {
+      throw new Error(`Runtime getter identifier ${identifier} conflicts with a generated binding`);
     }
   }
 
@@ -1368,6 +1411,8 @@ ${migrationNote}${declarationMethodsSection}
     if (runtimeGetterIdentifier === 'getRuntimeBridge') {
       throw new Error('Binding templates require a distinct runtime getter');
     }
+    this.assertRuntimeGetterIdentifier(runtimeGetterIdentifier);
+    this.assertBindingGetterAvailable(module, runtimeGetterIdentifier);
     return this.generateModuleWithGetter(module, annotatedJSDoc, runtimeGetterIdentifier, false);
   }
 
