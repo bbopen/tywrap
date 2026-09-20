@@ -175,16 +175,20 @@ describe('isolated npm consumer', () => {
       `${JSON.stringify({ name: 'tywrap-consumer-check', private: true, type: 'module' }, null, 2)}\n`,
       'utf8'
     );
-    await run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], {
-      cwd: consumer,
-      timeout: 180_000,
-    });
+    await run(
+      'npm',
+      ['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball, 'apache-arrow@21.1.0'],
+      { cwd: consumer, timeout: 180_000 }
+    );
 
     const installedPackage = realpathSync(join(consumer, 'node_modules', 'tywrap'));
     expect(isInside(installedPackage, consumer)).toBe(true);
     expect(isInside(installedPackage, repoRoot)).toBe(false);
     expect(existsSync(join(installedPackage, 'dist', 'cli.js'))).toBe(true);
     expect(existsSync(join(installedPackage, 'runtime', 'python_bridge.py'))).toBe(true);
+    expect(isInside(realpathSync(join(consumer, 'node_modules', 'apache-arrow')), consumer)).toBe(
+      true
+    );
 
     const isolatedPythonEnv: NodeJS.ProcessEnv = {
       ...process.env,
