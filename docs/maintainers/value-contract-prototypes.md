@@ -11,6 +11,10 @@ Python `int` parameter and result to TypeScript `bigint`. Safe integers use the
 same type. Python `bool` remains `boolean`. Calls without the option keep the
 safe `number` rule.
 
+The current value-contract revision represents Python `int` only as a safe JSON
+`number`. The compiler and return validator follow that rule. This prototype
+does not generate `bigint` wrappers; that needs a deliberate contract extension.
+
 The proposed generated wrapper must require `exactIntegerDecimalV2` in the
 bridge's `meta.valueCapabilities`. It must send
 `params.valuePolicy.integer = 'bigint-v2'` on each call. A new bridge must
