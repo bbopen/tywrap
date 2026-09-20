@@ -358,6 +358,28 @@ function resolveNdarray(type: PythonType): ValueResolution {
   };
 }
 
+function resolveTorchFloat16(): ValueResolution {
+  const ndarray = resolveNdarray({
+    kind: 'generic',
+    name: 'ndarray',
+    module: 'numpy',
+    typeArgs: [{ kind: 'custom', name: 'float16', module: 'numpy' }],
+  });
+  if (ndarray.status !== 'supported' || ndarray.value.kind !== 'ndarray-float16') {
+    return ndarray;
+  }
+  return {
+    status: 'supported',
+    value: {
+      kind: 'torch-float16',
+      wire: 'ndarray-envelope',
+      decodedAs: 'tensor-record',
+      dtype: 'torch.float16',
+      value: ndarray.value,
+    },
+  };
+}
+
 /** The conversion set that #335 may use with the frozen value-contract revision. */
 export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
   revision: VALUE_CONTRACT_REVISION,
@@ -467,25 +489,7 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
           ) {
             return { status: 'unresolved', annotation: annotationName(type) };
           }
-          const ndarray = resolveNdarray({
-            kind: 'generic',
-            name: 'ndarray',
-            module: 'numpy',
-            typeArgs: [{ kind: 'custom', name: 'float16', module: 'numpy' }],
-          });
-          if (ndarray.status !== 'supported' || ndarray.value.kind !== 'ndarray-float16') {
-            return ndarray;
-          }
-          return {
-            status: 'supported',
-            value: {
-              kind: 'torch-float16',
-              wire: 'ndarray-envelope',
-              decodedAs: 'tensor-record',
-              dtype: 'torch.float16',
-              value: ndarray.value,
-            },
-          };
+          return resolveTorchFloat16();
         }
         if (['list', 'List', 'Sequence', 'Iterable', 'set', 'frozenset'].includes(leaf ?? '')) {
           return resolveSequence(
@@ -509,6 +513,9 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
       }
       case 'custom': {
         const leaf = leafName(type);
+        if (type.name === 'HalfTensor' && type.module === 'torch') {
+          return resolveTorchFloat16();
+        }
         if (leaf === 'ndarray' || leaf === 'NDArray') {
           return resolveNdarray(type);
         }
@@ -592,7 +599,7 @@ function diagnosticForResolution(
       severity: 'warning',
       code: 'conversion-unresolved',
       path,
-      message: `${path}: no value conversion is defined for ${resolution.annotation}; the generated type keeps its existing explicit fallback.`,
+      message: `${path}: no value conversion is defined for ${resolution.annotation}; the generated result type is unknown.`,
     };
   }
   return {
@@ -603,36 +610,8 @@ function diagnosticForResolution(
   };
 }
 
-function containsUnconstrainedObject(type: PythonType): boolean {
-  switch (type.kind) {
-    case 'custom':
-      return type.name === 'object' && (type.module === undefined || type.module === 'builtins');
-    case 'collection':
-      return type.itemTypes.some(containsUnconstrainedObject);
-    case 'generic':
-      return type.typeArgs.some(containsUnconstrainedObject);
-    case 'union':
-      return type.types.some(containsUnconstrainedObject);
-    case 'optional':
-    case 'final':
-    case 'classvar':
-    case 'unpack':
-      return containsUnconstrainedObject(type.type);
-    case 'annotated':
-      return containsUnconstrainedObject(type.base);
-    default:
-      return false;
-  }
-}
-
 function outputType(value: ResolvedCallableValue): PythonType {
-  if (
-    value.resolution.status === 'unsupported' ||
-    (value.resolution.status === 'unresolved' && containsUnconstrainedObject(value.logicalType))
-  ) {
-    return UNKNOWN_TYPE;
-  }
-  return value.logicalType;
+  return value.resolution.status === 'supported' ? value.logicalType : UNKNOWN_TYPE;
 }
 
 function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {

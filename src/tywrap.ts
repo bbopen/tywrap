@@ -496,7 +496,8 @@ export async function generate(
           candidate === outerName &&
           ((resolution.value.kind === 'ndarray-float16' &&
             (candidate === 'numpy.ndarray' || candidate === 'numpy.typing.NDArray')) ||
-            (resolution.value.kind === 'torch-float16' && candidate === 'torch.Tensor'))
+            (resolution.value.kind === 'torch-float16' &&
+              (candidate === 'torch.Tensor' || candidate === 'torch.HalfTensor')))
         ) {
           continue;
         }

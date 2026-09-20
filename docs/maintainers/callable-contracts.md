@@ -41,6 +41,9 @@ from the TypeScript type.
 The compiler requires an explicit float16 dtype. An untyped ndarray or Torch
 tensor stays unresolved.
 
+For an evaluated PyTorch annotation, use `torch.HalfTensor`. The compiler
+accepts this exact class and leaves other Torch tensor classes unresolved.
+
 NumPy can spell `NDArray[np.float16]` as
 `numpy.ndarray[tuple[Any, ...], numpy.dtype[numpy.float16]]`. The compiler reads
 the dtype argument, not the shape wildcard. Only a supported scientific result
@@ -71,11 +74,10 @@ warning, so `--fail-on-warn` rejects strict builds.
   capability when enabled.
 - Non-string record keys require an explicit conversion.
 
-Unresolved annotations create warning diagnostics. They retain the generator's
-current fallback and do not claim a supported conversion. An unresolved `object`
-output, including an output that contains `object`, emits `unknown`. Python
-`object` can hold a primitive value, so a TypeScript `object` return would be
-too narrow.
+Unresolved annotations create warning diagnostics. Their result type is
+`unknown`, including an output that contains `object` or a type variable. Python
+`object` can hold a primitive value. A type variable has no validated conversion
+to the decoded result. Neither annotation justifies a precise TypeScript return.
 
 IR overload signatures stay separate from the implementation signature. The
 extractor collects type variables from overload annotations. Generated

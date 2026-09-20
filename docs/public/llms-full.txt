@@ -3077,6 +3077,12 @@ When `output.declaration` is enabled, `generate()` writes matching
 code. Simple `TypeVar` and callable `ParamSpec` declarations are preserved when
 tywrap can represent them safely.
 
+Unresolved return annotations now emit `Promise<unknown>` and a located warning.
+This includes `TypeVar` and `ParamSpec` results without a supported value
+conversion. Input generics remain in the declaration. Earlier versions could
+emit `Promise<T>` without validating the decoded value as `T`; callers must
+narrow the result or use a supported concrete overload.
+
 `generate()` returns:
 
 ```ts

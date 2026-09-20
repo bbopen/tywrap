@@ -880,6 +880,26 @@ describe('compileContract', () => {
     ).toMatchObject({ status: 'unresolved' });
   });
 
+  it('accepts only the evaluated torch.HalfTensor class as an exact float16 annotation', () => {
+    const resolve = (annotation: string) =>
+      DEFAULT_VALUE_CONVERSION.resolve({
+        direction: 'output',
+        path: '$.functions[0].returns',
+        logicalType: parseAnnotationToPythonType(annotation),
+      });
+    expect(resolve('torch.HalfTensor')).toMatchObject({
+      status: 'supported',
+      value: {
+        kind: 'torch-float16',
+        dtype: 'torch.float16',
+        value: { kind: 'ndarray-float16', dtype: 'float16' },
+      },
+    });
+    expect(resolve('torch.FloatTensor')).toMatchObject({ status: 'unresolved' });
+    expect(resolve('foreign.HalfTensor')).toMatchObject({ status: 'unresolved' });
+    expect(resolve('HalfTensor')).toMatchObject({ status: 'unresolved' });
+  });
+
   it('rejects a Torch float16 response with a mismatched nested dtype', async () => {
     const source = rawIr.functions[1]!;
     const ir = validateIrContract(
@@ -1141,6 +1161,120 @@ describe('compileContract', () => {
         objectValue: () => Promise<unknown>;
       };
       await expect(generated.objectValue()).resolves.toBe('a valid Python object');
+    } finally {
+      clearRuntimeBridge();
+      await bridge.dispose();
+      await new Promise<void>((resolve, reject) =>
+        server.close(error => (error ? reject(error) : resolve()))
+      );
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps generic inputs but uses unknown for unvalidated type-variable results', async () => {
+    const source = rawIr.functions[1]!;
+    const typeVar = {
+      name: 'T',
+      kind: 'typevar' as const,
+      bound: null,
+      constraints: null,
+      variance: null,
+    };
+    const generic = {
+      ...source,
+      name: 'generic_identity',
+      qualname: 'fixture.generic_identity',
+      parameters: [
+        { name: 'value', kind: 'POSITIONAL_OR_KEYWORD', annotation: '~T', default: false },
+      ],
+      returns: '~T',
+      type_params: [typeVar],
+    };
+    const nested = {
+      ...generic,
+      name: 'generic_nested',
+      qualname: 'fixture.generic_nested',
+      parameters: [
+        { name: 'value', kind: 'POSITIONAL_OR_KEYWORD', annotation: 'list[~T]', default: false },
+      ],
+      returns: 'list[~T]',
+    };
+    const paramspec = {
+      ...generic,
+      name: 'paramspec_apply',
+      qualname: 'fixture.paramspec_apply',
+      parameters: [
+        {
+          name: 'callback',
+          kind: 'POSITIONAL_OR_KEYWORD',
+          annotation: 'typing.Callable[~P, ~T]',
+          default: false,
+        },
+      ],
+      type_params: [
+        { name: 'P', kind: 'paramspec' as const, bound: null, constraints: null, variance: null },
+        typeVar,
+      ],
+    };
+    const ir = validateIrContract(
+      { ...rawIr, functions: [generic, nested, paramspec], classes: [] },
+      'generic result contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        classes: [],
+        functions: [generic, nested, paramspec].map(func => ({
+          ...moduleModel.functions[1]!,
+          name: func.name,
+        })),
+      },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'conversion-unresolved', path: '$.functions[0].returns' }),
+        expect.objectContaining({ code: 'conversion-unresolved', path: '$.functions[1].returns' }),
+        expect.objectContaining({ code: 'conversion-unresolved', path: '$.functions[2].returns' }),
+      ])
+    );
+    expect(compiled.generated.declaration).toContain(
+      'genericIdentity<T>(value: T): Promise<unknown>'
+    );
+    expect(compiled.generated.declaration).toContain(
+      'genericNested<T>(value: T[]): Promise<unknown>'
+    );
+    expect(compiled.generated.declaration).toMatch(
+      /paramspecApply<[^>]*>\([^\n]*\): Promise<unknown>/
+    );
+
+    let requestId = 0;
+    const server = createServer((request, response) => {
+      request.resume();
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ id: ++requestId, result: 'not the numeric input' }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as AddressInfo;
+    const bridge = new HttpBridge({ baseURL: `http://127.0.0.1:${address.port}` });
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-generic-proof-'));
+    try {
+      const outputPath = join(temporary, 'fixture.generated.mjs');
+      const javascript = ts.transpileModule(compiled.generated.typescript, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(outputPath, javascript, 'utf8');
+      setRuntimeBridge(bridge);
+      const generated = (await import(pathToFileURL(outputPath).href)) as {
+        genericIdentity: <T>(value: T) => Promise<unknown>;
+      };
+      await expect(generated.genericIdentity(42)).resolves.toBe('not the numeric input');
     } finally {
       clearRuntimeBridge();
       await bridge.dispose();
