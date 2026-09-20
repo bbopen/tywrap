@@ -366,6 +366,10 @@ def _main() -> None:
         )
     elif action == 'encode-integer':
         result = encode_exact_integers(payload)
+    elif action == 'encode-integer-limited':
+        result = encode_exact_integers(
+            payload['value'], max_payload_bytes=payload['limit']
+        )
     elif action == 'roundtrip-single-integer':
         require_capability(
             payload['meta'], 'exactIntegerDecimalV2', payload['policy']
@@ -377,7 +381,10 @@ def _main() -> None:
         result = encode_dataclass(Point(**payload), Point)
     else:
         raise PrototypeError(f'unknown action {action!r}')
-    print(json.dumps(result, allow_nan=False, ensure_ascii=False, separators=(',', ':')))
+    wire = json.dumps(
+        result, allow_nan=False, ensure_ascii=False, separators=(',', ':')
+    ).encode('utf-8')
+    sys.stdout.buffer.write(wire + b'\n')
 
 
 if __name__ == '__main__':
