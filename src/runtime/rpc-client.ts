@@ -448,7 +448,12 @@ export class RpcClient extends DisposableBase {
       validate
         ? {
             validate: result => {
-              validate(result, provenance);
+              // Keep the original call shape for validators that accept one argument.
+              if (validate.length > 1) {
+                validate(result, provenance);
+              } else {
+                validate(result);
+              }
               return result;
             },
           }
