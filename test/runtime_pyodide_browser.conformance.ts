@@ -30,7 +30,16 @@ function contentType(path: string): string {
 }
 
 async function run(command: string, args: string[], cwd: string): Promise<void> {
-  await execFileAsync(command, args, { cwd, timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+  try {
+    await execFileAsync(command, args, { cwd, timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+  } catch (error: unknown) {
+    const failure = error as Error & { stdout?: string; stderr?: string; code?: number | string };
+    throw new Error(
+      `${command} ${args.join(' ')} failed (${String(failure.code ?? 'unknown')}):\n` +
+        `stdout:\n${failure.stdout ?? ''}\nstderr:\n${failure.stderr ?? ''}`,
+      { cause: error }
+    );
+  }
 }
 
 function createStaticServer(compiled: string): Promise<{ server: Server; origin: string }> {
