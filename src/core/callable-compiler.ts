@@ -17,7 +17,7 @@ import type {
   PythonType,
 } from '../types/index.js';
 import type { CodeGenerator } from './generator.js';
-import type { ValidatedIrContract } from './ir-contract.js';
+import type { IrFunction, ValidatedIrContract } from './ir-contract.js';
 
 export type CallableDirection = 'input' | 'output';
 
@@ -39,6 +39,8 @@ export interface ValueConversionRequest {
   direction: CallableDirection;
   logicalType: PythonType;
   path: string;
+  /** Internal recursion counter. Revision 2 rejects contracts deeper than 64 nodes. */
+  depth?: number;
 }
 
 export interface SupportedValueResolution {
@@ -79,7 +81,8 @@ export interface CallableCompilationDiagnostic {
     | 'conversion-unsupported'
     | 'capability-unavailable'
     | 'coroutine-unsupported'
-    | 'dataclass-unsupported';
+    | 'dataclass-unsupported'
+    | 'overload-ambiguous';
   path: string;
   message: string;
 }
@@ -96,6 +99,7 @@ export interface ResolvedCallable {
   path: string;
   parameters: readonly ResolvedCallableValue[];
   result: ResolvedCallableValue;
+  overloadParameters: readonly (readonly ResolvedCallableValue[])[];
   overloadResults: readonly ResolvedCallableValue[];
   requiredCapabilities: readonly CallableCapability[];
 }
@@ -191,7 +195,12 @@ function resolveSequence(
   request: ValueConversionRequest,
   conversion: ValueConversionDescription
 ): ValueResolution {
-  const child = conversion.resolve({ ...request, logicalType: item, path: `${request.path}[]` });
+  const child = conversion.resolve({
+    ...request,
+    logicalType: item,
+    path: `${request.path}[]`,
+    depth: (request.depth ?? 0) + 1,
+  });
   if (child.status !== 'supported') {
     return child;
   }
@@ -206,7 +215,12 @@ function resolveRecord(
   request: ValueConversionRequest,
   conversion: ValueConversionDescription
 ): ValueResolution {
-  const child = conversion.resolve({ ...request, logicalType: valueType, path: `${request.path}{value}` });
+  const child = conversion.resolve({
+    ...request,
+    logicalType: valueType,
+    path: `${request.path}{value}`,
+    depth: (request.depth ?? 0) + 1,
+  });
   if (child.status !== 'supported') {
     return child;
   }
@@ -231,15 +245,54 @@ function resolveTuple(
     return {
       status: 'supported',
       value: {
-        kind: 'sequence',
+        kind: 'tuple',
         wire: 'json',
         decodedAs: 'array',
-        item: { kind: 'null', wire: 'json', decodedAs: 'null' },
+        items: [],
       },
     };
   }
+  if (items.length === 2 && leafName(items[1]!) === '...') {
+    return resolveSequence(items[0]!, request, conversion);
+  }
   const entries = items.map((item, index) =>
-    conversion.resolve({ ...request, logicalType: item, path: `${request.path}[${index}]` })
+    conversion.resolve({
+      ...request,
+      logicalType: item,
+      path: `${request.path}[${index}]`,
+      depth: (request.depth ?? 0) + 1,
+    })
+  );
+  const childFailure = firstUnresolvedChild(entries);
+  if (childFailure) {
+    return childFailure;
+  }
+  const values = entries as SupportedValueResolution[];
+  return {
+    status: 'supported',
+    value: { kind: 'tuple', wire: 'json', decodedAs: 'array', items: values.map(entry => entry.value) },
+  };
+}
+
+function resolveUnion(
+  options: readonly PythonType[],
+  request: ValueConversionRequest,
+  conversion: ValueConversionDescription
+): ValueResolution {
+  if (options.length < 2 || options.length > 32) {
+    return {
+      status: 'unsupported',
+      reason: 'Revision 2 accepts unions with two to 32 alternatives.',
+      guidance: 'Split a larger union or provide an explicit tagged record adapter.',
+    };
+  }
+  const entries = options.map((option, index) =>
+    conversion.resolve({
+      ...request,
+      logicalType: option,
+      path: `${request.path}.options[${index}]`,
+      depth: (request.depth ?? 0) + 1,
+    })
   );
   const childFailure = firstUnresolvedChild(entries);
   if (childFailure) {
@@ -247,16 +300,22 @@ function resolveTuple(
   }
   const values = entries as SupportedValueResolution[];
   const first = values[0]?.value;
-  if (!first || values.some(entry => JSON.stringify(entry.value) !== JSON.stringify(first))) {
+  const second = values[1]?.value;
+  if (!first || !second) {
     return {
       status: 'unsupported',
-      reason: 'The frozen value contract does not represent a heterogeneous tuple.',
-      guidance: 'Return a TypedDict or a homogeneous list until tuple conversion is specified.',
+      reason: 'Revision 2 requires at least two supported union alternatives.',
+      guidance: 'Provide two explicit value alternatives.',
     };
   }
   return {
     status: 'supported',
-    value: { kind: 'sequence', wire: 'json', decodedAs: 'array', item: first },
+    value: {
+      kind: 'union',
+      wire: 'selected-option',
+      decodedAs: 'selected-option',
+      options: [first, second, ...values.slice(2).map(entry => entry.value)],
+    },
   };
 }
 
@@ -264,10 +323,10 @@ function resolveNdarray(type: PythonType): ValueResolution {
   const typeArgument = type.kind === 'generic' ? type.typeArgs[0] : undefined;
   const dtype = typeArgument ? leafName(typeArgument) : undefined;
   const normalizedDtype = dtype?.toLowerCase();
-  if (normalizedDtype && normalizedDtype !== 'float16') {
+  if (normalizedDtype !== 'float16') {
     return {
       status: 'unresolved',
-      annotation: `${annotationName(type)}[${dtype}]`,
+      annotation: annotationName(type),
     };
   }
   return {
@@ -287,6 +346,13 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
   revision: VALUE_CONTRACT_REVISION,
   resolve(request): ValueResolution {
     const { logicalType: type } = request;
+    if ((request.depth ?? 0) > 64) {
+      return {
+        status: 'unsupported',
+        reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+        guidance: 'Flatten the value or provide a bounded adapter.',
+      };
+    }
     switch (type.kind) {
       case 'primitive':
         if (type.name === 'None') {
@@ -328,6 +394,14 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
       case 'final':
       case 'classvar':
         return DEFAULT_VALUE_CONVERSION.resolve({ ...request, logicalType: type.type });
+      case 'optional':
+        return resolveUnion(
+          [type.type, { kind: 'primitive', name: 'None' }],
+          request,
+          DEFAULT_VALUE_CONVERSION
+        );
+      case 'union':
+        return resolveUnion(type.types, request, DEFAULT_VALUE_CONVERSION);
       case 'collection':
         if (type.name === 'dict') {
           const key = type.itemTypes[0];
@@ -353,6 +427,26 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
         if (leaf === 'NDArray' || leaf === 'ndarray') {
           return resolveNdarray(type);
         }
+        if (leaf === 'Tensor' && type.module?.startsWith('torch')) {
+          const ndarray = resolveNdarray({
+            kind: 'generic',
+            name: 'ndarray',
+            module: 'numpy',
+            typeArgs: type.typeArgs,
+          });
+          if (ndarray.status !== 'supported' || ndarray.value.kind !== 'ndarray-float16') {
+            return ndarray;
+          }
+          return {
+            status: 'supported',
+            value: {
+              kind: 'torch-float16',
+              wire: 'ndarray-envelope',
+              decodedAs: 'tensor-record',
+              value: ndarray.value,
+            },
+          };
+        }
         if (['list', 'List', 'Sequence', 'Iterable', 'set', 'frozenset'].includes(leaf ?? '')) {
           return resolveSequence(type.typeArgs[0] ?? UNKNOWN_TYPE, request, DEFAULT_VALUE_CONVERSION);
         }
@@ -374,21 +468,6 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
         if (leaf === 'ndarray' || leaf === 'NDArray') {
           return resolveNdarray(type);
         }
-        if (leaf === 'Tensor' && type.module?.startsWith('torch')) {
-          const ndarray = resolveNdarray({ kind: 'custom', name: 'ndarray', module: 'numpy' });
-          if (ndarray.status !== 'supported' || ndarray.value.kind !== 'ndarray-float16') {
-            return ndarray;
-          }
-          return {
-            status: 'supported',
-            value: {
-              kind: 'torch-float16',
-              wire: 'ndarray-envelope',
-              decodedAs: 'tensor-record',
-              value: ndarray.value,
-            },
-          };
-        }
         return { status: 'unresolved', annotation: annotationName(type) };
       }
       default:
@@ -398,14 +477,35 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
 };
 
 function capabilityNamesFor(value: ValueContract): CallableCapability[] {
-  const names: CallableCapability[] = ['value-rpc', 'return-validation'];
-  if (value.kind === 'ndarray-float16') {
-    names.push('scientific-ndarray');
-  }
-  if (value.kind === 'torch-float16') {
-    names.push('scientific-torch', 'scientific-ndarray');
-  }
-  return names;
+  const names = new Set<CallableCapability>(['value-rpc', 'return-validation']);
+  const collect = (current: ValueContract): void => {
+    switch (current.kind) {
+      case 'sequence':
+        collect(current.item);
+        break;
+      case 'tuple':
+        current.items.forEach(collect);
+        break;
+      case 'union':
+        current.options.forEach(collect);
+        break;
+      case 'record':
+        current.fields.forEach(field => collect(field.value));
+        if (current.additionalValues) {
+          collect(current.additionalValues);
+        }
+        break;
+      case 'ndarray-float16':
+        names.add('scientific-ndarray');
+        break;
+      case 'torch-float16':
+        names.add('scientific-torch');
+        names.add('scientific-ndarray');
+        break;
+    }
+  };
+  collect(value);
+  return [...names];
 }
 
 function containsNamedType(type: PythonType, names: ReadonlySet<string>): boolean {
@@ -459,6 +559,47 @@ function diagnosticForResolution(
   };
 }
 
+function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {
+  if (left.kind === 'union') {
+    return left.options.some(option => valuesMayOverlap(option, right));
+  }
+  if (right.kind === 'union') {
+    return right.options.some(option => valuesMayOverlap(left, option));
+  }
+  if (
+    (left.kind === 'integer' && right.kind === 'float') ||
+    (left.kind === 'float' && right.kind === 'integer')
+  ) {
+    return true;
+  }
+  if (left.kind !== right.kind) {
+    return false;
+  }
+  if (left.kind === 'tuple' && right.kind === 'tuple') {
+    return left.items.length === right.items.length &&
+      left.items.every((item, index) => valuesMayOverlap(item, right.items[index]!));
+  }
+  if (left.kind === 'sequence' && right.kind === 'sequence') {
+    return valuesMayOverlap(left.item, right.item);
+  }
+  return true;
+}
+
+function overloadsMayOverlap(
+  left: readonly ResolvedCallableValue[],
+  right: readonly ResolvedCallableValue[]
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((value, index) => {
+    const other = right[index];
+    return value.resolution.status !== 'supported' ||
+      other?.resolution.status !== 'supported' ||
+      valuesMayOverlap(value.resolution.value, other.resolution.value);
+  });
+}
+
 function resolveCallable(
   func: PythonFunction,
   path: string,
@@ -467,94 +608,103 @@ function resolveCallable(
   dataclassNames: ReadonlySet<string>,
   diagnostics: CallableCompilationDiagnostic[]
 ): { function: PythonFunction; callable: ResolvedCallable } {
-  const parameters = func.parameters.map((parameter, index) => ({
-    direction: 'input' as const,
-    path: `${path}.parameters[${index}]`,
-    logicalType: parameter.type,
-    resolution: conversion.resolve({
-      direction: 'input',
-      logicalType: parameter.type,
-      path: `${path}.parameters[${index}]`,
-    }),
-  }));
-  const result: ResolvedCallableValue = {
-    direction: 'output',
-    path: `${path}.returns`,
-    logicalType: func.returnType,
-    resolution: conversion.resolve({ direction: 'output', logicalType: func.returnType, path: `${path}.returns` }),
-  };
-  const overloadResults = (func.overloads ?? []).map((overload, index) => ({
-    direction: 'output' as const,
-    path: `${path}.overloads[${index}].returns`,
-    logicalType: overload.returnType,
-    resolution: conversion.resolve({
-      direction: 'output',
-      logicalType: overload.returnType,
-      path: `${path}.overloads[${index}].returns`,
-    }),
-  }));
+  const resolveValue = (
+    direction: CallableDirection,
+    logicalType: PythonType,
+    valuePath: string
+  ): ResolvedCallableValue => ({
+    direction,
+    path: valuePath,
+    logicalType,
+    resolution: conversion.resolve({ direction, logicalType, path: valuePath }),
+  });
+  const parameters = func.parameters.map((parameter, index) =>
+    resolveValue('input', parameter.type, `${path}.parameters[${index}]`)
+  );
+  const result = resolveValue('output', func.returnType, `${path}.returns`);
+  const overloadParameters = (func.overloads ?? []).map((overload, overloadIndex) =>
+    overload.parameters.map((parameter, parameterIndex) =>
+      resolveValue(
+        'input',
+        parameter.type,
+        `${path}.overloads[${overloadIndex}].parameters[${parameterIndex}]`
+      )
+    )
+  );
+  const overloadResults = (func.overloads ?? []).map((overload, index) =>
+    resolveValue('output', overload.returnType, `${path}.overloads[${index}].returns`)
+  );
+  const values = [...parameters, result, ...overloadParameters.flat(), ...overloadResults];
   const requiredCapabilities = new Set<CallableCapability>();
-  for (const value of [...parameters, result, ...overloadResults]) {
+  for (const value of values) {
     const diagnostic = diagnosticForResolution(value.resolution, value.path);
     if (diagnostic) {
       diagnostics.push(diagnostic);
     }
-    if (value.resolution.status === 'supported') {
-      capabilityNamesFor(value.resolution.value).forEach(capability => requiredCapabilities.add(capability));
+  }
+  for (let index = 0; index < overloadParameters.length; index += 1) {
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      if (overloadsMayOverlap(overloadParameters[earlier]!, overloadParameters[index]!)) {
+        diagnostics.push({
+          severity: 'warning',
+          code: 'overload-ambiguous',
+          path: `${path}.overloads[${index}]`,
+          message: `${path}.overloads[${index}]: input values may also match overload ${earlier}. Runtime return validation uses the implementation result for ambiguous calls.`,
+        });
+      }
     }
   }
-
-  const forceUnsupportedOutput = (
-    resolution: ValueResolution,
-    logicalType: PythonType,
-    outputPath: string
-  ): ValueResolution => {
-    if (containsNamedType(logicalType, dataclassNames)) {
+  for (const value of values) {
+    if (containsNamedType(value.logicalType, dataclassNames)) {
       diagnostics.push({
         severity: 'error',
         code: 'dataclass-unsupported',
-        path: outputPath,
-        message: `${outputPath}: a dataclass annotation has no value adapter. Use a TypedDict or an explicit record adapter until #339.`,
+        path: value.path,
+        message: `${value.path}: a dataclass annotation has no value adapter. Use a TypedDict or an explicit record adapter until #339.`,
       });
-      return {
+      value.resolution = {
         status: 'unsupported',
         reason: 'No dataclass value adapter is available.',
         guidance: 'Use a TypedDict or an explicit record adapter.',
       };
     }
-    if (func.isAsync && capabilities.get('coroutine-execution')?.available !== true) {
+    if (
+      value.direction === 'output' &&
+      func.isAsync &&
+      capabilities.get('coroutine-execution')?.available !== true
+    ) {
       diagnostics.push({
         severity: 'error',
         code: 'coroutine-unsupported',
-        path: outputPath,
-        message: `${outputPath}: this callable requires coroutine execution, which #338 has not implemented.`,
+        path: value.path,
+        message: `${value.path}: this callable requires coroutine execution, which #338 has not implemented.`,
       });
-      return {
+      value.resolution = {
         status: 'unsupported',
         reason: 'Coroutine execution is unavailable.',
         guidance: 'Expose a synchronous value-returning adapter until #338 lands.',
       };
     }
-    return resolution;
-  };
-
-  result.resolution = forceUnsupportedOutput(result.resolution, result.logicalType, result.path);
-  overloadResults.forEach(overload => {
-    overload.resolution = forceUnsupportedOutput(
-      overload.resolution,
-      overload.logicalType,
-      overload.path
-    );
-  });
-  for (const capability of requiredCapabilities) {
-    const description = capabilities.get(capability);
-    if (description?.available !== true) {
-      diagnostics.push({
-        severity: 'error',
-        code: 'capability-unavailable',
-        path,
-        message: `${path}: ${capability} is required. ${description?.guidance ?? 'Add a declared capability before generating this callable.'}`,
-      });
+    if (value.resolution.status === 'supported') {
+      const needed = capabilityNamesFor(value.resolution.value);
+      needed.forEach(capability => requiredCapabilities.add(capability));
+      const missing = needed.filter(capability => capabilities.get(capability)?.available !== true);
+      if (missing.length > 0) {
+        missing.forEach(capability => {
+          const description = capabilities.get(capability);
+          diagnostics.push({
+            severity: 'error',
+            code: 'capability-unavailable',
+            path: value.path,
+            message: `${value.path}: ${capability} is required. ${description?.guidance ?? 'Add a declared capability before generating this callable.'}`,
+          });
+        });
+        value.resolution = {
+          status: 'unsupported',
+          reason: `Required capability is unavailable: ${missing.join(', ')}.`,
+          guidance: 'Provide the capability or use a supported value adapter.',
+        };
+      }
     }
   }
 
@@ -565,9 +715,18 @@ function resolveCallable(
   }));
   const resolvedOverloads = (func.overloads ?? []).map((overload, index) => ({
     ...overload,
+    parameters: overload.parameters.map((parameter, parameterIndex) => ({
+      ...parameter,
+      type:
+        overloadParameters[index]?.[parameterIndex]?.resolution.status === 'unsupported'
+          ? UNKNOWN_TYPE
+          : parameter.type,
+    })),
     returnType:
       overloadResults[index]?.resolution.status === 'unsupported' ? UNKNOWN_TYPE : overload.returnType,
   }));
+  const supportedValue = (value: ResolvedCallableValue): ValueContract | undefined =>
+    value.resolution.status === 'supported' ? value.resolution.value : undefined;
   const resolvedFunction: PythonFunction = {
     ...func,
     parameters: resolvedParameters,
@@ -578,6 +737,14 @@ function resolveCallable(
     },
     returnType: result.resolution.status === 'unsupported' ? UNKNOWN_TYPE : func.returnType,
     overloads: resolvedOverloads,
+    callableContract: {
+      parameterValues: parameters.map(supportedValue),
+      returnValue: supportedValue(result),
+      overloads: overloadResults.map((overload, index) => ({
+        parameterValues: overloadParameters[index]!.map(supportedValue),
+        returnValue: supportedValue(overload),
+      })),
+    },
   };
   return {
     function: resolvedFunction,
@@ -586,6 +753,7 @@ function resolveCallable(
       path,
       parameters,
       result,
+      overloadParameters,
       overloadResults,
       requiredCapabilities: [...requiredCapabilities].sort(),
     },
@@ -600,9 +768,39 @@ export function compileContract(
   ir: ValidatedIrContract,
   options: CompileContractOptions
 ): CompiledContract {
+  const matchesFunction = (source: IrFunction, mapped: PythonFunction): boolean =>
+    source.name === mapped.name &&
+    source.parameters.length === mapped.parameters.length &&
+    source.parameters.every((parameter, index) => parameter.name === mapped.parameters[index]?.name) &&
+    source.overloads.length === (mapped.overloads?.length ?? 0) &&
+    source.overloads.every((overload, index) =>
+      overload.parameters.length === mapped.overloads?.[index]?.parameters.length &&
+      overload.parameters.every((parameter, parameterIndex) =>
+        parameter.name === mapped.overloads?.[index]?.parameters[parameterIndex]?.name
+      )
+    );
+  if (ir.module !== options.module.name) {
+    throw new Error(`Compiled module ${options.module.name} does not match IR module ${ir.module}.`);
+  }
+  for (const func of options.module.functions) {
+    const source = ir.functions.find(entry => entry.name === func.name);
+    if (!source || !matchesFunction(source, func)) {
+      throw new Error(`Compiled function ${func.name} does not match validated IR.`);
+    }
+  }
+  for (const cls of options.module.classes) {
+    const source = ir.classes.find(entry => entry.name === cls.name);
+    if (!source || cls.methods.some(method =>
+      !source.methods.some(entry =>
+        matchesFunction(entry, method)
+      )
+    )) {
+      throw new Error(`Compiled class ${cls.name} does not match validated IR.`);
+    }
+  }
   const capabilities = new Map(options.capabilities.map(capability => [capability.name, capability]));
   const dataclassNames = new Set(
-    options.module.classes.filter(cls => cls.kind === 'dataclass').map(cls => cls.name)
+    ir.classes.filter(cls => cls.is_dataclass).map(cls => cls.name)
   );
   const diagnostics: CallableCompilationDiagnostic[] = [];
   const callables: ResolvedCallable[] = [];
@@ -620,14 +818,21 @@ export function compileContract(
   };
   const module: PythonModule = {
     ...options.module,
-    functions: options.module.functions.map((func, index) =>
-      compileFunction(func, `$.functions[${index}]`)
+    functions: options.module.functions.map(func =>
+      compileFunction(func, `$.functions[${ir.functions.findIndex(entry => entry.name === func.name)}]`)
     ),
-    classes: options.module.classes.map((cls, classIndex) => ({
+    classes: options.module.classes.map(cls => ({
       ...cls,
-      methods: cls.methods.map((method, methodIndex) =>
-        compileFunction(method, `$.classes[${classIndex}].methods[${methodIndex}]`)
-      ),
+      methods: cls.methods.map(method => {
+        const sourceClassIndex = ir.classes.findIndex(entry => entry.name === cls.name);
+        const sourceMethodIndex = ir.classes[sourceClassIndex]!.methods.findIndex(
+          entry => entry.name === method.name
+        );
+        return compileFunction(
+          method,
+          `$.classes[${sourceClassIndex}].methods[${sourceMethodIndex}]`
+        );
+      }),
     })),
   };
   const generated = options.generator.generateModuleDefinition(module, options.annotatedJSDoc);

@@ -2,6 +2,8 @@
  * Core type definitions for tywrap
  */
 
+import type { ValueContract } from '../contracts/value-contract.js';
+
 export interface PythonModule {
   name: string;
   path?: string;
@@ -49,6 +51,13 @@ export interface PythonFunction {
    */
   overloads?: PythonFunctionOverload[];
   /**
+   * Internal value contracts resolved before code emission.
+   *
+   * The compiler sets this field. Parser-created models leave it absent, and
+   * the generator then uses its legacy schema derivation.
+   */
+  callableContract?: ResolvedCallableContract;
+  /**
    * Binding of this callable on its owning class. Defaults to `'instance'`.
    * @see PythonMethodKind
    */
@@ -58,6 +67,17 @@ export interface PythonFunction {
 export interface PythonFunctionOverload {
   parameters: Parameter[];
   returnType: PythonType;
+}
+
+/** A resolved value contract for a callable signature. */
+export interface ResolvedCallableSignatureContract {
+  parameterValues: readonly (ValueContract | undefined)[];
+  returnValue?: ValueContract;
+}
+
+/** Internal compiler data consumed by generated validators. */
+export interface ResolvedCallableContract extends ResolvedCallableSignatureContract {
+  overloads: readonly ResolvedCallableSignatureContract[];
 }
 
 /**

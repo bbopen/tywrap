@@ -24,6 +24,7 @@ export type ReturnSchema =
   | {
       kind: 'primitive';
       type: 'number' | 'string' | 'boolean' | 'null' | 'undefined' | 'Uint8Array' | 'object';
+      constraint?: 'safe-integer' | 'finite';
     }
   | { kind: 'literal'; value: string | number | boolean | null }
   | { kind: 'array'; element: ReturnSchema }
@@ -43,6 +44,21 @@ export type ReturnSchema =
     };
 
 export type ReturnValidator<T = unknown> = (result: T) => T;
+
+/** One Python parameter used to select a declared overload after call binding. */
+export interface OverloadParameterSchema {
+  name: string;
+  kind: 'positional-only' | 'positional-or-keyword' | 'var-positional' | 'keyword-only' | 'var-keyword';
+  optional: boolean;
+  value: ReturnSchema;
+}
+
+/** An overload is selectable only when all of its value rules are supported. */
+export interface OverloadReturnSchema {
+  parameters: readonly OverloadParameterSchema[];
+  result: ReturnSchema;
+  selectable: boolean;
+}
 
 export interface DecodedShapeMetadata {
   marker: ScientificMarker;
@@ -99,7 +115,7 @@ function renderSchema(schema: ReturnSchema): string {
     case 'any':
       return 'unknown';
     case 'primitive':
-      return schema.type;
+      return schema.constraint ?? schema.type;
     case 'literal':
       return JSON.stringify(schema.value);
     case 'array':
@@ -156,6 +172,12 @@ function check(schema: ReturnSchema, value: unknown, state: CheckState): boolean
       }
       if (schema.type === 'object') {
         return isPlainObject(value);
+      }
+      if (schema.type === 'number' && schema.constraint === 'safe-integer') {
+        return typeof value === 'number' && Number.isSafeInteger(value);
+      }
+      if (schema.type === 'number' && schema.constraint === 'finite') {
+        return typeof value === 'number' && Number.isFinite(value);
       }
       return typeof value === schema.type;
     case 'literal':
@@ -225,6 +247,83 @@ export function createReturnValidator<T = unknown>(
     }
     return result;
   };
+}
+
+function matchesOverload(
+  signature: OverloadReturnSchema,
+  args: readonly unknown[],
+  kwargs: Readonly<Record<string, unknown>> | undefined
+): boolean {
+  if (!signature.selectable) {
+    return false;
+  }
+  const keywords = kwargs ?? {};
+  const usedKeywords = new Set<string>();
+  let position = 0;
+  let acceptsOtherKeywords = false;
+  const matches = (schema: ReturnSchema, value: unknown): boolean =>
+    check(schema, value, { definitions: {}, pairs: new WeakMap<object, Set<string>>() });
+
+  for (const parameter of signature.parameters) {
+    if (parameter.kind === 'var-positional') {
+      while (position < args.length) {
+        if (!matches(parameter.value, args[position])) {
+          return false;
+        }
+        position += 1;
+      }
+      continue;
+    }
+    if (parameter.kind === 'var-keyword') {
+      acceptsOtherKeywords = true;
+      for (const [name, value] of Object.entries(keywords)) {
+        if (!usedKeywords.has(name) && !matches(parameter.value, value)) {
+          return false;
+        }
+      }
+      continue;
+    }
+    const hasPosition = parameter.kind !== 'keyword-only' && position < args.length;
+    const hasKeyword = Object.prototype.hasOwnProperty.call(keywords, parameter.name);
+    if (hasKeyword && parameter.kind === 'positional-only') {
+      return false;
+    }
+    if (hasPosition && hasKeyword) {
+      return false;
+    }
+    if (!hasPosition && !hasKeyword) {
+      if (!parameter.optional) {
+        return false;
+      }
+      continue;
+    }
+    const value = hasPosition ? args[position++] : keywords[parameter.name];
+    if (hasKeyword) {
+      usedKeywords.add(parameter.name);
+    }
+    if (!matches(parameter.value, value)) {
+      return false;
+    }
+  }
+  if (position < args.length) {
+    return false;
+  }
+  return acceptsOtherKeywords || Object.keys(keywords).every(name => usedKeywords.has(name));
+}
+
+/** Select one supported overload; ambiguous calls use the implementation validator. */
+export function selectOverloadReturnValidator<T = unknown>(
+  overloads: readonly OverloadReturnSchema[],
+  args: readonly unknown[],
+  kwargs: Readonly<Record<string, unknown>> | undefined,
+  fallback: ReturnValidator<T>,
+  callSite: string,
+  definitions: Readonly<Record<string, ReturnSchema>> = {}
+): ReturnValidator<T> {
+  const matches = overloads.filter(overload => matchesOverload(overload, args, kwargs));
+  return matches.length === 1
+    ? createReturnValidator<T>(matches[0]!.result, callSite, definitions)
+    : fallback;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

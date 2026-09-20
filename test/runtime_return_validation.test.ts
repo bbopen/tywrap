@@ -26,6 +26,21 @@ describe('generated return validators', () => {
     expect(validator(42)).toBe(42);
   });
 
+  it('checks the value contract number constraints at nested paths', () => {
+    const validator = createReturnValidator(
+      {
+        kind: 'record',
+        values: { kind: 'primitive', type: 'number', constraint: 'safe-integer' },
+      },
+      'fixture.counts'
+    );
+    expect(validator({ count: 42 })).toEqual({ count: 42 });
+    expect(() => validator({ count: 1.5 })).toThrow(BridgeValidationError);
+    expect(() => validator({ count: Number.MAX_SAFE_INTEGER + 1 })).toThrow(
+      BridgeValidationError
+    );
+  });
+
   it('checks unions, optionals, tuples, TypedDict records, and no-op schemas', () => {
     const schema: ReturnSchema = {
       kind: 'tuple',

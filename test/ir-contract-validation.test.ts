@@ -85,4 +85,33 @@ describe('validateIrContract', () => {
       );
     }
   });
+
+  it('reads stable offline contracts without extractor metadata', () => {
+    const offline = Object.fromEntries(
+      Object.entries(validContract).filter(([key]) => key !== 'metadata')
+    );
+    const live = validateIrContract(offline, 'live IR');
+    expect(live).toMatchObject({ ok: false });
+
+    const saved = validateIrContract(offline, 'saved contract', {
+      allowOmittedMetadata: true,
+    });
+    expect(saved.ok).toBe(true);
+    if (saved.ok) {
+      expect(saved.contract.metadata).toEqual({});
+    }
+  });
+
+  it('bounds malformed-contract diagnostics', () => {
+    const invalid = {
+      ...validContract,
+      functions: Array.from({ length: 120 }, () => ({ name: 2 })),
+    };
+    const result = validateIrContract(invalid, 'bad contract');
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) {
+      expect(result.diagnostics.length).toBeLessThanOrEqual(101);
+      expect(result.diagnostics.at(-1)?.message).toContain('more than 100 contract errors');
+    }
+  });
 });

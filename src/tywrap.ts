@@ -4,8 +4,18 @@
 
 import { CodeGenerator } from './core/generator.js';
 import {
+  compileContract,
+  DEFAULT_CALLABLE_CAPABILITIES,
+  DEFAULT_VALUE_CONVERSION,
+} from './core/callable-compiler.js';
+import {
   TYWRAP_IR_VERSION,
   validateIrContract,
+  type IrClass,
+  type IrFunction,
+  type IrParameter,
+  type IrTypeAlias,
+  type IrTypeParameter,
   type ValidatedIrContract,
 } from './core/ir-contract.js';
 import { TypeMapper } from './core/mapper.js';
@@ -104,8 +114,7 @@ function stableJson(value: unknown): unknown {
 }
 
 function serializeContract(ir: ValidatedIrContract): string {
-  const contract = { ...ir };
-  delete contract.metadata;
+  const contract = Object.fromEntries(Object.entries(ir).filter(([key]) => key !== 'metadata'));
   return `${JSON.stringify(stableJson(contract), null, 2)}\n`;
 }
 
@@ -204,7 +213,17 @@ async function readContractInput(
   }
   try {
     const parsed = JSON.parse(await fsUtils.readFile(inputPath)) as unknown;
-    const validated = validateIrVersion(parsed, `Contract ${inputPath}`);
+    const validation = validateIrContract(parsed, `Contract ${inputPath}`, {
+      allowOmittedMetadata: true,
+    });
+    const validated = validation.ok
+      ? { ir: validation.contract }
+      : {
+          ir: null,
+          code: validation.diagnostics[0]?.code ?? 'contract-invalid',
+          error:
+            validation.diagnostics[0]?.message ?? `Contract ${inputPath} is not a JSON IR object.`,
+        };
     if (!validated.ir) {
       return { ir: null, error: validated.error, code: validated.code };
     }
@@ -451,9 +470,19 @@ export async function generate(
     // Apply module-level export filtering (functions/classes + excludes).
     filterModuleExports(moduleModel, moduleConfig, moduleKey, warnings);
 
-    // Generate module code
+    // Resolve callable values once before emitting declarations and wrappers.
     const annotatedJSDoc = Boolean(resolvedOptions.output?.annotatedJSDoc);
-    const gen = instance.generator.generateModuleDefinition(moduleModel, annotatedJSDoc);
+    const compiled = compileContract(ir, {
+      module: moduleModel,
+      generator: instance.generator,
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+      annotatedJSDoc,
+    });
+    const gen = compiled.generated;
+    for (const diagnostic of compiled.diagnostics) {
+      warnings.push(diagnostic.message);
+    }
 
     const baseName = moduleModel.name || 'module';
     const filesToEmit: Array<{ path: string; content: string }> = [
@@ -633,7 +662,7 @@ function collectModuleTypeVarNames(obj: Record<string, unknown>): Set<string> {
 }
 
 function transformIrToTsModel(ir: ValidatedIrContract): TSPythonModule {
-  const obj: Record<string, unknown> = ir;
+  const obj = ir;
   const functions = ir.functions;
   const classes = ir.classes;
   const aliases = ir.type_aliases;
@@ -647,33 +676,23 @@ function transformIrToTsModel(ir: ValidatedIrContract): TSPythonModule {
       knownTypeVarNames: moduleTypeVarNames,
       typeParameters,
     });
-  const mapTypeParameters = (value: Record<string, unknown>): PythonGenericParameter[] =>
-    Array.isArray(value.type_params)
-      ? (value.type_params as unknown[]).map(v => {
-          const param = (v ?? {}) as Record<string, unknown>;
-          return {
-            name: String(param.name ?? ''),
-            kind: String(param.kind ?? 'typevar') as PythonGenericParameter['kind'],
-            bound: param.bound ? parseType(param.bound) : undefined,
-            constraints: Array.isArray(param.constraints)
-              ? (param.constraints as unknown[]).map(item => parseType(item))
-              : undefined,
-            variance:
-              param.variance === 'covariant' ||
-              param.variance === 'contravariant' ||
-              param.variance === 'invariant'
-                ? param.variance
-                : undefined,
-          } satisfies PythonGenericParameter;
-        })
-      : [];
+  const mapTypeParameters = (
+    typeParameters: readonly IrTypeParameter[]
+  ): PythonGenericParameter[] =>
+    typeParameters.map(param => ({
+      name: param.name,
+      kind: param.kind,
+      bound: param.bound ? parseType(param.bound) : undefined,
+      constraints: param.constraints ? param.constraints.map(item => parseType(item)) : undefined,
+      variance: param.variance ?? undefined,
+    }));
   const mapParam = (
-    p: Record<string, unknown>,
+    p: IrParameter,
     typeParameters: readonly PythonGenericParameter[] = []
   ): Parameter => ({
-    name: String(p.name ?? ''),
+    name: p.name,
     type: parseType(p.annotation, typeParameters),
-    optional: Boolean(p.default),
+    optional: p.default,
     varArgs: p.kind === 'VAR_POSITIONAL',
     kwArgs: p.kind === 'VAR_KEYWORD',
     positionalOnly: p.kind === 'POSITIONAL_ONLY',
@@ -684,122 +703,93 @@ function transformIrToTsModel(ir: ValidatedIrContract): TSPythonModule {
     value === 'class' || value === 'static' ? value : 'instance';
 
   const mapFunc = (
-    f: Record<string, unknown>,
+    f: IrFunction,
     inheritedTypeParameters: readonly PythonGenericParameter[] = []
   ): PythonFunction => {
-    const localTypeParameters = mapTypeParameters(f);
+    const localTypeParameters = mapTypeParameters(f.type_params);
     const annotationTypeParameters = [...inheritedTypeParameters, ...localTypeParameters];
     return {
       name: String(f.name ?? ''),
       signature: {
-        parameters: Array.isArray(f.parameters)
-          ? (f.parameters as unknown[]).map(v =>
-              mapParam((v ?? {}) as Record<string, unknown>, annotationTypeParameters)
-            )
-          : [],
+        parameters: f.parameters.map(parameter => mapParam(parameter, annotationTypeParameters)),
         returnType: parseType(f.returns, annotationTypeParameters),
         isAsync: Boolean(f.is_async),
         isGenerator: Boolean(f.is_generator),
       },
-      docstring: (f.docstring as string | undefined) ?? undefined,
+      docstring: f.docstring ?? undefined,
       decorators: [],
       isAsync: Boolean(f.is_async),
       isGenerator: Boolean(f.is_generator),
       typeParameters: [...localTypeParameters],
       returnType: parseType(f.returns, annotationTypeParameters),
-      parameters: Array.isArray(f.parameters)
-        ? (f.parameters as unknown[]).map(v =>
-            mapParam((v ?? {}) as Record<string, unknown>, annotationTypeParameters)
-          )
-          : [],
-      overloads: Array.isArray(f.overloads)
-        ? (f.overloads as unknown[]).map(overload => {
-            const signature = (overload ?? {}) as Record<string, unknown>;
-            return {
-              parameters: Array.isArray(signature.parameters)
-                ? (signature.parameters as unknown[]).map(value =>
-                    mapParam((value ?? {}) as Record<string, unknown>, annotationTypeParameters)
-                  )
-                : [],
-              returnType: parseType(signature.returns, annotationTypeParameters),
-            };
-          })
-        : [],
+      parameters: f.parameters.map(parameter => mapParam(parameter, annotationTypeParameters)),
+      overloads: f.overloads.map(overload => ({
+        parameters: overload.parameters.map(parameter =>
+          mapParam(parameter, annotationTypeParameters)
+        ),
+        returnType: parseType(overload.returns, annotationTypeParameters),
+      })),
       methodKind: mapMethodKind(f.method_kind),
     };
   };
 
-  const mapClass = (c: Record<string, unknown>): PythonClass => {
-    const classTypeParameters = mapTypeParameters(c);
+  const mapClass = (c: IrClass): PythonClass => {
+    const classTypeParameters = mapTypeParameters(c.type_params);
     return {
-      name: String(c.name ?? ''),
-      bases: Array.isArray(c.bases) ? (c.bases as string[]) : [],
-      methods: Array.isArray(c.methods)
-        ? (c.methods as unknown[]).map(v =>
-            mapFunc((v ?? {}) as Record<string, unknown>, classTypeParameters)
-          )
-        : [],
-      properties: Array.isArray(c.fields)
-        ? (c.fields as unknown[]).map(v => {
-            const p = (v ?? {}) as Record<string, unknown>;
-            return {
-              name: String(p.name ?? ''),
-              type: parseType(p.annotation, classTypeParameters),
-              readonly: false,
-              setter: false,
-              getter: true,
-              optional: Boolean(p.default),
-            };
-          })
-        : [],
-      accessors: Array.isArray(c.accessors)
-        ? (c.accessors as unknown[]).map(v => {
-            const a = (v ?? {}) as Record<string, unknown>;
-            return {
-              name: String(a.name ?? ''),
-              type: parseType(a.returns, classTypeParameters),
-              docstring: (a.docstring as string | undefined) ?? undefined,
-              readOnly: typeof a.read_only === 'boolean' ? a.read_only : undefined,
-              isCached: Boolean(a.is_cached),
-            };
-          })
-        : [],
-      docstring: (c.docstring as string | undefined) ?? undefined,
-      decorators: (c.typed_dict as boolean) ? ['__typed_dict__'] : [],
-      kind: (c.typed_dict as boolean)
+      name: c.name,
+      bases: c.bases,
+      methods: c.methods.map(method => mapFunc(method, classTypeParameters)),
+      properties: c.fields.map(p => ({
+        name: p.name,
+        type: parseType(p.annotation, classTypeParameters),
+        readonly: false,
+        setter: false,
+        getter: true,
+        optional: p.default,
+      })),
+      accessors: c.accessors.map(a => ({
+        name: a.name,
+        type: parseType(a.returns, classTypeParameters),
+        docstring: a.docstring ?? undefined,
+        readOnly: a.read_only ?? undefined,
+        isCached: a.is_cached,
+      })),
+      docstring: c.docstring ?? undefined,
+      decorators: c.typed_dict ? ['__typed_dict__'] : [],
+      kind: c.typed_dict
         ? 'typed_dict'
-        : (c.is_protocol as boolean)
+        : c.is_protocol
           ? 'protocol'
-          : (c.is_namedtuple as boolean)
+          : c.is_namedtuple
             ? 'namedtuple'
-            : (c.is_dataclass as boolean)
+            : c.is_dataclass
               ? 'dataclass'
-              : (c.is_pydantic as boolean)
+              : c.is_pydantic
                 ? 'pydantic'
                 : 'class',
       typeParameters: classTypeParameters,
     };
   };
 
-  const mapTypeAlias = (alias: Record<string, unknown>): PythonTypeAlias => {
-    const typeParameters = mapTypeParameters(alias);
+  const mapTypeAlias = (alias: IrTypeAlias): PythonTypeAlias => {
+    const typeParameters = mapTypeParameters(alias.type_params);
     return {
-      name: String(alias.name ?? ''),
+      name: alias.name,
       type: parseType(alias.definition, typeParameters),
       typeParameters,
     };
   };
 
   const moduleModel: TSPythonModule = {
-    name: (obj.module as string) ?? 'module',
+    name: obj.module,
     path: undefined,
     version:
-      typeof (obj.metadata as Record<string, unknown> | undefined)?.package_version === 'string'
-        ? ((obj.metadata as Record<string, unknown> | undefined)?.package_version as string)
+      typeof obj.metadata.package_version === 'string'
+        ? obj.metadata.package_version
         : undefined,
-    functions: functions.map(v => mapFunc((v ?? {}) as Record<string, unknown>)),
-    classes: classes.map(v => mapClass((v ?? {}) as Record<string, unknown>)),
-    typeAliases: aliases.map(v => mapTypeAlias((v ?? {}) as Record<string, unknown>)),
+    functions: functions.map(functionValue => mapFunc(functionValue)),
+    classes: classes.map(mapClass),
+    typeAliases: aliases.map(mapTypeAlias),
     imports: [],
     exports: [],
   };

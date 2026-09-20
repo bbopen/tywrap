@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
 import {
   compileContract,
   DEFAULT_CALLABLE_CAPABILITIES,
@@ -6,7 +10,9 @@ import {
 } from '../src/core/callable-compiler.js';
 import { CodeGenerator } from '../src/core/generator.js';
 import { validateIrContract } from '../src/core/ir-contract.js';
-import type { PythonModule } from '../src/types/index.js';
+import { BridgeValidationError } from '../src/runtime/errors.js';
+import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
+import type { PythonModule, PythonType } from '../src/types/index.js';
 
 const rawIr = {
   ir_version: '0.4.0',
@@ -250,6 +256,123 @@ describe('compileContract', () => {
           additionalValues: { kind: 'integer', constraint: 'safe-integer' },
         },
       },
+    });
+    const selected = compiled.callables.find(callable => callable.name === 'select');
+    expect(selected?.result.resolution).toMatchObject({
+      status: 'supported',
+      value: {
+        kind: 'union',
+        options: [
+          { kind: 'string', wire: 'json', decodedAs: 'string' },
+          { kind: 'integer', wire: 'json', decodedAs: 'number', constraint: 'safe-integer' },
+        ],
+      },
+    });
+    expect(compiled.generated.typescript).toContain('selectOverloadReturnValidator(');
+    expect(compiled.generated.typescript).toContain('"constraint":"safe-integer"');
+  });
+
+  it('rejects a wrong return from the generated wrapper for a selected overload', async () => {
+    const validation = validateIrContract(rawIr, 'fixture contract');
+    expect(validation.ok).toBe(true);
+    if (!validation.ok) {
+      return;
+    }
+    const compiled = compileContract(validation.contract, {
+      module: moduleModel,
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-overload-'));
+    try {
+      const outputPath = join(temporary, 'fixture.generated.mjs');
+      const javascript = ts.transpileModule(compiled.generated.typescript, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(outputPath, javascript, 'utf8');
+      setRuntimeBridge({
+        async call<T>(
+          _module: string,
+          _functionName: string,
+          args: unknown[],
+          _kwargs?: Record<string, unknown>,
+          validate?: (result: T) => void
+        ): Promise<T> {
+          const result = (typeof args[0] === 'string' ? 99 : 4) as T;
+          validate?.(result);
+          return result;
+        },
+        async dispose(): Promise<void> {},
+      });
+      const generated = (await import(pathToFileURL(outputPath).href)) as {
+        select: (key: string | number) => Promise<string | number>;
+      };
+      await expect(generated.select('key')).rejects.toThrow(BridgeValidationError);
+      await expect(generated.select(2)).resolves.toBe(4);
+    } finally {
+      clearRuntimeBridge();
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it('uses revision 2 for selected unions and fixed heterogeneous tuples', () => {
+    const union = DEFAULT_VALUE_CONVERSION.resolve({
+      direction: 'output',
+      path: '$.functions[0].returns',
+      logicalType: {
+        kind: 'union',
+        types: [
+          { kind: 'primitive', name: 'str' },
+          { kind: 'primitive', name: 'int' },
+        ],
+      },
+    });
+    const tuple = DEFAULT_VALUE_CONVERSION.resolve({
+      direction: 'output',
+      path: '$.functions[1].returns',
+      logicalType: {
+        kind: 'collection',
+        name: 'tuple',
+        itemTypes: [
+          { kind: 'primitive', name: 'int' },
+          { kind: 'primitive', name: 'str' },
+        ],
+      },
+    });
+
+    expect(union).toMatchObject({
+      status: 'supported',
+      value: { kind: 'union', options: [{ kind: 'string' }, { kind: 'integer' }] },
+    });
+    expect(tuple).toMatchObject({
+      status: 'supported',
+      value: { kind: 'tuple', items: [{ kind: 'integer' }, { kind: 'string' }] },
+    });
+  });
+
+  it('requires dtype evidence before selecting the float16 scientific contract', () => {
+    const resolve = (logicalType: PythonType) =>
+      DEFAULT_VALUE_CONVERSION.resolve({
+        direction: 'output',
+        path: '$.functions[0].returns',
+        logicalType,
+      });
+
+    expect(resolve({ kind: 'custom', name: 'ndarray', module: 'numpy' })).toMatchObject({
+      status: 'unresolved',
+    });
+    expect(resolve({ kind: 'custom', name: 'Tensor', module: 'torch' })).toMatchObject({
+      status: 'unresolved',
+    });
+    expect(resolve({
+      kind: 'generic',
+      name: 'NDArray',
+      module: 'numpy',
+      typeArgs: [{ kind: 'custom', name: 'float16', module: 'numpy' }],
+    })).toMatchObject({
+      status: 'supported',
+      value: { kind: 'ndarray-float16', dtype: 'float16' },
     });
   });
 

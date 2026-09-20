@@ -31,10 +31,10 @@ export interface IrParameter {
 
 export interface IrTypeParameter {
   name: string;
-  kind: string;
+  kind: 'typevar' | 'paramspec' | 'typevartuple';
   bound: string | null;
   constraints: string[] | null;
-  variance: string | null;
+  variance: 'covariant' | 'contravariant' | 'invariant' | null;
 }
 
 export interface IrOverload {
@@ -111,25 +111,58 @@ export interface IrDiagnostic {
   message: string;
 }
 
+export interface ValidateIrContractOptions {
+  /**
+   * Generated offline contracts omit extractor metadata so their bytes stay
+   * stable. The reader restores an empty metadata object for that format.
+   */
+  allowOmittedMetadata?: boolean;
+}
+
 export type IrValidationResult =
   | { ok: true; contract: ValidatedIrContract; diagnostics: readonly [] }
   | { ok: false; contract: null; diagnostics: readonly IrDiagnostic[] };
 
 class ValidationState {
   readonly diagnostics: IrDiagnostic[] = [];
+  private overflowed = false;
+
+  private static readonly maxDiagnostics = 100;
 
   constructor(private readonly source: string) {}
 
   invalid(path: string, message: string): void {
+    if (this.diagnostics.length >= ValidationState.maxDiagnostics) {
+      this.overflowed = true;
+      return;
+    }
     this.diagnostics.push({ code: 'contract-invalid', path, message: `${this.source} ${message}` });
   }
 
   versionMismatch(path: string, found: string): void {
+    if (this.diagnostics.length >= ValidationState.maxDiagnostics) {
+      this.overflowed = true;
+      return;
+    }
     this.diagnostics.push({
       code: 'ir-version-mismatch',
       path,
       message: `IR version mismatch: TypeScript expects ${TYWRAP_IR_VERSION}, but ${this.source} declares ${found}. Regenerate the contract with a matching tywrap_ir.`,
     });
+  }
+
+  finish(): readonly IrDiagnostic[] {
+    if (!this.overflowed) {
+      return this.diagnostics;
+    }
+    return [
+      ...this.diagnostics,
+      {
+        code: 'contract-invalid',
+        path: '$',
+        message: `${this.source} has more than ${ValidationState.maxDiagnostics} contract errors.`,
+      },
+    ];
   }
 }
 
@@ -389,11 +422,15 @@ function validateTypeAlias(value: unknown, path: string, state: ValidationState)
  * The return value is safe to compile without further structural checks. The
  * caller owns all filesystem, cache, interpreter, and output operations.
  */
-export function validateIrContract(input: unknown, source = 'IR'): IrValidationResult {
+export function validateIrContract(
+  input: unknown,
+  source = 'IR',
+  options: ValidateIrContractOptions = {}
+): IrValidationResult {
   const state = new ValidationState(source);
   const contract = recordAt(input, '$', state);
   if (!contract) {
-    return { ok: false, contract: null, diagnostics: state.diagnostics };
+    return { ok: false, contract: null, diagnostics: state.finish() };
   }
 
   const version = requiredString(contract, 'ir_version', '$', state);
@@ -409,14 +446,23 @@ export function validateIrContract(input: unknown, source = 'IR'): IrValidationR
   constants?.forEach((constant, index) => validateConstant(constant, `$.constants[${index}]`, state));
   const aliases = requiredArray(contract, 'type_aliases', '$', state);
   aliases?.forEach((alias, index) => validateTypeAlias(alias, `$.type_aliases[${index}]`, state));
-  const metadata = requiredValue(contract, 'metadata', '$', state);
-  if (!isRecord(metadata)) {
+  const metadata = contract.metadata;
+  if (metadata === undefined && !options.allowOmittedMetadata) {
+    state.invalid('$.metadata', '$ is missing required field metadata.');
+  } else if (metadata !== undefined && !isRecord(metadata)) {
     state.invalid('$.metadata', '$.metadata must be an object.');
   }
   validateStringArray(requiredValue(contract, 'warnings', '$', state), '$.warnings', state);
 
   if (state.diagnostics.length > 0) {
-    return { ok: false, contract: null, diagnostics: state.diagnostics };
+    return { ok: false, contract: null, diagnostics: state.finish() };
   }
-  return { ok: true, contract: input as ValidatedIrContract, diagnostics: [] };
+  return {
+    ok: true,
+    contract: {
+      ...contract,
+      metadata: isRecord(metadata) ? metadata : {},
+    } as ValidatedIrContract,
+    diagnostics: [],
+  };
 }

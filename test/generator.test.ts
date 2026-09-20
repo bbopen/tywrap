@@ -655,6 +655,61 @@ describe('CodeGenerator', () => {
     expect(code.declaration).toContain('export function getValue(key: number): Promise<number>;');
   });
 
+  it('does not expose the implementation signature beside declared overloads', () => {
+    const key = {
+      name: 'key',
+      type: { kind: 'primitive', name: 'str' },
+      optional: false,
+      varArgs: false,
+      kwArgs: false,
+    };
+    const fallback = {
+      name: 'fallback',
+      type: { kind: 'primitive', name: 'int' },
+      optional: true,
+      varArgs: false,
+      kwArgs: false,
+    };
+    const method = {
+      name: 'get_value',
+      signature: {
+        parameters: [key, fallback],
+        returnType: { kind: 'primitive', name: 'str' },
+        isAsync: false,
+        isGenerator: false,
+      },
+      decorators: [],
+      isAsync: false,
+      isGenerator: false,
+      parameters: [key, fallback],
+      returnType: { kind: 'primitive', name: 'str' },
+      methodKind: 'static',
+      overloads: [{ parameters: [key], returnType: { kind: 'primitive', name: 'str' } }],
+    } as any;
+
+    const functionCode = gen.generateFunctionWrapper(method, 'fixture');
+    expect(functionCode.declaration).toContain(
+      'export function getValue(key: string): Promise<string>;'
+    );
+    expect(functionCode.declaration).not.toContain('fallback');
+
+    const classCode = gen.generateClassWrapper(
+      {
+        name: 'Catalog',
+        bases: [],
+        methods: [method],
+        properties: [],
+        decorators: [],
+        kind: 'class',
+      },
+      'fixture'
+    );
+    expect(classCode.declaration).toContain(
+      'static getValue(key: string): Promise<string>;'
+    );
+    expect(classCode.declaration).not.toContain('fallback');
+  });
+
   it('models *args as an array parameter when kwargs are present', () => {
     const code = gen.generateFunctionWrapper(
       {

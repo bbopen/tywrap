@@ -13,6 +13,8 @@ import type {
   GeneratedCode,
   TypescriptType,
 } from '../types/index.js';
+import type { ValueContract } from '../contracts/value-contract.js';
+import type { OverloadReturnSchema, ReturnSchema } from '../runtime/validators.js';
 import { globalCache } from '../utils/cache.js';
 
 import {
@@ -38,6 +40,46 @@ interface GenericRenderContext {
 }
 
 type ReturnDefinitionNames = ReadonlySet<string>;
+
+function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
+  switch (value.kind) {
+    case 'null':
+      return { kind: 'primitive', type: 'null' };
+    case 'boolean':
+      return { kind: 'primitive', type: 'boolean' };
+    case 'integer':
+      return { kind: 'primitive', type: 'number', constraint: value.constraint };
+    case 'float':
+      return { kind: 'primitive', type: 'number', constraint: value.constraint };
+    case 'string':
+      return { kind: 'primitive', type: 'string' };
+    case 'sequence':
+      return { kind: 'array', element: valueContractToReturnSchema(value.item) };
+    case 'tuple':
+      return { kind: 'tuple', elements: value.items.map(valueContractToReturnSchema) };
+    case 'union':
+      return { kind: 'union', options: value.options.map(valueContractToReturnSchema) };
+    case 'record':
+      return {
+        kind: 'record',
+        fields: Object.fromEntries(
+          value.fields.map(field => [
+            field.name,
+            { schema: valueContractToReturnSchema(field.value), optional: !field.required },
+          ])
+        ),
+        values: value.additionalValues
+          ? valueContractToReturnSchema(value.additionalValues)
+          : undefined,
+      };
+    case 'ndarray-float16':
+      return { kind: 'marker', marker: 'ndarray', dtype: value.dtype, dims: value.rank };
+    case 'torch-float16':
+      return { kind: 'marker', marker: 'torch.tensor', dtype: value.value.dtype };
+    case 'unsupported':
+      return { kind: 'any' };
+  }
+}
 
 export interface CodeGeneratorOptions {
   /** Reports a generated annotation that cannot be represented by emitted declarations. */
@@ -543,6 +585,53 @@ export class CodeGenerator {
     return schema(type);
   }
 
+  private resolvedReturnSchema(
+    func: PythonFunction,
+    definitions: ReturnDefinitionNames
+  ): ReturnSchema {
+    const value = func.callableContract?.returnValue;
+    return value
+      ? valueContractToReturnSchema(value)
+      : (this.returnSchema(func.returnType, definitions) as ReturnSchema);
+  }
+
+  private overloadReturnSchemas(
+    func: PythonFunction,
+    definitions: ReturnDefinitionNames
+  ): OverloadReturnSchema[] {
+    return (func.overloads ?? []).map((overload, overloadIndex) => {
+      const contract = func.callableContract?.overloads[overloadIndex];
+      return {
+        parameters: overload.parameters
+          .map((parameter, parameterIndex) => ({ parameter, parameterIndex }))
+          .filter(({ parameter }) => parameter.name !== 'self' && parameter.name !== 'cls')
+          .map(({ parameter, parameterIndex }) => ({
+            name: parameter.name,
+            kind: parameter.varArgs
+              ? 'var-positional' as const
+              : parameter.kwArgs
+                ? 'var-keyword' as const
+                : parameter.keywordOnly
+                  ? 'keyword-only' as const
+                  : parameter.positionalOnly
+                    ? 'positional-only' as const
+                    : 'positional-or-keyword' as const,
+            optional: parameter.optional,
+            value: contract?.parameterValues[parameterIndex]
+              ? valueContractToReturnSchema(contract.parameterValues[parameterIndex]!)
+              : (this.returnSchema(parameter.type, definitions) as ReturnSchema),
+          })),
+        result: contract?.returnValue
+          ? valueContractToReturnSchema(contract.returnValue)
+          : (this.returnSchema(overload.returnType, definitions) as ReturnSchema),
+        selectable:
+          contract !== undefined &&
+          contract.returnValue !== undefined &&
+          contract.parameterValues.every(value => value !== undefined),
+      };
+    });
+  }
+
   private returnDefinitions(module: PythonModule): ReturnDefinitionNames {
     return new Set(
       module.classes
@@ -671,7 +760,7 @@ export class CodeGenerator {
     const fname = this.escapeIdentifier(func.name);
     const moduleId = moduleName ?? '__main__';
     const validatorName = `__validate${this.escapeIdentifier(func.name, { preserveCase: true })}Result`;
-    const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.returnSchema(func.returnType, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n\n`;
+    const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.resolvedReturnSchema(func, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n\n`;
 
     const renderDeclaredOverload = (overload: NonNullable<typeof func.overloads>[number]): string[] => {
       const overloadParams = overload.parameters.filter(
@@ -779,7 +868,7 @@ export class CodeGenerator {
     const requiredKwOnlyNames = keywordOnlyParams.filter(p => !p.optional).map(p => p.name);
     const keywordOnlyNames = keywordOnlyParams.map(p => p.name);
     const overloads: string[] = (func.overloads ?? []).flatMap(renderDeclaredOverload);
-    if (requiredKwOnlyNames.length > 0) {
+    if ((func.overloads?.length ?? 0) === 0 && requiredKwOnlyNames.length > 0) {
       // Required keyword-only params must be represented with a required `kwargs` parameter.
       // Avoid "required after optional" by emitting overloads where all preceding parameters are required.
       const requiredPosCount =
@@ -816,7 +905,12 @@ export class CodeGenerator {
           );
         }
       }
-    } else if (firstOptionalIndex >= 0 && !varArgsParam && !needsKwargsParam) {
+    } else if (
+      (func.overloads?.length ?? 0) === 0 &&
+      firstOptionalIndex >= 0 &&
+      !varArgsParam &&
+      !needsKwargsParam
+    ) {
       for (let i = firstOptionalIndex; i <= positionalParams.length; i++) {
         const head = positionalParams.slice(0, i).map(p => renderPositionalParam(p));
         const rest: string[] = [];
@@ -856,9 +950,13 @@ export class CodeGenerator {
     const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
     const callPreludeLines = emitCallPrelude(callDescriptor, this.callEmitHelpers());
     const callPrelude = callPreludeLines.length > 0 ? `${callPreludeLines.join('\n')}\n` : '';
+    const overloadValidator = (func.overloads?.length ?? 0) > 0
+      ? `  const __selectedReturnValidator = selectOverloadReturnValidator(${JSON.stringify(this.overloadReturnSchemas(func, returnDefinitions))}, __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${validatorName}, ${JSON.stringify(`${moduleId}.${func.name}`)}, __tywrapReturnDefinitions);\n`
+      : '';
+    const selectedValidatorName = overloadValidator ? '__selectedReturnValidator' : validatorName;
 
     const ts = `${jsdoc}${returnValidator}${overloadDecl}export async function ${fname}${typeParamDecl}(${paramDecl}): Promise<${returnType}> {
-${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${moduleId}', '${func.name}', __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${validatorName});
+${callPrelude}${guards}${overloadValidator}  return getRuntimeBridge().call<${returnType}>('${moduleId}', '${func.name}', __args, ${hasKwArgs ? '__kwargs' : 'undefined'}, ${selectedValidatorName});
 }
 `;
 
@@ -1062,10 +1160,28 @@ ${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${module
         );
         const mname = this.escapeIdentifier(method.name);
         const validatorName = `__validate${this.escapeIdentifier(cls.name, { preserveCase: true })}${this.escapeIdentifier(method.name, { preserveCase: true })}Result`;
-        const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.returnSchema(method.returnType, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n\n`;
+        const returnValidator = `const ${validatorName} = createReturnValidator(${JSON.stringify(this.resolvedReturnSchema(method, returnDefinitions))}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n\n`;
 
-        const overloads: string[] = [];
-        if (needsKwargsParam && requiredKwOnlyNames.length > 0) {
+        const declaredOverloads = (method.overloads?.length ?? 0) > 0
+          ? this.generateFunctionWrapper(
+              {
+                ...method,
+                parameters: fparams,
+                overloads: method.overloads?.map(overload => ({
+                  ...overload,
+                  parameters: overload.parameters.filter(p => p.name !== 'self' && p.name !== 'cls'),
+                })),
+              },
+              moduleName,
+              false,
+              moduleDeclaredNames,
+              returnDefinitions
+            ).declaration.match(/^export function .*;$/gm)?.map(line =>
+              `  static ${line.slice('export function '.length)}`
+            ) ?? []
+          : [];
+        const overloads: string[] = [...declaredOverloads];
+        if (declaredOverloads.length === 0 && needsKwargsParam && requiredKwOnlyNames.length > 0) {
           const firstOptionalIndex = positionalParams.findIndex(p => p.optional);
           const requiredPosCount =
             firstOptionalIndex >= 0 ? firstOptionalIndex : positionalParams.length;
@@ -1109,10 +1225,14 @@ ${callPrelude}${guards}  return getRuntimeBridge().call<${returnType}>('${module
 
         const guardLines = emitArgGuards(callDescriptor);
         const guards = guardLines.length > 0 ? `${guardLines.join('\n')}\n` : '';
+        const overloadValidator = declaredOverloads.length > 0
+          ? `    const __selectedReturnValidator = selectOverloadReturnValidator(${JSON.stringify(this.overloadReturnSchemas(method, returnDefinitions))}, __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${validatorName}, ${JSON.stringify(`${moduleId}.${cls.name}.${method.name}`)}, __tywrapReturnDefinitions);\n`
+          : '';
+        const selectedValidatorName = overloadValidator ? '__selectedReturnValidator' : validatorName;
 
-        const callExpr = `getRuntimeBridge().call<${returnType}>('${moduleId}', '${cls.name}.${method.name}', __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${validatorName})`;
+        const callExpr = `getRuntimeBridge().call<${returnType}>('${moduleId}', '${cls.name}.${method.name}', __args, ${needsKwargsParam ? '__kwargs' : 'undefined'}, ${selectedValidatorName})`;
         methodBodies.push(`${overloadDecl}  ${staticPrefix}async ${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}> {
-    ${returnValidator}${callPrelude}${guards}    return ${callExpr};
+    ${returnValidator}${callPrelude}${guards}${overloadValidator}    return ${callExpr};
   }`);
         methodDeclarations.push(
           `${overloadDecl}${overloads.length > 0 ? '' : `  ${staticPrefix}${mname}${methodTypeParamDecl}(${paramsDecl}): Promise<${returnType}>;\n`}`
@@ -1228,7 +1348,7 @@ ${migrationNote}${declarationMethodsSection}
     });
     const needsRuntime = module.functions.length > 0 || hasRuntimeClasses;
     const bridgeDecl = needsRuntime
-      ? `import { createReturnValidator, getRuntimeBridge, type ReturnSchema } from 'tywrap/runtime';\n\n${this.emitReturnDefinitions(module)}`
+      ? `import { createReturnValidator, selectOverloadReturnValidator, getRuntimeBridge, type ReturnSchema } from 'tywrap/runtime';\n\n${this.emitReturnDefinitions(module)}`
       : '';
 
     const ts = `${`${header}${bridgeDecl}${functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd()}\n`;
@@ -1263,7 +1383,7 @@ ${migrationNote}${declarationMethodsSection}
       declaration,
       sourceMap: undefined,
       metadata: {
-        generatedAt: new Date(),
+        generatedAt: new Date(0),
         sourceFiles: [],
         runtime: 'auto',
         optimizations: [],
