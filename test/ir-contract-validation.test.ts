@@ -120,9 +120,11 @@ describe('validateIrContract', () => {
     const result = validateIrContract(oversized, 'large contract');
     expect(result).toMatchObject({ ok: false });
     if (!result.ok) {
-      expect(result.diagnostics.some(diagnostic =>
-        diagnostic.message.includes('100000 entry validation limit')
-      )).toBe(true);
+      expect(
+        result.diagnostics.some(diagnostic =>
+          diagnostic.message.includes('100000 entry validation limit')
+        )
+      ).toBe(true);
     }
   });
 });

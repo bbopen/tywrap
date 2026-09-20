@@ -501,8 +501,8 @@ export function parseAnnotationToPythonType(
     if (generic) {
       const qualified = splitQualifiedName(generic.name);
       const parts = splitTopLevel(generic.inner, ',');
-      const numpyArrayShape = qualified.module === 'numpy' &&
-        qualified.name === 'ndarray' && parts.length === 2;
+      const numpyArrayShape =
+        qualified.module === 'numpy' && qualified.name === 'ndarray' && parts.length === 2;
       const typeArgs = parts.map((part, index) => {
         if (!numpyArrayShape || index !== 0) {
           return parse(part.trim(), depth + 1);

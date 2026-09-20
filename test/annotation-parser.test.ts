@@ -76,11 +76,17 @@ describe('annotation parser', () => {
       { onUnknownTypeName: name => unknown.push(name) }
     );
     expect(type).toMatchObject({
-      kind: 'generic', name: 'ndarray', module: 'numpy',
+      kind: 'generic',
+      name: 'ndarray',
+      module: 'numpy',
       typeArgs: [
         { kind: 'collection', name: 'tuple' },
-        { kind: 'generic', name: 'dtype', module: 'numpy',
-          typeArgs: [{ kind: 'custom', name: 'float16', module: 'numpy' }] },
+        {
+          kind: 'generic',
+          name: 'dtype',
+          module: 'numpy',
+          typeArgs: [{ kind: 'custom', name: 'float16', module: 'numpy' }],
+        },
       ],
     });
     expect(unknown).toEqual([]);
