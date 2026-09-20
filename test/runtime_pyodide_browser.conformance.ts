@@ -1,0 +1,157 @@
+import { execFile } from 'node:child_process';
+import { createServer, type Server } from 'node:http';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
+
+import { chromium } from '@playwright/test';
+import { afterEach, describe, expect, it } from 'vitest';
+
+const execFileAsync = promisify(execFile);
+const repoRoot = resolve(process.cwd());
+const pyodideVersion = '0.28.1';
+const tempRoot = mkdtempSync(join(tmpdir(), 'tywrap-pyodide-browser-'));
+
+function isInside(child: string, parent: string): boolean {
+  const relation = relative(resolve(parent), resolve(child));
+  return (
+    relation === '' ||
+    (!isAbsolute(relation) && relation !== '..' && !relation.startsWith(`..${sep}`))
+  );
+}
+
+function contentType(path: string): string {
+  if (path.endsWith('.html')) return 'text/html; charset=utf-8';
+  if (path.endsWith('.js') || path.endsWith('.mjs')) return 'text/javascript; charset=utf-8';
+  if (path.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (path.endsWith('.wasm')) return 'application/wasm';
+  if (path.endsWith('.data')) return 'application/octet-stream';
+  return 'application/octet-stream';
+}
+
+async function run(command: string, args: string[], cwd: string): Promise<void> {
+  await execFileAsync(command, args, { cwd, timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+}
+
+function createStaticServer(compiled: string): Promise<{ server: Server; origin: string }> {
+  return new Promise((resolveServer, reject) => {
+    const server = createServer((request, response) => {
+      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      if (path === '/') {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(`<!doctype html>
+<script type="importmap">{"imports":{"pyodide":"/pyodide/pyodide.mjs","tywrap/runtime":"/dist/runtime/index.js"}}</script>`);
+        return;
+      }
+
+      const roots: Array<[prefix: string, root: string]> = [
+        ['/dist/', join(repoRoot, 'dist')],
+        ['/pyodide/', join(repoRoot, 'node_modules', 'pyodide')],
+        ['/generated/', compiled],
+      ];
+      const route = roots.find(([prefix]) => path.startsWith(prefix));
+      if (!route) {
+        response.writeHead(404).end();
+        return;
+      }
+      const [prefix, root] = route;
+      const target = resolve(root, decodeURIComponent(path.slice(prefix.length)));
+      if (!isInside(target, root)) {
+        response.writeHead(403).end();
+        return;
+      }
+      try {
+        response.writeHead(200, { 'content-type': contentType(target) });
+        response.end(readFileSync(target));
+      } catch {
+        response.writeHead(404).end();
+      }
+    });
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        reject(new Error('browser smoke server has no TCP address'));
+        return;
+      }
+      resolveServer({ server, origin: `http://127.0.0.1:${address.port}` });
+    });
+  });
+}
+
+describe('real browser PyodideBridge', () => {
+  afterEach(() => {
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('loads the pinned local runtime and executes an actual generated wrapper in Chromium', async () => {
+    const generated = join(tempRoot, 'source');
+    const compiled = join(tempRoot, 'compiled');
+    await run(
+      process.execPath,
+      [
+        join(repoRoot, 'dist', 'cli.js'),
+        'generate',
+        '--modules',
+        'math',
+        '--runtime',
+        'pyodide',
+        '--output-dir',
+        generated,
+        '--fail-on-warn',
+      ],
+      repoRoot
+    );
+    await run(
+      process.execPath,
+      [
+        join(repoRoot, 'node_modules', 'typescript', 'lib', 'tsc.js'),
+        '--ignoreConfig',
+        '--target',
+        'ES2022',
+        '--module',
+        'ESNext',
+        '--moduleResolution',
+        'bundler',
+        '--skipLibCheck',
+        '--outDir',
+        compiled,
+        join(generated, 'math.generated.ts'),
+      ],
+      repoRoot
+    );
+
+    const { server, origin } = await createStaticServer(compiled);
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(origin);
+      const result = await page.evaluate(
+        async ({ pyodideURL, version }) => {
+          const { PyodideBridge } = await import('/dist/runtime/pyodide.js');
+          const { clearRuntimeBridge, setRuntimeBridge } = await import('/dist/runtime/index.js');
+          const math = await import('/generated/math.generated.js');
+          const bridge = new PyodideBridge({ indexURL: `${pyodideURL}/pyodide/` });
+          setRuntimeBridge({
+            call: bridge.call.bind(bridge),
+            dispose: bridge.dispose.bind(bridge),
+          });
+          try {
+            return { result: await math.sqrt(81), version };
+          } finally {
+            clearRuntimeBridge();
+            await bridge.dispose();
+          }
+        },
+        { pyodideURL: origin, version: pyodideVersion }
+      );
+      expect(result).toEqual({ result: 9, version: pyodideVersion });
+    } finally {
+      await browser.close();
+      await new Promise<void>((resolveClose, reject) =>
+        server.close(error => (error ? reject(error) : resolveClose()))
+      );
+    }
+  }, 240_000);
+});
