@@ -1,5 +1,5 @@
 {
-  "revision": 1,
+  "revision": 2,
   "status": "frozen-internal-prototype",
   "transport": "tywrap/1 value RPC",
   "codecVersion": 1,
@@ -20,10 +20,25 @@
       "failure": "reject NaN and Infinity"
     },
     "sequence": {
-      "logicalKind": "list or tuple of contracted values",
+      "logicalKind": "list or variadic tuple of one contracted item kind",
       "wire": "JSON array",
       "decodedAs": "JavaScript array",
       "composition": "apply each item rule at its result path"
+    },
+    "tuple": {
+      "logicalKind": "fixed-length heterogeneous tuple of contracted values",
+      "wire": "JSON array",
+      "decodedAs": "JavaScript array with one contracted value per position",
+      "composition": "require exact length and apply each item rule at its result index; an empty tuple is valid"
+    },
+    "union": {
+      "logicalKind": "one value matching a nonempty set of contracted alternatives",
+      "wire": "the selected alternative's existing wire encoding",
+      "decodedAs": "the selected alternative's JavaScript value",
+      "minimumAlternatives": 2,
+      "maximumAlternatives": 32,
+      "composition": "require at least one matching alternative; reject a contract if the same wire value can match alternatives with different decoded representations; order has no semantic effect",
+      "failure": "reject an empty or one-option union during contract construction; reject a value that matches no alternative with its path"
     },
     "record": {
       "logicalKind": "string-keyed record of contracted values",
@@ -46,6 +61,12 @@
     }
   },
   "prototypeBoundary": "Only float16 scientific values use the new ndarray contract. Existing Arrow int64 values may decode as bigint and keep their current rules.",
+  "contractLimits": {
+    "maximumDepth": 64,
+    "maximumUnionAlternatives": 32,
+    "namedRecordAliases": "inline nonrecursive aliases within the depth limit",
+    "recursiveAliases": "unsupported until a reviewed reference-graph contract exists"
+  },
   "compatibility": {
     "wireChange": false,
     "unknownVersion": "reject",

@@ -1,5 +1,5 @@
 /** Internal value policy consumed by codecs and callable-contract generation. */
-export const VALUE_CONTRACT_REVISION = 1 as const;
+export const VALUE_CONTRACT_REVISION = 2 as const;
 
 /** JSON numbers can carry Python integers exactly only within this range. */
 export const MAX_SAFE_JSON_INTEGER = 2 ** 53 - 1;
@@ -25,6 +25,18 @@ export type ValueContract =
       readonly wire: 'json';
       readonly decodedAs: 'array';
       readonly item: ValueContract;
+    }
+  | {
+      readonly kind: 'tuple';
+      readonly wire: 'json';
+      readonly decodedAs: 'array';
+      readonly items: readonly ValueContract[];
+    }
+  | {
+      readonly kind: 'union';
+      readonly wire: 'selected-option';
+      readonly decodedAs: 'selected-option';
+      readonly options: readonly [ValueContract, ValueContract, ...ValueContract[]];
     }
   | {
       readonly kind: 'record';
