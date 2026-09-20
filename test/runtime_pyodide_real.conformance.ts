@@ -6,7 +6,7 @@ import { loadPyodide } from 'pyodide';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { PyodideBridge } from '../src/runtime/pyodide.js';
-import { clearRuntimeBridge, setRuntimeBridge } from '../src/runtime/index.js';
+import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 import { generate } from '../src/tywrap.js';
 
 const indexURL = `${join(process.cwd(), 'node_modules', 'pyodide')}/`;
