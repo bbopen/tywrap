@@ -30,6 +30,8 @@ describe('real PyodideBridge', () => {
     await expect(bridge.call('numpy', 'array', [[1.5, -2.25]])).resolves.toEqual([1.5, -2.25]);
     await expect(bridge.call('math', 'not_a_function', [])).rejects.toMatchObject({
       name: 'BridgeExecutionError',
+      message: expect.stringMatching(/AttributeError:.*not_a_function/),
+      traceback: expect.stringContaining('not_a_function'),
     });
   }, 180_000);
 
@@ -90,7 +92,13 @@ sys.modules['tywrap_async_text'] = tywrap_async_text
   }, 180_000);
 
   it('requires local runtime assets before starting WASM', () => {
-    for (const name of ['pyodide.mjs', 'pyodide.asm.wasm', 'pyodide-lock.json']) {
+    for (const name of [
+      'pyodide.mjs',
+      'pyodide.asm.js',
+      'pyodide.asm.wasm',
+      'python_stdlib.zip',
+      'pyodide-lock.json',
+    ]) {
       if (!existsSync(join(indexURL, name))) {
         throw new Error(`Required Pyodide runtime asset is missing: ${name}`);
       }

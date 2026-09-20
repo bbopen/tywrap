@@ -206,6 +206,7 @@ describe('isolated npm consumer', () => {
     expect(isInside(importedIrPath, repoRoot)).toBe(false);
 
     const generated = join(consumer, 'generated');
+    expect(existsSync(generated)).toBe(false);
     writeFileSync(
       join(consumer, 'tywrap.config.json'),
       `${JSON.stringify(
@@ -267,7 +268,8 @@ describe('isolated npm consumer', () => {
     const runner = join(consumer, 'run-generated-wrapper.mjs');
     writeFileSync(
       runner,
-      `import { NodeBridge } from 'tywrap/node';
+      `import { BridgeValidationError } from 'tywrap';
+import { NodeBridge } from 'tywrap/node';
 import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 import * as fixture from './built/generated/consumer_fixture.generated.js';
 
@@ -282,8 +284,8 @@ const bridge = new NodeBridge({
   },
 });
 
-setRuntimeBridge({ call: bridge.call.bind(bridge), dispose: bridge.dispose.bind(bridge) });
 try {
+  setRuntimeBridge({ call: bridge.call.bind(bridge), dispose: bridge.dispose.bind(bridge) });
   const add = await fixture.add(2, 3);
   const safeMax = await fixture.safeMax();
   const safeMin = await fixture.safeMin();
@@ -314,7 +316,7 @@ try {
   } catch (error) {
     validationError = error;
   }
-  if (validationError?.name !== 'BridgeValidationError') {
+  if (!(validationError instanceof BridgeValidationError)) {
     throw new Error('wrong_return did not throw BridgeValidationError');
   }
   process.stdout.write(JSON.stringify({ add, safeMax, safeMin, float16Values, negativeZero }));

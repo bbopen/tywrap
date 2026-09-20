@@ -175,11 +175,11 @@ describe('real browser PyodideBridge', () => {
         const { clearRuntimeBridge, setRuntimeBridge } = await import('/dist/runtime/index.js');
         const math = await import('/generated/math.generated.js');
         const bridge = new PyodideBridge({ indexURL: location.origin + '/pyodide/' });
-        setRuntimeBridge({
-          call: bridge.call.bind(bridge),
-          dispose: bridge.dispose.bind(bridge),
-        });
         try {
+          setRuntimeBridge({
+            call: bridge.call.bind(bridge),
+            dispose: bridge.dispose.bind(bridge),
+          });
           return {
             result: await math.sqrt(81),
             pythonVersion: await bridge.call('platform', 'python_version', []),
