@@ -1107,6 +1107,7 @@ describe('compileContract', () => {
     expect(compiled.generated.declaration).toContain('objectValue(): Promise<unknown>');
     expect(compiled.generated.typescript).toContain('createReturnValidator({"kind":"any"}');
 
+    let nestedList: ReturnType<typeof compileContract> | undefined;
     for (const annotation of ['list[object]', 'dict[str, object]']) {
       const nested = validateIrContract(
         {
@@ -1138,6 +1139,14 @@ describe('compileContract', () => {
         capabilities: DEFAULT_CALLABLE_CAPABILITIES,
       });
       expect(nestedCompiled.generated.declaration).toContain('objectValue(): Promise<unknown>');
+      expect(nestedCompiled.generated.typescript).toContain(
+        annotation.startsWith('list')
+          ? 'createReturnValidator({"kind":"array","element":{"kind":"any"}}'
+          : 'createReturnValidator({"kind":"record","values":{"kind":"any"}}'
+      );
+      if (annotation.startsWith('list')) {
+        nestedList = nestedCompiled;
+      }
     }
 
     let requestId = 0;
@@ -1161,6 +1170,20 @@ describe('compileContract', () => {
         objectValue: () => Promise<unknown>;
       };
       await expect(generated.objectValue()).resolves.toBe('a valid Python object');
+      if (nestedList) {
+        const nestedPath = join(temporary, 'nested.generated.mjs');
+        await writeFile(
+          nestedPath,
+          ts.transpileModule(nestedList.generated.typescript, {
+            compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+          }).outputText,
+          'utf8'
+        );
+        const nestedGenerated = (await import(pathToFileURL(nestedPath).href)) as {
+          objectValue: () => Promise<unknown>;
+        };
+        await expect(nestedGenerated.objectValue()).rejects.toThrow(BridgeValidationError);
+      }
     } finally {
       clearRuntimeBridge();
       await bridge.dispose();
@@ -1270,6 +1293,24 @@ describe('compileContract', () => {
         compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
       }).outputText;
       await writeFile(outputPath, javascript, 'utf8');
+      const declarationPath = join(temporary, 'fixture.generated.d.ts');
+      const consumerPath = join(temporary, 'consumer.ts');
+      await writeFile(declarationPath, compiled.generated.declaration, 'utf8');
+      await writeFile(
+        consumerPath,
+        "import { genericIdentity } from './fixture.generated.js';\nconst numeric: Promise<number> = genericIdentity(42);\nvoid numeric;\n",
+        'utf8'
+      );
+      const program = ts.createProgram([consumerPath], {
+        noEmit: true,
+        strict: true,
+        skipLibCheck: true,
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        types: [],
+      });
+      expect(ts.getPreEmitDiagnostics(program).map(diagnostic => diagnostic.code)).toContain(2322);
       setRuntimeBridge(bridge);
       const generated = (await import(pathToFileURL(outputPath).href)) as {
         genericIdentity: <T>(value: T) => Promise<unknown>;
@@ -1283,6 +1324,381 @@ describe('compileContract', () => {
       );
       await rm(temporary, { recursive: true, force: true });
     }
+  });
+
+  it('keeps existing marker and literal checks when the declaration falls back to unknown', async () => {
+    const source = rawIr.functions[1]!;
+    const annotations = [
+      { name: 'dataframe_value', returns: 'pandas.DataFrame' },
+      { name: 'literal_value', returns: "typing.Literal['x']" },
+    ];
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: annotations.map(({ name, returns }) => ({
+          ...source,
+          name,
+          qualname: `fixture.${name}`,
+          returns,
+        })),
+        classes: [],
+      },
+      'unresolved validation contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        classes: [],
+        functions: annotations.map(({ name }) => ({ ...moduleModel.functions[1]!, name })),
+      },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.generated.declaration).toContain('dataframeValue(): Promise<unknown>');
+    expect(compiled.generated.declaration).toContain('literalValue(): Promise<unknown>');
+    expect(compiled.generated.typescript).toContain('"marker":"dataframe"');
+    expect(compiled.generated.typescript).toContain('"kind":"literal","value":"x"');
+
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-fallback-proof-'));
+    try {
+      const outputPath = join(temporary, 'fixture.generated.mjs');
+      const javascript = ts.transpileModule(compiled.generated.typescript, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(outputPath, javascript, 'utf8');
+      setRuntimeBridge({
+        async call<T>(
+          _module: string,
+          functionName: string,
+          _args: unknown[],
+          _kwargs?: Record<string, unknown>,
+          validate?: (result: T) => void
+        ): Promise<T> {
+          const result = (functionName === 'literal_value' ? 'y' : {}) as T;
+          validate?.(result);
+          return result;
+        },
+        async dispose(): Promise<void> {},
+      });
+      const generated = (await import(pathToFileURL(outputPath).href)) as {
+        dataframeValue: () => Promise<unknown>;
+        literalValue: () => Promise<unknown>;
+      };
+      await expect(generated.dataframeValue()).rejects.toThrow(BridgeValidationError);
+      await expect(generated.literalValue()).rejects.toThrow(BridgeValidationError);
+    } finally {
+      clearRuntimeBridge();
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves selected local TypedDict fields and simple aliases through revision 2', async () => {
+    const source = rawIr.functions[1]!;
+    const point = rawIr.classes[0]!;
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: [
+          {
+            ...source,
+            name: 'payload_value',
+            qualname: 'fixture.payload_value',
+            returns: 'Payload',
+          },
+          { ...source, name: 'user_id', qualname: 'fixture.user_id', returns: 'UserId' },
+        ],
+        classes: [
+          {
+            ...point,
+            name: 'Payload',
+            qualname: 'fixture.Payload',
+            typed_dict: true,
+            is_dataclass: false,
+            fields: [
+              { name: 'x', kind: 'FIELD', annotation: 'int', default: false },
+              { name: 'label', kind: 'FIELD', annotation: 'str', default: true },
+            ],
+          },
+        ],
+        type_aliases: [{ name: 'UserId', definition: 'int', is_generic: false, type_params: [] }],
+      },
+      'selected named values contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        functions: ['payload_value', 'user_id'].map(name => ({
+          ...moduleModel.functions[1]!,
+          name,
+        })),
+        classes: [{ ...moduleModel.classes[0]!, name: 'Payload' }],
+        typeAliases: [{ name: 'UserId', type: { kind: 'primitive', name: 'int' } }],
+      },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.diagnostics).toEqual([]);
+    expect(compiled.generated.declaration).toContain('payloadValue(): Promise<Payload>');
+    expect(compiled.generated.declaration).toContain('userId(): Promise<UserId>');
+    expect(compiled.callables[0]?.result.resolution).toMatchObject({
+      status: 'supported',
+      value: {
+        kind: 'record',
+        fields: [
+          { name: 'x', required: true, value: { kind: 'integer' } },
+          { name: 'label', required: false, value: { kind: 'string' } },
+        ],
+      },
+    });
+    expect(compiled.callables[1]?.result.resolution).toMatchObject({
+      status: 'supported',
+      value: { kind: 'integer', constraint: 'safe-integer' },
+    });
+
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-named-proof-'));
+    try {
+      const outputPath = join(temporary, 'fixture.generated.mjs');
+      const javascript = ts.transpileModule(compiled.generated.typescript, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(outputPath, javascript, 'utf8');
+      setRuntimeBridge({
+        async call<T>(
+          _module: string,
+          functionName: string,
+          _args: unknown[],
+          _kwargs?: Record<string, unknown>,
+          validate?: (result: T) => void
+        ): Promise<T> {
+          const result = (
+            functionName === 'user_id' ? Number.MAX_SAFE_INTEGER + 1 : { x: 'bad' }
+          ) as T;
+          validate?.(result);
+          return result;
+        },
+        async dispose(): Promise<void> {},
+      });
+      const generated = (await import(pathToFileURL(outputPath).href)) as {
+        payloadValue: () => Promise<{ x: number; label?: string }>;
+        userId: () => Promise<number>;
+      };
+      await expect(generated.payloadValue()).rejects.toThrow(BridgeValidationError);
+      await expect(generated.userId()).rejects.toThrow(BridgeValidationError);
+    } finally {
+      clearRuntimeBridge();
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it('composes nested local records and aliases, but stops cycles and foreign names', () => {
+    const source = rawIr.functions[1]!;
+    const point = rawIr.classes[0]!;
+    const typedDict = (name: string, annotation: string) => ({
+      ...point,
+      name,
+      qualname: `fixture.${name}`,
+      typed_dict: true,
+      is_dataclass: false,
+      fields: [{ name: 'value', kind: 'FIELD', annotation, default: false }],
+    });
+    const returns = [
+      ['nested_values', 'list[Outer]'],
+      ['alias_values', 'AliasAlias'],
+      ['cycle_values', 'Loop'],
+      ['foreign_values', 'foreign.Outer'],
+      ['self_values', 'SelfRef'],
+      ['qualified_values', 'fixture.Outer'],
+    ] as const;
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: returns.map(([name, annotation]) => ({
+          ...source,
+          name,
+          qualname: `fixture.${name}`,
+          returns: annotation,
+        })),
+        classes: [
+          typedDict('Child', 'int'),
+          typedDict('Outer', 'Child'),
+          typedDict('SelfRef', 'SelfRef'),
+        ],
+        type_aliases: [
+          { name: 'UserId', definition: 'int', is_generic: false, type_params: [] },
+          { name: 'AliasAlias', definition: 'UserId', is_generic: false, type_params: [] },
+          { name: 'Loop', definition: 'Loop', is_generic: false, type_params: [] },
+        ],
+      },
+      'composed named values contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        functions: returns.map(([name]) => ({ ...moduleModel.functions[1]!, name })),
+        classes: ['Child', 'Outer', 'SelfRef'].map(name => ({
+          ...moduleModel.classes[0]!,
+          name,
+        })),
+        typeAliases: ['UserId', 'AliasAlias', 'Loop'].map(name => ({
+          name,
+          type: { kind: 'custom' as const, name: 'Any' },
+        })),
+      },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.callables[0]?.result.resolution).toMatchObject({
+      status: 'supported',
+      value: {
+        kind: 'sequence',
+        item: {
+          kind: 'record',
+          fields: [
+            {
+              name: 'value',
+              value: {
+                kind: 'record',
+                fields: [{ name: 'value', value: { kind: 'integer' } }],
+              },
+            },
+          ],
+        },
+      },
+    });
+    expect(compiled.callables[1]?.result.resolution).toMatchObject({
+      status: 'supported',
+      value: { kind: 'integer', constraint: 'safe-integer' },
+    });
+    expect(compiled.callables[2]?.result.resolution.status).toBe('unresolved');
+    expect(compiled.callables[3]?.result.resolution.status).toBe('unresolved');
+    expect(compiled.callables[4]?.result.resolution.status).toBe('unresolved');
+    expect(compiled.callables[5]?.result.resolution.status).toBe('supported');
+    expect(compiled.generated.declaration).toContain('nestedValues(): Promise<Outer[]>');
+    expect(compiled.generated.declaration).toContain('aliasValues(): Promise<AliasAlias>');
+    expect(compiled.generated.declaration).toContain('cycleValues(): Promise<unknown>');
+    expect(compiled.generated.declaration).toContain('foreignValues(): Promise<unknown>');
+    expect(compiled.generated.declaration).toContain('selfValues(): Promise<unknown>');
+    expect(compiled.generated.declaration).toContain('qualifiedValues(): Promise<Outer>');
+    expect(compiled.generated.typescript).toContain(
+      'const __validateforeign_valuesResult = createReturnValidator({"kind":"any"}'
+    );
+
+    const rejectIntegers: typeof DEFAULT_VALUE_CONVERSION = {
+      revision: DEFAULT_VALUE_CONVERSION.revision,
+      resolve(request) {
+        if (request.logicalType.kind === 'primitive' && request.logicalType.name === 'int') {
+          return {
+            status: 'unsupported',
+            reason: 'This configured conversion declines integers.',
+            guidance: 'Use a different conversion.',
+          };
+        }
+        return DEFAULT_VALUE_CONVERSION.resolve(request);
+      },
+    };
+    const declined = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        functions: returns.map(([name]) => ({ ...moduleModel.functions[1]!, name })),
+        classes: ['Child', 'Outer', 'SelfRef'].map(name => ({
+          ...moduleModel.classes[0]!,
+          name,
+        })),
+        typeAliases: ['UserId', 'AliasAlias', 'Loop'].map(name => ({
+          name,
+          type: { kind: 'custom' as const, name: 'Any' },
+        })),
+      },
+      generator: new CodeGenerator(),
+      conversion: rejectIntegers,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(declined.callables[0]?.result.resolution.status).toBe('unsupported');
+    expect(declined.callables[1]?.result.resolution.status).toBe('unsupported');
+    expect(declined.generated.declaration).toContain('nestedValues(): Promise<unknown>');
+  });
+
+  it('bounds local alias expansion when a converter leaves custom names unresolved', () => {
+    const aliases = Array.from({ length: 70 }, (_, index) => ({
+      name: `Alias${index}`,
+      definition: index === 69 ? 'External' : `Alias${index + 1}`,
+      is_generic: false,
+      type_params: [],
+    }));
+    const source = rawIr.functions[1]!;
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: [
+          { ...source, name: 'alias_chain', qualname: 'fixture.alias_chain', returns: 'Alias0' },
+        ],
+        type_aliases: aliases,
+      },
+      'bounded alias chain contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const unresolvedCustom: typeof DEFAULT_VALUE_CONVERSION = {
+      revision: DEFAULT_VALUE_CONVERSION.revision,
+      resolve(request) {
+        if (request.logicalType.kind === 'custom') {
+          return { status: 'unresolved', annotation: request.logicalType.name };
+        }
+        return DEFAULT_VALUE_CONVERSION.resolve(request);
+      },
+    };
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        functions: [{ ...moduleModel.functions[1]!, name: 'alias_chain' }],
+        classes: [],
+        typeAliases: aliases.map(alias => ({
+          name: alias.name,
+          type: { kind: 'custom' as const, name: 'Any' },
+        })),
+      },
+      generator: new CodeGenerator(),
+      conversion: unresolvedCustom,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.callables[0]?.result.resolution).toMatchObject({
+      status: 'unsupported',
+      reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+    });
+  });
+
+  it('treats a variadic integer tuple as the supported sequence contract', () => {
+    const logicalType = parseAnnotationToPythonType('tuple[int, ...]');
+    expect(
+      DEFAULT_VALUE_CONVERSION.resolve({
+        direction: 'output',
+        path: '$.functions[0].returns',
+        logicalType,
+      })
+    ).toMatchObject({
+      status: 'supported',
+      value: {
+        kind: 'sequence',
+        item: { kind: 'integer', constraint: 'safe-integer' },
+      },
+    });
   });
 
   it('requires returned dataclass fields even when their constructor has defaults', () => {

@@ -59,6 +59,11 @@ tensor objects keep their identity-based marker proof.
 The compiler keeps Arrow int64 behavior outside this prototype. Existing Arrow
 int64 values can decode as `bigint`.
 
+Selected local non-generic `TypedDict` classes use revision-2 record contracts
+when every field has a supported conversion. Nested records and selected simple
+aliases compose through the same resolver. Foreign and recursive names remain
+unresolved.
+
 ## Diagnostics and fallback
 
 Known unsupported cases create error diagnostics. The compiler changes the
@@ -78,6 +83,14 @@ Unresolved annotations create warning diagnostics. Their result type is
 `unknown`, including an output that contains `object` or a type variable. Python
 `object` can hold a primitive value. A type variable has no validated conversion
 to the decoded result. Neither annotation justifies a precise TypeScript return.
+
+The compiler keeps an existing best-effort return check when it widens a
+declaration. For example, an unresolved `list[object]` still rejects a non-array
+result, and a `DataFrame` annotation still requires a decoded marker.
+
+`Literal` returns keep their exact-value validator, but stay `unknown` until a
+literal value contract exists. Unresolved literal overloads cannot select a
+precise return at runtime.
 
 IR overload signatures stay separate from the implementation signature. The
 extractor collects type variables from overload annotations. Generated
