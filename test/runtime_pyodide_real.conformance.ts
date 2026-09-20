@@ -26,6 +26,8 @@ describe('real PyodideBridge', () => {
     await expect(bridge.call('numpy', 'array', [[1.5, -2.25]])).resolves.toEqual([1.5, -2.25]);
     await expect(bridge.call('math', 'not_a_function', [])).rejects.toMatchObject({
       name: 'BridgeExecutionError',
+      message: expect.stringMatching(/AttributeError:.*not_a_function/),
+      traceback: expect.stringContaining('not_a_function'),
     });
   }, 180_000);
 

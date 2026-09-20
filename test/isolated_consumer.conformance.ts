@@ -206,6 +206,7 @@ describe('isolated npm consumer', () => {
     expect(isInside(importedIrPath, repoRoot)).toBe(false);
 
     const generated = join(consumer, 'generated');
+    expect(existsSync(generated)).toBe(false);
     writeFileSync(
       join(consumer, 'tywrap.config.json'),
       `${JSON.stringify(
