@@ -1,0 +1,53 @@
+{
+  "revision": 1,
+  "status": "frozen-internal-prototype",
+  "transport": "tywrap/1 value RPC",
+  "codecVersion": 1,
+  "rules": {
+    "integer": {
+      "logicalKind": "Python int, excluding bool",
+      "constraint": "-9007199254740991 <= value <= 9007199254740991",
+      "wire": "JSON integer number",
+      "decodedAs": "JavaScript number",
+      "failure": "reject before JSON encoding with result path and explicit conversion guidance"
+    },
+    "float": {
+      "logicalKind": "finite Python float",
+      "constraint": "finite",
+      "wire": "JSON number",
+      "decodedAs": "JavaScript number",
+      "failure": "reject NaN and Infinity"
+    },
+    "sequence": {
+      "logicalKind": "list or tuple of contracted values",
+      "wire": "JSON array",
+      "decodedAs": "JavaScript array",
+      "composition": "apply each item rule at its result path"
+    },
+    "record": {
+      "logicalKind": "string-keyed record of contracted values",
+      "wire": "JSON object",
+      "decodedAs": "JavaScript object",
+      "composition": "apply each field rule at its result path"
+    },
+    "ndarray-float16": {
+      "logicalKind": "NumPy float16 ndarray",
+      "wire": "codecVersion 1 ndarray Arrow envelope; JSON fallback stays explicit",
+      "decodedAs": "JavaScript numeric scalar or nested array",
+      "conversion": "decode each Arrow Uint16 storage word as IEEE 754 binary16 before reshape",
+      "failure": "reject non-finite converted values"
+    },
+    "torch-float16": {
+      "logicalKind": "Torch float16 tensor",
+      "wire": "codecVersion 1 torch.tensor envelope containing ndarray envelope",
+      "decodedAs": "tensor record with numeric data",
+      "conversion": "reuse ndarray-float16 rule for nested value"
+    }
+  },
+  "compatibility": {
+    "wireChange": false,
+    "unknownVersion": "reject",
+    "unsafeInteger": "previous clients could round; new producers reject",
+    "generatedWrappers": "regenerate when callable-contract code consumes revision 1"
+  }
+}
