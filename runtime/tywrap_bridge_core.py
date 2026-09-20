@@ -715,6 +715,14 @@ def serialize_sparse_matrix(obj):
             'Complex scipy sparse matrices are not supported by the JSON codec; '
             'split into real/imag components explicitly before returning'
         )
+    if getattr(obj.dtype, 'kind', None) in ('i', 'u') and obj.data.size and (
+        (obj.data < -JS_SAFE_INTEGER_MAX).any()
+        or (obj.data > JS_SAFE_INTEGER_MAX).any()
+    ):
+        raise RuntimeError(
+            'JSON scipy sparse encoding cannot safely represent data outside the '
+            'JavaScript safe integer range; cast or encode the values explicitly'
+        )
 
     if fmt in ('csr', 'csc'):
         data = obj.data.tolist()
@@ -995,21 +1003,41 @@ def _needs_serialize_visit(value):
     """Return whether value needs container or scientific traversal work."""
     if type(value) in (type(None), bool, int, float, str):
         return False
-    if type(value) in (dict, list, tuple):
+    if isinstance(value, (dict, list, tuple, set, frozenset)):
         return True
     package = type(value).__module__.split('.', 1)[0]
     if package in ('numpy', 'pandas', 'scipy', 'torch'):
         return True
-    return 'sklearn.base' in sys.modules and is_sklearn_estimator(value)
+    return callable(getattr(value, 'model_dump', None)) or (
+        'sklearn.base' in sys.modules and is_sklearn_estimator(value)
+    )
 
 
-def _serialize_leaf(value):
+def _serialize_leaf(value, path):
     """Apply non-container conversions without allocating a traversal frame."""
+    if isinstance(value, int) and not isinstance(value, bool) and (
+        value < -JS_SAFE_INTEGER_MAX or value > JS_SAFE_INTEGER_MAX
+    ):
+        raise RuntimeError(
+            f'Unsafe Python integer at {path}: {value} is outside the JavaScript safe '
+            'integer range; return an explicit string or use an Arrow integer column'
+        )
     if type(value) in (type(None), bool, int, float, str):
         return value
+    np = sys.modules.get('numpy')
+    if np is not None and isinstance(value, np.generic):
+        extracted = value.item()
+        if isinstance(extracted, np.generic):
+            raise TypeError(
+                f'NumPy scalar at {path} did not convert to a JSON value; '
+                'cast it explicitly before returning'
+            )
+        return _serialize_leaf(extracted, path)
     pydantic_value = serialize_pydantic(value)
     if pydantic_value is not _NO_PYDANTIC:
         return pydantic_value
+    if type(value) in (set, frozenset):
+        return list(value)
     stdlib_value = serialize_stdlib(value)
     if stdlib_value is not None:
         return stdlib_value
@@ -1057,22 +1085,23 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
             if _needs_serialize_visit(item):
                 stack.append(('visit', item, depth + 1, child_path, output, item_key))
             else:
-                output[item_key] = _serialize_leaf(item)
+                output[item_key] = _serialize_leaf(item, child_path)
             continue
         if action == 'sequence':
             _, current, depth, path, parent, key, output, index = frame
             if index == len(output):
                 active_ids.remove(id(current))
-                parent[key] = output if type(current) is list else tuple(output)
+                parent[key] = output if isinstance(current, list) else tuple(output)
                 continue
             stack.append(('sequence', current, depth, path, parent, key, output, index + 1))
             item = current[index]
+            child_path = _serialize_path(path, index)
             if _needs_serialize_visit(item):
                 stack.append(
-                    ('visit', item, depth + 1, _serialize_path(path, index), output, index)
+                    ('visit', item, depth + 1, child_path, output, index)
                 )
             else:
-                output[index] = _serialize_leaf(item)
+                output[index] = _serialize_leaf(item, child_path)
             continue
 
         _, current, depth, path, parent, key = frame
@@ -1085,7 +1114,7 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
                 path=path,
             )
         except Exception as exc:
-            if path == 'result':
+            if path == 'result' and 'safe integer range' not in str(exc):
                 raise
             raise RuntimeError(f'Scientific value serialization failed at {path}: {exc}') from exc
         if scientific is not _NO_SCIENTIFIC:
@@ -1106,8 +1135,7 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
             parent[key] = scientific
             continue
 
-        container_type = type(current)
-        if container_type in (dict, list, tuple):
+        if isinstance(current, (dict, list, tuple)):
             _check_serialize_depth(depth, path)
             visited_nodes += 1
             _check_serialize_nodes(visited_nodes, path)
@@ -1116,7 +1144,7 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
                 raise RuntimeError(f'Circular reference detected at {path}')
             active_ids.add(current_id)
 
-            if container_type is dict:
+            if isinstance(current, dict):
                 output = {}
                 parent[key] = output
                 stack.append(
@@ -1125,12 +1153,18 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
                 continue
 
             output = [None] * len(current)
-            if container_type is list:
+            if isinstance(current, list):
                 parent[key] = output
             stack.append(('sequence', current, depth, path, parent, key, output, 0))
             continue
 
-        parent[key] = _serialize_leaf(current)
+        normalized = _serialize_leaf(current, path)
+        if normalized is not current and _needs_serialize_visit(normalized):
+            stack.append(('visit', normalized, depth, path, parent, key))
+        elif normalized is not current:
+            parent[key] = _serialize_leaf(normalized, path)
+        else:
+            parent[key] = normalized
 
     return root[0]
 
