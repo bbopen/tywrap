@@ -2,9 +2,10 @@
 
 ## tywrap (npm)
 
-Releases publish from `main` via the [`release.yml`](../.github/workflows/release.yml)
-workflow. There is one path: bump the version on a branch, merge to `main`, and the
-workflow tags, releases, and publishes.
+Releases publish from `main` via the
+[`release.yml`](../.github/workflows/release.yml) workflow. There is one path:
+bump the version on a branch, merge to `main`, and the workflow tags, releases,
+and publishes.
 
 1. On a release branch, bump the version and update the changelog:
    - `package.json`: the new `version`
@@ -15,6 +16,7 @@ workflow tags, releases, and publishes.
    - `package-lock.json`: refresh if dependencies changed
 
 2. Run the release gate:
+
    ```sh
    CI=1 npm run check:all
    ```
@@ -49,13 +51,18 @@ workflow tags, releases, and publishes.
    current IR schema used by `src/tywrap.ts`.
 
 3. Validate the Python package:
+
    ```sh
    python -m venv .venv-release
    ./.venv-release/bin/python -m pip install -e tywrap_ir
-   PATH="$PWD/.venv-release/bin:$PATH" python -m unittest discover -s tywrap_ir/tests -p 'test_*.py' -v
+   ./.venv-release/bin/python -I -m unittest discover -s tywrap_ir/tests -p 'test_*.py' -v
    ```
 
+   Isolated mode prevents the repository directory from shadowing the installed
+   package.
+
 4. Tag the merged `main` commit and push the tag:
+
    ```sh
    git tag tywrap-ir-v<version>
    git push origin tywrap-ir-v<version>
@@ -63,6 +70,19 @@ workflow tags, releases, and publishes.
 
 5. The [`publish-pypi.yml`](../.github/workflows/publish-pypi.yml) workflow
    publishes `tywrap-ir` to PyPI from that tag.
+
+## Publish documentation
+
+The docs workflow checks both package versions against npm and PyPI before
+deployment. It keeps the current site when either version is unavailable or a
+registry check fails. After both packages publish, run the docs workflow on
+`main`:
+
+```sh
+gh workflow run docs.yml --ref main
+```
+
+Verify its deployment before announcing the release.
 
 ## Notes
 

@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.11.0](https://github.com/bbopen/tywrap/compare/v0.10.0...v0.11.0) (2026-09-20)
+
+Python integers outside JavaScript's safe range now reject before JSON encoding.
+NumPy and Torch float16 values decode to numbers instead of storage words.
+Generated wrappers preserve supported overload relationships and await Python
+coroutine results through Node and Pyodide.
+
+### Compatibility
+
+- Python integer results must be between -9007199254740991 and 9007199254740991.
+  This applies to nested values, supported NumPy scalars, and model dumps.
+  Errors identify the result path and suggest a string or an Arrow integer column.
+- Float16 results preserve finite values, subnormals, and signed zero. Remove
+  application code that converts the returned storage words manually.
+- Unresolved return annotations produce `unknown` with generation diagnostics.
+  Existing partial return checks remain. Type-only Protocol signatures remain
+  available, but an unresolved generic runtime result cannot promise `T`.
+- Regenerate wrappers after upgrading the generator and runtime. The value-RPC
+  protocol remains `tywrap/1`, and the Python IR schema remains `0.4.0`.
+
+### Generation and execution
+
+- Ambiguous unions produce generation diagnostics when the same wire value can
+  decode into different representations. Disjoint supported alternatives remain usable.
+- The pure callable compiler resolves arguments, overloads, conversions,
+  capabilities, and diagnostics before code generation. Declarations and return
+  validators use those resolved contracts.
+- Supported overload calls infer their corresponding return types. Invalid calls
+  fail TypeScript compilation, and invalid results reject through the generated
+  validator. Registered overload extraction requires Python 3.11 or later.
+- Node and Pyodide await Python coroutine results. Exceptions retain call context;
+  timeout and disposal checks cover subsequent requests. HTTP behavior depends
+  on the server's coroutine support.
+- Node worker restarts isolate replacement requests from retired process errors
+  and stale write backpressure.
+- Development reload preserves the working bridge and generated files when a
+  configured Python module changes during candidate preparation.
+- Python encodes ASCII subprocess frames without per-character scanning,
+  preserving the wire format and Unicode handling.
+- `tywrap-ir` 0.3.1 collects generic parameters used only in overload annotations.
+  Its package version changes independently from the npm package.
+
+### Validation and design work
+
+- Clean consumer checks install a packed npm package and a non-editable Python
+  wheel, then generate, compile, and execute wrappers outside the checkout.
+- Actual Pyodide and browser smoke tests complement the existing mocked and
+  CPython checks. Scientific tests include an independent finite float16 oracle
+  and real NumPy and Torch generated calls.
+- Exact bigint transport, dataclass transport, and explicit runtime binding have
+  bounded design prototypes. They are not default production features in 0.11.
+
+See the [migration guide](https://bbopen.github.io/tywrap/guide/migrating-to-0-11)
+for package versions, fresh IR extraction, pinned contracts, and conversion examples.
+
 ## [0.10.0](https://github.com/bbopen/tywrap/compare/v0.9.0...v0.10.0) (2026-07-13)
 
 The scientific codec correctness release. Codec envelopes for numpy, pandas, scipy, torch, and sklearn now compose inside ordinary containers, validate what they claim, and refuse to serialize what they cannot preserve. Every behavior change in this release landed by flipping named rows in the menagerie truth table, and the pinned scientific CI job holds the line against library drift.
