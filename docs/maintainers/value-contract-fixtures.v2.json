@@ -10,6 +10,20 @@
     { "decimal": "9223372036854775807", "outcome": "reject" },
     { "decimal": "265252859812191058636308480000000", "outcome": "reject" }
   ],
+  "bytesCases": [
+    {
+      "logicalHex": "00ff80",
+      "requestEnvelope": { "__tywrap_bytes__": true, "b64": "AP+A" },
+      "responseEnvelope": { "__type__": "bytes", "encoding": "base64", "data": "AP+A" },
+      "decodedAs": "Uint8Array[0,255,128]"
+    },
+    {
+      "logicalHex": "",
+      "requestEnvelope": { "__tywrap_bytes__": true, "b64": "" },
+      "responseEnvelope": { "__type__": "bytes", "encoding": "base64", "data": "" },
+      "decodedAs": "Uint8Array[]"
+    }
+  ],
   "binary16Cases": [
     { "wordHex": "0000", "outcome": "0" },
     { "wordHex": "8000", "outcome": "-0" },
