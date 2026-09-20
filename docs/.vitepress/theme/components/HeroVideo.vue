@@ -25,16 +25,16 @@ let copyTimeout: number | null = null
 
 const benefits = [
   {
-    title: 'Keep the Python you have',
-    details: 'Call functions from your existing modules and libraries such as NumPy, pandas, and SciPy.',
+    title: 'Reuse your Python work',
+    details: 'Connect existing calculations and data tools to your TypeScript app.',
   },
   {
-    title: 'Get help from your editor',
-    details: 'Generate TypeScript signatures from supported Python annotations for autocomplete and type checks.',
+    title: 'Write less integration code',
+    details: 'Generate callable functions from Python annotations, with parameter and return types in your editor.',
   },
   {
-    title: 'Move arrays and DataFrames',
-    details: 'Move supported arrays and DataFrames between Python and TypeScript. Node and Bun can use Arrow.',
+    title: 'Work with scientific data',
+    details: 'Return NumPy arrays and pandas tables to your app. Node and Bun can use Arrow for binary transfer.',
   },
   {
     title: 'Choose where Python runs',
@@ -133,9 +133,9 @@ onBeforeUnmount(() => {
       <div class="hero-content">
         <h1 id="hero-title">Use Python libraries in your TypeScript app.</h1>
         <p class="hero-subtitle">
-          Keep the Python code and libraries you already use. tywrap generates
-          TypeScript functions you can call from your app. Supported Python
-          annotations add argument and return types for your editor.
+          Run your existing Python functions from TypeScript, with generated
+          signatures and autocomplete. Bring NumPy, pandas, and SciPy into your
+          app without writing each wrapper by hand.
         </p>
         <div class="hero-actions">
           <a class="get-started" :href="gettingStartedUrl">Get started</a>
@@ -317,7 +317,7 @@ h1 {
 .fallback-python { color: var(--python-amber); }
 .fallback-typescript { color: var(--typescript-blue); }
 .fallback-line { width: 2.4rem; height: 1px; background: #8b9ab1; }
-.hero-poster, .hero-video { display: block; object-fit: cover; object-position: 60% center; }
+.hero-poster, .hero-video { display: block; object-fit: cover; object-position: 100% center; }
 .video-control {
   position: absolute;
   right: 1rem;
