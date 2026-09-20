@@ -241,10 +241,9 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
     ['special-floats', 'special_floats(true)', 'special_floats', [true], /NaN|Infinity|serialize/i],
     ['tuple-key-dict', 'tuple_key_dict()', 'tuple_key_dict', [], /keys must be str/i],
     ['enum-member', 'enum_member()', 'enum_member', [], /TrafficLight|serializable/i],
-    ['coroutine-value', 'coroutine_value()', 'coroutine_value', [], /coroutine|serializable/i],
     ['dataclass-instance', 'dataclass_instance()', 'dataclass_instance', [], /serializable/i],
     ['complex-value', 'complex_value()', 'complex_value', [], /serializable/i],
-    ['generator-value', 'generator_value()', 'generator_value', [], /serializable/i],
+    ['generator-value', 'generator_value()', 'generator_value', [], /generator|supported/i],
   ].map(([id, call, functionName, args, pattern]) =>
     valuesRow({
       id: id as string,
@@ -256,6 +255,13 @@ export const RUNTIME_CATALOGUE: readonly CatalogueRow[] = [
       expected: error(pattern as RegExp),
     })
   ),
+  valuesRow({
+    id: 'coroutine-value',
+    call: 'coroutine_value()',
+    status: 'EXPECTED_OK',
+    currentBehavior: 'The bridge awaits the coroutine and returns its string result.',
+    expected: equal('coroutine-result'),
+  }),
 
   // NumPy: Arrow is the default subprocess path; JSON rows pin fallback-only differences.
   libraryRow({

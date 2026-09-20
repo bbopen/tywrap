@@ -329,6 +329,12 @@ export class PooledTransport extends DisposableBase implements Transport {
       }
       throw error;
     } finally {
+      // A subprocess may retire its process after this lease reached stdin.
+      // Remove it before another waiter can acquire the old generation.
+      if (!workerRemoved && this.requiresReplacement(worker)) {
+        this.removeWorker(worker);
+        workerRemoved = true;
+      }
       // Only release if worker wasn't removed due to fatal error
       if (!workerRemoved) {
         this.release(worker);
@@ -360,6 +366,11 @@ export class PooledTransport extends DisposableBase implements Transport {
       );
     }
     return false;
+  }
+
+  private requiresReplacement(worker: TransportLease): boolean {
+    const transport = worker.transport as Transport & { readonly requiresReplacement?: boolean };
+    return transport.requiresReplacement === true;
   }
 
   /**
