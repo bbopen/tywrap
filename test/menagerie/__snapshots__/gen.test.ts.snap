@@ -295,11 +295,11 @@ export async function decimalValues(): Promise<unknown[]> {
   return getRuntimeBridge().call<unknown[]>('fixtures.values_torture', 'decimal_values', __args, undefined, __validatedecimal_valuesResult);
 }
 
-const __validatedeeply_nestedResult = createReturnValidator({"kind":"array","element":{"kind":"any"}}, "fixtures.values_torture.deeply_nested", __tywrapReturnDefinitions);
+const __validatedeeply_nestedResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.deeply_nested", __tywrapReturnDefinitions);
 
-export async function deeplyNested(): Promise<object[]> {
+export async function deeplyNested(): Promise<unknown> {
   const __args: unknown[] = [];
-  return getRuntimeBridge().call<object[]>('fixtures.values_torture', 'deeply_nested', __args, undefined, __validatedeeply_nestedResult);
+  return getRuntimeBridge().call<unknown>('fixtures.values_torture', 'deeply_nested', __args, undefined, __validatedeeply_nestedResult);
 }
 
 const __validateecho_intResult = createReturnValidator({"kind":"primitive","type":"number","constraint":"safe-integer"}, "fixtures.values_torture.echo_int", __tywrapReturnDefinitions);
@@ -309,11 +309,11 @@ export async function echoInt(value: number): Promise<number> {
   return getRuntimeBridge().call<number>('fixtures.values_torture', 'echo_int', __args, undefined, __validateecho_intResult);
 }
 
-const __validateempty_valuesResult = createReturnValidator({"kind":"tuple","elements":[{"kind":"tuple","elements":[{"kind":"any"}]},{"kind":"array","element":{"kind":"any"}},{"kind":"record","values":{"kind":"any"}},{"kind":"array","element":{"kind":"any"}}]}, "fixtures.values_torture.empty_values", __tywrapReturnDefinitions);
+const __validateempty_valuesResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.empty_values", __tywrapReturnDefinitions);
 
-export async function emptyValues(): Promise<[[unknown], object[], Record<string, object>, object[]]> {
+export async function emptyValues(): Promise<unknown> {
   const __args: unknown[] = [];
-  return getRuntimeBridge().call<[[unknown], object[], Record<string, object>, object[]]>('fixtures.values_torture', 'empty_values', __args, undefined, __validateempty_valuesResult);
+  return getRuntimeBridge().call<unknown>('fixtures.values_torture', 'empty_values', __args, undefined, __validateempty_valuesResult);
 }
 
 const __validateenum_memberResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.enum_member", __tywrapReturnDefinitions);
@@ -332,9 +332,9 @@ export async function finiteFloatEdges(): Promise<number[]> {
 
 const __validategenerator_valueResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.generator_value", __tywrapReturnDefinitions);
 
-export async function generatorValue(): Promise<object> {
+export async function generatorValue(): Promise<unknown> {
   const __args: unknown[] = [];
-  return getRuntimeBridge().call<object>('fixtures.values_torture', 'generator_value', __args, undefined, __validategenerator_valueResult);
+  return getRuntimeBridge().call<unknown>('fixtures.values_torture', 'generator_value', __args, undefined, __validategenerator_valueResult);
 }
 
 const __validateint_key_dictResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.int_key_dict", __tywrapReturnDefinitions);
@@ -426,11 +426,11 @@ export async function specialFloats(include?: boolean): Promise<number[]> {
   return getRuntimeBridge().call<number[]>('fixtures.values_torture', 'special_floats', __args, undefined, __validatespecial_floatsResult);
 }
 
-const __validatetemporal_valuesResult = createReturnValidator({"kind":"record","values":{"kind":"any"}}, "fixtures.values_torture.temporal_values", __tywrapReturnDefinitions);
+const __validatetemporal_valuesResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.temporal_values", __tywrapReturnDefinitions);
 
-export async function temporalValues(): Promise<Record<string, object>> {
+export async function temporalValues(): Promise<unknown> {
   const __args: unknown[] = [];
-  return getRuntimeBridge().call<Record<string, object>>('fixtures.values_torture', 'temporal_values', __args, undefined, __validatetemporal_valuesResult);
+  return getRuntimeBridge().call<unknown>('fixtures.values_torture', 'temporal_values', __args, undefined, __validatetemporal_valuesResult);
 }
 
 const __validatetuple_key_dictResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.tuple_key_dict", __tywrapReturnDefinitions);
@@ -447,11 +447,11 @@ export async function unicodeText(): Promise<string> {
   return getRuntimeBridge().call<string>('fixtures.values_torture', 'unicode_text', __args, undefined, __validateunicode_textResult);
 }
 
-const __validateuuid_and_pathResult = createReturnValidator({"kind":"record","values":{"kind":"any"}}, "fixtures.values_torture.uuid_and_path", __tywrapReturnDefinitions);
+const __validateuuid_and_pathResult = createReturnValidator({"kind":"any"}, "fixtures.values_torture.uuid_and_path", __tywrapReturnDefinitions);
 
-export async function uuidAndPath(): Promise<Record<string, object>> {
+export async function uuidAndPath(): Promise<unknown> {
   const __args: unknown[] = [];
-  return getRuntimeBridge().call<Record<string, object>>('fixtures.values_torture', 'uuid_and_path', __args, undefined, __validateuuid_and_pathResult);
+  return getRuntimeBridge().call<unknown>('fixtures.values_torture', 'uuid_and_path', __args, undefined, __validateuuid_and_pathResult);
 }
 
 /**
@@ -483,17 +483,17 @@ export function dataclassInstance(): Promise<unknown>;
 
 export function decimalValues(): Promise<unknown[]>;
 
-export function deeplyNested(): Promise<object[]>;
+export function deeplyNested(): Promise<unknown>;
 
 export function echoInt(value: number): Promise<number>;
 
-export function emptyValues(): Promise<[[unknown], object[], Record<string, object>, object[]]>;
+export function emptyValues(): Promise<unknown>;
 
 export function enumMember(): Promise<unknown>;
 
 export function finiteFloatEdges(): Promise<number[]>;
 
-export function generatorValue(): Promise<object>;
+export function generatorValue(): Promise<unknown>;
 
 export function intKeyDict(): Promise<unknown>;
 
@@ -520,13 +520,13 @@ export function setAndFrozenset(): Promise<[number[], string[]]>;
 export function specialFloats(): Promise<number[]>;
 export function specialFloats(include?: boolean): Promise<number[]>;
 
-export function temporalValues(): Promise<Record<string, object>>;
+export function temporalValues(): Promise<unknown>;
 
 export function tupleKeyDict(): Promise<unknown>;
 
 export function unicodeText(): Promise<string>;
 
-export function uuidAndPath(): Promise<Record<string, object>>;
+export function uuidAndPath(): Promise<unknown>;
 
 /**
  * Point(x: 'int', y: 'int')
