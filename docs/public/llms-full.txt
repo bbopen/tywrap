@@ -3477,7 +3477,7 @@ the declared return schema.
 | Stage | Owners | Invariant |
 | --- | --- | --- |
 | Python analysis | `tywrap_ir/tywrap_ir/__main__.py`, `tywrap_ir/tywrap_ir/` | The extractor emits JSON typed IR for the requested module. |
-| IR contract | `src/core/ir-contract.ts`, `src/tywrap.ts` | Pure validation checks the complete IR structure, expected module and schema version `0.4.0`. |
+| IR contract | `src/core/ir-contract.ts`, `src/tywrap.ts` | Pure validation checks the complete IR structure and schema version `0.4.0`; generation checks the requested module. |
 | Callable compilation | `src/core/callable-compiler.ts`, `src/contracts/value-contract.ts` | Resolved contracts describe arguments, overloads, conversion, validation, capabilities and diagnostics without I/O. |
 | Wrapper generation | `src/core/generator.ts`, `src/core/emit-call.ts` | Declarations, call wrappers and return validators consume the resolved callable contracts. |
 | Runtime transport | `src/runtime/node.ts`, `src/runtime/subprocess-transport.ts`, `src/runtime/frame-codec.ts`, `runtime/python_bridge.py` | Node subprocess requests use JSONL and use `tywrap-frame/1` when a message exceeds one line. |
