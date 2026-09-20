@@ -355,6 +355,16 @@ def sklearn_simple_estimator() -> object:
     return LinearRegression(fit_intercept=False, positive=True)
 
 
+def sklearn_unsafe_nested_estimator() -> object:
+    from sklearn.base import BaseEstimator
+
+    class NestedParams(BaseEstimator):
+        def __init__(self, config: object = None):
+            self.config = config
+
+    return NestedParams(config={'nested': {'unsafe': 2**53 + 1}})
+
+
 def sklearn_pipeline() -> object:
     from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import Pipeline

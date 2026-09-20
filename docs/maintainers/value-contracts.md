@@ -11,7 +11,7 @@ Migration for users with large Python integers: convert them to strings in Pytho
 
 The [fixed proof fixtures](value-contract-fixtures.v2.json) cover integer boundaries, binary16 values, unions, fixed tuples, and nested paths. The focused tests also compare every finite binary16 storage word with an independent float32 bit reference. They test signed zero with `Object.is`.
 
-The Python serializer checks plain integers, NumPy scalar integers, and model dumps during its existing value walk. A JSON ndarray or sparse matrix checks integer data before it creates an envelope. The TypeScript decoder converts float16 Arrow storage during extraction, before it reshapes the ndarray. Torch uses that same ndarray path. These checks do not walk the full decoded payload again for schema validation.
+The Python serializer checks plain integers, NumPy scalar integers, and model dumps during its existing value walk. It also checks terminal estimator parameters and Series name metadata before JSON output. A JSON ndarray or sparse matrix checks integer data before it creates an envelope. Sparse metadata checks shapes and indices. The TypeScript decoder converts float16 Arrow storage during extraction, before it reshapes the ndarray. Torch uses that same ndarray path. These checks do not walk Arrow payloads again for schema validation.
 
 ## Exact bigint extension for #337
 
