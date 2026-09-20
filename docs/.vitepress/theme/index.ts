@@ -2,7 +2,7 @@ import DefaultTheme from 'vitepress/theme'
 import type { Theme } from 'vitepress'
 import { h } from 'vue'
 import { useRoute } from 'vitepress'
-import Hero3D from './components/Hero3D.vue'
+import HeroVideo from './components/HeroVideo.vue'
 import './custom.css'
 
 export default {
@@ -11,7 +11,7 @@ export default {
     const route = useRoute()
     const isHome = route.path === '/' || route.path.replace(/\/$/, '') === '/tywrap'
     return h(DefaultTheme.Layout, null, {
-      ...(isHome ? { 'layout-top': () => h(Hero3D) } : {}),
+      ...(isHome ? { 'home-hero-before': () => h(HeroVideo) } : {}),
     })
   },
 } satisfies Theme

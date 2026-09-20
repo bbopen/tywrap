@@ -1,33 +1,22 @@
-/* Custom theme overrides for tywrap docs */
-
-/* Hide VitePress default hero — replaced by Hero3D component */
-.VPHome > .VPHero {
-  display: none;
+/* Keep the site canvas behind the home hero and the guide content. */
+:root {
+  --vp-c-bg: #090f1b;
+  --vp-c-bg-soft: #111b2a;
+  --vp-c-bg-alt: #0c1421;
+  --vp-c-brand-1: #73b7fa;
+  --vp-c-brand-2: #a7d3ff;
+  --vp-c-brand-3: #4d9ce8;
 }
 
-/* Ensure home page has transparent background for the 3D canvas */
-.VPHome {
-  background-color: transparent !important;
+.VPHome { background: #090f1b; }
+.VPHome .VPHomeContent { background: #090f1b; }
+
+/* The hero owns the page introduction. Keep the markdown content readable. */
+.VPHome .VPHomeContent .container {
+  max-width: 1220px;
+  margin-inline: auto;
 }
 
-/* Features section inherits transparent theme on home */
-.VPHome .VPFeatures {
-  background-color: transparent !important;
-}
-
-/* Ensure the main markdown content container is transparent */
-.VPHome .VPHomeContent {
-  background-color: transparent !important;
-}
-
-/* Restrict features/content to the left to match the hero text layout.
-   Targets internal VitePress classes (.VPFeatures .container, .VPHomeContent .container)
-   verified against VitePress 1.x — may need updating if VitePress changes its markup. */
-@media (min-width: 960px) {
-  .VPHome .VPFeatures .container,
-  .VPHome .VPHomeContent .container {
-    max-width: 60%;
-    margin-left: 0;
-    padding-left: max(24px, calc((100vw - var(--vp-layout-max-width, 1152px)) / 2));
-  }
+.VPHome .vp-doc {
+  max-width: 760px;
 }
