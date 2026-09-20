@@ -140,12 +140,20 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
   let generatedDir = '';
   let originalSource = '';
   let originalDeclaration = '';
+  let supportsOverloadExtraction = false;
   let compiledModule: PythonModule;
   let prototype: BindingPrototypeCode;
   let clientModule: ClientModule;
   let legacyModule: LegacyModule;
 
   beforeAll(async () => {
+    const overloadProbe = await processUtils.exec(
+      pythonPath,
+      ['-c', 'import typing; print(int(hasattr(typing, "get_overloads")))'],
+      { timeoutMs: 10_000 }
+    );
+    expect(overloadProbe.code, overloadProbe.stderr).toBe(0);
+    supportsOverloadExtraction = overloadProbe.stdout.trim() === '1';
     temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-binding-'));
     generatedDir = join(temporary, 'generated');
     const generated = await generate({
@@ -443,23 +451,30 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
 
   it('typechecks overloads, generics, optional arguments, and the class namespace', async () => {
     const consumer = join(generatedDir, 'binding-consumer.ts');
+    const selectSignatures = (originalDeclaration.match(/^export function select\(/gm) ?? [])
+      .length;
+    expect(selectSignatures).toBe(supportsOverloadExtraction ? 2 : 1);
+    const selectChecks = supportsOverloadExtraction
+      ? `const b: Promise<number> = client.api.select(2);
+const c: Promise<string> = client.api.select('x');
+// @ts-expect-error the string overload returns a string
+const wrong: Promise<number> = client.api.select('x');
+void wrong;`
+      : `const b: Promise<string | number> = client.api.select(2);
+const c: Promise<string | number> = client.api.select('x');`;
     await writeFile(
       consumer,
       `import { bindRuntime, type RuntimeExecution } from './binding_fixture.generated.client.js';
 declare const runtime: RuntimeExecution;
 const client = bindRuntime(runtime);
 const a: Promise<string> = client.api.identity<string>('x');
-const b: Promise<number> = client.api.select(2);
-const c: Promise<string> = client.api.select('x');
+${selectChecks}
 const d: Promise<number> = client.api.scale(2);
 const e: Promise<number> = client.api.scale(2, 3);
 const f: Promise<string> = client.api.Client.label('x');
 const g: Promise<string> = client.api.kwOnly({ label: 'x' });
 const h: Promise<Uint8Array> = client.api.echoBytes(new Uint8Array([1]));
 void [a, b, c, d, e, f, g, h];
-// @ts-expect-error the string overload returns a string
-const wrong: Promise<number> = client.api.select('x');
-void wrong;
 `,
       'utf8'
     );
