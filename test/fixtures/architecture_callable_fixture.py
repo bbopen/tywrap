@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import overload
+import typing
 
 
-@overload
+@typing.overload
 def select_record(key: str) -> dict[str, dict[str, str]]: ...
 
 
-@overload
+@typing.overload
 def select_record(key: int) -> dict[str, dict[str, int]]: ...
 
 
@@ -17,11 +17,11 @@ def select_record(key: str | int) -> dict[str, dict[str, str | int]]:
     return {'outer': {'value': key}}
 
 
-@overload
+@typing.overload
 def select_record_wrong(key: str) -> dict[str, dict[str, str]]: ...
 
 
-@overload
+@typing.overload
 def select_record_wrong(key: int) -> dict[str, dict[str, int]]: ...
 
 
