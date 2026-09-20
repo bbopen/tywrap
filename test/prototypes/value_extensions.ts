@@ -132,8 +132,22 @@ function walk(
       return value;
     }
     if (contract.kind === 'float') {
+      if (mode === 'decode' && isRecord(value)) {
+        exactKeys(value, ['__tywrap__', 'codecVersion', 'encoding'], path);
+        if (
+          value.__tywrap__ !== 'float' ||
+          value.codecVersion !== 2 ||
+          value.encoding !== 'negative-zero'
+        ) {
+          throw new PrototypeError(`invalid float envelope at ${path}`);
+        }
+        return -0;
+      }
       if (typeof value !== 'number' || !Number.isFinite(value)) {
         throw new PrototypeError(`expected finite float at ${path}`);
+      }
+      if (mode === 'encode' && Object.is(value, -0)) {
+        return { __tywrap__: 'float', codecVersion: 2, encoding: 'negative-zero' };
       }
       return value;
     }
