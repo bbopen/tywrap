@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
@@ -87,6 +87,7 @@ describe('real browser PyodideBridge', () => {
   it('loads the pinned local runtime and executes an actual generated wrapper in Chromium', async () => {
     const generated = join(tempRoot, 'source');
     const compiled = join(tempRoot, 'compiled');
+    symlinkSync(join(repoRoot, 'node_modules'), join(tempRoot, 'node_modules'), 'dir');
     await run(
       process.execPath,
       [

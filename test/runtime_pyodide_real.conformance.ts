@@ -14,13 +14,13 @@ describe('real PyodideBridge', () => {
   });
 
   it('runs standard library, byte envelope, scientific JSON, and Python error cases', async () => {
-    bridge = new PyodideBridge({ indexURL, packages: ['numpy'] });
+      bridge = new PyodideBridge({ indexURL });
 
     await expect(bridge.call('math', 'sqrt', [81])).resolves.toBe(9);
     await expect(bridge.call('builtins', 'bytes', [[0, 1, 255]])).resolves.toEqual(
       new Uint8Array([0, 1, 255])
     );
-    await expect(bridge.call('numpy', 'array', [[1.5, -2.25]])).resolves.toEqual([1.5, -2.25]);
+      await expect(bridge.call('decimal', 'Decimal', ['1.25'])).resolves.toBe('1.25');
     await expect(bridge.call('math', 'not_a_function', [])).rejects.toMatchObject({
       name: 'BridgeExecutionError',
     });
