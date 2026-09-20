@@ -14,6 +14,7 @@ import { clearRuntimeBridge, setRuntimeBridge } from '../src/runtime/index.js';
 import {
   BridgeDisposedError,
   BridgeExecutionError,
+  BridgeProtocolError,
   BridgeTimeoutError,
 } from '../src/runtime/errors.js';
 import { generate } from '../src/tywrap.js';
@@ -221,6 +222,52 @@ nodeSuite('Subprocess retirement reaps the child', () => {
   );
 });
 
+describe('Subprocess cleanup retry', () => {
+  it('retains a child handle when kill fails and retries after disposal', async () => {
+    vi.useFakeTimers();
+    let canExit = false;
+    const child = Object.assign(new EventEmitter(), {
+      stdin: Object.assign(new EventEmitter(), { end: () => undefined }),
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      killed: false,
+      kill: vi.fn((signal: NodeJS.Signals) => {
+        child.killed = true;
+        if (canExit && signal === 'SIGKILL') {
+          child.signalCode = 'SIGKILL';
+          queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
+        }
+        return true;
+      }),
+    });
+    const transport = new SubprocessTransport({ bridgeScript: 'unused' });
+    const internals = transport as unknown as { _state: 'ready'; process: unknown };
+    internals._state = 'ready';
+    internals.process = child;
+    try {
+      const first = transport.dispose();
+      expect(transport.dispose()).toBe(first);
+      await vi.advanceTimersByTimeAsync(2100);
+      await expect(first).rejects.toBeInstanceOf(BridgeProtocolError);
+      expect(transport.isDisposed).toBe(true);
+      expect(internals.process).toBe(child);
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+
+      canExit = true;
+      const retry = transport.dispose();
+      await vi.advanceTimersByTimeAsync(1100);
+      await expect(retry).resolves.toBeUndefined();
+      expect(internals.process).toBeNull();
+      expect(child.signalCode).toBe('SIGKILL');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('Subprocess partial-write abort', () => {
   it('retires after the first frame, independent of timeout tombstones', async () => {
     const controller = new AbortController();
@@ -315,7 +362,10 @@ describe('RPC default timeout', () => {
 });
 
 describe('Retired worker leases', () => {
-  function createFakePool(onReplacementWorkerReady?: () => Promise<void>) {
+  function createFakePool(
+    onReplacementWorkerReady?: () => Promise<void>,
+    firstDispose?: () => Promise<void>
+  ) {
     let created = 0;
     const disposals: Array<ReturnType<typeof vi.fn>> = [];
     const pool = new PooledTransport({
@@ -324,7 +374,7 @@ describe('Retired worker leases', () => {
       onReplacementWorkerReady,
       createTransport: () => {
         const index = created++;
-        const dispose = vi.fn(async () => undefined);
+        const dispose = vi.fn(index === 0 && firstDispose ? firstDispose : async () => undefined);
         disposals.push(dispose);
         const worker: Transport & { requiresReplacement: boolean } = {
           requiresReplacement: false,
@@ -370,6 +420,45 @@ describe('Retired worker leases', () => {
     }
   });
 
+  it('holds the worker slot until retired cleanup succeeds', async () => {
+    const gate = deferred<void>();
+    const { pool, count } = createFakePool(undefined, () => gate.promise);
+    try {
+      await pool.init();
+      await expect(pool.send(request, 100)).rejects.toBeInstanceOf(BridgeTimeoutError);
+      const next = pool.send(request, 100);
+      expect(count()).toBe(1);
+      expect(pool.workerCount).toBe(0);
+
+      gate.resolve(undefined);
+      await expect(next).resolves.toBe(response);
+      expect(count()).toBe(2);
+    } finally {
+      gate.resolve(undefined);
+      await pool.dispose();
+    }
+  });
+
+  it('blocks replacement after failed cleanup and retains a retryable worker', async () => {
+    const cleanupError = new BridgeProtocolError('Python process did not exit after SIGKILL');
+    let attempts = 0;
+    const { pool, disposals, count } = createFakePool(undefined, async () => {
+      attempts++;
+      if (attempts < 3) {
+        throw cleanupError;
+      }
+    });
+    await pool.init();
+    await expect(pool.send(request, 100)).rejects.toBeInstanceOf(BridgeTimeoutError);
+    await expect(pool.send(request, 100)).rejects.toBe(cleanupError);
+    expect(count()).toBe(1);
+    expect(pool.workerCount).toBe(0);
+    await expect(pool.dispose()).rejects.toBe(cleanupError);
+    expect(disposals[0]).toHaveBeenCalledTimes(2);
+    await expect(pool.dispose()).resolves.toBeUndefined();
+    expect(disposals[0]).toHaveBeenCalledTimes(3);
+  });
+
   it('does not publish a replacement after disposal', async () => {
     const started = deferred<void>();
     const gate = deferred<void>();
@@ -380,7 +469,9 @@ describe('Retired worker leases', () => {
     await pool.init();
     await expect(pool.send(request, 100)).rejects.toBeInstanceOf(BridgeTimeoutError);
     await started.promise;
-    await pool.dispose();
+    const closing = pool.dispose();
+    expect(pool.dispose()).toBe(closing);
+    await closing;
     gate.resolve(undefined);
     await vi.waitFor(() => expect(disposals[1]).toHaveBeenCalledTimes(1));
     expect(pool.workerCount).toBe(0);

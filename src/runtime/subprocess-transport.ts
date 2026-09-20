@@ -266,6 +266,8 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private process: ChildProcess | null = null;
   private processExited = false;
   private processError: Error | null = null;
+  private readonly shutdownHandlers = new WeakSet<ChildProcess>();
+  private disposalInFlight?: Promise<void>;
 
   // Stream buffers
   private stdoutBuffer = '';
@@ -586,6 +588,27 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     await this.spawnProcess();
   }
 
+  /** Retry cleanup if the first disposal could not reap the child. */
+  override dispose(): Promise<void> {
+    if (this.disposalInFlight) {
+      return this.disposalInFlight;
+    }
+    const disposal =
+      this.isDisposed && this.process
+        ? this.withDispatchMutex(() => this.killProcess())
+        : super.dispose();
+    this.disposalInFlight = disposal;
+    disposal.then(
+      () => {
+        this.disposalInFlight = undefined;
+      },
+      () => {
+        this.disposalInFlight = undefined;
+      }
+    );
+    return disposal;
+  }
+
   /**
    * Dispose the transport by killing the Python process.
    */
@@ -714,11 +737,14 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
     // Add a catch-all error handler to prevent uncaught exceptions during shutdown
     // This must be added BEFORE removing other listeners and ending stdin
-    const noopErrorHandler = (): void => {
-      // Ignore errors during shutdown (e.g., EPIPE)
-    };
-    proc.stdin?.on('error', noopErrorHandler);
-    proc.on('error', noopErrorHandler);
+    if (!this.shutdownHandlers.has(proc)) {
+      const noopErrorHandler = (): void => {
+        // Ignore errors during shutdown (e.g., EPIPE)
+      };
+      proc.stdin?.on('error', noopErrorHandler);
+      proc.on('error', noopErrorHandler);
+      this.shutdownHandlers.add(proc);
+    }
 
     // Gracefully end stdin to prevent EPIPE on pending writes
     try {
@@ -733,7 +759,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     proc.stdout?.removeAllListeners();
     proc.stderr?.removeAllListeners();
 
-    const hasExited = (): boolean => proc.exitCode !== null || proc.signalCode !== null;
+    const hasExited = (): boolean =>
+      (proc.exitCode !== null && proc.exitCode !== undefined) ||
+      (proc.signalCode !== null && proc.signalCode !== undefined);
     if (hasExited()) {
       return;
     }
