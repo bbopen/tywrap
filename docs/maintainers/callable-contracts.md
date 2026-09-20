@@ -41,6 +41,9 @@ from the TypeScript type.
 The compiler requires an explicit float16 dtype. An untyped ndarray or Torch
 tensor stays unresolved.
 
+For an evaluated PyTorch annotation, use `torch.HalfTensor`. The compiler
+accepts this exact class and leaves other Torch tensor classes unresolved.
+
 NumPy can spell `NDArray[np.float16]` as
 `numpy.ndarray[tuple[Any, ...], numpy.dtype[numpy.float16]]`. The compiler reads
 the dtype argument, not the shape wildcard. Only a supported scientific result
@@ -55,6 +58,11 @@ tensor objects keep their identity-based marker proof.
 
 The compiler keeps Arrow int64 behavior outside this prototype. Existing Arrow
 int64 values can decode as `bigint`.
+
+Selected local non-generic `TypedDict` classes use revision-2 record contracts
+when every field has a supported conversion. Nested records and selected simple
+aliases compose through the same resolver. Foreign and recursive names remain
+unresolved.
 
 ## Diagnostics and fallback
 
@@ -71,11 +79,18 @@ warning, so `--fail-on-warn` rejects strict builds.
   capability when enabled.
 - Non-string record keys require an explicit conversion.
 
-Unresolved annotations create warning diagnostics. They retain the generator's
-current fallback and do not claim a supported conversion. An unresolved `object`
-output, including an output that contains `object`, emits `unknown`. Python
-`object` can hold a primitive value, so a TypeScript `object` return would be
-too narrow.
+Unresolved annotations create warning diagnostics. Their result type is
+`unknown`, including an output that contains `object` or a type variable. Python
+`object` can hold a primitive value. A type variable has no validated conversion
+to the decoded result. Neither annotation justifies a precise TypeScript return.
+
+The compiler keeps an existing best-effort return check when it widens a
+declaration. For example, an unresolved `list[object]` still rejects a non-array
+result, and a `DataFrame` annotation still requires a decoded marker.
+
+`Literal` returns keep their exact-value validator, but stay `unknown` until a
+literal value contract exists. Unresolved literal overloads cannot select a
+precise return at runtime.
 
 IR overload signatures stay separate from the implementation signature. The
 extractor collects type variables from overload annotations. Generated
