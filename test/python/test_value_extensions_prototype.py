@@ -53,6 +53,7 @@ def test_integer_envelope_and_capability_fail_closed() -> None:
     encoded = prototype.encode_exact_integers(2**80)
     for change in (
         {'codecVersion': 1},
+        {'codecVersion': 2.0},
         {'encoding': 'json'},
         {'unexpected': True},
     ):
@@ -60,6 +61,8 @@ def test_integer_envelope_and_capability_fail_closed() -> None:
             prototype.decode_exact_integers({**encoded, **change})
     with pytest.raises(prototype.PrototypeError, match='untagged integer at args'):
         prototype.decode_exact_integers(42)
+    with pytest.raises(prototype.PrototypeError, match='reserved record key at result.__tywrap__'):
+        prototype.encode_exact_integers({'__tywrap__': 'ordinary'})
     with pytest.raises(prototype.PrototypeError, match='bridge lacks'):
         prototype.require_capability({}, 'exactIntegerDecimalV2', 'bigint-v2')
     with pytest.raises(prototype.PrototypeError, match='unsupported per-call'):

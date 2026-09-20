@@ -101,6 +101,16 @@ describe('exact integer rejection prototype', () => {
     expect(() => encodeExactRequest(BigInt('9'.repeat(4097)), integer)).toThrow(/4096 digits/);
     expect(() => encodeExactRequest(1n, integer, 20)).toThrow(/payload exceeds 20 bytes/);
   });
+
+  it('rejects a record key reserved for envelopes', () => {
+    const record: PrototypeContract = {
+      kind: 'record',
+      fields: { __tywrap__: { kind: 'string' } },
+    };
+    expect(() => encodeExactRequest({ __tywrap__: 'ordinary' }, record)).toThrow(
+      /reserved record key/
+    );
+  });
 });
 
 describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
