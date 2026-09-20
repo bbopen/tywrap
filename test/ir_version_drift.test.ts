@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
  * so this test runs without a Python interpreter and without pulling tywrap.ts'
  * dependency graph into the test process. The single sources are:
  *   - Python: tywrap_ir/tywrap_ir/__init__.py  (IR_VERSION = "...")
- *   - TypeScript: src/tywrap.ts                (const TYWRAP_IR_VERSION = '...')
+ *   - TypeScript: src/core/ir-contract.ts      (const TYWRAP_IR_VERSION = '...')
  */
 
 const repoRoot = process.cwd();
@@ -32,7 +32,7 @@ describe('IR_VERSION drift', () => {
       'IR_VERSION'
     );
     const tsVersion = readVersion(
-      join('src', 'tywrap.ts'),
+      join('src', 'core', 'ir-contract.ts'),
       /\bTYWRAP_IR_VERSION\s*=\s*["']([^"']+)["']/,
       'TYWRAP_IR_VERSION'
     );

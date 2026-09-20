@@ -618,7 +618,7 @@ export class CodeGenerator {
                     : 'positional-or-keyword' as const,
             optional: parameter.optional,
             value: contract?.parameterValues[parameterIndex]
-              ? valueContractToReturnSchema(contract.parameterValues[parameterIndex]!)
+              ? valueContractToReturnSchema(contract.parameterValues[parameterIndex])
               : (this.returnSchema(parameter.type, definitions) as ReturnSchema),
           })),
         result: contract?.returnValue
@@ -627,7 +627,12 @@ export class CodeGenerator {
         selectable:
           contract !== undefined &&
           contract.returnValue !== undefined &&
-          contract.parameterValues.every(value => value !== undefined),
+          overload.parameters.every(
+            (parameter, index) =>
+              parameter.name === 'self' ||
+              parameter.name === 'cls' ||
+              contract.parameterValues[index] !== undefined
+          ),
       };
     });
   }
@@ -1347,8 +1352,13 @@ ${migrationNote}${declarationMethodsSection}
       return kind === 'class' && !c.decorators.includes('__typed_dict__');
     });
     const needsRuntime = module.functions.length > 0 || hasRuntimeClasses;
+    const hasOverloads =
+      module.functions.some(func => (func.overloads?.length ?? 0) > 0) ||
+      module.classes.some(cls =>
+        cls.methods.some(method => (method.overloads?.length ?? 0) > 0)
+      );
     const bridgeDecl = needsRuntime
-      ? `import { createReturnValidator, selectOverloadReturnValidator, getRuntimeBridge, type ReturnSchema } from 'tywrap/runtime';\n\n${this.emitReturnDefinitions(module)}`
+      ? `import { createReturnValidator, ${hasOverloads ? 'selectOverloadReturnValidator, ' : ''}getRuntimeBridge, type ReturnSchema } from 'tywrap/runtime';\n\n${this.emitReturnDefinitions(module)}`
       : '';
 
     const ts = `${`${header}${bridgeDecl}${functionCodes}\n${classCodes}\n${typeAliasCodes}`.trimEnd()}\n`;

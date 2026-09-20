@@ -634,7 +634,23 @@ function resolveCallable(
   const overloadResults = (func.overloads ?? []).map((overload, index) =>
     resolveValue('output', overload.returnType, `${path}.overloads[${index}].returns`)
   );
-  const values = [...parameters, result, ...overloadParameters.flat(), ...overloadResults];
+  // Python binds these receivers before the wrapper sends RPC arguments.
+  const visibleParameters = parameters.filter(
+    (_, index) => func.parameters[index]?.name !== 'self' && func.parameters[index]?.name !== 'cls'
+  );
+  const visibleOverloadParameters = overloadParameters.map((values, overloadIndex) =>
+    values.filter(
+      (_, index) =>
+        func.overloads?.[overloadIndex]?.parameters[index]?.name !== 'self' &&
+        func.overloads?.[overloadIndex]?.parameters[index]?.name !== 'cls'
+    )
+  );
+  const values = [
+    ...visibleParameters,
+    result,
+    ...visibleOverloadParameters.flat(),
+    ...overloadResults,
+  ];
   const requiredCapabilities = new Set<CallableCapability>();
   for (const value of values) {
     const diagnostic = diagnosticForResolution(value.resolution, value.path);
@@ -644,7 +660,7 @@ function resolveCallable(
   }
   for (let index = 0; index < overloadParameters.length; index += 1) {
     for (let earlier = 0; earlier < index; earlier += 1) {
-      if (overloadsMayOverlap(overloadParameters[earlier]!, overloadParameters[index]!)) {
+      if (overloadsMayOverlap(visibleOverloadParameters[earlier]!, visibleOverloadParameters[index]!)) {
         diagnostics.push({
           severity: 'warning',
           code: 'overload-ambiguous',

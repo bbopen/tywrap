@@ -247,10 +247,14 @@ function requiredArray(
   path: string,
   state: ValidationState
 ): unknown[] | null {
-  const value = requiredValue(object, name, path, state);
-  if (!Array.isArray(value)) {
+  if (!(name in object)) {
     const noun = path === '$' ? `required array field ${name}` : `${path}.${name}`;
     state.invalid(`${path}.${name}`, `${path} is missing ${noun}.`);
+    return null;
+  }
+  const value = object[name];
+  if (!Array.isArray(value)) {
+    state.invalid(`${path}.${name}`, `${path}.${name} must be an array.`);
     return null;
   }
   return value;

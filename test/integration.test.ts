@@ -232,7 +232,7 @@ describe('IR-only integration', () => {
   }, 30_000);
 
   it('preserves Python overload input-to-return relationships in generated declarations', async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-overload-contract-'));
+    const tempDir = await mkdtemp(join(process.cwd(), 'test', '.tywrap-overload-contract-'));
     try {
       const outDir = join(tempDir, 'generated');
       const result = await generate({
