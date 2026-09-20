@@ -11,10 +11,12 @@ Python `int` parameter and result to TypeScript `bigint`. Safe integers use the
 same type. Python `bool` remains `boolean`. Calls without the option keep the
 safe `number` rule.
 
-The generated wrapper requires `exactIntegerDecimalV2` in the bridge's
-`meta.valueCapabilities`. It sends `params.valuePolicy.integer = 'bigint-v2'` on
-each call. A new bridge rejects unknown policies. An old bridge lacks the
-capability, so the wrapper rejects the call before sending a tag.
+The proposed generated wrapper must require `exactIntegerDecimalV2` in the
+bridge's `meta.valueCapabilities`. It must send
+`params.valuePolicy.integer = 'bigint-v2'` on each call. A new bridge must
+reject unknown policies. An old bridge lacks the capability, so the wrapper must
+reject the call before sending a tag. The prototype tests this policy in an
+isolated adapter. The shipped wrapper does not implement it.
 
 The version 2 integer envelope is
 `{"__tywrap__":"integer","codecVersion":2,"encoding":"decimal","value":"18446744073709551617"}`.
@@ -90,18 +92,21 @@ It includes fields with defaults and `init=False`. An instance returns those
 fields. `Optional[T]` permits `null`; a default does not make a returned
 property optional.
 
-The generated wrapper requires `dataclassFieldsV2` in `meta.valueCapabilities`.
-It sends `params.valuePolicy.dataclass = 'fields-v2'` on each call. The Python
-encoder accepts only the compiled dataclass type. It emits a version 2 envelope
+The proposed generated wrapper must require `dataclassFieldsV2` in
+`meta.valueCapabilities`. It must send
+`params.valuePolicy.dataclass = 'fields-v2'` on each call. The Python prototype
+encoder accepts only the declared dataclass type. It emits a version 2 envelope
 with `module.qualname` identity and an ordered `fields` record. It rejects
 unsupported fields and cycles with paths. It applies depth, node, and byte
 limits. It does not call `dataclasses.asdict` or create object handles.
 
-The TypeScript decoder checks marker, version, encoding, type identity, and
-fields before it removes the envelope. It returns a plain record. A
-module-private `WeakMap` stores verified type identity. The return validator
-reads that entry before it checks field keys and values. A plain record cannot
-claim dataclass origin. A nested dataclass gets its own entry.
+The TypeScript prototype decoder checks marker, version, encoding, type
+identity, and exact fields before it removes the envelope. It returns a plain
+record. A module-private `WeakMap` stores verified type identity. The prototype
+origin check reads that entry. A plain record cannot claim dataclass origin. A
+nested dataclass gets its own entry. The current generated return validator
+checks required field types but does not check origin or reject extra keys. The
+adapter must perform those checks before it calls the validator.
 
 The Python prototype checks the declared root dataclass type. It serializes
 nested dataclasses by their observed runtime type and does not check a compiled
