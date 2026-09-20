@@ -215,6 +215,14 @@ def test_dataclass_nested_values_and_failures() -> None:
     with pytest.raises(prototype.PrototypeError, match='declared dataclass type'):
         prototype.encode_dataclass(prototype.Point(1, 2), Container)
 
+    class OrdinaryPoint:
+        def __init__(self, x: int, y: int) -> None:
+            self.x = x
+            self.y = y
+
+    with pytest.raises(prototype.PrototypeError, match='declared dataclass type'):
+        prototype.encode_dataclass(OrdinaryPoint(1, 2), prototype.Point)
+
     @dataclass
     class Unsupported:
         value: object
