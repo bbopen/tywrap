@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
@@ -352,6 +352,11 @@ echoExact(1n, [2]);`,
         await expect(generated.combineExact(7n, [2n], true, 1.5)).rejects.toThrow(
           /expected integer envelope/
         );
+        responseOverride = [
+          [{ __tywrap__: 'integer', codecVersion: 2, encoding: 'decimal', value: '7' }],
+          [{ __tywrap__: 'integer', codecVersion: 1, encoding: 'decimal', value: '2' }],
+        ];
+        await expect(generated.echoExact(7n, [2n])).rejects.toThrow(/invalid integer envelope/);
 
         const bypassBridge = {
           meta: { valueCapabilities: ['exactIntegerDecimalV2'] },
@@ -413,27 +418,23 @@ echoExact(1n, [2]);`,
         expect(ordinaryCalls).toBe(1);
         expect(exactCalls).toBe(0);
 
-        let serverLimitError = '';
-        try {
-          execFileSync(
-            PYTHON ?? 'python3',
-            [
-              pythonAdapter,
-              JSON.stringify(descriptors.echo_exact.args),
-              JSON.stringify(bridge.meta),
-              'echo_exact',
-            ],
-            {
-              input: Buffer.alloc(10 * 1024 * 1024 + 1, 0x20),
-              env: pythonEnvironment,
-              encoding: 'utf8',
-              maxBuffer: 1024 * 1024,
-            }
-          );
-        } catch (error) {
-          serverLimitError = String((error as { stderr?: string }).stderr ?? error);
-        }
-        expect(serverLimitError).toContain('input payload exceeds byte limit');
+        const serverGuard = spawnSync(
+          PYTHON ?? 'python3',
+          [
+            pythonAdapter,
+            JSON.stringify(descriptors.echo_exact.args),
+            JSON.stringify(bridge.meta),
+            'echo_exact',
+          ],
+          {
+            input: Buffer.alloc(10 * 1024 * 1024 + 1, 0x20),
+            env: pythonEnvironment,
+            encoding: 'utf8',
+            maxBuffer: 1024 * 1024,
+          }
+        );
+        expect(serverGuard.status).not.toBe(0);
+        expect(serverGuard.stderr).toContain('input payload exceeds byte limit');
       } finally {
         clearRuntimeBridge();
         await rm(temporary, { recursive: true, force: true });
