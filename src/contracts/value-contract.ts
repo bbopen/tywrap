@@ -51,35 +51,47 @@ type CommonValueContractLeaf =
       readonly guidance: string;
     };
 
-type CompositeValueContract<TValue> =
-  | {
-      readonly kind: 'sequence';
-      readonly wire: 'json';
-      readonly decodedAs: 'array';
-      readonly item: TValue;
-    }
-  | {
-      readonly kind: 'tuple';
-      readonly wire: 'json';
-      readonly decodedAs: 'array';
-      readonly items: readonly TValue[];
-    }
-  | {
-      readonly kind: 'union';
-      readonly wire: 'selected-option';
-      readonly decodedAs: 'selected-option';
-      readonly options: readonly [TValue, TValue, ...TValue[]];
-    }
-  | {
-      readonly kind: 'record';
-      readonly wire: 'json';
-      readonly decodedAs: 'object';
-      readonly fields: readonly ValueContractField<TValue>[];
-      readonly additionalValues?: TValue;
-    };
+interface SequenceContract<TValue> {
+  readonly kind: 'sequence';
+  readonly wire: 'json';
+  readonly decodedAs: 'array';
+  readonly item: TValue;
+}
+
+interface TupleContract<TValue> {
+  readonly kind: 'tuple';
+  readonly wire: 'json';
+  readonly decodedAs: 'array';
+  readonly items: readonly TValue[];
+}
+
+interface UnionContract<TValue> {
+  readonly kind: 'union';
+  readonly wire: 'selected-option';
+  readonly decodedAs: 'selected-option';
+  readonly options: readonly [TValue, TValue, ...TValue[]];
+}
+
+interface RecordContract<TValue> {
+  readonly kind: 'record';
+  readonly wire: 'json';
+  readonly decodedAs: 'object';
+  readonly fields: readonly ValueContractField<TValue>[];
+  readonly additionalValues?: TValue;
+}
+
+interface V2SequenceContract extends SequenceContract<ValueContract> {}
+interface V2TupleContract extends TupleContract<ValueContract> {}
+interface V2UnionContract extends UnionContract<ValueContract> {}
+interface V2RecordContract extends RecordContract<ValueContract> {}
 
 /** Revision 2 remains the default safe-number value contract. */
-export type ValueContract = CommonValueContractLeaf | CompositeValueContract<ValueContract>;
+export type ValueContract =
+  | CommonValueContractLeaf
+  | V2SequenceContract
+  | V2TupleContract
+  | V2UnionContract
+  | V2RecordContract;
 
 export interface ExactIntegerValueContract {
   readonly kind: 'integer-exact';
@@ -88,11 +100,19 @@ export interface ExactIntegerValueContract {
   readonly constraint: 'exact-integer';
 }
 
+interface V3SequenceContract extends SequenceContract<ValueContractV3> {}
+interface V3TupleContract extends TupleContract<ValueContractV3> {}
+interface V3UnionContract extends UnionContract<ValueContractV3> {}
+interface V3RecordContract extends RecordContract<ValueContractV3> {}
+
 /** Revision 3 adds exact integers without changing revision 2. */
 export type ValueContractV3 =
   | CommonValueContractLeaf
   | ExactIntegerValueContract
-  | CompositeValueContract<ValueContractV3>;
+  | V3SequenceContract
+  | V3TupleContract
+  | V3UnionContract
+  | V3RecordContract;
 
 export interface ValueContractField<TValue = ValueContract> {
   readonly name: string;
