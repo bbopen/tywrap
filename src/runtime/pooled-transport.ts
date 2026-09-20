@@ -429,12 +429,7 @@ export class PooledTransport extends DisposableBase implements Transport {
             }
           },
           error => {
-            this.retirementError = error instanceof Error ? error : new Error(String(error));
-            for (const waiter of this.waitQueue) {
-              clearTimeout(waiter.timer);
-              waiter.reject(this.retirementError);
-            }
-            this.waitQueue.length = 0;
+            this.recordCleanupFailure(error);
           }
         )
         .finally(() => {
@@ -464,6 +459,26 @@ export class PooledTransport extends DisposableBase implements Transport {
     }
     if (errors.length > 1) {
       throw new AggregateError(errors, 'Multiple errors during worker disposal');
+    }
+  }
+
+  private recordCleanupFailure(error: unknown): Error {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    this.retirementError = failure;
+    for (const waiter of this.waitQueue) {
+      clearTimeout(waiter.timer);
+      waiter.reject(failure);
+    }
+    this.waitQueue.length = 0;
+    return failure;
+  }
+
+  private async disposeUnpublishedWorker(worker: TransportLease): Promise<void> {
+    try {
+      await worker.transport.dispose();
+    } catch (error) {
+      this.retiringWorkers.add(worker);
+      throw this.recordCleanupFailure(error);
     }
   }
 
@@ -594,14 +609,21 @@ export class PooledTransport extends DisposableBase implements Transport {
    */
   private async createWorker(onWorkerReady = this.options.onWorkerReady): Promise<TransportLease> {
     const transport = this.options.createTransport();
-
-    // Initialize the transport
-    await transport.init();
-
     const worker: TransportLease = {
       transport,
       inFlightCount: 0,
     };
+
+    try {
+      await transport.init();
+    } catch (error) {
+      try {
+        await this.disposeUnpublishedWorker(worker);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Worker init and cleanup failed');
+      }
+      throw error;
+    }
 
     try {
       // Call onWorkerReady callback if provided
@@ -610,16 +632,16 @@ export class PooledTransport extends DisposableBase implements Transport {
       }
     } catch (error) {
       // Ensure partially initialized workers do not leak when warmup fails.
-      await transport.dispose().catch(() => {
-        // Ignore disposal failures during warmup failure handling.
-      });
+      try {
+        await this.disposeUnpublishedWorker(worker);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Worker warmup and cleanup failed');
+      }
       throw error;
     }
 
     if (this.state === 'disposing' || this.state === 'disposed' || this.retirementError) {
-      await transport.dispose().catch(() => {
-        // Ignore disposal failures if the pool was torn down mid-creation.
-      });
+      await this.disposeUnpublishedWorker(worker);
       throw new BridgeExecutionError('Pool disposed during worker creation');
     }
 
