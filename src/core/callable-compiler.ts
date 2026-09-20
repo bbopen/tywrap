@@ -295,31 +295,141 @@ function combineWireRelations(relations: readonly WireRelation[]): WireRelation 
   return relations.includes('same-decoding') ? 'same-decoding' : 'disjoint';
 }
 
-function isTaggedValue(value: ValueContract): boolean {
-  return (
-    value.kind === 'bytes' || value.kind === 'ndarray-float16' || value.kind === 'torch-float16'
-  );
+type WireCategory = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'unknown';
+
+function acceptsWireCategory(value: ValueContract, category: WireCategory): boolean {
+  if (category === 'unknown' || value.kind === 'unsupported') {
+    return true;
+  }
+  if (value.kind === 'union') {
+    return value.options.some(option => acceptsWireCategory(option, category));
+  }
+  const expected: WireCategory = (() => {
+    switch (value.kind) {
+      case 'null':
+        return 'null';
+      case 'boolean':
+        return 'boolean';
+      case 'integer':
+      case 'float':
+        return 'number';
+      case 'string':
+        return 'string';
+      case 'sequence':
+      case 'tuple':
+        return 'array';
+      case 'bytes':
+      case 'record':
+      case 'ndarray-float16':
+      case 'torch-float16':
+        return 'object';
+    }
+  })();
+  return expected === category;
+}
+
+function taggedEnvelopeShapes(
+  value: ValueContract
+): readonly Readonly<Record<string, WireCategory>>[] {
+  switch (value.kind) {
+    case 'bytes':
+      return [
+        { __type__: 'string', encoding: 'string', data: 'string' },
+        { __tywrap_bytes__: 'boolean', b64: 'string' },
+      ];
+    case 'ndarray-float16':
+      return [
+        {
+          __tywrap__: 'string',
+          codecVersion: 'number',
+          encoding: 'string',
+          b64: 'string',
+          shape: 'array',
+          dtype: 'string',
+        },
+        {
+          __tywrap__: 'string',
+          codecVersion: 'number',
+          encoding: 'string',
+          data: 'unknown',
+          shape: 'array',
+          dtype: 'string',
+        },
+      ];
+    case 'torch-float16':
+      return [
+        {
+          __tywrap__: 'string',
+          codecVersion: 'number',
+          encoding: 'string',
+          value: 'object',
+          shape: 'array',
+          dtype: 'string',
+          device: 'string',
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
+function recordCanMatchEnvelope(
+  record: Extract<ValueContract, { kind: 'record' }>,
+  envelope: Readonly<Record<string, WireCategory>>
+): boolean {
+  const fields = new Map(record.fields.map(field => [field.name, field] as const));
+  if (record.fields.some(field => field.required && !(field.name in envelope))) {
+    return false;
+  }
+  for (const [name, category] of Object.entries(envelope)) {
+    const field = fields.get(name);
+    if (field && !acceptsWireCategory(field.value, category)) {
+      return false;
+    }
+    if (record.additionalValues && !acceptsWireCategory(record.additionalValues, category)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function taggedRecordRelation(
+  record: Extract<ValueContract, { kind: 'record' }>,
+  tagged: ValueContract
+): WireRelation {
+  return taggedEnvelopeShapes(tagged).some(envelope => recordCanMatchEnvelope(record, envelope))
+    ? 'ambiguous'
+    : 'disjoint';
 }
 
 function recordWireRelation(left: ValueContract, right: ValueContract): WireRelation {
   if (left.kind !== 'record' || right.kind !== 'record') {
     return 'disjoint';
   }
+  const leftFields = new Map(left.fields.map(field => [field.name, field] as const));
+  const rightFields = new Map(right.fields.map(field => [field.name, field] as const));
   const relations: WireRelation[] = [];
   for (const field of left.fields) {
-    const other =
-      right.fields.find(candidate => candidate.name === field.name)?.value ??
-      right.additionalValues;
+    const otherField = rightFields.get(field.name);
+    const other = otherField?.value ?? right.additionalValues;
     if (other) {
-      relations.push(valueWireRelation(field.value, other));
+      const relation = valueWireRelation(field.value, other);
+      if (relation === 'disjoint' && (field.required || otherField?.required)) {
+        return 'disjoint';
+      }
+      relations.push(relation);
     }
   }
   for (const field of right.fields) {
-    if (left.fields.some(candidate => candidate.name === field.name)) {
+    if (leftFields.has(field.name)) {
       continue;
     }
     if (left.additionalValues) {
-      relations.push(valueWireRelation(left.additionalValues, field.value));
+      const relation = valueWireRelation(left.additionalValues, field.value);
+      if (relation === 'disjoint' && field.required) {
+        return 'disjoint';
+      }
+      relations.push(relation);
     }
   }
   if (left.additionalValues && right.additionalValues) {
@@ -341,11 +451,11 @@ function valueWireRelation(left: ValueContract, right: ValueContract): WireRelat
   if (left.kind === 'record' && right.kind === 'record') {
     return recordWireRelation(left, right);
   }
-  if (
-    (left.kind === 'record' && isTaggedValue(right)) ||
-    (right.kind === 'record' && isTaggedValue(left))
-  ) {
-    return 'ambiguous';
+  if (left.kind === 'record' && taggedEnvelopeShapes(right).length > 0) {
+    return taggedRecordRelation(left, right);
+  }
+  if (right.kind === 'record' && taggedEnvelopeShapes(left).length > 0) {
+    return taggedRecordRelation(right, left);
   }
   if (left.kind === 'sequence' && right.kind === 'sequence') {
     return valueWireRelation(left.item, right.item) === 'ambiguous' ? 'ambiguous' : 'same-decoding';

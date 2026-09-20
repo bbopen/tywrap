@@ -1720,7 +1720,7 @@ describe('compileContract', () => {
         reason: 'Union alternatives can share a wire value but decode differently.',
       });
     }
-    for (const annotation of ['int | float', 'bytes | str']) {
+    for (const annotation of ['int | float', 'bytes | str', 'bytes | dict[str, int]']) {
       expect(
         DEFAULT_VALUE_CONVERSION.resolve({
           direction: 'output',
@@ -1729,6 +1729,74 @@ describe('compileContract', () => {
         }).status
       ).toBe('supported');
     }
+    const tagged: typeof DEFAULT_VALUE_CONVERSION = {
+      revision: DEFAULT_VALUE_CONVERSION.revision,
+      resolve(request) {
+        if (request.logicalType.kind === 'custom' && request.logicalType.name === 'IntTag') {
+          return {
+            status: 'supported',
+            value: {
+              kind: 'record',
+              wire: 'json',
+              decodedAs: 'object',
+              fields: [
+                {
+                  name: 'tag',
+                  required: true,
+                  value: {
+                    kind: 'integer',
+                    wire: 'json',
+                    decodedAs: 'number',
+                    constraint: 'safe-integer',
+                  },
+                },
+                {
+                  name: 'payload',
+                  required: true,
+                  value: { kind: 'bytes', wire: 'base64-envelope', decodedAs: 'Uint8Array' },
+                },
+              ],
+            },
+          };
+        }
+        if (request.logicalType.kind === 'custom' && request.logicalType.name === 'StringTag') {
+          return {
+            status: 'supported',
+            value: {
+              kind: 'record',
+              wire: 'json',
+              decodedAs: 'object',
+              fields: [
+                {
+                  name: 'tag',
+                  required: true,
+                  value: { kind: 'string', wire: 'json', decodedAs: 'string' },
+                },
+                {
+                  name: 'payload',
+                  required: true,
+                  value: {
+                    kind: 'record',
+                    wire: 'json',
+                    decodedAs: 'object',
+                    fields: [],
+                    additionalValues: { kind: 'string', wire: 'json', decodedAs: 'string' },
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return DEFAULT_VALUE_CONVERSION.resolve({ ...request, resolveNested: tagged.resolve });
+      },
+    };
+    expect(
+      tagged.resolve({
+        direction: 'output',
+        path: '$.returns',
+        logicalType: parseAnnotationToPythonType('IntTag | StringTag'),
+      }).status
+    ).toBe('supported');
 
     const source = rawIr.functions[1]!;
     const ir = validateIrContract(
