@@ -26,7 +26,15 @@ export type ReturnSchema =
   | { kind: 'any' }
   | {
       kind: 'primitive';
-      type: 'number' | 'string' | 'boolean' | 'null' | 'undefined' | 'Uint8Array' | 'object';
+      type:
+        | 'number'
+        | 'bigint'
+        | 'string'
+        | 'boolean'
+        | 'null'
+        | 'undefined'
+        | 'Uint8Array'
+        | 'object';
       constraint?: 'safe-integer' | 'finite';
     }
   | { kind: 'literal'; value: string | number | boolean | null }

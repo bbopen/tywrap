@@ -9,6 +9,7 @@ import {
   compileContract,
   DEFAULT_CALLABLE_CAPABILITIES,
   DEFAULT_VALUE_CONVERSION,
+  EXACT_INTEGER_VALUE_CONVERSION,
 } from '../src/core/callable-compiler.js';
 import { CodeGenerator } from '../src/core/generator.js';
 import { parseAnnotationToPythonType } from '../src/core/annotation-parser.js';
@@ -1699,6 +1700,96 @@ describe('compileContract', () => {
         item: { kind: 'integer', constraint: 'safe-integer' },
       },
     });
+  });
+
+  it('uses revision 3 for explicit nested bigint callables only', () => {
+    const source = rawIr.functions[1]!;
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: [
+          {
+            ...source,
+            name: 'combine_exact',
+            qualname: 'fixture.combine_exact',
+            parameters: [
+              { name: 'value', kind: 'POSITIONAL_OR_KEYWORD', annotation: 'int', default: false },
+              {
+                name: 'nested',
+                kind: 'POSITIONAL_OR_KEYWORD',
+                annotation: 'list[int]',
+                default: false,
+              },
+              { name: 'flag', kind: 'POSITIONAL_OR_KEYWORD', annotation: 'bool', default: false },
+              { name: 'ratio', kind: 'POSITIONAL_OR_KEYWORD', annotation: 'float', default: false },
+            ],
+            returns: 'int',
+          },
+        ],
+      },
+      'exact integer callable contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const module = {
+      ...moduleModel,
+      functions: [{ ...moduleModel.functions[1]!, name: 'combine_exact' }],
+      classes: [],
+    };
+    const options = {
+      module,
+      generator: new CodeGenerator(),
+      conversion: EXACT_INTEGER_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    };
+    expect(() => compileContract(ir.contract, options)).toThrow(
+      /exact-integer-adapter is unavailable/
+    );
+    const capabilities = DEFAULT_CALLABLE_CAPABILITIES.map(capability =>
+      capability.name === 'exact-integer-adapter' ? { ...capability, available: true } : capability
+    );
+    const exact = compileContract(ir.contract, { ...options, capabilities });
+    expect(exact.callables[0]?.requiredCapabilities).toContain('exact-integer-adapter');
+    expect(exact.callables[0]?.parameters[1]?.resolution).toMatchObject({
+      status: 'supported',
+      value: { kind: 'sequence', item: { kind: 'integer-exact' } },
+    });
+    expect(exact.generated.declaration).toContain('value: bigint');
+    expect(exact.generated.declaration).toContain('nested: bigint[]');
+    expect(exact.generated.declaration).toContain('flag: boolean');
+    expect(exact.generated.declaration).toContain('ratio: number');
+    expect(exact.generated.declaration).toContain('Promise<bigint>');
+    expect(exact.generated.typescript).toContain('"kind":"primitive","type":"bigint"');
+
+    const defaultContract = compileContract(ir.contract, {
+      ...options,
+      conversion: DEFAULT_VALUE_CONVERSION,
+    });
+    expect(defaultContract.generated.declaration).toContain('value: number');
+    expect(defaultContract.generated.declaration).toContain('nested: number[]');
+    expect(defaultContract.generated.declaration).toContain('Promise<number>');
+  });
+
+  it('keeps exact integer tags disjoint from record union options', () => {
+    expect(
+      EXACT_INTEGER_VALUE_CONVERSION.resolve({
+        direction: 'output',
+        path: '$.returns',
+        logicalType: parseAnnotationToPythonType('int | dict[str, str]'),
+      })
+    ).toMatchObject({
+      status: 'unsupported',
+      reason: 'An exact integer tag can overlap a record wire value.',
+    });
+    expect(
+      EXACT_INTEGER_VALUE_CONVERSION.resolve({
+        direction: 'output',
+        path: '$.returns',
+        logicalType: parseAnnotationToPythonType('int | bool'),
+      })
+    ).toMatchObject({ status: 'supported', value: { kind: 'union' } });
   });
 
   it('requires returned dataclass fields even when their constructor has defaults', () => {

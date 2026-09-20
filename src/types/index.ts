@@ -2,7 +2,7 @@
  * Core type definitions for tywrap
  */
 
-import type { ValueContract } from '../contracts/value-contract.js';
+import type { ValueContractV3 } from '../contracts/value-contract.js';
 import type { DecodedProvenance } from '../runtime/decoded-provenance.js';
 
 export interface PythonModule {
@@ -72,8 +72,8 @@ export interface PythonFunctionOverload {
 
 /** A resolved value contract for a callable signature. */
 export interface ResolvedCallableSignatureContract {
-  parameterValues: readonly (ValueContract | undefined)[];
-  returnValue?: ValueContract;
+  parameterValues: readonly (ValueContractV3 | undefined)[];
+  returnValue?: ValueContractV3;
   /** Original annotation used for best-effort validation when no value contract resolves. */
   returnValidationType?: PythonType;
 }

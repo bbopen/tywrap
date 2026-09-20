@@ -13,7 +13,7 @@ import type {
   GeneratedCode,
   TypescriptType,
 } from '../types/index.js';
-import type { ValueContract } from '../contracts/value-contract.js';
+import { containsExactInteger, type ValueContractV3 } from '../contracts/value-contract.js';
 import type { OverloadReturnSchema, ReturnSchema } from '../runtime/validators.js';
 import { globalCache } from '../utils/cache.js';
 
@@ -41,7 +41,7 @@ interface GenericRenderContext {
 
 type ReturnDefinitionNames = ReadonlySet<string> & { readonly moduleName?: string };
 
-function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
+function valueContractToReturnSchema(value: ValueContractV3): ReturnSchema {
   switch (value.kind) {
     case 'null':
       return { kind: 'primitive', type: 'null' };
@@ -49,6 +49,8 @@ function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
       return { kind: 'primitive', type: 'boolean' };
     case 'integer':
       return { kind: 'primitive', type: 'number', constraint: value.constraint };
+    case 'integer-exact':
+      return { kind: 'primitive', type: 'bigint' };
     case 'float':
       return { kind: 'primitive', type: 'number', constraint: value.constraint };
     case 'string':
@@ -80,6 +82,77 @@ function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
       return { kind: 'marker', marker: 'torch.tensor', dtype: value.dtype };
     case 'unsupported':
       return { kind: 'any' };
+  }
+}
+
+function valueContractToTsType(value: ValueContractV3): string {
+  switch (value.kind) {
+    case 'null':
+      return 'null';
+    case 'boolean':
+      return 'boolean';
+    case 'integer':
+    case 'float':
+      return 'number';
+    case 'integer-exact':
+      return 'bigint';
+    case 'string':
+      return 'string';
+    case 'bytes':
+      return 'Uint8Array';
+    case 'sequence': {
+      const item = valueContractToTsType(value.item);
+      return `${value.item.kind === 'union' ? `(${item})` : item}[]`;
+    }
+    case 'tuple':
+      return `[${value.items.map(valueContractToTsType).join(', ')}]`;
+    case 'union':
+      return value.options.map(valueContractToTsType).join(' | ');
+    case 'record': {
+      const fields = value.fields
+        .map(
+          field =>
+            `${JSON.stringify(field.name)}${field.required ? '' : '?'}: ${valueContractToTsType(field.value)};`
+        )
+        .join(' ');
+      const record = `{ ${fields} }`;
+      if (!value.additionalValues) {
+        return record;
+      }
+      const additional = `Record<string, ${valueContractToTsType(value.additionalValues)}>`;
+      return value.fields.length === 0 ? additional : `(${record} & ${additional})`;
+    }
+    case 'ndarray-float16':
+      return '__tywrapFloat16Value';
+    case 'torch-float16':
+      return '__tywrapFloat16Tensor';
+    case 'unsupported':
+      return 'unknown';
+  }
+}
+
+function containsScientificValue(
+  value: ValueContractV3,
+  kind: 'ndarray-float16' | 'torch-float16'
+): boolean {
+  if (value.kind === kind) {
+    return true;
+  }
+  switch (value.kind) {
+    case 'sequence':
+      return containsScientificValue(value.item, kind);
+    case 'tuple':
+      return value.items.some(item => containsScientificValue(item, kind));
+    case 'union':
+      return value.options.some(option => containsScientificValue(option, kind));
+    case 'record':
+      return (
+        value.fields.some(field => containsScientificValue(field.value, kind)) ||
+        (value.additionalValues !== undefined &&
+          containsScientificValue(value.additionalValues, kind))
+      );
+    default:
+      return false;
   }
 }
 
@@ -449,10 +522,13 @@ export class CodeGenerator {
   }
 
   private resolvedReturnType(
-    contract: ValueContract | undefined,
+    contract: ValueContractV3 | undefined,
     logicalType: PythonType,
     ctx: GenericRenderContext
   ): string {
+    if (contract && containsExactInteger(contract)) {
+      return valueContractToTsType(contract);
+    }
     if (contract?.kind === 'ndarray-float16') {
       return '__tywrapFloat16Value';
     }
@@ -786,8 +862,28 @@ export class CodeGenerator {
     );
     const typeParamDecl = genericContext.declaration;
 
-    const tsTypeForValue = (p: Parameter): string =>
-      this.typeToTsFromPython(p.type, genericContext, 'value');
+    const parameterContracts = new WeakMap<Parameter, ValueContractV3>();
+    func.parameters.forEach((parameter, index) => {
+      const value = func.callableContract?.parameterValues[index];
+      if (value) {
+        parameterContracts.set(parameter, value);
+      }
+    });
+    func.overloads?.forEach((overload, overloadIndex) => {
+      overload.parameters.forEach((parameter, parameterIndex) => {
+        const value =
+          func.callableContract?.overloads[overloadIndex]?.parameterValues[parameterIndex];
+        if (value) {
+          parameterContracts.set(parameter, value);
+        }
+      });
+    });
+    const tsTypeForValue = (p: Parameter): string => {
+      const value = parameterContracts.get(p);
+      return value && containsExactInteger(value)
+        ? valueContractToTsType(value)
+        : this.typeToTsFromPython(p.type, genericContext, 'value');
+    };
 
     const kwargsType = (() => {
       if (!needsKwargsParam) {
@@ -1501,13 +1597,22 @@ ${migrationNote}${declarationMethodsSection}
         )
       ),
     ];
-    const resolvedReturns = emittedCallables.flatMap(func => [
+    const resolvedValues = emittedCallables.flatMap(func => [
+      ...(func.callableContract?.parameterValues ?? []),
       func.callableContract?.returnValue,
-      ...(func.callableContract?.overloads.map(overload => overload.returnValue) ?? []),
+      ...(func.callableContract?.overloads.flatMap(overload => [
+        ...overload.parameterValues,
+        overload.returnValue,
+      ]) ?? []),
     ]);
-    const needsTorchFloat16 = resolvedReturns.some(value => value?.kind === 'torch-float16');
+    const needsTorchFloat16 = resolvedValues.some(
+      value => value !== undefined && containsScientificValue(value, 'torch-float16')
+    );
     const needsFloat16 =
-      needsTorchFloat16 || resolvedReturns.some(value => value?.kind === 'ndarray-float16');
+      needsTorchFloat16 ||
+      resolvedValues.some(
+        value => value !== undefined && containsScientificValue(value, 'ndarray-float16')
+      );
     const scientificTypes = needsFloat16
       ? `type __tywrapFloat16Value = number | __tywrapFloat16Value[];\n${
           needsTorchFloat16

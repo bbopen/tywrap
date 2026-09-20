@@ -13,7 +13,7 @@ const specification = JSON.parse(
 ) as {
   revision: number;
   base: { file: string; revision: number; sha256: string };
-  valueEnvelopeCodecVersion: number;
+  exactIntegerEnvelopeCodecVersion: number;
   callPolicy: string;
   requiredCapability: string;
   rules: {
@@ -54,7 +54,7 @@ describe('exact integer value policy', () => {
 
   it('keeps semantic revision, envelope version, and call policy distinct', () => {
     expect(specification.revision).toBe(3);
-    expect(specification.valueEnvelopeCodecVersion).toBe(2);
+    expect(specification.exactIntegerEnvelopeCodecVersion).toBe(2);
     expect(specification.callPolicy).toBe('bigint-v2');
     expect(specification.requiredCapability).toBe('exactIntegerDecimalV2');
     expect(specification.rules['integer-exact'].contract).toEqual({
