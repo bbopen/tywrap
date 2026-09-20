@@ -8,6 +8,17 @@ The scientific codec envelope reference lives in
 
 ## Recent releases
 
+### v0.10.0: scientific codec correctness
+
+`v0.10.0` shipped on 13 July 2026. Scientific values now compose inside
+containers, and decoded envelopes validate their shape, dtype, and provenance.
+JSON ndarray and pandas conversions reject values they cannot preserve.
+Torch bfloat16 values use exact float32 storage, and Arrow supports scalar arrays.
+The pinned scientific menagerie checks the supported cases and explicit failures.
+
+The Python package stayed at `tywrap-ir` 0.3.0 with IR schema 0.4.0.
+See [the changelog](./CHANGELOG.md#0100-2026-07-13) for compatibility details.
+
 ### v0.9.0: typed value-RPC
 
 `v0.9.0` narrowed tywrap to one job done well: typed value-RPC between
@@ -113,9 +124,24 @@ and bridge live.
 
 ## Now
 
-The typed value-RPC contract pass (#260) is complete as of `v0.9.0`, and the
-scientific data plane (#237) as of `v0.8.0`. The next release theme is not yet
-locked; candidates are drawn from **Later** below.
+The next planned release is `v0.11.0`, tracked in #342 and #334. It must reject
+unsafe Python integers before JSON encoding and decode Arrow float16 storage
+as numeric values. Generated wrappers must pass a clean consumer installation
+test with the candidate npm and Python packages.
+
+Architecture work in #345 joins callable resolution with shared value contracts.
+Its proof covers safe integers, float16 arrays reused by Torch, and overloads
+that return nested records. Independent tests must exercise generation,
+TypeScript compilation, execution, decoding, and return validation.
+
+Overload preservation and coroutine execution have separate acceptance criteria
+in #336 and #338. Actual Pyodide and browser tests in #341 must pass before any
+browser coroutine claim. The release scope will record only accepted behavior.
+
+Bigint transport, dataclass values, and explicitly bound clients remain bounded
+design prototypes in #337, #339, and #340. Completing their designs does not
+establish general production support. The current integer release policy remains
+rejection outside the JavaScript safe range.
 
 See [docs/codec-envelopes.md](./docs/codec-envelopes.md) for the scientific
 codec envelope reference.
