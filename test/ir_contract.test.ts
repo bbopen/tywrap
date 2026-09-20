@@ -1,9 +1,14 @@
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
 import { generate } from '../src/tywrap.js';
+import { BridgeValidationError } from '../src/runtime/errors.js';
 import { getDefaultPythonPath } from '../src/utils/python.js';
+import { processUtils } from '../src/utils/runtime.js';
+import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 
 const pythonPath = getDefaultPythonPath();
 
@@ -17,6 +22,147 @@ function options(outputDir: string) {
 }
 
 describe('pinned IR contracts', () => {
+  it('keeps extracted positional-only overloads bound to their return types', async () => {
+    const tempDir = await mkdtemp(join(process.cwd(), 'test', '.tywrap-positional-'));
+    try {
+      const outputDir = join(tempDir, 'generated');
+      const result = await generate({
+        ...options(outputDir),
+        pythonModules: { positional_overloads: { typeHints: 'strict' as const } },
+        pythonImportPath: ['test/fixtures/python'],
+        output: { dir: outputDir, format: 'esm', declaration: true, sourceMap: false },
+      });
+      expect(result.failures).toEqual([]);
+
+      const contract = JSON.parse(
+        await readFile(join(outputDir, 'positional_overloads.contract.json'), 'utf8')
+      ) as {
+        functions: Array<{
+          name: string;
+          parameters: Array<{ name: string; kind: string; default: boolean }>;
+          overloads: Array<{
+            parameters: Array<{ name: string; kind: string; default: boolean }>;
+            returns: string;
+          }>;
+        }>;
+      };
+      const choose = contract.functions.find(func => func.name === 'choose');
+      expect(choose?.parameters.map(param => [param.name, param.kind, param.default])).toEqual([
+        ['value', 'POSITIONAL_ONLY', false],
+        ['bias', 'POSITIONAL_OR_KEYWORD', true],
+        ['loud', 'KEYWORD_ONLY', true],
+      ]);
+
+      const hasOverloadExtraction = await processUtils.exec(pythonPath, [
+        '-c',
+        'import typing; raise SystemExit(0 if hasattr(typing, "get_overloads") else 1)',
+      ]);
+      if (hasOverloadExtraction.code === 0) {
+        expect(choose?.overloads).toHaveLength(2);
+        expect(
+          choose?.overloads.map(overload => overload.parameters.map(param => param.kind))
+        ).toEqual([
+          ['POSITIONAL_ONLY', 'POSITIONAL_OR_KEYWORD', 'KEYWORD_ONLY'],
+          ['POSITIONAL_ONLY', 'POSITIONAL_OR_KEYWORD', 'KEYWORD_ONLY'],
+        ]);
+        expect(choose?.overloads.map(overload => overload.returns)).toEqual([
+          expect.stringMatching(/str$/),
+          expect.stringMatching(/int$/),
+        ]);
+
+        const consumerPath = join(outputDir, 'consumer.ts');
+        await writeFile(
+          join(outputDir, 'contract.d.ts'),
+          await readFile(join(outputDir, 'positional_overloads.generated.d.ts'), 'utf8'),
+          'utf8'
+        );
+        await writeFile(
+          consumerPath,
+          [
+            "import { choose } from './contract.js';",
+            "const text: Promise<string> = choose('a');",
+            "const loudText: Promise<string> = choose('a', undefined, { loud: true });",
+            'const number: Promise<number> = choose(4, 2, { loud: true });',
+            'void text;',
+            'void loudText;',
+            'void number;',
+            '// @ts-expect-error value is positional-only',
+            "choose('a', undefined, { value: 'b' });",
+            '// @ts-expect-error the string overload returns a string',
+            "const wrong: Promise<number> = choose('a');",
+            'void wrong;',
+          ].join('\n'),
+          'utf8'
+        );
+        const program = ts.createProgram([consumerPath], {
+          noEmit: true,
+          strict: true,
+          skipLibCheck: true,
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          moduleResolution: ts.ModuleResolutionKind.Bundler,
+          types: [],
+        });
+        expect(
+          ts
+            .getPreEmitDiagnostics(program)
+            .map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))
+        ).toEqual([]);
+      } else {
+        expect(choose?.overloads).toEqual([]);
+      }
+
+      const source = await readFile(join(outputDir, 'positional_overloads.generated.ts'), 'utf8');
+      const javascript = ts.transpileModule(source, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      const runtimePath = join(tempDir, 'positional_overloads.generated.mjs');
+      await writeFile(runtimePath, javascript, 'utf8');
+      const calls: Array<{ args: unknown[]; kwargs?: Record<string, unknown> }> = [];
+      let wrongStringReturn = false;
+      setRuntimeBridge({
+        async call<T>(
+          _module: string,
+          _functionName: string,
+          args: unknown[],
+          kwargs?: Record<string, unknown>,
+          validate?: (result: T) => void
+        ): Promise<T> {
+          calls.push({ args: [...args], kwargs });
+          const value =
+            typeof args[0] === 'string'
+              ? wrongStringReturn
+                ? 7
+                : args[0]
+              : Number(args[0]) + Number(args[1] ?? 0);
+          validate?.(value as T);
+          return value as T;
+        },
+        async dispose(): Promise<void> {},
+      });
+      const generated = (await import(pathToFileURL(runtimePath).href)) as {
+        choose: (...args: unknown[]) => Promise<unknown>;
+      };
+      await expect(generated.choose('a')).resolves.toBe('a');
+      await expect(generated.choose('a', undefined, { loud: true })).resolves.toBe('a');
+      await expect(generated.choose(4, 2, { loud: true })).resolves.toBe(6);
+      await expect(generated.choose('a', undefined, { value: 'b' })).rejects.toThrow(
+        /positional-only argument "value"/
+      );
+      expect(calls).toHaveLength(3);
+      expect(calls[0]?.args).toEqual(['a']);
+      expect(calls[1]).toEqual({ args: ['a'], kwargs: { loud: true } });
+      expect(calls[2]).toEqual({ args: [4, 2], kwargs: { loud: true } });
+      if (hasOverloadExtraction.code === 0) {
+        wrongStringReturn = true;
+        await expect(generated.choose('a')).rejects.toThrow(BridgeValidationError);
+      }
+    } finally {
+      clearRuntimeBridge();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('writes stable sorted contracts and detects contract drift in check mode', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-ir-contract-'));
     try {
