@@ -32,6 +32,12 @@ describe('real PyodideBridge', () => {
     await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow();
   }, 180_000);
 
+  it('fails explicitly when the configured runtime assets are missing', async () => {
+    bridge = new PyodideBridge({ indexURL: `${indexURL}missing-runtime-assets/` });
+    await expect(bridge.call('math', 'sqrt', [4])).rejects.toThrow();
+    expect(bridge.isReady).toBe(false);
+  }, 180_000);
+
   it('reports a bootstrap failure and disposes the failed bridge', async () => {
     const globals = globalThis as typeof globalThis & { loadPyodide?: typeof loadPyodide };
     const previousLoader = globals.loadPyodide;

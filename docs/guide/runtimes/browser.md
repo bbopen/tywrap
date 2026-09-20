@@ -42,7 +42,7 @@ import { setRuntimeBridge } from 'tywrap/runtime';
 import { array } from './generated/numpy.generated.js';
 
 const bridge = new PyodideBridge({
-  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.0/full/',
+  indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.1/full/',
   packages: ['numpy'],
 });
 
