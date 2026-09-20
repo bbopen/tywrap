@@ -13,7 +13,10 @@ import type { RuntimeExecution } from '../types/index.js';
 export { BridgeCodec, type CodecOptions } from './bridge-codec.js';
 export {
   createReturnValidator,
+  selectOverloadReturnValidator,
   describeReceivedShape,
+  type OverloadParameterSchema,
+  type OverloadReturnSchema,
   type ReturnSchema,
   type ReturnValidator,
 } from './validators.js';
