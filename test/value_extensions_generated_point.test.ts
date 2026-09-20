@@ -173,7 +173,7 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
       const compiled = compilePoint(pointIr, true, true);
       expect(compiled.diagnostics.filter(item => item.severity === 'error')).toEqual([]);
       expect(compiled.callables[0]?.requiredCapabilities).toContain('dataclass-adapter');
-      expect(compiled.generated.declaration).toContain('make_point(): Promise<Point>');
+      expect(compiled.generated.declaration).toContain('makePoint(): Promise<Point>');
       expect(compiled.generated.declaration).toContain(
         'export type Point = { x: number; y: number; }'
       );
@@ -191,8 +191,8 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
         await writeFile(declarationPath, compiled.generated.declaration, 'utf8');
         await writeFile(
           consumerPath,
-          `import { make_point, type Point } from './value_extensions.generated.js';
-const result: Promise<Point> = make_point();
+          `import { makePoint, type Point } from './value_extensions.generated.js';
+const result: Promise<Point> = makePoint();
 result.then(point => {
   const x: number = point.x;
   const y: number = point.y;
@@ -239,12 +239,12 @@ result.then(point => {
           async dispose(): Promise<void> {},
         });
         const generated = (await import(pathToFileURL(outputPath).href)) as {
-          make_point: () => Promise<{ x: number; y: number }>;
+          makePoint: () => Promise<{ x: number; y: number }>;
         };
 
-        await expect(generated.make_point()).resolves.toEqual({ x: 1, y: 2 });
+        await expect(generated.makePoint()).resolves.toEqual({ x: 1, y: 2 });
         bridgeMeta = {};
-        await expect(generated.make_point()).rejects.toThrow(/bridge lacks dataclassFieldsV2/);
+        await expect(generated.makePoint()).rejects.toThrow(/bridge lacks dataclassFieldsV2/);
         bridgeMeta = { valueCapabilities: ['dataclassFieldsV2'] };
         const valid = pythonPoint() as { fields: Record<string, unknown> };
         for (const bad of [
@@ -254,7 +254,7 @@ result.then(point => {
           { x: 1, y: 2 },
         ]) {
           wire = bad;
-          await expect(generated.make_point()).rejects.toThrow();
+          await expect(generated.makePoint()).rejects.toThrow();
         }
 
         setRuntimeBridge({
@@ -271,7 +271,7 @@ result.then(point => {
           },
           async dispose(): Promise<void> {},
         });
-        await expect(generated.make_point()).rejects.toThrow(BridgeValidationError);
+        await expect(generated.makePoint()).rejects.toThrow(BridgeValidationError);
       } finally {
         clearRuntimeBridge();
         await rm(temporary, { recursive: true, force: true });
