@@ -59,6 +59,26 @@ They must cover floats, booleans, nested records, malformed tags, digit limits,
 byte limits, and old bridges. Production work needs separate review of
 capability negotiation, generated types, and migration cost.
 
+### Exact integer migration cost
+
+Opting in changes every declared Python `int` at that callable to TypeScript
+`bigint`, including values within the safe number range. Callers must update
+number arithmetic, comparisons, and stored JSON. `JSON.stringify` rejects a
+plain `bigint`, so callers that persist results need an explicit encoding.
+
+Each tagged integer adds 73 JSON bytes beyond its decimal digits. For example,
+`7` uses one byte as a JSON number and 74 bytes in the version 2 envelope.
+Nested collections multiply that cost by their integer count. Teams must measure
+representative call payloads against the byte limit before enabling the option.
+
+The client must check the bridge capability before it sends tagged values. This
+requires a coordinated client and bridge rollout. Old bridges reject the opted
+call. Arrow int64 columns keep their current type and wire format.
+
+Before production adoption, inventory generated call sites that use `int`,
+measure payload growth, and typecheck downstream callers after the opt-in. The
+prototype has not measured those application-specific costs.
+
 ## Dataclass output option
 
 The generation option is `dataclassReturns: 'validated-v2'` for a callable with
