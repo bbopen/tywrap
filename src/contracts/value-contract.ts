@@ -100,6 +100,26 @@ export interface ValueContractField<TValue = ValueContract> {
   readonly required: boolean;
 }
 
+export function containsExactInteger(value: ValueContractV3): boolean {
+  switch (value.kind) {
+    case 'integer-exact':
+      return true;
+    case 'sequence':
+      return containsExactInteger(value.item);
+    case 'tuple':
+      return value.items.some(containsExactInteger);
+    case 'union':
+      return value.options.some(containsExactInteger);
+    case 'record':
+      return (
+        value.fields.some(field => containsExactInteger(field.value)) ||
+        (value.additionalValues !== undefined && containsExactInteger(value.additionalValues))
+      );
+    default:
+      return false;
+  }
+}
+
 export function isSafeJsonInteger(value: number): boolean {
   return Number.isInteger(value) && Math.abs(value) <= MAX_SAFE_JSON_INTEGER;
 }

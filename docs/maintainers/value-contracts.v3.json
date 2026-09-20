@@ -7,7 +7,7 @@
     "sha256": "554f84b75126513250a7eb773294347fe4dc42262e4ac52f86e7aa19cc65bb4e"
   },
   "transport": "tywrap/1 value RPC",
-  "valueEnvelopeCodecVersion": 2,
+  "exactIntegerEnvelopeCodecVersion": 2,
   "callPolicy": "bigint-v2",
   "requiredCapability": "exactIntegerDecimalV2",
   "rules": {
