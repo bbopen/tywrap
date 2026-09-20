@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BridgeValidationError } from '../src/runtime/errors.js';
+import { DecodedProvenance } from '../src/runtime/decoded-provenance.js';
 import { HttpBridge } from '../src/runtime/http.js';
 import { NodeBridge } from '../src/runtime/node.js';
 import {
@@ -220,7 +221,17 @@ describe('return validator bridge propagation', () => {
     try {
       await expect(bridge.call<number>('math', 'sqrt', [16], undefined, validate)).resolves.toBe(4);
       expect(validate).toHaveBeenCalledOnce();
-      expect(validate).toHaveBeenCalledWith(4);
+      expect(validate).toHaveBeenCalledWith(4, expect.any(DecodedProvenance));
+      const [, provenance] = validate.mock.calls[0] as unknown as [number, DecodedProvenance];
+      expect(provenance.atRoot()).toBeUndefined();
+
+      const reject = vi.fn((_value: number) => {
+        throw new Error('one-argument validator rejected the value');
+      });
+      await expect(bridge.call<number>('math', 'sqrt', [16], undefined, reject)).rejects.toThrow(
+        'one-argument validator rejected the value'
+      );
+      expect(reject).toHaveBeenCalledOnce();
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close(error => (error ? reject(error) : resolve()))
