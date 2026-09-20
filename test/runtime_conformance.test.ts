@@ -356,12 +356,21 @@ class HttpReferenceBackend implements ConformanceBackend {
 const PYODIDE_CORE_HARNESS = `${BOOTSTRAP_PYTHON}
 
 import sys as __tywrap_driver_sys
-for __tywrap_line in __tywrap_driver_sys.stdin:
-    __tywrap_line = __tywrap_line.strip()
-    if not __tywrap_line:
-        continue
-    __tywrap_driver_sys.stdout.write(__tywrap_dispatch(__tywrap_line) + '\\n')
-    __tywrap_driver_sys.stdout.flush()
+import asyncio as __tywrap_driver_asyncio
+import inspect as __tywrap_driver_inspect
+
+async def __tywrap_driver_main():
+    for __tywrap_line in __tywrap_driver_sys.stdin:
+        __tywrap_line = __tywrap_line.strip()
+        if not __tywrap_line:
+            continue
+        __tywrap_result = __tywrap_dispatch(__tywrap_line)
+        if __tywrap_driver_inspect.isawaitable(__tywrap_result):
+            __tywrap_result = await __tywrap_result
+        __tywrap_driver_sys.stdout.write(__tywrap_result + '\\n')
+        __tywrap_driver_sys.stdout.flush()
+
+__tywrap_driver_asyncio.run(__tywrap_driver_main())
 `;
 
 // The harness inlines the full ~31 KB bootstrap. Passing it via `python -c "..."`
