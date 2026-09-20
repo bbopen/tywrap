@@ -285,6 +285,7 @@ jobs:
       - name: Run pinned scientific menagerie
         env:
           TYWRAP_CODEC_PYTHON: python
+          TYWRAP_REQUIRE_TORCH_CONFORMANCE: '1'
         run: npm run test:menagerie
 
   os:
