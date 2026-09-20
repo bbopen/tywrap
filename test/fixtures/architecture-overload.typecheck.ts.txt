@@ -1,0 +1,33 @@
+import { selectRecord } from './generated/architecture_callable_fixture.generated.js';
+import { float16Values } from './generated/consumer_fixture.generated.js';
+
+type Float16Value = number | Float16Value[];
+type GeneratedFloat16Value = Awaited<ReturnType<typeof float16Values>>;
+
+const float16Result: Promise<Float16Value> = float16Values();
+const acceptsScalar: number extends GeneratedFloat16Value ? true : never = true;
+const acceptsArray: number[] extends GeneratedFloat16Value ? true : never = true;
+
+// @ts-expect-error A decoded float16 array is not a string.
+const wrongFloat16Result: Promise<string> = float16Values();
+
+const textRecord: Promise<Record<string, Record<string, string>>> = selectRecord('label');
+const integerRecord: Promise<Record<string, Record<string, number>>> = selectRecord(42);
+
+// @ts-expect-error An integer input must not infer a string record.
+const wrongTextRecord: Promise<Record<string, Record<string, string>>> = selectRecord(42);
+
+// @ts-expect-error A string input must not infer an integer record.
+const wrongIntegerRecord: Promise<Record<string, Record<string, number>>> = selectRecord('label');
+
+// @ts-expect-error A boolean input matches no overload.
+selectRecord(true);
+
+void textRecord;
+void integerRecord;
+void wrongTextRecord;
+void wrongIntegerRecord;
+void float16Result;
+void wrongFloat16Result;
+void acceptsScalar;
+void acceptsArray;
