@@ -18,6 +18,7 @@ from value_extensions import (
 
 def main() -> None:
     trusted_contracts: list[dict[str, Any]] = json.loads(sys.argv[1])
+    bridge_meta: dict[str, Any] = json.loads(sys.argv[2])
     raw = sys.stdin.buffer.read(MAX_PAYLOAD_BYTES + 1)
     if len(raw) > MAX_PAYLOAD_BYTES:
         raise PrototypeError('input payload exceeds byte limit')
@@ -32,7 +33,7 @@ def main() -> None:
         raise PrototypeError('missing exact-integer call parameters')
     value_policy = params.get('valuePolicy')
     policy = value_policy.get('integer') if isinstance(value_policy, dict) else None
-    require_capability(request.get('meta', {}), 'exactIntegerDecimalV2', policy)
+    require_capability(bridge_meta, 'exactIntegerDecimalV2', policy)
     args = params.get('args')
     if not isinstance(args, list) or len(args) != len(trusted_contracts):
         raise PrototypeError('exact-integer arguments differ from the contract')
