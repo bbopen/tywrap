@@ -1086,7 +1086,7 @@ def _serialize_leaf(value, path):
     pydantic_value = serialize_pydantic(value)
     if pydantic_value is not _NO_PYDANTIC:
         return pydantic_value
-    if type(value) in (set, frozenset):
+    if isinstance(value, (set, frozenset)):
         return list(value)
     stdlib_value = serialize_stdlib(value)
     if stdlib_value is not None:

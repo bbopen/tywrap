@@ -196,6 +196,23 @@ def test_integer_subclass_cannot_bypass_policy() -> None:
         serialize({'value': MisleadingInteger(2**53 + 1)}, force_json_markers=True)
 
 
+@pytest.mark.parametrize('container_type', [set, frozenset])
+def test_set_subclass_values_follow_nested_integer_policy(container_type: type) -> None:
+    class SetSubclass(container_type):
+        pass
+
+    for force_json_markers in (False, True):
+        with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.items\[0\]:'):
+            serialize({'items': SetSubclass([2**53 + 1])}, force_json_markers=force_json_markers)
+        with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\[0\]:'):
+            serialize(SetSubclass([2**53 + 1]), force_json_markers=force_json_markers)
+
+        safe = serialize({'items': SetSubclass([2**53 - 1])}, force_json_markers=force_json_markers)
+        assert json.loads(encode_value(safe, allow_nan=False)) == {
+            'items': [2**53 - 1]
+        }
+
+
 def test_estimator_metadata_rejects_nested_unsafe_integer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
