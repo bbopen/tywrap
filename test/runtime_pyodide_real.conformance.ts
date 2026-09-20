@@ -44,9 +44,11 @@ describe('real PyodideBridge', () => {
         return new Proxy(py, {
           get(target, property, receiver) {
             if (property === 'runPythonAsync') {
-              return async () => {
-                bootstrapAttempted = true;
-                throw new Error('bootstrap failure fixture');
+              return async (code: string) => {
+                bootstrapAttempted = code.includes('tywrap_bridge_core');
+                return target.runPythonAsync(
+                  `raise RuntimeError("bootstrap failure fixture")\n${code}`
+                );
               };
             }
             return Reflect.get(target, property, receiver);

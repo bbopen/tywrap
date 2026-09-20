@@ -170,11 +170,11 @@ describe('real browser PyodideBridge', () => {
       const page = await browser.newPage();
       await page.goto(origin);
       const result = (await page.evaluate(
-        `async pyodideURL => {
+        `(async () => {
         const { PyodideBridge } = await import('/dist/runtime/pyodide.js');
         const { clearRuntimeBridge, setRuntimeBridge } = await import('/dist/runtime/index.js');
         const math = await import('/generated/math.generated.js');
-        const bridge = new PyodideBridge({ indexURL: pyodideURL + '/pyodide/' });
+        const bridge = new PyodideBridge({ indexURL: location.origin + '/pyodide/' });
         setRuntimeBridge({
           call: bridge.call.bind(bridge),
           dispose: bridge.dispose.bind(bridge),
@@ -188,8 +188,7 @@ describe('real browser PyodideBridge', () => {
           clearRuntimeBridge();
           await bridge.dispose();
         }
-      }`,
-        origin
+      })()`
       )) as { result: number; pythonVersion: string };
       expect(result).toMatchObject({ result: 9 });
       expect(result.pythonVersion).toMatch(/^\d+\.\d+\.\d+/);
