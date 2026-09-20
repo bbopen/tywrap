@@ -375,6 +375,61 @@ describeNodeOnly('startNodeWatchSession', () => {
     }
   }, 30000);
 
+  it('keeps the last good bridge when source changes during bridge preparation', async () => {
+    const tempDir = await mkdtemp(join(process.cwd(), '.tmp-tywrap-dev-mid-reload-'));
+    const packageDir = join(tempDir, 'watchpkg');
+    const outputDir = join(tempDir, 'generated');
+    const configPath = join(tempDir, 'tywrap.config.json');
+    const pythonPath = getDefaultPythonPath();
+    const events: NodeWatchEvent[] = [];
+    let changeSourceBeforeNextBridge = false;
+
+    await mkdir(packageDir, { recursive: true });
+    await writePythonModule(packageDir, 'def answer() -> int:\n    return 1\n');
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        pythonModules: { watchpkg: { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: [tempDir],
+        output: { dir: outputDir, format: 'esm', declaration: false, sourceMap: false },
+        runtime: { node: { pythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+      }),
+      'utf-8'
+    );
+
+    let session: NodeWatchSession | undefined;
+    try {
+      session = await startNodeWatchSession({
+        configFile: configPath,
+        createBridge: async () => {
+          if (changeSourceBeforeNextBridge) {
+            changeSourceBeforeNextBridge = false;
+            await writePythonModule(packageDir, 'def answer() -> int \n    return 9\n');
+          }
+          return new SnapshotPythonBridge(join(packageDir, '__init__.py'), pythonPath);
+        },
+        onEvent: event => events.push(event),
+      });
+
+      const generatedModule = (await import(
+        pathToFileURL(join(outputDir, 'watchpkg.generated.ts')).href
+      )) as { answer: () => Promise<number> };
+      expect(await generatedModule.answer()).toBe(1);
+
+      changeSourceBeforeNextBridge = true;
+      await expect(session.reloadNow()).resolves.toBe(false);
+      const reloadError = events.find(event => event.type === 'reload-error' && event.manual);
+      expect(reloadError).toMatchObject({
+        error: { message: 'Watched Python source changed during reload; keeping the current bridge' },
+      });
+      expect(await generatedModule.answer()).toBe(1);
+    } finally {
+      await session?.close();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30000);
+
   it('passes the latest resolved config into createBridge on manual reloads', async () => {
     const tempDir = await mkdtemp(join(process.cwd(), '.tmp-tywrap-dev-config-bridge-'));
     const packageDir = join(tempDir, 'configpkg');

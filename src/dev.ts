@@ -7,6 +7,7 @@
 
 import { watch as createWatcher, type FSWatcher } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative, resolve, sep } from 'node:path';
 
@@ -56,6 +57,7 @@ interface StageResult {
   warnings: string[];
   failures: GenerateFailure[];
   watchSources: WatchSource[];
+  sourceFingerprint: string;
   outputDir: string;
 }
 
@@ -252,6 +254,55 @@ function normalizeWatchSources(sources: Iterable<WatchSource>): WatchSource[] {
   return [...entries.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([path, kind]) => ({ path, kind }));
+}
+
+async function fingerprintPythonSources(
+  sources: WatchSource[],
+  ignoredPaths: string[]
+): Promise<string> {
+  const files = new Set<string>();
+  for (const source of normalizeWatchSources(sources)) {
+    if (shouldIgnoreWatchPath(source.path, ignoredPaths)) {
+      continue;
+    }
+    if (source.kind === 'file') {
+      files.add(source.path);
+      continue;
+    }
+
+    const pending = [source.path];
+    while (pending.length > 0) {
+      const directory = pending.pop();
+      if (directory === undefined) {
+        break;
+      }
+      if (shouldIgnoreWatchPath(directory, ignoredPaths)) {
+        continue;
+      }
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (shouldIgnoreWatchPath(path, ignoredPaths)) {
+          continue;
+        }
+        if (entry.isDirectory()) {
+          pending.push(path);
+        } else if (entry.isFile() && (entry.name.endsWith('.py') || entry.name.endsWith('.pyi'))) {
+          files.add(path);
+        }
+      }
+    }
+  }
+
+  const hash = createHash('sha256');
+  for (const file of [...files].sort()) {
+    const contents = await readFile(file);
+    hash.update(file);
+    hash.update('\0');
+    hash.update(String(contents.length));
+    hash.update('\0');
+    hash.update(contents);
+  }
+  return hash.digest('hex');
 }
 
 function isSameOrNestedPath(candidate: string, root: string): boolean {
@@ -606,6 +657,10 @@ async function resolveWatchTargets(config: TywrapOptions): Promise<WatchTarget[]
 async function generateToStage(configFile: string): Promise<StageResult> {
   const config = await resolveConfig({ configFile, requireConfig: true });
   const watchTargets = await resolveWatchTargets(config);
+  const watchSources = normalizeWatchSources(watchTargets.map(toWatchSource));
+  const outputDir = resolve(config.output.dir);
+  const ignoredPaths = buildIgnoredPaths(outputDir);
+  const sourceFingerprint = await fingerprintPythonSources(watchSources, ignoredPaths);
   const tempDir = await mkdtemp(join(tmpdir(), 'tywrap-dev-'));
   const stageOutputDir = join(tempDir, 'output');
 
@@ -632,8 +687,11 @@ async function generateToStage(configFile: string): Promise<StageResult> {
       files.set(relativePath, await readFile(writtenPath, 'utf-8'));
     }
 
-    const outputDir = resolve(config.output.dir);
-    const watchSources = normalizeWatchSources(watchTargets.map(toWatchSource));
+    if ((await fingerprintPythonSources(watchSources, ignoredPaths)) !== sourceFingerprint) {
+      throw new Error(
+        'Watched Python source changed during generation; keeping the current bridge'
+      );
+    }
 
     return {
       config,
@@ -643,6 +701,7 @@ async function generateToStage(configFile: string): Promise<StageResult> {
       warnings: result.warnings,
       failures: result.failures,
       watchSources,
+      sourceFingerprint,
       outputDir,
     };
   } catch (error) {
@@ -902,6 +961,13 @@ export async function startNodeWatchSession<T extends RuntimeExecution & Disposa
         if (closed) {
           return null;
         }
+      }
+
+      if (
+        (await fingerprintPythonSources(stage.watchSources, nextIgnoredPaths)) !==
+        stage.sourceFingerprint
+      ) {
+        throw new Error('Watched Python source changed during reload; keeping the current bridge');
       }
 
       return { stage, preparedWatchers, nextIgnoredPaths, watchPaths };
