@@ -64,8 +64,14 @@ function syncPlayback() {
 }
 
 function onMotionChange(event: MediaQueryListEvent) {
-  reducedMotion.value = event.matches
-  if (!event.matches) void nextTick(syncPlayback)
+  if (event.matches) {
+    videoRef.value?.pause()
+    isPlaying.value = false
+    reducedMotion.value = true
+  } else {
+    reducedMotion.value = false
+    void nextTick(syncPlayback)
+  }
 }
 
 function togglePlayback() {
