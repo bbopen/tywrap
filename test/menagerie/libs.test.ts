@@ -63,17 +63,20 @@ describe.skipIf(!bridgeAvailable)('menagerie optional-library gate', () => {
   );
 
   it.skipIf(!hasPythonModule('numpy') || !hasPythonModule('pyarrow'))(
-    'round-trips ndarrays nested in a mapping while retaining scalar behavior',
+    'preserves nested Arrow arrays and rejects unsafe NumPy scalars',
     async () => {
       const bridge = makeBridge();
       try {
         await expect(
-          bridge.call('fixtures.library_torture', 'numpy_adversarial', [])
+          bridge.call('fixtures.library_torture', 'numpy_adversarial_safe_scalar', [])
         ).resolves.toEqual({
           array: [9007199254740993n, 9223372036854775807n],
-          scalar: 9007199254740992,
+          scalar: 9007199254740991,
           float_column: [1, 2.5],
         });
+        await expect(
+          bridge.call('fixtures.library_torture', 'numpy_adversarial', [])
+        ).rejects.toThrow(/Unsafe Python integer at result\.scalar/);
       } finally {
         await bridge.dispose();
       }

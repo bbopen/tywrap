@@ -1,0 +1,49 @@
+{
+  "revision": 2,
+  "integerCases": [
+    { "decimal": "-9007199254740991", "outcome": "number" },
+    { "decimal": "9007199254740991", "outcome": "number" },
+    { "decimal": "-9007199254740992", "outcome": "reject" },
+    { "decimal": "9007199254740992", "outcome": "reject" },
+    { "decimal": "9007199254740993", "outcome": "reject" },
+    { "decimal": "-9223372036854775808", "outcome": "reject" },
+    { "decimal": "9223372036854775807", "outcome": "reject" },
+    { "decimal": "265252859812191058636308480000000", "outcome": "reject" }
+  ],
+  "binary16Cases": [
+    { "wordHex": "0000", "outcome": "0" },
+    { "wordHex": "8000", "outcome": "-0" },
+    { "wordHex": "0001", "outcome": "5.960464477539063e-8" },
+    { "wordHex": "03ff", "outcome": "0.00006097555160522461" },
+    { "wordHex": "0400", "outcome": "0.00006103515625" },
+    { "wordHex": "3e00", "outcome": "1.5" },
+    { "wordHex": "c080", "outcome": "-2.25" },
+    { "wordHex": "7bff", "outcome": "65504" },
+    { "wordHex": "fbff", "outcome": "-65504" },
+    { "wordHex": "7c00", "outcome": "reject" },
+    { "wordHex": "fc00", "outcome": "reject" },
+    { "wordHex": "7e00", "outcome": "reject" }
+  ],
+  "compositionCases": [
+    {
+      "path": "result.outer[0].value",
+      "logicalValue": "9007199254740993",
+      "outcome": "reject"
+    },
+    {
+      "path": "result.outer[0].tensor.value",
+      "logicalValue": "float16[1.5,-2.25]",
+      "outcome": "number[1.5,-2.25]"
+    }
+  ],
+  "unionCases": [
+    { "contract": "str|int", "value": "label", "outcome": "string" },
+    { "contract": "str|int", "value": 42, "outcome": "safe-integer number" },
+    { "contract": "str|int", "value": 9007199254740992, "outcome": "reject" }
+  ],
+  "tupleCases": [
+    { "contract": "tuple[str,int]", "value": ["label", 42], "outcome": "accept" },
+    { "contract": "tuple[str,int]", "value": ["label"], "outcome": "reject-length" },
+    { "contract": "tuple[str,int]", "value": ["label", 9007199254740992], "outcome": "reject-integer" }
+  ]
+}
