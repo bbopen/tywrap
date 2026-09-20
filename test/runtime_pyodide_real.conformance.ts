@@ -35,7 +35,13 @@ describe('real PyodideBridge', () => {
   }, 180_000);
 
   it('requires local runtime assets before starting WASM', () => {
-    for (const name of ['pyodide.mjs', 'pyodide.asm.wasm', 'pyodide-lock.json']) {
+    for (const name of [
+      'pyodide.mjs',
+      'pyodide.asm.js',
+      'pyodide.asm.wasm',
+      'python_stdlib.zip',
+      'pyodide-lock.json',
+    ]) {
       if (!existsSync(join(indexURL, name))) {
         throw new Error(`Required Pyodide runtime asset is missing: ${name}`);
       }
