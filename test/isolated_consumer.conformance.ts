@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import {
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -85,6 +86,14 @@ describe('isolated npm consumer', () => {
     await run(python, ['-m', 'venv', venv], { cwd: tempRoot });
     const isolatedPython = venvPython(venv);
     expect(existsSync(isolatedPython)).toBe(true);
+    await run(
+      isolatedPython,
+      [
+        '-c',
+        'import sys\nif sys.version_info < (3, 11): raise SystemExit("Python 3.11 is required for overload extraction")',
+      ],
+      { cwd: consumer }
+    );
 
     mkdirSync(wheelDir, { recursive: true });
     await run(
@@ -145,6 +154,9 @@ describe('isolated npm consumer', () => {
     writeFileSync(
       join(fixtures, 'consumer_fixture.py'),
       [
+        'import numpy as np',
+        'from numpy.typing import NDArray',
+        '',
         'def add(left: int, right: int) -> int:',
         '    return left + right',
         '',
@@ -160,8 +172,7 @@ describe('isolated npm consumer', () => {
         'def unsafe_negative() -> int:',
         '    return -(2**53)',
         '',
-        'def float16_values() -> object:',
-        '    import numpy as np',
+        'def float16_values() -> NDArray[np.float16]:',
         '    return np.array([1.5, -2.25, -0.0], dtype=np.float16)',
         '',
         'def wrong_return() -> int:',
@@ -169,6 +180,10 @@ describe('isolated npm consumer', () => {
         '',
       ].join('\n'),
       'utf8'
+    );
+    copyFileSync(
+      join(repoRoot, 'test', 'fixtures', 'architecture_callable_fixture.py'),
+      join(fixtures, 'architecture_callable_fixture.py')
     );
     writeFileSync(
       join(consumer, 'package.json'),
@@ -211,7 +226,10 @@ describe('isolated npm consumer', () => {
       join(consumer, 'tywrap.config.json'),
       `${JSON.stringify(
         {
-          pythonModules: { consumer_fixture: { typeHints: 'strict' } },
+          pythonModules: {
+            consumer_fixture: { typeHints: 'strict' },
+            architecture_callable_fixture: { typeHints: 'strict' },
+          },
           pythonImportPath: [fixtures],
           output: { dir: generated, format: 'esm', declaration: false, sourceMap: false },
           runtime: { node: { pythonPath: isolatedPython } },
@@ -237,6 +255,13 @@ describe('isolated npm consumer', () => {
     const generatedSource = join(generated, 'consumer_fixture.generated.ts');
     expect(existsSync(generatedSource)).toBe(true);
     expect(readFileSync(generatedSource, 'utf8')).not.toContain(repoRoot);
+    const architectureSource = join(generated, 'architecture_callable_fixture.generated.ts');
+    expect(existsSync(architectureSource)).toBe(true);
+    expect(readFileSync(architectureSource, 'utf8')).not.toContain(repoRoot);
+    copyFileSync(
+      join(repoRoot, 'test', 'fixtures', 'architecture-overload.typecheck.ts.txt'),
+      join(consumer, 'architecture-overload.typecheck.ts')
+    );
     writeFileSync(
       join(consumer, 'tsconfig.json'),
       `${JSON.stringify(
@@ -250,7 +275,7 @@ describe('isolated npm consumer', () => {
             strict: true,
             skipLibCheck: true,
           },
-          include: ['generated/**/*.ts'],
+          include: ['generated/**/*.ts', 'architecture-overload.typecheck.ts'],
         },
         null,
         2
@@ -272,6 +297,7 @@ describe('isolated npm consumer', () => {
 import { NodeBridge } from 'tywrap/node';
 import { clearRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 import * as fixture from './built/generated/consumer_fixture.generated.js';
+import * as architecture from './built/generated/architecture_callable_fixture.generated.js';
 
 const [pythonPath, fixtures] = process.argv.slice(2);
 const bridge = new NodeBridge({
@@ -280,7 +306,7 @@ const bridge = new NodeBridge({
   env: {
     PYTHONNOUSERSITE: '1',
     PYTHONPATH: fixtures,
-    TYWRAP_ALLOWED_MODULES: 'consumer_fixture',
+    TYWRAP_ALLOWED_MODULES: 'consumer_fixture,architecture_callable_fixture',
   },
 });
 
@@ -319,7 +345,37 @@ try {
   if (!(validationError instanceof BridgeValidationError)) {
     throw new Error('wrong_return did not throw BridgeValidationError');
   }
-  process.stdout.write(JSON.stringify({ add, safeMax, safeMin, float16Values, negativeZero }));
+  const textRecord = await architecture.selectRecord('label');
+  const integerRecord = await architecture.selectRecord(42);
+  for (const key of ['label', 42]) {
+    let wrongOverloadError;
+    try {
+      await architecture.selectRecordWrong(key);
+    } catch (error) {
+      wrongOverloadError = error;
+    }
+    if (
+      !(wrongOverloadError instanceof BridgeValidationError) ||
+      wrongOverloadError.callSite !== 'architecture_callable_fixture.select_record_wrong'
+    ) {
+      throw new Error('selected overload accepted a wrong nested return');
+    }
+  }
+  let wrongIntegerError;
+  try {
+    await architecture.wrongIntegerReturn();
+  } catch (error) {
+    wrongIntegerError = error;
+  }
+  if (
+    !(wrongIntegerError instanceof BridgeValidationError) ||
+    wrongIntegerError.callSite !== 'architecture_callable_fixture.wrong_integer_return'
+  ) {
+    throw new Error('wrong_integer_return did not throw BridgeValidationError');
+  }
+  process.stdout.write(JSON.stringify({
+    add, safeMax, safeMin, float16Values, negativeZero, textRecord, integerRecord,
+  }));
 } finally {
   clearRuntimeBridge();
   await bridge.dispose();
@@ -338,6 +394,8 @@ try {
       safeMin: Number.MIN_SAFE_INTEGER,
       float16Values: [1.5, -2.25, 0],
       negativeZero: true,
+      textRecord: { outer: { value: 'label' } },
+      integerRecord: { outer: { value: 42 } },
     });
   }, 240_000);
 });
