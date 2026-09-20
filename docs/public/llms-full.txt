@@ -535,6 +535,33 @@ Python results; upgrading the TypeScript client does not update that server.
 
 ## Regenerate wrappers
 
+After these versions are published, upgrade both packages:
+
+```bash
+npm install tywrap@0.11.0
+python3 -m pip install --upgrade tywrap-ir==0.3.1
+```
+
+Use the Python executable selected by `runtime.node.pythonPath` and
+`runtime.node.virtualEnv` instead of `python3` when your configuration differs.
+The new extractor captures generic parameters used only in overload annotations.
+Its IR schema remains `0.4.0`, so the schema check alone cannot detect an older
+extractor or an older saved contract.
+
+Extract fresh IR when regenerating:
+
+```bash
+npx tywrap generate --no-cache
+```
+
+This bypasses the on-disk IR cache. It does not replace existing cache entries.
+If you enable caching again, first remove the old generated IR files from
+`.tywrap/cache` so generation extracts and caches the updated contracts.
+
+If you use `contractInput`, temporarily omit it to extract fresh contracts with
+the updated Python package. Review those contracts before restoring `contractInput`.
+The `--no-cache` option does not replace a pinned input contract.
+
 Regenerate wrappers with the upgraded generator. Python `int` return validators
 then check the safe integer range as well as the JavaScript value type.
 Regeneration also applies the reviewed callable-contract diagnostics.
