@@ -102,6 +102,11 @@ describe('isolated npm consumer', () => {
     );
     await run(
       isolatedPython,
+      ['-m', 'pip', 'install', '--disable-pip-version-check', 'numpy==2.3.5', 'pyarrow==24.0.0'],
+      { cwd: tempRoot, timeout: 180_000 }
+    );
+    await run(
+      isolatedPython,
       [
         '-m',
         'pip',
@@ -148,6 +153,16 @@ describe('isolated npm consumer', () => {
         '',
         'def safe_min() -> int:',
         '    return -(2**53 - 1)',
+        '',
+        'def unsafe_positive() -> int:',
+        '    return 2**53',
+        '',
+        'def unsafe_negative() -> int:',
+        '    return -(2**53)',
+        '',
+        'def float16_values() -> object:',
+        '    import numpy as np',
+        '    return np.array([1.5, -2.25, -0.0], dtype=np.float16)',
         '',
         'def wrong_return() -> int:',
         '    return "not an integer"',
@@ -268,6 +283,27 @@ try {
   const add = await fixture.add(2, 3);
   const safeMax = await fixture.safeMax();
   const safeMin = await fixture.safeMin();
+  const float16Values = await fixture.float16Values();
+  if (!Array.isArray(float16Values) || float16Values.length !== 3) {
+    throw new Error('float16_values did not decode to a three-element array');
+  }
+  const negativeZero = Object.is(float16Values[2], -0);
+  for (const call of [fixture.unsafePositive, fixture.unsafeNegative]) {
+    let unsafeError;
+    try {
+      await call();
+    } catch (error) {
+      unsafeError = error;
+    }
+    if (
+      unsafeError?.name !== 'BridgeExecutionError' ||
+      !unsafeError.message.includes('result') ||
+      !unsafeError.message.includes('safe integer range') ||
+      !unsafeError.message.includes('explicit string')
+    ) {
+      throw new Error('unsafe integer did not fail with a located conversion error');
+    }
+  }
   let validationError;
   try {
     await fixture.wrongReturn();
@@ -277,7 +313,7 @@ try {
   if (validationError?.name !== 'BridgeValidationError') {
     throw new Error('wrong_return did not throw BridgeValidationError');
   }
-  process.stdout.write(JSON.stringify({ add, safeMax, safeMin }));
+  process.stdout.write(JSON.stringify({ add, safeMax, safeMin, float16Values, negativeZero }));
 } finally {
   clearRuntimeBridge();
   await bridge.dispose();
@@ -294,6 +330,8 @@ try {
       add: 5,
       safeMax: Number.MAX_SAFE_INTEGER,
       safeMin: Number.MIN_SAFE_INTEGER,
+      float16Values: [1.5, -2.25, 0],
+      negativeZero: true,
     });
   }, 240_000);
 });
