@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress';
 export default defineConfig({
   title: 'tywrap',
   description:
-    'Generate TypeScript bindings with precise types for fully annotated, in-module, serializable Python returns, with fallbacks where tywrap cannot resolve a type.',
+    'Call Python libraries from TypeScript. Generate callable wrappers from supported Python annotations for Node, Bun, and browser apps.',
   base: '/tywrap/',
   appearance: 'force-dark',
   cleanUrls: true,
@@ -27,6 +27,7 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Getting Started', link: '/guide/getting-started' },
+          { text: 'Migrating to 0.11', link: '/guide/migrating-to-0-11' },
           { text: 'Agent Adoption', link: '/guide/agent-adoption' },
           { text: 'Configuration', link: '/guide/configuration' },
           { text: 'Watch & Reload', link: '/guide/dev-reload' },

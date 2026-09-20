@@ -38,6 +38,9 @@ jobs:
         run: npm run test:types
       - name: Build
         run: npm run build
+      - name: Full release checks
+        if: github.event_name == 'workflow_dispatch'
+        run: CI=1 npm run check:all
 
   test:
     if: github.event_name != 'schedule'
@@ -77,6 +80,60 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
           fail_ci_if_error: false
+
+  isolated-consumer:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: Build package candidate
+        run: npm run build
+      - name: Run isolated consumer check
+        env:
+          CI: '1'
+        run: npx vitest run --config vitest.isolated-consumer.config.ts
+
+  pyodide-browser:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: Install tywrap-ir
+        run: python -m pip install -e tywrap_ir
+      - name: Build package
+        run: npm run build
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Fetch locked NumPy asset
+        run: node scripts/fetch-pyodide-package.mjs numpy
+      - name: Record pinned runtime evidence
+        run: node scripts/print-pyodide-ci-evidence.mjs
+      - name: Run real Pyodide and browser checks
+        env:
+          CI: '1'
+        run: npx vitest run --config vitest.pyodide.config.ts
 
   python-suite-core:
     if: github.event_name != 'schedule'
@@ -228,6 +285,7 @@ jobs:
       - name: Run pinned scientific menagerie
         env:
           TYWRAP_CODEC_PYTHON: python
+          TYWRAP_REQUIRE_TORCH_CONFORMANCE: '1'
         run: npm run test:menagerie
 
   os:
@@ -359,6 +417,8 @@ jobs:
     needs:
       - lint
       - test
+      - isolated-consumer
+      - pyodide-browser
       - python-suite-core
       - python-suite-data
       - living-app
@@ -373,6 +433,8 @@ jobs:
           fail=0
           if [ "${{ needs.lint.result }}" != "success" ]; then echo "::error::lint: ${{ needs.lint.result }}"; fail=1; fi
           if [ "${{ needs.test.result }}" != "success" ]; then echo "::error::test: ${{ needs.test.result }}"; fail=1; fi
+          if [ "${{ needs.isolated-consumer.result }}" != "success" ]; then echo "::error::isolated-consumer: ${{ needs.isolated-consumer.result }}"; fail=1; fi
+          if [ "${{ needs.pyodide-browser.result }}" != "success" ]; then echo "::error::pyodide-browser: ${{ needs.pyodide-browser.result }}"; fail=1; fi
           if [ "${{ needs.python-suite-core.result }}" != "success" ]; then echo "::error::python-suite-core: ${{ needs.python-suite-core.result }}"; fail=1; fi
           if [ "${{ needs.python-suite-data.result }}" != "success" ]; then echo "::error::python-suite-data: ${{ needs.python-suite-data.result }}"; fail=1; fi
           if [ "${{ needs.living-app.result }}" != "success" ]; then echo "::error::living-app: ${{ needs.living-app.result }}"; fail=1; fi

@@ -120,6 +120,10 @@ export class PooledTransport extends DisposableBase implements Transport {
   };
   private readonly workers: TransportLease[] = [];
   private readonly waitQueue: QueuedWaiter[] = [];
+  private readonly retiringWorkers = new Set<TransportLease>();
+  private readonly retirements = new Set<Promise<void>>();
+  private retirementError?: Error;
+  private disposalInFlight?: Promise<void>;
   /** Tracks workers being created to prevent race condition in acquire() */
   private pendingCreations = 0;
   private cachedCapabilities?: TransportCapabilities;
@@ -192,6 +196,24 @@ export class PooledTransport extends DisposableBase implements Transport {
     await this.fillToMinimumWorkers();
   }
 
+  /** Retry retained worker cleanup after a failed disposal. */
+  override dispose(): Promise<void> {
+    if (this.disposalInFlight) {
+      return this.disposalInFlight;
+    }
+    const disposal = this.isDisposed ? this.retryRetiringWorkers() : super.dispose();
+    this.disposalInFlight = disposal;
+    disposal.then(
+      () => {
+        this.disposalInFlight = undefined;
+      },
+      () => {
+        this.disposalInFlight = undefined;
+      }
+    );
+    return disposal;
+  }
+
   /**
    * Dispose the pool and all workers.
    *
@@ -207,17 +229,21 @@ export class PooledTransport extends DisposableBase implements Transport {
     }
     this.waitQueue.length = 0;
 
-    // Dispose all workers
-    const errors: Error[] = [];
-    for (const worker of this.workers) {
+    await Promise.all(this.retirements);
+
+    // Retry cleanup for workers whose first disposal failed.
+    const errors = await this.cleanupRetiringWorkers();
+
+    // Dispose all active workers.
+    const activeWorkers = this.workers.splice(0);
+    for (const worker of activeWorkers) {
       try {
         await worker.transport.dispose();
       } catch (e) {
         errors.push(e instanceof Error ? e : new Error(String(e)));
+        this.retiringWorkers.add(worker);
       }
     }
-    this.workers.length = 0;
-
     // Report errors if any
     if (errors.length === 1) {
       throw errors[0];
@@ -244,6 +270,9 @@ export class PooledTransport extends DisposableBase implements Transport {
    * @throws BridgeExecutionError if pool is disposed while waiting
    */
   async acquire(): Promise<TransportLease> {
+    if (this.retirementError) {
+      throw this.retirementError;
+    }
     // Check for disposed state
     if (this.isDisposed || this.state === 'disposing') {
       throw new BridgeExecutionError('Pool has been disposed');
@@ -260,7 +289,10 @@ export class PooledTransport extends DisposableBase implements Transport {
     // Include pendingCreations to prevent race condition where multiple
     // concurrent acquire() calls all pass the length check before any
     // worker is actually added to the array
-    if (this.workers.length + this.pendingCreations < this.options.maxWorkers) {
+    if (
+      this.workers.length + this.retiringWorkers.size + this.pendingCreations <
+      this.options.maxWorkers
+    ) {
       this.pendingCreations++;
       try {
         const newWorker = await this.createWorker();
@@ -329,6 +361,12 @@ export class PooledTransport extends DisposableBase implements Transport {
       }
       throw error;
     } finally {
+      // A subprocess may retire its process after this lease reached stdin.
+      // Remove it before another waiter can acquire the old generation.
+      if (!workerRemoved && this.requiresReplacement(worker)) {
+        this.removeWorker(worker);
+        workerRemoved = true;
+      }
       // Only release if worker wasn't removed due to fatal error
       if (!workerRemoved) {
         this.release(worker);
@@ -362,23 +400,85 @@ export class PooledTransport extends DisposableBase implements Transport {
     return false;
   }
 
+  private requiresReplacement(worker: TransportLease): boolean {
+    const transport = worker.transport as Transport & { readonly requiresReplacement?: boolean };
+    return transport.requiresReplacement === true;
+  }
+
   /**
    * Remove a worker from the pool.
    *
    * This is called when a worker is detected as dead (crashed, pipe error, etc.).
-   * The worker's transport is disposed in the background.
+   * Hold its slot until disposal succeeds. Failed disposal blocks new leases.
    */
   private removeWorker(worker: TransportLease): void {
+    if (this.state === 'disposing' || this.isDisposed) {
+      return;
+    }
     const index = this.workers.indexOf(worker);
     if (index !== -1) {
       this.workers.splice(index, 1);
-      // Dispose transport in background - don't await to avoid blocking
-      worker.transport.dispose().catch(() => {
-        // Ignore disposal errors for dead workers
-      });
-      if (this.state === 'ready') {
-        this.scheduleReplacementWorker();
+      this.retiringWorkers.add(worker);
+      const retirement = Promise.resolve()
+        .then(() => worker.transport.dispose())
+        .then(
+          () => {
+            this.retiringWorkers.delete(worker);
+            if (this.state === 'ready') {
+              this.scheduleReplacementWorker();
+            }
+          },
+          error => {
+            this.recordCleanupFailure(error);
+          }
+        )
+        .finally(() => {
+          this.retirements.delete(retirement);
+        });
+      this.retirements.add(retirement);
+    }
+  }
+
+  private async cleanupRetiringWorkers(): Promise<Error[]> {
+    const errors: Error[] = [];
+    for (const worker of this.retiringWorkers) {
+      try {
+        await worker.transport.dispose();
+        this.retiringWorkers.delete(worker);
+      } catch (e) {
+        errors.push(e instanceof Error ? e : new Error(String(e)));
       }
+    }
+    return errors;
+  }
+
+  private async retryRetiringWorkers(): Promise<void> {
+    const errors = await this.cleanupRetiringWorkers();
+    if (errors.length === 1) {
+      throw errors[0];
+    }
+    if (errors.length > 1) {
+      throw new AggregateError(errors, 'Multiple errors during worker disposal');
+    }
+  }
+
+  private recordCleanupFailure(error: unknown): Error {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    this.retirementError = failure;
+    for (const waiter of this.waitQueue) {
+      clearTimeout(waiter.timer);
+      waiter.reject(failure);
+    }
+    this.waitQueue.length = 0;
+    return failure;
+  }
+
+  private async disposeUnpublishedWorker(worker: TransportLease): Promise<void> {
+    try {
+      await worker.transport.dispose();
+    } catch (error) {
+      this.retiringWorkers.add(worker);
+      throw this.recordCleanupFailure(error);
     }
   }
 
@@ -419,11 +519,15 @@ export class PooledTransport extends DisposableBase implements Transport {
   }
 
   private getMinimumWorkerDeficit(): number {
-    return Math.max(0, this.options.minWorkers - (this.workers.length + this.pendingCreations));
+    return Math.max(
+      0,
+      this.options.minWorkers -
+        (this.workers.length + this.retiringWorkers.size + this.pendingCreations)
+    );
   }
 
   private isShuttingDown(): boolean {
-    return this.isDisposed || this.state === 'disposing';
+    return this.isDisposed || this.state === 'disposing' || this.retirementError !== undefined;
   }
 
   private async fillToMinimumWorkers(): Promise<void> {
@@ -447,10 +551,13 @@ export class PooledTransport extends DisposableBase implements Transport {
    * the full worker cold-start penalty after a timeout or crash.
    */
   private scheduleReplacementWorker(): void {
-    if (this.state !== 'ready') {
+    if (this.state !== 'ready' || this.retirementError) {
       return;
     }
-    if (this.workers.length + this.pendingCreations >= this.options.maxWorkers) {
+    if (
+      this.workers.length + this.retiringWorkers.size + this.pendingCreations >=
+      this.options.maxWorkers
+    ) {
       return;
     }
 
@@ -502,14 +609,21 @@ export class PooledTransport extends DisposableBase implements Transport {
    */
   private async createWorker(onWorkerReady = this.options.onWorkerReady): Promise<TransportLease> {
     const transport = this.options.createTransport();
-
-    // Initialize the transport
-    await transport.init();
-
     const worker: TransportLease = {
       transport,
       inFlightCount: 0,
     };
+
+    try {
+      await transport.init();
+    } catch (error) {
+      try {
+        await this.disposeUnpublishedWorker(worker);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Worker init and cleanup failed');
+      }
+      throw error;
+    }
 
     try {
       // Call onWorkerReady callback if provided
@@ -518,16 +632,16 @@ export class PooledTransport extends DisposableBase implements Transport {
       }
     } catch (error) {
       // Ensure partially initialized workers do not leak when warmup fails.
-      await transport.dispose().catch(() => {
-        // Ignore disposal failures during warmup failure handling.
-      });
+      try {
+        await this.disposeUnpublishedWorker(worker);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Worker warmup and cleanup failed');
+      }
       throw error;
     }
 
-    if (this.state === 'disposing' || this.state === 'disposed') {
-      await transport.dispose().catch(() => {
-        // Ignore disposal failures if the pool was torn down mid-creation.
-      });
+    if (this.state === 'disposing' || this.state === 'disposed' || this.retirementError) {
+      await this.disposeUnpublishedWorker(worker);
       throw new BridgeExecutionError('Pool disposed during worker creation');
     }
 
