@@ -49,6 +49,9 @@ not edit it directly. Regenerate it from `runtime/tywrap_bridge_core.py` with
 the repository script. Pyodide uses JSON codec envelopes because pyarrow is not
 available in WASM.
 
+The bridge awaits Python call results under the event loop owned by each
+backend. See [coroutine calls](./coroutines.md) for timeout and disposal rules.
+
 `HttpBridge` sends the same RPC and codec concepts to a remote Python service.
 The transport owns HTTP concerns while the codec and return validator preserve
 the client-side invariants.
