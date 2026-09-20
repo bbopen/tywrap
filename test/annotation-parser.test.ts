@@ -68,4 +68,35 @@ describe('annotation parser', () => {
     expect((t as any).name).toBe('args');
     expect((t as any).module).toBe('Request');
   });
+
+  it('keeps NumPy dtype detail without warning on its shape wildcard', () => {
+    const unknown: string[] = [];
+    const type = parseAnnotationToPythonType(
+      'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[numpy.float16]]',
+      { onUnknownTypeName: name => unknown.push(name) }
+    );
+    expect(type).toMatchObject({
+      kind: 'generic',
+      name: 'ndarray',
+      module: 'numpy',
+      typeArgs: [
+        { kind: 'collection', name: 'tuple' },
+        {
+          kind: 'generic',
+          name: 'dtype',
+          module: 'numpy',
+          typeArgs: [{ kind: 'custom', name: 'float16', module: 'numpy' }],
+        },
+      ],
+    });
+    expect(unknown).toEqual([]);
+    parseAnnotationToPythonType('numpy.ndarray[tuple[Any, ...], numpy.dtype[numpy.float16]]', {
+      onUnknownTypeName: name => unknown.push(name),
+    });
+    expect(unknown).toEqual([]);
+    parseAnnotationToPythonType('list[Any]', {
+      onUnknownTypeName: name => unknown.push(name),
+    });
+    expect(unknown).toEqual(['Any']);
+  });
 });

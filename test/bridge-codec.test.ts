@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BridgeCodec, type CodecOptions } from '../src/runtime/bridge-codec.js';
+import { DecodedProvenance } from '../src/runtime/decoded-provenance.js';
 import {
   BridgeCodecError,
   BridgeProtocolError,
@@ -631,6 +632,71 @@ describe('decodeResponseAsync - Arrow Integration', () => {
     await expect(codec.decodeResponseAsync(payload)).resolves.toEqual({
       items: [{ matrix: [1, 2] }],
     });
+  });
+
+  it('records scalar ndarray proof at the root and nested array and record slots', async () => {
+    const scalar = {
+      __tywrap__: 'ndarray',
+      codecVersion: 1,
+      encoding: 'json',
+      data: 1.5,
+      shape: [],
+      dtype: 'float16',
+    };
+    const rootProof = new DecodedProvenance();
+    expect(
+      await codec.decodeResponseAsync(
+        JSON.stringify({ id: 1, protocol: 'tywrap/1', result: scalar }),
+        rootProof
+      )
+    ).toBe(1.5);
+    expect(rootProof.atRoot()).toEqual({ marker: 'ndarray', dims: 0, dtype: 'float16' });
+
+    const nestedProof = new DecodedProvenance();
+    const decoded = await codec.decodeResponseAsync<{ tuple: [number, { value: number }] }>(
+      JSON.stringify({
+        id: 1,
+        protocol: 'tywrap/1',
+        result: { tuple: [scalar, { value: scalar }] },
+      }),
+      nestedProof
+    );
+    expect(decoded).toEqual({ tuple: [1.5, { value: 1.5 }] });
+    expect(nestedProof.atRoot()).toBeUndefined();
+    expect(nestedProof.atChild(decoded.tuple, '0')?.dtype).toBe('float16');
+    expect(nestedProof.atChild(decoded.tuple[1], 'value')?.dtype).toBe('float16');
+    expect(nestedProof.atChild(decoded.tuple, 1)).toBeUndefined();
+  });
+
+  it('does not record proof for plain numbers or malformed scalar envelopes', async () => {
+    const plainProof = new DecodedProvenance();
+    expect(
+      await codec.decodeResponseAsync(
+        JSON.stringify({ id: 1, protocol: 'tywrap/1', result: 1.5 }),
+        plainProof
+      )
+    ).toBe(1.5);
+    expect(plainProof.atRoot()).toBeUndefined();
+
+    const malformedProof = new DecodedProvenance();
+    await expect(
+      codec.decodeResponseAsync(
+        JSON.stringify({
+          id: 1,
+          protocol: 'tywrap/1',
+          result: {
+            __tywrap__: 'ndarray',
+            codecVersion: 1,
+            encoding: 'json',
+            data: 1.5,
+            shape: [1],
+            dtype: 'float16',
+          },
+        }),
+        malformedProof
+      )
+    ).rejects.toThrow(/must be an array at depth 0/);
+    expect(malformedProof.atRoot()).toBeUndefined();
   });
 
   it('labels v1 scientific-envelope validation failures without Arrow wording', async () => {

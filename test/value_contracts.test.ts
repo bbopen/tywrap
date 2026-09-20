@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
+import { BridgeCodec } from '../src/runtime/bridge-codec.js';
+import { DecodedProvenance } from '../src/runtime/decoded-provenance.js';
 import {
   MAX_SAFE_JSON_INTEGER,
   VALUE_CONTRACT_REVISION,
@@ -15,7 +17,13 @@ import {
 
 const specification = JSON.parse(
   readFileSync(new URL('../docs/maintainers/value-contracts.v2.json', import.meta.url), 'utf8')
-) as { revision: number; rules: { integer: { minimum: number; maximum: number } } };
+) as {
+  revision: number;
+  rules: {
+    integer: { minimum: number; maximum: number };
+    bytes: { decodedAs: string };
+  };
+};
 const fixtures = JSON.parse(
   readFileSync(
     new URL('../docs/maintainers/value-contract-fixtures.v2.json', import.meta.url),
@@ -23,6 +31,12 @@ const fixtures = JSON.parse(
   )
 ) as {
   revision: number;
+  bytesCases: readonly {
+    logicalHex: string;
+    requestEnvelope: object;
+    responseEnvelope: object;
+    decodedAs: string;
+  }[];
   binary16Cases: readonly { wordHex: string; outcome: string }[];
 };
 
@@ -85,6 +99,23 @@ describe('frozen value policy', () => {
     expect(isSafeJsonInteger(-(2 ** 53))).toBe(false);
     expect(isSafeJsonInteger(1.5)).toBe(false);
   });
+
+  it('matches the shared bytes request and response fixtures', async () => {
+    const codec = new BridgeCodec();
+    expect(specification.rules.bytes.decodedAs).toBe('JavaScript Uint8Array');
+    for (const fixture of fixtures.bytesCases) {
+      const bytes = Uint8Array.from(Buffer.from(fixture.logicalHex, 'hex'));
+      const request = JSON.parse(codec.encodeRequest({ value: bytes }));
+      expect(request.value).toEqual(fixture.requestEnvelope);
+
+      const decoded = await codec.decodeResponseAsync<Uint8Array>(
+        JSON.stringify({ id: 1, protocol: 'tywrap/1', result: fixture.responseEnvelope })
+      );
+      expect(decoded).toBeInstanceOf(Uint8Array);
+      expect([...decoded]).toEqual([...bytes]);
+      expect(`Uint8Array[${[...decoded].join(',')}]`).toBe(fixture.decodedAs);
+    }
+  });
 });
 
 describe('Arrow float16 value contract', () => {
@@ -129,6 +160,13 @@ describe('Arrow float16 value contract', () => {
     ]);
   });
 
+  it('carries Arrow scalar float16 proof with the decoded number', async () => {
+    registerWords([0x3e00]);
+    const provenance = new DecodedProvenance();
+    expect(await decodeValueAsync(envelope([]), provenance)).toBe(1.5);
+    expect(provenance.atRoot()).toEqual({ marker: 'ndarray', dims: 0, dtype: 'float16' });
+  });
+
   it('uses the ndarray rule inside nested Torch and record values', async () => {
     registerWords([0x3e00, 0xc080]);
     const value = {
@@ -147,6 +185,62 @@ describe('Arrow float16 value contract', () => {
     await expect(decodeValueAsync(value)).resolves.toEqual({
       outer: [{ data: [1.5, -2.25], shape: [2], dtype: 'torch.float16', device: 'cpu' }],
     });
+  });
+
+  it.each([
+    { shape: [], encoding: 'json' },
+    { shape: [1], encoding: 'json' },
+    { shape: [], encoding: 'arrow' },
+    { shape: [1], encoding: 'arrow' },
+  ] as const)(
+    'requires a matching nested dtype for Torch float16 shape $shape with $encoding data',
+    async ({ shape, encoding }) => {
+      registerWords([0x3e00]);
+      const nested = {
+        __tywrap__: 'ndarray',
+        codecVersion: 1,
+        encoding,
+        shape,
+        dtype: 'float16',
+        ...(encoding === 'arrow' ? { b64: 'AA==' } : { data: shape.length ? [1.5] : 1.5 }),
+      };
+      const tensor = {
+        __tywrap__: 'torch.tensor',
+        codecVersion: 1,
+        encoding: 'ndarray',
+        value: nested,
+        shape,
+        dtype: 'torch.float16',
+        device: 'cpu',
+      };
+
+      await expect(decodeValueAsync(tensor)).resolves.toMatchObject({
+        data: shape.length ? [1.5] : 1.5,
+        dtype: 'torch.float16',
+      });
+      await expect(
+        decodeValueAsync({ ...tensor, value: { ...nested, dtype: 'float32' } })
+      ).rejects.toThrow(/value\.dtype.*must be "float16".*"torch\.float16"/);
+    }
+  );
+
+  it('requires the nested version 1 envelope for Torch float16', async () => {
+    await expect(
+      decodeValueAsync({
+        __tywrap__: 'torch.tensor',
+        codecVersion: 1,
+        encoding: 'ndarray',
+        shape: [],
+        dtype: 'torch.float16',
+        value: {
+          __tywrap__: 'ndarray',
+          encoding: 'json',
+          shape: [],
+          dtype: 'float16',
+          data: 1.5,
+        },
+      })
+    ).rejects.toThrow(/float16 value must use ndarray codecVersion 1/);
   });
 
   it.each([0x7c00, 0xfc00, 0x7e00])('rejects non-finite word %s', word => {
