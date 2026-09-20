@@ -610,7 +610,11 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     // holding the mutex observes the disposing state before it can spawn; if it
     // spawned just before disposal began, this barrier kills that child too.
     await this.withDispatchMutex(async () => {
-      await this.retirement;
+      try {
+        await this.retirement;
+      } catch {
+        // Retry the retained process handle during final disposal.
+      }
       await this.killProcess();
     });
 
@@ -706,6 +710,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
 
     const proc = this.process;
     this.process = null;
+    this.processExited = true;
 
     // Add a catch-all error handler to prevent uncaught exceptions during shutdown
     // This must be added BEFORE removing other listeners and ending stdin
@@ -728,25 +733,63 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     proc.stdout?.removeAllListeners();
     proc.stderr?.removeAllListeners();
 
-    // Kill the process
-    if (!proc.killed) {
-      proc.kill('SIGTERM');
-
-      // Wait briefly for graceful exit
-      await new Promise<void>(resolve => {
-        const timeout = setTimeout(() => {
-          if (!proc.killed) {
-            proc.kill('SIGKILL');
-          }
-          resolve();
-        }, 1000);
-
-        proc.once('exit', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
+    const hasExited = (): boolean => proc.exitCode != null || proc.signalCode != null;
+    if (hasExited()) {
+      return;
     }
+
+    await new Promise<void>((resolve, reject) => {
+      let graceTimer: ReturnType<typeof setTimeout> | undefined;
+      let forceTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (error?: Error): void => {
+        if (graceTimer) {
+          clearTimeout(graceTimer);
+        }
+        if (forceTimer) {
+          clearTimeout(forceTimer);
+        }
+        proc.removeListener('exit', onExit);
+        if (error) {
+          // Keep the handle for a later disposal retry. Never publish a new
+          // generation while the old child may still be alive.
+          this.process = proc;
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
+      const onExit = (): void => finish();
+      proc.once('exit', onExit);
+      if (hasExited()) {
+        finish();
+        return;
+      }
+      if (!proc.killed) {
+        try {
+          proc.kill('SIGTERM');
+        } catch {
+          // The force timer below still bounds shutdown.
+        }
+      }
+      graceTimer = setTimeout(() => {
+        if (hasExited()) {
+          finish();
+          return;
+        }
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          // Report an unreaped child after the force deadline.
+        }
+        forceTimer = setTimeout(() => {
+          if (hasExited()) {
+            finish();
+          } else {
+            finish(new BridgeProtocolError('Python process did not exit after SIGKILL'));
+          }
+        }, 1000);
+      }, 1000);
+    });
   }
 
   /**
@@ -810,7 +853,8 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.rejectAllPending(error);
     this.rejectAllQueuedWrites(error);
     // killProcess removes old stdout listeners before a replacement can start.
-    this.retirement = this.killProcess().catch(() => {
+    this.retirement = this.killProcess();
+    this.retirement.catch(() => {
       this.processExited = true;
     });
   }

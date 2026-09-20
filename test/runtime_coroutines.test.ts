@@ -3,6 +3,7 @@ import { delimiter, join } from 'node:path';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { EventEmitter } from 'node:events';
+import type { ChildProcess } from 'node:child_process';
 import { NodeBridge } from '../src/runtime/node.js';
 import { PyodideTransport } from '../src/runtime/pyodide-transport.js';
 import { PooledTransport } from '../src/runtime/pooled-transport.js';
@@ -156,6 +157,68 @@ nodeSuite('Subprocess retirement boundary', () => {
       await transport.dispose();
     }
   }, 15000);
+});
+
+nodeSuite('Subprocess retirement reaps the child', () => {
+  it('lets a responsive bridge exit without SIGKILL', async () => {
+    const transport = new SubprocessTransport({
+      bridgeScript: 'runtime/python_bridge.py',
+      pythonPath: PYTHON ?? 'python3',
+    });
+    try {
+      await transport.init();
+      const child = (transport as unknown as { process: ChildProcess }).process;
+      const kill = vi.spyOn(child, 'kill');
+      await transport.dispose();
+      expect(kill).not.toHaveBeenCalledWith('SIGKILL');
+      expect(child.exitCode != null || child.signalCode != null).toBe(true);
+    } finally {
+      await transport.dispose();
+    }
+  }, 10_000);
+
+  it.skipIf(process.platform === 'win32')(
+    'forces exit when Python ignores SIGTERM',
+    async () => {
+      const transport = new SubprocessTransport({
+        bridgeScript: join(process.cwd(), 'test/fixtures/python/ignore_sigterm_bridge.py'),
+        pythonPath: PYTHON ?? 'python3',
+      });
+      let child: ChildProcess | undefined;
+      try {
+        await transport.init();
+        const internals = transport as unknown as {
+          process: ChildProcess;
+          stderrBuffer: string;
+        };
+        child = internals.process;
+        await vi.waitFor(() => expect(internals.stderrBuffer).toContain('READY'), {
+          timeout: 5000,
+        });
+        const kill = vi.spyOn(child, 'kill');
+
+        await expect(transport.send(request, 250)).rejects.toBeInstanceOf(BridgeTimeoutError);
+        await transport.dispose();
+
+        expect(kill).toHaveBeenCalledWith('SIGTERM');
+        expect(kill).toHaveBeenCalledWith('SIGKILL');
+        expect(child.signalCode).toBe('SIGKILL');
+      } finally {
+        if (child && child.exitCode == null && child.signalCode == null) {
+          child.kill('SIGKILL');
+          await new Promise<void>(resolve => {
+            const timer = setTimeout(resolve, 1000);
+            child?.once('exit', () => {
+              clearTimeout(timer);
+              resolve();
+            });
+          });
+        }
+        await transport.dispose();
+      }
+    },
+    10_000
+  );
 });
 
 describe('Subprocess partial-write abort', () => {
