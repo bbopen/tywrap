@@ -49,7 +49,7 @@ interface FixtureHandle {
 }
 
 interface ClientModule {
-  bindRuntime(runtime: RuntimeExecution): FixtureHandle;
+  bindRuntime(runtime: Pick<RuntimeExecution, 'call'>): FixtureHandle;
 }
 
 interface LegacyModule {
@@ -97,10 +97,10 @@ const defaultExcludedExports = new Set([
   'cached_property',
 ]);
 
-async function bindingTemplate(
+async function compiledFixture(
   outputDir: string,
   moduleName: string
-): Promise<{ baseline: GeneratedCode; template: GeneratedCode; module: PythonModule }> {
+): Promise<{ baseline: GeneratedCode; module: PythonModule }> {
   const contractPath = join(outputDir, `${moduleName}.contract.json`);
   const parsed: unknown = JSON.parse(await readFile(contractPath, 'utf8'));
   const validated = validateIrContract(parsed, contractPath, { allowOmittedMetadata: true });
@@ -130,7 +130,6 @@ async function bindingTemplate(
   }
   return {
     baseline: compiled.generated,
-    template: generator.generateModuleBindingTemplate(compiled.module),
     module: compiled.module,
   };
 }
@@ -169,19 +168,12 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
       join(generatedDir, 'binding_fixture.generated.d.ts'),
       'utf8'
     );
-    const compiled = await bindingTemplate(generatedDir, 'binding_fixture');
+    const compiled = await compiledFixture(generatedDir, 'binding_fixture');
     compiledModule = compiled.module;
     expect(compiled.baseline.typescript).toBe(originalSource);
     expect(compiled.baseline.declaration).toBe(originalDeclaration);
-    prototype = renderClientBindingPrototype(
-      {
-        typescript: originalSource,
-        declaration: originalDeclaration,
-        metadata: { generatedAt: new Date(0), sourceFiles: [], runtime: 'auto', optimizations: [] },
-      },
-      compiled.template,
-      'binding_fixture'
-    );
+    prototype = renderClientBindingPrototype(compiled.module, new CodeGenerator());
+    expect(prototype.declaration).toBe(originalDeclaration);
 
     const files = [
       ['binding_fixture.generated', prototype.typescript, prototype.declaration],
@@ -254,19 +246,10 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
 
   it('executes an allocated runtime getter without falling back to the registry', async () => {
     const getter = '__tywrapRuntimeProvider1';
-    const template = new CodeGenerator().generateModuleBindingTemplate(
-      compiledModule,
-      false,
-      getter
-    );
     const allocated = renderClientBindingPrototype(
-      {
-        typescript: originalSource,
-        declaration: originalDeclaration,
-        metadata: { generatedAt: new Date(0), sourceFiles: [], runtime: 'auto', optimizations: [] },
-      },
-      template,
-      'binding_fixture',
+      compiledModule,
+      new CodeGenerator(),
+      false,
       getter
     );
     expect(allocated.bindingPrototype.core.typescript).toContain(`${getter}().call`);
@@ -291,6 +274,19 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
     } finally {
       handle.dispose();
     }
+  });
+
+  it('rejects source maps until the opt-in files can each carry one', () => {
+    const generator = new CodeGenerator();
+    expect(() =>
+      renderClientBindingPrototype(compiledModule, {
+        generateModuleDefinition: module => ({
+          ...generator.generateModuleDefinition(module),
+          sourceMap: '{}',
+        }),
+        generateModuleBindingTemplate: generator.generateModuleBindingTemplate.bind(generator),
+      })
+    ).toThrow('Client binding prototype does not support source maps');
   });
 
   it('keeps two Python environments separate across interleaved and concurrent calls', async () => {
@@ -464,10 +460,11 @@ void wrong;`
 const c: Promise<string | number> = client.api.select('x');`;
     await writeFile(
       consumer,
-      `import { bindRuntime, type RuntimeExecution } from './binding_fixture.generated.client.js';
+      `import { bindRuntime, type BoundRuntime } from './binding_fixture.generated.client.js';
 import { identity as legacyIdentity } from './binding_fixture.generated.js';
-declare const runtime: RuntimeExecution;
+declare const runtime: BoundRuntime;
 const client = bindRuntime(runtime);
+const callOnly = bindRuntime({ call: async <T>() => undefined as T });
 const a: Promise<unknown> = client.api.identity<string>('x');
 const legacyA: Promise<unknown> = legacyIdentity<string>('x');
 // @ts-expect-error the explicit generic input type is string
@@ -482,7 +479,7 @@ const e: Promise<number> = client.api.scale(2, 3);
 const f: Promise<string> = client.api.Client.label('x');
 const g: Promise<string> = client.api.kwOnly({ label: 'x' });
 const h: Promise<Uint8Array> = client.api.echoBytes(new Uint8Array([1]));
-void [a, legacyA, unsafeResult, unsafeLegacy, b, c, d, e, f, g, h];
+void [callOnly, a, legacyA, unsafeResult, unsafeLegacy, b, c, d, e, f, g, h];
 `,
       'utf8'
     );
@@ -523,23 +520,10 @@ void [a, legacyA, unsafeResult, unsafeLegacy, b, c, d, e, f, g, h];
         performance: { caching: false, batching: false, compression: 'none' },
       });
       expect(result.failures).toEqual([]);
-      const compiled = await bindingTemplate(comparisonDir, 'advanced_types');
+      const compiled = await compiledFixture(comparisonDir, 'advanced_types');
       const source = compiled.baseline.typescript;
       const declaration = compiled.baseline.declaration;
-      const rendered = renderClientBindingPrototype(
-        {
-          typescript: source,
-          declaration,
-          metadata: {
-            generatedAt: new Date(0),
-            sourceFiles: [],
-            runtime: 'auto',
-            optimizations: [],
-          },
-        },
-        compiled.template,
-        'advanced_types'
-      );
+      const rendered = renderClientBindingPrototype(compiled.module, new CodeGenerator());
       const callableCount = (source.match(/getRuntimeBridge\(\)\.call/g) ?? []).length;
       expect(callableCount).toBeGreaterThan(0);
       const sourceBytes = Buffer.byteLength(source);
