@@ -1107,6 +1107,7 @@ describe('compileContract', () => {
     expect(compiled.generated.declaration).toContain('objectValue(): Promise<unknown>');
     expect(compiled.generated.typescript).toContain('createReturnValidator({"kind":"any"}');
 
+    let nestedList: ReturnType<typeof compileContract> | undefined;
     for (const annotation of ['list[object]', 'dict[str, object]']) {
       const nested = validateIrContract(
         {
@@ -1138,6 +1139,14 @@ describe('compileContract', () => {
         capabilities: DEFAULT_CALLABLE_CAPABILITIES,
       });
       expect(nestedCompiled.generated.declaration).toContain('objectValue(): Promise<unknown>');
+      expect(nestedCompiled.generated.typescript).toContain(
+        annotation.startsWith('list')
+          ? 'createReturnValidator({"kind":"array","element":{"kind":"any"}}'
+          : 'createReturnValidator({"kind":"record","values":{"kind":"any"}}'
+      );
+      if (annotation.startsWith('list')) {
+        nestedList = nestedCompiled;
+      }
     }
 
     let requestId = 0;
@@ -1161,6 +1170,20 @@ describe('compileContract', () => {
         objectValue: () => Promise<unknown>;
       };
       await expect(generated.objectValue()).resolves.toBe('a valid Python object');
+      if (nestedList) {
+        const nestedPath = join(temporary, 'nested.generated.mjs');
+        await writeFile(
+          nestedPath,
+          ts.transpileModule(nestedList.generated.typescript, {
+            compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+          }).outputText,
+          'utf8'
+        );
+        const nestedGenerated = (await import(pathToFileURL(nestedPath).href)) as {
+          objectValue: () => Promise<unknown>;
+        };
+        await expect(nestedGenerated.objectValue()).rejects.toThrow(BridgeValidationError);
+      }
     } finally {
       clearRuntimeBridge();
       await bridge.dispose();
@@ -1270,6 +1293,24 @@ describe('compileContract', () => {
         compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
       }).outputText;
       await writeFile(outputPath, javascript, 'utf8');
+      const declarationPath = join(temporary, 'fixture.generated.d.ts');
+      const consumerPath = join(temporary, 'consumer.ts');
+      await writeFile(declarationPath, compiled.generated.declaration, 'utf8');
+      await writeFile(
+        consumerPath,
+        "import { genericIdentity } from './fixture.generated.js';\nconst numeric: Promise<number> = genericIdentity(42);\nvoid numeric;\n",
+        'utf8'
+      );
+      const program = ts.createProgram([consumerPath], {
+        noEmit: true,
+        strict: true,
+        skipLibCheck: true,
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        types: [],
+      });
+      expect(ts.getPreEmitDiagnostics(program).map(diagnostic => diagnostic.code)).toContain(2322);
       setRuntimeBridge(bridge);
       const generated = (await import(pathToFileURL(outputPath).href)) as {
         genericIdentity: <T>(value: T) => Promise<unknown>;
@@ -1281,6 +1322,77 @@ describe('compileContract', () => {
       await new Promise<void>((resolve, reject) =>
         server.close(error => (error ? reject(error) : resolve()))
       );
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps existing marker and literal checks when the declaration falls back to unknown', async () => {
+    const source = rawIr.functions[1]!;
+    const annotations = [
+      { name: 'dataframe_value', returns: 'pandas.DataFrame' },
+      { name: 'literal_value', returns: "typing.Literal['x']" },
+    ];
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: annotations.map(({ name, returns }) => ({
+          ...source,
+          name,
+          qualname: `fixture.${name}`,
+          returns,
+        })),
+        classes: [],
+      },
+      'unresolved validation contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        classes: [],
+        functions: annotations.map(({ name }) => ({ ...moduleModel.functions[1]!, name })),
+      },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.generated.declaration).toContain('dataframeValue(): Promise<unknown>');
+    expect(compiled.generated.declaration).toContain('literalValue(): Promise<unknown>');
+    expect(compiled.generated.typescript).toContain('"marker":"dataframe"');
+    expect(compiled.generated.typescript).toContain('"kind":"literal","value":"x"');
+
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-fallback-proof-'));
+    try {
+      const outputPath = join(temporary, 'fixture.generated.mjs');
+      const javascript = ts.transpileModule(compiled.generated.typescript, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(outputPath, javascript, 'utf8');
+      setRuntimeBridge({
+        async call<T>(
+          _module: string,
+          functionName: string,
+          _args: unknown[],
+          _kwargs?: Record<string, unknown>,
+          validate?: (result: T) => void
+        ): Promise<T> {
+          const result = (functionName === 'literal_value' ? 'y' : {}) as T;
+          validate?.(result);
+          return result;
+        },
+        async dispose(): Promise<void> {},
+      });
+      const generated = (await import(pathToFileURL(outputPath).href)) as {
+        dataframeValue: () => Promise<unknown>;
+        literalValue: () => Promise<unknown>;
+      };
+      await expect(generated.dataframeValue()).rejects.toThrow(BridgeValidationError);
+      await expect(generated.literalValue()).rejects.toThrow(BridgeValidationError);
+    } finally {
+      clearRuntimeBridge();
       await rm(temporary, { recursive: true, force: true });
     }
   });

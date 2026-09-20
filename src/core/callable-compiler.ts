@@ -929,9 +929,11 @@ function resolveCallable(
     callableContract: {
       parameterValues: parameters.map(supportedValue),
       returnValue: supportedValue(result),
+      returnValidationType: func.returnType,
       overloads: overloadResults.map((overload, index) => ({
         parameterValues: overloadParameters[index]!.map(supportedValue),
         returnValue: supportedValue(overload),
+        returnValidationType: func.overloads![index]!.returnType,
       })),
     },
   };
@@ -1014,16 +1016,19 @@ export function compileContract(
     ),
     classes: selectedClasses.map(cls => ({
       ...cls,
-      methods: cls.methods.map(method => {
-        const sourceClassIndex = ir.classes.findIndex(entry => entry.name === cls.name);
-        const sourceMethodIndex = ir.classes[sourceClassIndex]!.methods.findIndex(
-          entry => entry.name === method.name
-        );
-        return compileFunction(
-          method,
-          `$.classes[${sourceClassIndex}].methods[${sourceMethodIndex}]`
-        );
-      }),
+      methods:
+        cls.kind === 'protocol'
+          ? cls.methods
+          : cls.methods.map(method => {
+              const sourceClassIndex = ir.classes.findIndex(entry => entry.name === cls.name);
+              const sourceMethodIndex = ir.classes[sourceClassIndex]!.methods.findIndex(
+                entry => entry.name === method.name
+              );
+              return compileFunction(
+                method,
+                `$.classes[${sourceClassIndex}].methods[${sourceMethodIndex}]`
+              );
+            }),
     })),
     typeAliases: selectedAliases,
   };

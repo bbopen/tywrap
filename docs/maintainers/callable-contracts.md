@@ -79,6 +79,10 @@ Unresolved annotations create warning diagnostics. Their result type is
 `object` can hold a primitive value. A type variable has no validated conversion
 to the decoded result. Neither annotation justifies a precise TypeScript return.
 
+The compiler keeps an existing best-effort return check when it widens a
+declaration. For example, an unresolved `list[object]` still rejects a non-array
+result, and a `DataFrame` annotation still requires a decoded marker.
+
 IR overload signatures stay separate from the implementation signature. The
 extractor collects type variables from overload annotations. Generated
 declarations retain each input-to-result relation. The hidden TypeScript

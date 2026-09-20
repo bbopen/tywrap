@@ -662,7 +662,10 @@ export class CodeGenerator {
     const value = func.callableContract?.returnValue;
     return value
       ? valueContractToReturnSchema(value)
-      : (this.returnSchema(func.returnType, definitions) as ReturnSchema);
+      : (this.returnSchema(
+          func.callableContract?.returnValidationType ?? func.returnType,
+          definitions
+        ) as ReturnSchema);
   }
 
   private overloadReturnSchemas(
@@ -693,7 +696,10 @@ export class CodeGenerator {
           })),
         result: contract?.returnValue
           ? valueContractToReturnSchema(contract.returnValue)
-          : (this.returnSchema(overload.returnType, definitions) as ReturnSchema),
+          : (this.returnSchema(
+              contract?.returnValidationType ?? overload.returnType,
+              definitions
+            ) as ReturnSchema),
         selectable:
           contract !== undefined &&
           contract.returnValue !== undefined &&
