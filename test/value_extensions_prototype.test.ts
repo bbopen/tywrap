@@ -248,6 +248,9 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
     };
 
     it('decodes Point and preserves verified origin', () => {
+      expect(() => encodeExactRequest({ x: 1, y: 2 }, point)).toThrow(
+        /dataclass inputs are unsupported at args/
+      );
       const wire = pythonAction('encode-point', JSON.stringify({ x: 1, y: 2 }));
       const decoded = decodeExactResponse(wire, point);
       expect(decoded).toEqual({ x: 1, y: 2 });
