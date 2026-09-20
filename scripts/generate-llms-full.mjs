@@ -4,6 +4,7 @@ import { join } from 'node:path';
 const orderedDocs = [
   'docs/index.md',
   'docs/guide/getting-started.md',
+  'docs/guide/migrating-to-0-11.md',
   'docs/guide/agent-adoption.md',
   'docs/guide/configuration.md',
   'docs/guide/runtimes/comparison.md',
