@@ -156,7 +156,7 @@ export function transformIrToTsModel(
     version: typeof ir.metadata.package_version === 'string'
       ? ir.metadata.package_version
       : undefined,
-    functions: ir.functions.map(mapFunc),
+    functions: ir.functions.map(func => mapFunc(func)),
     classes: ir.classes.map(mapClass),
     typeAliases: ir.type_aliases.map(mapTypeAlias),
     imports: [],
