@@ -392,8 +392,12 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       let timer: NodeJS.Timeout | undefined;
 
       const abandon = (error: BridgeTimeoutError): void => {
-        if (this.pending.get(messageId) !== pendingEntry) return;
-        if (timer) clearTimeout(timer);
+        if (this.pending.get(messageId) !== pendingEntry) {
+          return;
+        }
+        if (timer) {
+          clearTimeout(timer);
+        }
         signal?.removeEventListener('abort', abortHandler);
         this.pending.delete(messageId);
         this.timedOutRequests.mark(messageId);
@@ -401,7 +405,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         reject(error);
         // A request that reached Python may run forever. Retire only that
         // process generation; a queued, unwritten request leaves it intact.
-        if (pendingEntry.written) this.retireProcessGeneration();
+        if (pendingEntry.written) {
+          this.retireProcessGeneration();
+        }
       };
 
       // Defined before the timer so the timeout path can also detach it.
@@ -795,7 +801,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   }
 
   private retireProcessGeneration(): void {
-    if (this.retiredGeneration || this.isLifecycleEnding()) return;
+    if (this.retiredGeneration || this.isLifecycleEnding()) {
+      return;
+    }
     this.retiredGeneration = true;
     this.needsRestart = true;
     const error = new BridgeProtocolError('Python worker retired after request timeout or abort');
@@ -1220,7 +1228,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
         ? this.pending.get(messageId) === pendingEntry
         : this.pending.has(messageId));
     const onWrite = (): void => {
-      if (pendingEntry) pendingEntry.written = true;
+      if (pendingEntry) {
+        pendingEntry.written = true;
+      }
     };
     const run = (): Promise<void> => {
       if (!isLive()) {

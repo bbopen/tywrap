@@ -1461,7 +1461,7 @@ describe('PyodideTransport', () => {
 
       const message = JSON.stringify(createValidMessage());
       await expect(transport.send(message, 1000)).rejects.toThrow(
-        /Invalid JSON response from Python/
+        /Invalid response from Python: missing numeric id/
       );
     });
   });
