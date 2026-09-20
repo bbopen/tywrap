@@ -390,7 +390,11 @@ function recordCanMatchEnvelope(
     if (field?.required && !acceptsWireCategory(field.value, category)) {
       return false;
     }
-    if (field?.required && record.additionalValues && !acceptsWireCategory(record.additionalValues, category)) {
+    if (
+      field?.required &&
+      record.additionalValues &&
+      !acceptsWireCategory(record.additionalValues, category)
+    ) {
       return false;
     }
   }
