@@ -31,6 +31,20 @@ const integerContract: PrototypeContract = {
     negative: { kind: 'record', fields: { value: { kind: 'integer' } } },
     safe: { kind: 'integer' },
     flag: { kind: 'boolean' },
+    whole: { kind: 'float' },
+    fraction: { kind: 'float' },
+    negativeZero: { kind: 'float' },
+    mixed: {
+      kind: 'array',
+      item: {
+        kind: 'record',
+        fields: {
+          quantity: { kind: 'integer' },
+          ratio: { kind: 'float' },
+          flag: { kind: 'boolean' },
+        },
+      },
+    },
   },
 };
 
@@ -40,11 +54,20 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
     it('round-trips nested positive and negative values beyond int64 in both directions', () => {
       const positive = 2n ** 80n + 1n;
       const negative = -(2n ** 130n + 7n);
-      const value = { positive: [positive], negative: { value: negative }, safe: 7n, flag: true };
+      const value = {
+        positive: [positive],
+        negative: { value: negative },
+        safe: 7n,
+        flag: true,
+        whole: 1,
+        fraction: 1.5,
+        negativeZero: -0,
+        mixed: [{ quantity: -9n, ratio: 2, flag: false }],
+      };
 
       const pythonWire = pythonAction(
         'encode-integer',
-        `{"positive":[${positive}],"negative":{"value":${negative}},"safe":7,"flag":true}`
+        `{"positive":[${positive}],"negative":{"value":${negative}},"safe":7,"flag":true,"whole":1.0,"fraction":1.5,"negativeZero":-0.0,"mixed":[{"quantity":-9,"ratio":2.0,"flag":false}]}`
       );
       expect(decodeExactResponse(pythonWire, integerContract)).toEqual(value);
 
@@ -54,6 +77,11 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
         'bigint-v2'
       );
       const request = encodeExactRequest(value, integerContract);
+      expect((request as { negativeZero: unknown }).negativeZero).toEqual({
+        __tywrap__: 'float',
+        codecVersion: 2,
+        encoding: 'negative-zero',
+      });
       const response = pythonAction(
         'roundtrip-integer',
         JSON.stringify({
@@ -63,6 +91,7 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
         })
       );
       expect(decodeExactResponse(response, integerContract)).toEqual(value);
+      expect(Object.is((response as { negativeZero: number }).negativeZero, -0)).toBe(true);
     });
   }
 );
@@ -110,6 +139,16 @@ describe('exact integer rejection prototype', () => {
     expect(() => encodeExactRequest({ __tywrap__: 'ordinary' }, record)).toThrow(
       /reserved record key/
     );
+  });
+
+  it('rejects malformed negative-zero envelopes', () => {
+    const float: PrototypeContract = { kind: 'float' };
+    expect(() =>
+      decodeExactResponse(
+        { __tywrap__: 'float', codecVersion: 1, encoding: 'negative-zero' },
+        float
+      )
+    ).toThrow(/invalid float envelope/);
   });
 });
 

@@ -126,54 +126,105 @@ def encode_exact_integers(
 
 def decode_exact_integers(
     value: object,
+    contract: Mapping[str, Any],
     *,
     max_payload_bytes: int = MAX_PAYLOAD_BYTES,
 ) -> object:
-    """Decode only version 2 integer tags for an opted call."""
+    """Decode an opted request with its trusted resolved value contract."""
     _check_payload(value, max_payload_bytes)
     budget = Budget()
     active: set[int] = set()
 
-    def visit(current: object, path: str, depth: int) -> object:
+    def visit(
+        current: object, spec: Mapping[str, Any], path: str, depth: int
+    ) -> object:
+        kind = spec.get('kind')
+        if kind == 'nullable':
+            if current is None:
+                return visit(None, {'kind': 'null'}, path, depth)
+            return visit(current, spec['value'], path, depth)
         budget.visit(path, depth)
-        if current is None or type(current) in (bool, str):
-            return current
-        if type(current) is int:
-            raise PrototypeError(f'untagged integer at {path}')
-        if type(current) is float and math.isfinite(current):
-            return current
-        if isinstance(current, (list, dict)):
-            marker = id(current)
+        marker = id(current) if isinstance(current, (list, dict)) else None
+        if marker is not None:
             if marker in active:
                 raise PrototypeError(f'cycle at {path}')
             active.add(marker)
-            try:
+        try:
+            if kind == 'null':
+                if current is not None:
+                    raise PrototypeError(f'expected null at {path}')
+                return None
+            if kind == 'boolean':
+                if type(current) is not bool:
+                    raise PrototypeError(f'expected boolean at {path}')
+                return current
+            if kind == 'string':
+                if type(current) is not str:
+                    raise PrototypeError(f'expected string at {path}')
+                return current
+            if kind == 'integer':
+                if not isinstance(current, dict):
+                    raise PrototypeError(f'untagged integer at {path}')
+                if (
+                    set(current) != INTEGER_FIELDS
+                    or current.get('__tywrap__') != 'integer'
+                    or type(current.get('codecVersion')) is not int
+                    or current.get('codecVersion') != 2
+                    or current.get('encoding') != 'decimal'
+                ):
+                    raise PrototypeError(f'invalid integer envelope at {path}')
+                return _canonical_decimal(current['value'], _child(path, 'value'))
+            if kind == 'safe-integer':
+                if (
+                    type(current) is not int
+                    or current < -SAFE_INTEGER_MAX
+                    or current > SAFE_INTEGER_MAX
+                ):
+                    raise PrototypeError(f'expected safe integer at {path}')
+                return current
+            if kind == 'float':
                 if isinstance(current, dict):
-                    if '__tywrap__' in current:
-                        if (
-                            set(current) != INTEGER_FIELDS
-                            or current.get('__tywrap__') != 'integer'
-                            or type(current.get('codecVersion')) is not int
-                            or current.get('codecVersion') != 2
-                            or current.get('encoding') != 'decimal'
-                        ):
-                            raise PrototypeError(f'invalid integer envelope at {path}')
-                        return _canonical_decimal(current['value'], _child(path, 'value'))
-                    if any(not isinstance(key, str) for key in current):
-                        raise PrototypeError(f'non-string record key at {path}')
-                    return {
-                        key: visit(item, _child(path, key), depth + 1)
-                        for key, item in current.items()
-                    }
+                    if current != {
+                        '__tywrap__': 'float',
+                        'codecVersion': 2,
+                        'encoding': 'negative-zero',
+                    } or type(current.get('codecVersion')) is not int:
+                        raise PrototypeError(f'invalid float envelope at {path}')
+                    return -0.0
+                if type(current) not in (int, float):
+                    raise PrototypeError(f'expected finite float at {path}')
+                try:
+                    result = float(current)
+                except OverflowError as exc:
+                    raise PrototypeError(f'expected finite float at {path}') from exc
+                if not math.isfinite(result):
+                    raise PrototypeError(f'expected finite float at {path}')
+                return result
+            if kind == 'array':
+                if not isinstance(current, list):
+                    raise PrototypeError(f'expected array at {path}')
                 return [
-                    visit(item, _child(path, index), depth + 1)
+                    visit(item, spec['item'], _child(path, index), depth + 1)
                     for index, item in enumerate(current)
                 ]
-            finally:
+            if kind == 'record':
+                if not isinstance(current, dict):
+                    raise PrototypeError(f'expected record at {path}')
+                fields = spec['fields']
+                if '__tywrap__' in current:
+                    raise PrototypeError(f'reserved record key at {path}.__tywrap__')
+                if set(current) != set(fields):
+                    raise PrototypeError(f'fields differ at {path}')
+                return {
+                    key: visit(current[key], field, _child(path, key), depth + 1)
+                    for key, field in fields.items()
+                }
+            raise PrototypeError(f'unsupported contract kind {kind!r} at {path}')
+        finally:
+            if marker is not None:
                 active.remove(marker)
-        raise PrototypeError(f'unsupported value at {path}: {type(current).__name__}')
 
-    return visit(value, 'args', 0)
+    return visit(value, contract, 'args', 0)
 
 
 def encode_dataclass(
@@ -257,6 +308,34 @@ class Point:
     y: int
 
 
+INTEGER_TEST_CONTRACT: dict[str, Any] = {
+    'kind': 'record',
+    'fields': {
+        'positive': {'kind': 'array', 'item': {'kind': 'integer'}},
+        'negative': {
+            'kind': 'record',
+            'fields': {'value': {'kind': 'integer'}},
+        },
+        'safe': {'kind': 'integer'},
+        'flag': {'kind': 'boolean'},
+        'whole': {'kind': 'float'},
+        'fraction': {'kind': 'float'},
+        'negativeZero': {'kind': 'float'},
+        'mixed': {
+            'kind': 'array',
+            'item': {
+                'kind': 'record',
+                'fields': {
+                    'quantity': {'kind': 'integer'},
+                    'ratio': {'kind': 'float'},
+                    'flag': {'kind': 'boolean'},
+                },
+            },
+        },
+    },
+}
+
+
 def _main() -> None:
     raw = sys.stdin.buffer.read(MAX_PAYLOAD_BYTES + 1)
     if len(raw) > MAX_PAYLOAD_BYTES:
@@ -267,7 +346,9 @@ def _main() -> None:
         require_capability(
             payload['meta'], 'exactIntegerDecimalV2', payload['policy']
         )
-        result = encode_exact_integers(decode_exact_integers(payload['value']))
+        result = encode_exact_integers(
+            decode_exact_integers(payload['value'], INTEGER_TEST_CONTRACT)
+        )
     elif action == 'encode-integer':
         result = encode_exact_integers(payload)
     elif action == 'encode-point':
