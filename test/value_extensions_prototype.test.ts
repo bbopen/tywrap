@@ -205,6 +205,12 @@ describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
     it('agrees on nested Unicode and rejects unpaired surrogates', () => {
       const nested = { café: ['🍵', 'é'] };
       expect(pythonAction('encode-integer', JSON.stringify(nested))).toEqual(nested);
+      const encoded = spawnSync(pythonPath, [pythonScript, 'encode-integer'], {
+        input: JSON.stringify(nested),
+        encoding: 'utf8',
+      });
+      expect(encoded.status).toBe(0);
+      expect(encoded.stdout.trim()).toBe(JSON.stringify(nested));
       const bad = spawnSync(pythonPath, [pythonScript, 'encode-integer'], {
         input: JSON.stringify('\ud800'),
         encoding: 'utf8',

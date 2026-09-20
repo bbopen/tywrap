@@ -377,7 +377,7 @@ def _main() -> None:
         result = encode_dataclass(Point(**payload), Point)
     else:
         raise PrototypeError(f'unknown action {action!r}')
-    print(json.dumps(result, allow_nan=False, separators=(',', ':')))
+    print(json.dumps(result, allow_nan=False, ensure_ascii=False, separators=(',', ':')))
 
 
 if __name__ == '__main__':
