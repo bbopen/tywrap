@@ -1,19 +1,22 @@
 # Migrating to 0.11
 
-This guide covers tywrap 0.11.0 and tywrap-ir 0.3.1.
+This guide covers tywrap 0.11.0 and tywrap-ir 0.3.1. The documentation
+deployment requires both versions to be available on their public package
+registries.
 
 ## Large Python integers
 
 Python `int` results still use TypeScript `number`. The supported range is
 `-9007199254740991` through `9007199254740991`, inclusive.
 
-Earlier versions could round larger integers when JavaScript parsed the response.
-The new serializer rejects those values before writing JSON. This applies to root
-results, nested containers, supported NumPy scalars, and model dumps.
+Earlier versions could round larger integers when JavaScript parsed the
+response. The new serializer rejects those values before writing JSON. This
+applies to root results, nested containers, supported NumPy scalars, and model
+dumps.
 
 For example, a result containing `{"items": [9007199254740993]}` now fails at
-`result.items[0]`. The error identifies the unsafe value and suggests an explicit
-string or an Arrow integer column.
+`result.items[0]`. The error identifies the unsafe value and suggests an
+explicit string or an Arrow integer column.
 
 Return a string when the value represents an identifier or must remain an exact
 decimal integer:
@@ -32,18 +35,19 @@ representation. Arrow int64 remains exact and can decode as JavaScript `bigint`.
 JSON fallback does not provide that representation and rejects unsafe integers.
 
 Booleans and finite floats remain supported. Converting an integer to a Python
-`float` can lose precision before tywrap receives it. Use a string when exactness
-matters. Tagged bigint transport remains a separate design proposal.
+`float` can lose precision before tywrap receives it. Use a string when
+exactness matters. Tagged bigint transport remains a separate design proposal.
 
 ## NumPy and Torch float16
 
 The Arrow decoder now converts float16 storage words into their numeric values
 before reshaping the result. For example, `[15872, 49280]` becomes the intended
-`[1.5, -2.25]`. Remove application code that manually decodes those storage words.
+`[1.5, -2.25]`. Remove application code that manually decodes those storage
+words.
 
-The conversion preserves signed zero, finite subnormal values, and finite extrema.
-NumPy arrays and nested Torch tensors use the same conversion. Non-finite results
-continue to reject under the existing policy.
+The conversion preserves signed zero, finite subnormal values, and finite
+extrema. NumPy arrays and nested Torch tensors use the same conversion.
+Non-finite results continue to reject under the existing policy.
 
 The scientific envelope format, JSON fallback, and Arrow int64 behavior stay
 compatible. Torch bfloat16 keeps its existing float32 transport conversion.
@@ -51,7 +55,8 @@ compatible. Torch bfloat16 keeps its existing float32 transport conversion.
 ## Return types that cannot be validated
 
 An unresolved Python `object` result now produces `Promise<unknown>`. Python
-objects can include strings and numbers, which TypeScript's `object` type excludes.
+objects can include strings and numbers, which TypeScript's `object` type
+excludes.
 
 An unresolved generic result also becomes `unknown`. Earlier wrappers could
 declare `Promise<T>` while accepting any returned value. A generic input remains
@@ -70,10 +75,10 @@ if (typeof result !== 'string') {
 console.log(result.toUpperCase());
 ```
 
-The current value contract does not resolve every Python annotation. For example,
-`Literal` results become `unknown`, while their existing literal checks remain.
-Other unresolved returns retain available marker, container or record checks.
-These partial checks do not prove a precise TypeScript return type.
+The current value contract does not resolve every Python annotation. For
+example, `Literal` results become `unknown`, while their existing literal checks
+remain. Other unresolved returns retain available marker, container or record
+checks. These partial checks do not prove a precise TypeScript return type.
 Type-only Protocol methods keep their declared generic signatures.
 
 Supported string and integer overloads retain their corresponding return types.
@@ -116,8 +121,8 @@ If you enable caching again, first remove the old generated IR files from
 
 If you use `contractInput`, temporarily omit it to extract fresh contracts with
 the updated Python package. Review each new `<module>.contract.json` in your
-output directory. Replace the corresponding pinned input file with that contract,
-or point `contractInput` to the new file. Then restore the setting.
+output directory. Replace the corresponding pinned input file with that
+contract, or point `contractInput` to the new file. Then restore the setting.
 The `--no-cache` option does not replace a pinned input contract.
 
 Regenerate wrappers with the upgraded generator. Python `int` return validators
@@ -127,6 +132,6 @@ Regeneration also applies the reviewed callable-contract diagnostics.
 Update any tests that expected a rounded integer or float16 storage words.
 Assert the corrected value or the specific conversion error instead.
 
-Run your generated calls against the upgraded runtime before deploying them.
-An old wrapper cannot add the new generated return checks by itself, although the
+Run your generated calls against the upgraded runtime before deploying them. An
+old wrapper cannot add the new generated return checks by itself, although the
 upgraded Python serializer still rejects unsafe integer results.

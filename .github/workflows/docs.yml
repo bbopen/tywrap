@@ -8,6 +8,9 @@ on:
     paths:
       - 'docs/**'
       - 'scripts/generate-llms-full.mjs'
+      - 'scripts/check_docs_release.py'
+      - 'test/python/test_docs_release.py'
+      - 'tywrap_ir/pyproject.toml'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/docs.yml'
@@ -36,6 +39,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Test release availability gate
+        run: python -m unittest discover -s test/python -p 'test_docs_release.py' -v
+
       - name: Build VitePress site
         run: npm run docs:build
 
@@ -55,6 +65,7 @@ jobs:
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
@@ -63,6 +74,17 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Check public package versions
+        id: packages
+        run: python scripts/check_docs_release.py
+
       - name: Deploy to GitHub Pages
+        if: steps.packages.outputs.available == 'true'
         id: deployment
         uses: actions/deploy-pages@v5
