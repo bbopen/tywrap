@@ -987,7 +987,7 @@ describe('compileContract', () => {
     }
   });
 
-  it('degrades unimplemented dataclass and coroutine outputs with local diagnostics', () => {
+  it('keeps supported coroutine results and degrades unadapted dataclass outputs', () => {
     const validation = validateIrContract(rawIr, 'fixture contract');
     expect(validation.ok).toBe(true);
     if (!validation.ok) {
@@ -1003,8 +1003,41 @@ describe('compileContract', () => {
 
     expect(compiled.diagnostics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ code: 'coroutine-unsupported', path: '$.functions[2].returns' }),
         expect.objectContaining({ code: 'dataclass-unsupported', path: '$.functions[3].returns' }),
+      ])
+    );
+    expect(
+      compiled.diagnostics.some(diagnostic => diagnostic.code === 'coroutine-unsupported')
+    ).toBe(false);
+    expect(compiled.module.functions[2]?.returnType).toEqual({ kind: 'primitive', name: 'str' });
+    expect(compiled.generated.declaration).toContain('asyncValue(): Promise<string>');
+    expect(compiled.callables[2]?.requiredCapabilities).toContain('coroutine-execution');
+    expect(compiled.module.functions[3]?.returnType).toEqual({
+      kind: 'custom',
+      name: 'Any',
+      module: 'typing',
+    });
+  });
+
+  it('degrades coroutine results when the execution capability is unavailable', () => {
+    const validation = validateIrContract(rawIr, 'fixture contract');
+    expect(validation.ok).toBe(true);
+    if (!validation.ok) {
+      return;
+    }
+
+    const compiled = compileContract(validation.contract, {
+      module: moduleModel,
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES.map(capability =>
+        capability.name === 'coroutine-execution' ? { ...capability, available: false } : capability
+      ),
+    });
+
+    expect(compiled.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'coroutine-unsupported', path: '$.functions[2].returns' }),
       ])
     );
     expect(compiled.module.functions[2]?.returnType).toEqual({
@@ -1012,11 +1045,110 @@ describe('compileContract', () => {
       name: 'Any',
       module: 'typing',
     });
-    expect(compiled.module.functions[3]?.returnType).toEqual({
-      kind: 'custom',
-      name: 'Any',
-      module: 'typing',
+    expect(compiled.generated.declaration).toContain('asyncValue(): Promise<unknown>');
+  });
+
+  it('does not promise a TypeScript object for an unconstrained Python object result', async () => {
+    const source = rawIr.functions[1]!;
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: [
+          {
+            ...source,
+            name: 'object_value',
+            qualname: 'fixture.object_value',
+            returns: 'object',
+          },
+        ],
+        classes: [],
+      },
+      'object result contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        classes: [],
+        functions: [{ ...moduleModel.functions[1]!, name: 'object_value' }],
+      },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
     });
+    expect(compiled.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'conversion-unresolved', path: '$.functions[0].returns' }),
+      ])
+    );
+    expect(compiled.generated.declaration).toContain('objectValue(): Promise<unknown>');
+    expect(compiled.generated.typescript).toContain('createReturnValidator({"kind":"any"}');
+
+    for (const annotation of ['list[object]', 'dict[str, object]']) {
+      const nested = validateIrContract(
+        {
+          ...rawIr,
+          functions: [
+            {
+              ...source,
+              name: 'object_value',
+              qualname: 'fixture.object_value',
+              returns: annotation,
+            },
+          ],
+          classes: [],
+        },
+        'nested object result contract'
+      );
+      expect(nested.ok).toBe(true);
+      if (!nested.ok) {
+        continue;
+      }
+      const nestedCompiled = compileContract(nested.contract, {
+        module: {
+          ...moduleModel,
+          classes: [],
+          functions: [{ ...moduleModel.functions[1]!, name: 'object_value' }],
+        },
+        generator: new CodeGenerator(),
+        conversion: DEFAULT_VALUE_CONVERSION,
+        capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+      });
+      expect(nestedCompiled.generated.declaration).toContain('objectValue(): Promise<unknown>');
+    }
+
+    let requestId = 0;
+    const server = createServer((request, response) => {
+      request.resume();
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ id: ++requestId, result: 'a valid Python object' }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as AddressInfo;
+    const bridge = new HttpBridge({ baseURL: `http://127.0.0.1:${address.port}` });
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-object-proof-'));
+    try {
+      const outputPath = join(temporary, 'fixture.generated.mjs');
+      const javascript = ts.transpileModule(compiled.generated.typescript, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(outputPath, javascript, 'utf8');
+      setRuntimeBridge(bridge);
+      const generated = (await import(pathToFileURL(outputPath).href)) as {
+        objectValue: () => Promise<unknown>;
+      };
+      await expect(generated.objectValue()).resolves.toBe('a valid Python object');
+    } finally {
+      clearRuntimeBridge();
+      await bridge.dispose();
+      await new Promise<void>((resolve, reject) =>
+        server.close(error => (error ? reject(error) : resolve()))
+      );
+      await rm(temporary, { recursive: true, force: true });
+    }
   });
 
   it('requires returned dataclass fields even when their constructor has defaults', () => {

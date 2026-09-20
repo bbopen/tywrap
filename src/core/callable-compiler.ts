@@ -153,8 +153,8 @@ export const DEFAULT_CALLABLE_CAPABILITIES: readonly CapabilityDescription[] = [
   },
   {
     name: 'coroutine-execution',
-    available: false,
-    guidance: 'Coroutine execution belongs to #338. Expose a value-returning adapter until then.',
+    available: true,
+    guidance: 'Use a runtime bridge that awaits Python coroutine results.',
   },
   {
     name: 'dataclass-adapter',
@@ -603,6 +603,38 @@ function diagnosticForResolution(
   };
 }
 
+function containsUnconstrainedObject(type: PythonType): boolean {
+  switch (type.kind) {
+    case 'custom':
+      return type.name === 'object' && (type.module === undefined || type.module === 'builtins');
+    case 'collection':
+      return type.itemTypes.some(containsUnconstrainedObject);
+    case 'generic':
+      return type.typeArgs.some(containsUnconstrainedObject);
+    case 'union':
+      return type.types.some(containsUnconstrainedObject);
+    case 'optional':
+    case 'final':
+    case 'classvar':
+    case 'unpack':
+      return containsUnconstrainedObject(type.type);
+    case 'annotated':
+      return containsUnconstrainedObject(type.base);
+    default:
+      return false;
+  }
+}
+
+function outputType(value: ResolvedCallableValue): PythonType {
+  if (
+    value.resolution.status === 'unsupported' ||
+    (value.resolution.status === 'unresolved' && containsUnconstrainedObject(value.logicalType))
+  ) {
+    return UNKNOWN_TYPE;
+  }
+  return value.logicalType;
+}
+
 function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {
   if (left.kind === 'unsupported' || right.kind === 'unsupported') {
     return true;
@@ -848,22 +880,22 @@ function resolveCallable(
         guidance: 'Use a TypedDict or an explicit record adapter.',
       };
     }
-    if (
-      value.direction === 'output' &&
-      func.isAsync &&
-      capabilities.get('coroutine-execution')?.available !== true
-    ) {
-      diagnostics.push({
-        severity: 'error',
-        code: 'coroutine-unsupported',
-        path: value.path,
-        message: `${value.path}: this callable requires coroutine execution, which #338 has not implemented.`,
-      });
-      value.resolution = {
-        status: 'unsupported',
-        reason: 'Coroutine execution is unavailable.',
-        guidance: 'Expose a synchronous value-returning adapter until #338 lands.',
-      };
+    if (value.direction === 'output' && func.isAsync) {
+      if (capabilities.get('coroutine-execution')?.available !== true) {
+        diagnostics.push({
+          severity: 'error',
+          code: 'coroutine-unsupported',
+          path: value.path,
+          message: `${value.path}: this callable requires a runtime bridge that awaits Python coroutine results.`,
+        });
+        value.resolution = {
+          status: 'unsupported',
+          reason: 'Coroutine execution is unavailable.',
+          guidance: 'Use a coroutine-capable runtime bridge or a synchronous adapter.',
+        };
+      } else {
+        requiredCapabilities.add('coroutine-execution');
+      }
     }
     if (value.resolution.status === 'supported') {
       const needed = capabilityNamesFor(value.resolution.value);
@@ -901,10 +933,7 @@ function resolveCallable(
           ? UNKNOWN_TYPE
           : parameter.type,
     })),
-    returnType:
-      overloadResults[index]?.resolution.status === 'unsupported'
-        ? UNKNOWN_TYPE
-        : overload.returnType,
+    returnType: overloadResults[index] ? outputType(overloadResults[index]) : overload.returnType,
   }));
   const supportedValue = (value: ResolvedCallableValue): ValueContract | undefined =>
     value.resolution.status === 'supported' ? value.resolution.value : undefined;
@@ -914,9 +943,9 @@ function resolveCallable(
     signature: {
       ...func.signature,
       parameters: resolvedParameters,
-      returnType: result.resolution.status === 'unsupported' ? UNKNOWN_TYPE : func.returnType,
+      returnType: outputType(result),
     },
-    returnType: result.resolution.status === 'unsupported' ? UNKNOWN_TYPE : func.returnType,
+    returnType: outputType(result),
     overloads: resolvedOverloads,
     callableContract: {
       parameterValues: parameters.map(supportedValue),
