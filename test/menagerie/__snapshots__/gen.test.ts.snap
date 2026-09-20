@@ -124,7 +124,7 @@ export async function protocolIdentity(value: SupportsClose): Promise<unknown> {
   return getRuntimeBridge().call<unknown>('fixtures.typing_torture', 'protocol_identity', __args, undefined, __validateprotocol_identityResult);
 }
 
-const __validaterated_movieResult = createReturnValidator({"kind":"record","fields":{"title":{"schema":{"kind":"primitive","type":"string"},"optional":false},"year":{"schema":{"kind":"primitive","type":"number","constraint":"safe-integer"},"optional":false},"rating":{"schema":{"kind":"primitive","type":"number","constraint":"safe-integer"},"optional":true}}}, "fixtures.typing_torture.rated_movie", __tywrapReturnDefinitions);
+const __validaterated_movieResult = createReturnValidator({"kind":"record","fields":{"title":{"schema":{"kind":"primitive","type":"string"},"optional":false},"year":{"schema":{"kind":"primitive","type":"number","constraint":"safe-integer"},"optional":false},"rating":{"schema":{"kind":"primitive","type":"number","constraint":"finite"},"optional":true}}}, "fixtures.typing_torture.rated_movie", __tywrapReturnDefinitions);
 
 export async function ratedMovie(): Promise<RatedMovie> {
   const __args: unknown[] = [];
@@ -159,7 +159,7 @@ export async function userIdEcho(value: UserId): Promise<UserId> {
   return getRuntimeBridge().call<UserId>('fixtures.typing_torture', 'user_id_echo', __args, undefined, __validateuser_id_echoResult);
 }
 
-const __validatevariadic_tupleResult = createReturnValidator({"kind":"array","element":{"kind":"primitive","type":"number"}}, "fixtures.typing_torture.variadic_tuple", __tywrapReturnDefinitions);
+const __validatevariadic_tupleResult = createReturnValidator({"kind":"array","element":{"kind":"primitive","type":"number","constraint":"safe-integer"}}, "fixtures.typing_torture.variadic_tuple", __tywrapReturnDefinitions);
 
 export async function variadicTuple(value: number[]): Promise<number[]> {
   const __args: unknown[] = [value];

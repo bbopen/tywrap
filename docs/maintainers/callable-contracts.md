@@ -60,8 +60,9 @@ The compiler keeps Arrow int64 behavior outside this prototype. Existing Arrow
 int64 values can decode as `bigint`.
 
 Selected local non-generic `TypedDict` classes use revision-2 record contracts
-when every field has a supported conversion. Selected simple aliases use their
-underlying supported contract. Foreign and recursive names remain unresolved.
+when every field has a supported conversion. Nested records and selected simple
+aliases compose through the same resolver. Foreign and recursive names remain
+unresolved.
 
 ## Diagnostics and fallback
 

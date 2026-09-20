@@ -1500,6 +1500,156 @@ describe('compileContract', () => {
     }
   });
 
+  it('composes nested local records and aliases, but stops cycles and foreign names', () => {
+    const source = rawIr.functions[1]!;
+    const point = rawIr.classes[0]!;
+    const typedDict = (name: string, annotation: string) => ({
+      ...point,
+      name,
+      qualname: `fixture.${name}`,
+      typed_dict: true,
+      is_dataclass: false,
+      fields: [{ name: 'value', kind: 'FIELD', annotation, default: false }],
+    });
+    const returns = [
+      ['nested_values', 'list[Outer]'],
+      ['alias_values', 'AliasAlias'],
+      ['cycle_values', 'Loop'],
+      ['foreign_values', 'foreign.Outer'],
+      ['self_values', 'SelfRef'],
+      ['qualified_values', 'fixture.Outer'],
+    ] as const;
+    const ir = validateIrContract(
+      {
+        ...rawIr,
+        functions: returns.map(([name, annotation]) => ({
+          ...source,
+          name,
+          qualname: `fixture.${name}`,
+          returns: annotation,
+        })),
+        classes: [
+          typedDict('Child', 'int'),
+          typedDict('Outer', 'Child'),
+          typedDict('SelfRef', 'SelfRef'),
+        ],
+        type_aliases: [
+          { name: 'UserId', definition: 'int', is_generic: false, type_params: [] },
+          { name: 'AliasAlias', definition: 'UserId', is_generic: false, type_params: [] },
+          { name: 'Loop', definition: 'Loop', is_generic: false, type_params: [] },
+        ],
+      },
+      'composed named values contract'
+    );
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const compiled = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        functions: returns.map(([name]) => ({ ...moduleModel.functions[1]!, name })),
+        classes: ['Child', 'Outer', 'SelfRef'].map(name => ({
+          ...moduleModel.classes[0]!,
+          name,
+        })),
+        typeAliases: ['UserId', 'AliasAlias', 'Loop'].map(name => ({
+          name,
+          type: { kind: 'custom' as const, name: 'Any' },
+        })),
+      },
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.callables[0]?.result.resolution).toMatchObject({
+      status: 'supported',
+      value: {
+        kind: 'sequence',
+        item: {
+          kind: 'record',
+          fields: [
+            {
+              name: 'value',
+              value: {
+                kind: 'record',
+                fields: [{ name: 'value', value: { kind: 'integer' } }],
+              },
+            },
+          ],
+        },
+      },
+    });
+    expect(compiled.callables[1]?.result.resolution).toMatchObject({
+      status: 'supported',
+      value: { kind: 'integer', constraint: 'safe-integer' },
+    });
+    expect(compiled.callables[2]?.result.resolution.status).toBe('unresolved');
+    expect(compiled.callables[3]?.result.resolution.status).toBe('unresolved');
+    expect(compiled.callables[4]?.result.resolution.status).toBe('unresolved');
+    expect(compiled.callables[5]?.result.resolution.status).toBe('supported');
+    expect(compiled.generated.declaration).toContain('nestedValues(): Promise<Outer[]>');
+    expect(compiled.generated.declaration).toContain('aliasValues(): Promise<AliasAlias>');
+    expect(compiled.generated.declaration).toContain('cycleValues(): Promise<unknown>');
+    expect(compiled.generated.declaration).toContain('foreignValues(): Promise<unknown>');
+    expect(compiled.generated.declaration).toContain('selfValues(): Promise<unknown>');
+    expect(compiled.generated.declaration).toContain('qualifiedValues(): Promise<Outer>');
+    expect(compiled.generated.typescript).toContain(
+      'const __validateforeign_valuesResult = createReturnValidator({"kind":"any"}'
+    );
+
+    const rejectIntegers: typeof DEFAULT_VALUE_CONVERSION = {
+      revision: DEFAULT_VALUE_CONVERSION.revision,
+      resolve(request) {
+        if (request.logicalType.kind === 'primitive' && request.logicalType.name === 'int') {
+          return {
+            status: 'unsupported',
+            reason: 'This configured conversion declines integers.',
+            guidance: 'Use a different conversion.',
+          };
+        }
+        return DEFAULT_VALUE_CONVERSION.resolve(request);
+      },
+    };
+    const declined = compileContract(ir.contract, {
+      module: {
+        ...moduleModel,
+        functions: returns.map(([name]) => ({ ...moduleModel.functions[1]!, name })),
+        classes: ['Child', 'Outer', 'SelfRef'].map(name => ({
+          ...moduleModel.classes[0]!,
+          name,
+        })),
+        typeAliases: ['UserId', 'AliasAlias', 'Loop'].map(name => ({
+          name,
+          type: { kind: 'custom' as const, name: 'Any' },
+        })),
+      },
+      generator: new CodeGenerator(),
+      conversion: rejectIntegers,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(declined.callables[0]?.result.resolution.status).toBe('unsupported');
+    expect(declined.callables[1]?.result.resolution.status).toBe('unsupported');
+    expect(declined.generated.declaration).toContain('nestedValues(): Promise<unknown>');
+  });
+
+  it('treats a variadic integer tuple as the supported sequence contract', () => {
+    const logicalType = parseAnnotationToPythonType('tuple[int, ...]');
+    expect(
+      DEFAULT_VALUE_CONVERSION.resolve({
+        direction: 'output',
+        path: '$.functions[0].returns',
+        logicalType,
+      })
+    ).toMatchObject({
+      status: 'supported',
+      value: {
+        kind: 'sequence',
+        item: { kind: 'integer', constraint: 'safe-integer' },
+      },
+    });
+  });
+
   it('requires returned dataclass fields even when their constructor has defaults', () => {
     const point = rawIr.classes[0]!;
     const ir = validateIrContract(
