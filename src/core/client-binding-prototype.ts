@@ -53,48 +53,6 @@ function stripExport(
   return text;
 }
 
-function rewriteRuntimeCalls(
-  source: ts.SourceFile,
-  node: ts.FunctionDeclaration | ts.ClassDeclaration,
-  providerName: string
-): string {
-  const start = node.getFullStart();
-  let text = stripExport(source, node);
-  const exportLength = node.modifiers?.some(
-    modifier => modifier.kind === ts.SyntaxKind.ExportKeyword
-  )
-    ? 'export '.length
-    : 0;
-  const replacements: Array<{ start: number; end: number }> = [];
-  const visit = (child: ts.Node): void => {
-    if (
-      ts.isCallExpression(child) &&
-      ts.isIdentifier(child.expression) &&
-      child.expression.text === 'getRuntimeBridge' &&
-      child.arguments.length === 0
-    ) {
-      replacements.push({
-        start: child.expression.getStart(source) - start - exportLength,
-        end: child.expression.getEnd() - start - exportLength,
-      });
-    }
-    ts.forEachChild(child, visit);
-  };
-  visit(node);
-  for (const range of replacements.sort((left, right) => right.start - left.start)) {
-    text = `${text.slice(0, range.start)}${providerName}${text.slice(range.end)}`;
-  }
-  return text;
-}
-
-function runtimeImport(source: ts.SourceFile, node: ts.ImportDeclaration): string {
-  const text = node.getText(source);
-  if (!ts.isStringLiteral(node.moduleSpecifier) || node.moduleSpecifier.text !== 'tywrap/runtime') {
-    return text;
-  }
-  return text.replace(/\bgetRuntimeBridge\s*,\s*/, '').replace(/,\s*getRuntimeBridge\b/, '');
-}
-
 function inspectExports(source: ts.SourceFile): ExportedCalls {
   const functions: string[] = [];
   const classes: ClassExport[] = [];
@@ -118,7 +76,10 @@ function inspectExports(source: ts.SourceFile): ExportedCalls {
           return member.name.text;
         });
       classes.push({ name: node.name.text, methods });
-    } else if (ts.isTypeAliasDeclaration(node)) {
+    } else if (
+      ts.isTypeAliasDeclaration(node) &&
+      node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)
+    ) {
       typeAliases.push(node.name.text);
     }
   }
@@ -222,6 +183,7 @@ export declare function bindRuntime(runtime: RuntimeExecution): BoundHandle;
  */
 export function renderClientBindingPrototype(
   generated: GeneratedCode,
+  bindingTemplate: GeneratedCode,
   moduleName: string
 ): BindingPrototypeCode {
   if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(moduleName)) {
@@ -229,14 +191,14 @@ export function renderClientBindingPrototype(
   }
   const source = ts.createSourceFile(
     `${moduleName}.generated.ts`,
-    generated.typescript,
+    bindingTemplate.typescript,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS
   );
   const declarations = ts.createSourceFile(
     `${moduleName}.generated.d.ts`,
-    generated.declaration,
+    bindingTemplate.declaration,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS
@@ -244,8 +206,12 @@ export function renderClientBindingPrototype(
   const calls = inspectExports(source);
   const callableCount =
     calls.functions.length + calls.classes.reduce((count, cls) => count + cls.methods.length, 0);
-  if (countCalls(source, 'getRuntimeBridge') !== callableCount) {
-    throw new Error('Generated call sites differ from exported callable count');
+  if (
+    countCalls(source, '__tywrapRuntimeProvider') !== callableCount ||
+    countCalls(source, 'getRuntimeBridge') !== 0 ||
+    bindingTemplate.declaration !== generated.declaration
+  ) {
+    throw new Error('Binding template call sites or declarations differ from default output');
   }
   const usedNames = new Set([
     ...calls.functions,
@@ -258,7 +224,10 @@ export function renderClientBindingPrototype(
   usedNames.add(legacyValue);
   const registryImport = allocateName('__tywrapRegistry', usedNames);
   usedNames.add(registryImport);
-  const providerName = allocateName('__tywrapRuntimeProvider', usedNames);
+  const providerName = '__tywrapRuntimeProvider';
+  if (usedNames.has(providerName)) {
+    throw new Error(`Generated module defines reserved provider name ${providerName}`);
+  }
   usedNames.add(providerName);
   const runtimeType = allocateName('__TywrapRuntime', usedNames);
   const imports: string[] = [];
@@ -266,11 +235,11 @@ export function renderClientBindingPrototype(
   const body: string[] = [];
   for (const node of source.statements) {
     if (ts.isImportDeclaration(node)) {
-      imports.push(runtimeImport(source, node));
+      imports.push(node.getText(source));
     } else if (ts.isTypeAliasDeclaration(node)) {
       typeAliases.push(node.getText(source));
     } else if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
-      body.push(rewriteRuntimeCalls(source, node, providerName));
+      body.push(stripExport(source, node));
     } else {
       body.push(node.getFullText(source));
     }

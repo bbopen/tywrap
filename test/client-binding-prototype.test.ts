@@ -12,11 +12,19 @@ import { NodeBridge } from 'tywrap/node';
 import { clearRuntimeBridge, getRuntimeBridge, setRuntimeBridge } from 'tywrap/runtime';
 
 import {
+  compileContract,
+  DEFAULT_CALLABLE_CAPABILITIES,
+  DEFAULT_VALUE_CONVERSION,
+} from '../src/core/callable-compiler.js';
+import {
   renderClientBindingPrototype,
   type BindingPrototypeCode,
 } from '../src/core/client-binding-prototype.js';
+import { CodeGenerator } from '../src/core/generator.js';
+import { validateIrContract } from '../src/core/ir-contract.js';
+import { transformIrToTsModel } from '../src/core/ir-model.js';
 import { generate } from '../src/tywrap.js';
-import type { RuntimeExecution } from '../src/types/index.js';
+import type { GeneratedCode, RuntimeExecution } from '../src/types/index.js';
 import { getDefaultPythonPath } from '../src/utils/python.js';
 import { processUtils } from '../src/utils/runtime.js';
 import { PYTHON_AVAILABLE } from './helpers/python-probe.js';
@@ -81,6 +89,34 @@ const fixtureB = resolve('test/fixtures/python/binding_b');
 const bridgeScript = resolve('runtime/python_bridge.py');
 const pythonPath = getDefaultPythonPath();
 
+async function bindingTemplate(outputDir: string, moduleName: string): Promise<GeneratedCode> {
+  const contractPath = join(outputDir, `${moduleName}.contract.json`);
+  const parsed: unknown = JSON.parse(await readFile(contractPath, 'utf8'));
+  const validated = validateIrContract(parsed, contractPath, { allowOmittedMetadata: true });
+  if (!validated.ok || !validated.contract) {
+    throw new Error(`Invalid generated contract: ${JSON.stringify(validated.diagnostics)}`);
+  }
+  const generator = new CodeGenerator();
+  const compiled = compileContract(validated.contract, {
+    module: transformIrToTsModel(validated.contract),
+    generator,
+    conversion: DEFAULT_VALUE_CONVERSION,
+    capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+  });
+  const emittedSource = await readFile(join(outputDir, `${moduleName}.generated.ts`), 'utf8');
+  const emittedDeclaration = await readFile(
+    join(outputDir, `${moduleName}.generated.d.ts`),
+    'utf8'
+  );
+  if (
+    compiled.generated.typescript !== emittedSource ||
+    compiled.generated.declaration !== emittedDeclaration
+  ) {
+    throw new Error('Compiled contract differs from default generated output');
+  }
+  return generator.generateModuleBindingTemplate(compiled.module);
+}
+
 describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype', () => {
   let temporary = '';
   let generatedDir = '';
@@ -112,6 +148,7 @@ describe.skipIf(!PYTHON_AVAILABLE)('explicit generated client binding prototype'
         declaration: originalDeclaration,
         metadata: { generatedAt: new Date(0), sourceFiles: [], runtime: 'auto', optimizations: [] },
       },
+      await bindingTemplate(generatedDir, 'binding_fixture'),
       'binding_fixture'
     );
 
@@ -412,6 +449,7 @@ void wrong;
             optimizations: [],
           },
         },
+        await bindingTemplate(comparisonDir, 'advanced_types'),
         'advanced_types'
       );
       const callableCount = (source.match(/getRuntimeBridge\(\)\.call/g) ?? []).length;
