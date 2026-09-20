@@ -33,6 +33,8 @@ coroutine results through Node and Pyodide.
 - Node and Pyodide await Python coroutine results. Exceptions retain call context;
   timeout and disposal checks cover subsequent requests. HTTP behavior depends
   on the server's coroutine support.
+- Node worker restarts isolate replacement requests from retired process errors
+  and stale write backpressure.
 - Development reload preserves the working bridge and generated files when a
   configured Python module changes during candidate preparation.
 - Python encodes ASCII subprocess frames without per-character scanning,
