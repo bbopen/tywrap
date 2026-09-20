@@ -147,18 +147,6 @@ onBeforeUnmount(() => {
           <a class="get-started" :href="gettingStartedUrl">Get started</a>
           <a class="text-link" :href="base + 'examples/'">See examples</a>
         </div>
-        <div class="agent-guide">
-          <p>Working with a coding agent? Give it the tywrap guide.</p>
-          <div class="agent-guide-actions">
-            <button type="button" class="copy-guide" @click="copyAgentGuide">
-              {{ copyState === 'copied' ? 'Copied agent guide' : 'Copy agent guide' }}
-            </button>
-            <a :href="agentGuideUrl">Open guide</a>
-          </div>
-          <p class="copy-status" role="status" aria-live="polite">
-            {{ copyState === 'failed' ? 'Copy failed. Open the guide instead.' : copyState === 'copied' ? 'Agent guide copied to clipboard.' : '' }}
-          </p>
-        </div>
       </div>
 
       <div ref="mediaRef" class="hero-media">
@@ -208,6 +196,19 @@ onBeforeUnmount(() => {
           </svg>
         </button>
       </div>
+
+      <div class="agent-guide">
+        <p>Working with a coding agent? Give it the tywrap guide.</p>
+        <div class="agent-guide-actions">
+          <button type="button" class="copy-guide" @click="copyAgentGuide">
+            {{ copyState === 'copied' ? 'Copied agent guide' : 'Copy agent guide' }}
+          </button>
+          <a :href="agentGuideUrl">Open guide</a>
+        </div>
+        <p class="copy-status" role="status" aria-live="polite">
+          {{ copyState === 'failed' ? 'Copy failed. Open the guide instead.' : copyState === 'copied' ? 'Agent guide copied to clipboard.' : '' }}
+        </p>
+      </div>
     </section>
 
     <section class="benefits" aria-label="What tywrap helps you do">
@@ -233,11 +234,12 @@ onBeforeUnmount(() => {
 .hero-section {
   display: grid;
   grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
-  align-items: center;
-  gap: clamp(2.5rem, 5vw, 6rem);
-  padding-block: clamp(6.5rem, 10vw, 9rem) clamp(3.5rem, 7vw, 6rem);
+  grid-template-areas: "content media" "agent media";
+  column-gap: clamp(2.5rem, 5vw, 6rem);
+  row-gap: 1.5rem;
+  padding-block: clamp(2.5rem, 5vw, 5rem) clamp(3.5rem, 7vw, 6rem);
 }
-.hero-content { min-width: 0; }
+.hero-content { grid-area: content; min-width: 0; align-self: end; }
 h1 {
   margin: 0;
   max-width: 11ch;
@@ -272,7 +274,7 @@ h1 {
 .text-link, .agent-guide a { color: var(--page-text); text-underline-offset: 0.3em; }
 .text-link:hover, .agent-guide a:hover { color: var(--typescript-blue); }
 .agent-guide {
-  margin-top: 2.8rem;
+  grid-area: agent;
   padding-top: 1.1rem;
   border-top: 1px solid #29384c;
   color: var(--page-muted);
@@ -292,6 +294,8 @@ h1 {
 .copy-guide:hover { border-color: var(--typescript-blue); color: var(--typescript-blue); }
 .agent-guide .copy-status { min-height: 1.3em; margin-top: 0.45rem; color: #ffc0b8; }
 .hero-media {
+  grid-area: media;
+  align-self: center;
   position: relative;
   aspect-ratio: 4 / 3;
   min-width: 0;
@@ -361,14 +365,18 @@ h1 {
 }
 .benefit p { margin: 0; color: var(--page-muted); font-size: 0.94rem; line-height: 1.55; }
 @media (max-width: 1000px) {
-  .hero-section { grid-template-columns: minmax(0, 1fr); }
+  .hero-section {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "content" "media" "agent";
+    row-gap: 2.5rem;
+  }
   h1 { max-width: 13ch; }
   .hero-media { aspect-ratio: 16 / 10; }
   .benefits { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {
   .hero-section, .benefits { width: min(100% - 2rem, 1220px); }
-  .hero-section { gap: 2.5rem; padding-top: 6.2rem; padding-bottom: 3rem; }
+  .hero-section { padding-top: 2.5rem; padding-bottom: 3rem; }
   h1 { font-size: clamp(2.75rem, 12vw, 3.8rem); }
   .hero-subtitle { margin-top: 1.3rem; }
   .hero-media { aspect-ratio: 4 / 3; }

@@ -8,7 +8,6 @@
   --vp-c-brand-3: #4d9ce8;
 }
 
-.VPHome > .VPHero { display: none; }
 .VPHome { background: #090f1b; }
 .VPHome .VPHomeContent { background: #090f1b; }
 

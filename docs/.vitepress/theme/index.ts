@@ -11,7 +11,7 @@ export default {
     const route = useRoute()
     const isHome = route.path === '/' || route.path.replace(/\/$/, '') === '/tywrap'
     return h(DefaultTheme.Layout, null, {
-      ...(isHome ? { 'layout-top': () => h(HeroVideo) } : {}),
+      ...(isHome ? { 'home-hero-before': () => h(HeroVideo) } : {}),
     })
   },
 } satisfies Theme
