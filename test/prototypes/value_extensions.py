@@ -17,6 +17,7 @@ MAX_DEPTH = 64
 MAX_NODES = 100_000
 MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
 SAFE_INTEGER_MAX = 2**53 - 1
+MAX_INTEGER_MAGNITUDE = 10**MAX_DECIMAL_DIGITS
 DECIMAL = re.compile(r'(?:0|[1-9][0-9]*|-[1-9][0-9]*)\Z', re.ASCII)
 INTEGER_FIELDS = frozenset({'__tywrap__', 'codecVersion', 'encoding', 'value'})
 
@@ -38,9 +39,19 @@ class Budget:
 
 
 def _check_payload(value: object, max_payload_bytes: int) -> None:
-    encoded = json.dumps(value, allow_nan=False, separators=(',', ':'))
-    if len(encoded.encode('utf-8')) > max_payload_bytes:
+    try:
+        encoded = json.dumps(
+            value, allow_nan=False, ensure_ascii=False, separators=(',', ':')
+        )
+        byte_count = len(encoded.encode('utf-8'))
+    except (UnicodeEncodeError, ValueError) as exc:
+        raise PrototypeError('payload is not finite UTF-8 JSON') from exc
+    if byte_count > max_payload_bytes:
         raise PrototypeError(f'payload exceeds {max_payload_bytes} bytes')
+
+
+def _version_two(value: object) -> bool:
+    return type(value) in (int, float) and value == 2
 
 
 def _child(path: str, key: str | int) -> str:
@@ -69,7 +80,12 @@ def _canonical_decimal(value: object, path: str) -> int:
 
 
 def _integer_envelope(value: int, path: str) -> dict[str, object]:
-    decimal = str(value)
+    if abs(value) >= MAX_INTEGER_MAGNITUDE:
+        raise PrototypeError(f'integer exceeds {MAX_DECIMAL_DIGITS} digits at {path}')
+    try:
+        decimal = str(value)
+    except ValueError as exc:
+        raise PrototypeError(f'integer conversion failed at {path}') from exc
     _canonical_decimal(decimal, path)
     return {
         '__tywrap__': 'integer',
@@ -168,8 +184,7 @@ def decode_exact_integers(
                 if (
                     set(current) != INTEGER_FIELDS
                     or current.get('__tywrap__') != 'integer'
-                    or type(current.get('codecVersion')) is not int
-                    or current.get('codecVersion') != 2
+                    or not _version_two(current.get('codecVersion'))
                     or current.get('encoding') != 'decimal'
                 ):
                     raise PrototypeError(f'invalid integer envelope at {path}')
@@ -188,7 +203,7 @@ def decode_exact_integers(
                         '__tywrap__': 'float',
                         'codecVersion': 2,
                         'encoding': 'negative-zero',
-                    } or type(current.get('codecVersion')) is not int:
+                    } or not _version_two(current.get('codecVersion')):
                         raise PrototypeError(f'invalid float envelope at {path}')
                     return -0.0
                 if type(current) not in (int, float):
@@ -351,6 +366,13 @@ def _main() -> None:
         )
     elif action == 'encode-integer':
         result = encode_exact_integers(payload)
+    elif action == 'roundtrip-single-integer':
+        require_capability(
+            payload['meta'], 'exactIntegerDecimalV2', payload['policy']
+        )
+        result = encode_exact_integers(
+            decode_exact_integers(payload['value'], {'kind': 'integer'})
+        )
     elif action == 'encode-point':
         result = encode_dataclass(Point(**payload), Point)
     else:

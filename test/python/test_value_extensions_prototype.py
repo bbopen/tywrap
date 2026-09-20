@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -64,15 +65,51 @@ def test_integer_digit_and_payload_caps() -> None:
     ) == accepted
     with pytest.raises(prototype.PrototypeError, match='4096 digits'):
         prototype.encode_exact_integers(int('9' * (prototype.MAX_DECIMAL_DIGITS + 1)))
+    with pytest.raises(
+        prototype.PrototypeError, match=r'4096 digits at result.big\[0\]'
+    ):
+        prototype.encode_exact_integers({'big': [10**5000]})
     with pytest.raises(prototype.PrototypeError, match='payload exceeds 80 bytes'):
         prototype.encode_exact_integers({'text': 'x' * 80}, max_payload_bytes=80)
+
+
+def test_unicode_payload_cap_counts_compact_utf8_bytes() -> None:
+    assert prototype.encode_exact_integers('é', max_payload_bytes=4) == 'é'
+    with pytest.raises(prototype.PrototypeError, match='payload exceeds 3 bytes'):
+        prototype.encode_exact_integers('é', max_payload_bytes=3)
+
+    nested = {'café': ['🍵', 'é']}
+    expected_bytes = len('{"café":["🍵","é"]}'.encode('utf-8'))
+    assert prototype.encode_exact_integers(
+        nested, max_payload_bytes=expected_bytes
+    ) == nested
+    with pytest.raises(prototype.PrototypeError, match='payload exceeds'):
+        prototype.encode_exact_integers(
+            nested, max_payload_bytes=expected_bytes - 1
+        )
+
+
+@pytest.mark.parametrize(
+    ('version_token', 'accepted'),
+    [('2', True), ('2.0', True), ('2e0', True), ('true', False), ('"2"', False), ('2.5', False), ('null', False)],
+)
+def test_integer_version_uses_json_numeric_value(version_token: str, accepted: bool) -> None:
+    envelope = json.loads(
+        '{"__tywrap__":"integer","codecVersion":'
+        + version_token
+        + ',"encoding":"decimal","value":"7"}'
+    )
+    if accepted:
+        assert prototype.decode_exact_integers(envelope, INTEGER) == 7
+    else:
+        with pytest.raises(prototype.PrototypeError):
+            prototype.decode_exact_integers(envelope, INTEGER)
 
 
 def test_integer_envelope_and_capability_fail_closed() -> None:
     encoded = prototype.encode_exact_integers(2**80)
     for change in (
         {'codecVersion': 1},
-        {'codecVersion': 2.0},
         {'encoding': 'json'},
         {'unexpected': True},
     ):
