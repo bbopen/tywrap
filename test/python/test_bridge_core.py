@@ -84,6 +84,65 @@ def test_model_dump_values_follow_nested_integer_policy() -> None:
         serialize(ScalarModel(), force_json_markers=True)
 
 
+def test_model_dump_cycle_rejects_without_recursing_forever() -> None:
+    class Model:
+        other: object
+
+        def model_dump(self, **_kwargs: object) -> object:
+            return self.other
+
+    first = Model()
+    second = Model()
+    first.other = second
+    second.other = first
+
+    with pytest.raises(RuntimeError, match='Circular model conversion detected at result'):
+        serialize(first, force_json_markers=True)
+
+
+def test_long_model_dump_chain_obeys_depth_and_node_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Model:
+        def __init__(self, other: object):
+            self.other = other
+
+        def model_dump(self, **_kwargs: object) -> object:
+            return self.other
+
+    value: object = 1
+    for _ in range(10):
+        value = Model(value)
+
+    monkeypatch.setattr(bridge_core, 'MAX_SERIALIZE_DEPTH', 4)
+    with pytest.raises(RuntimeError, match='maximum depth 4 exceeded at result'):
+        serialize(value, force_json_markers=True)
+
+    monkeypatch.setattr(bridge_core, 'MAX_SERIALIZE_DEPTH', MAX_SERIALIZE_DEPTH)
+    monkeypatch.setattr(bridge_core, 'MAX_SERIALIZE_NODES', 4)
+    with pytest.raises(RuntimeError, match='maximum visited nodes 4 exceeded at result'):
+        serialize(value, force_json_markers=True)
+
+
+def test_nested_pydantic_models_keep_value_semantics() -> None:
+    pydantic = pytest.importorskip('pydantic')
+    if not hasattr(pydantic.BaseModel, 'model_dump'):
+        pytest.skip('Pydantic v2 is required')
+
+    class Child(pydantic.BaseModel):
+        count: int
+
+    class Parent(pydantic.BaseModel):
+        child: Child
+        items: list[int]
+
+    value = Parent(child=Child(count=3), items=[4, 5])
+    assert serialize(value, force_json_markers=True) == {
+        'child': {'count': 3},
+        'items': [4, 5],
+    }
+
+
 def test_numpy_scalar_follows_nested_integer_policy() -> None:
     np = pytest.importorskip('numpy')
     with pytest.raises(RuntimeError, match=r'Unsafe Python integer at result\.nested\[0\]:'):

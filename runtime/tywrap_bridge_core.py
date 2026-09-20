@@ -1065,6 +1065,9 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
     while stack:
         frame = stack.pop()
         action = frame[0]
+        if action == 'release-model':
+            active_ids.remove(frame[1])
+            continue
         if action == 'dict':
             _, current, depth, path, parent, key, output, iterator = frame
             try:
@@ -1156,6 +1159,24 @@ def serialize(obj, *, force_json_markers, torch_allow_copy=False):
             if isinstance(current, list):
                 parent[key] = output
             stack.append(('sequence', current, depth, path, parent, key, output, 0))
+            continue
+
+        if callable(getattr(current, 'model_dump', None)):
+            _check_serialize_depth(depth, path)
+            visited_nodes += 1
+            _check_serialize_nodes(visited_nodes, path)
+            current_id = id(current)
+            if current_id in active_ids:
+                raise RuntimeError(f'Circular model conversion detected at {path}')
+            active_ids.add(current_id)
+            normalized = _serialize_leaf(current, path)
+            if normalized is current:
+                raise RuntimeError(f'Circular model conversion detected at {path}')
+            stack.append(('release-model', current_id))
+            if _needs_serialize_visit(normalized):
+                stack.append(('visit', normalized, depth + 1, path, parent, key))
+            else:
+                parent[key] = _serialize_leaf(normalized, path)
             continue
 
         normalized = _serialize_leaf(current, path)
