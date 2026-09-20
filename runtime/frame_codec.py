@@ -100,22 +100,27 @@ def encode_frames(
     if total_bytes is None:
         total_bytes = utf8_byte_length(logical_json)
 
-    # Walk codepoints, accumulating UTF-8 bytes into the current slice until the
-    # next codepoint would exceed max_frame_bytes; that boundary is, by
-    # construction, a codepoint boundary so no multi-byte sequence is split.
-    slices: List[str] = []
-    current_chars: List[str] = []
-    current_bytes = 0
-    for ch in logical_json:
-        ch_bytes = _utf8_bytes_of_codepoint(ord(ch))
-        if current_bytes + ch_bytes > max_frame_bytes and current_chars:
-            slices.append(''.join(current_chars))
-            current_chars = []
-            current_bytes = 0
-        current_chars.append(ch)
-        current_bytes += ch_bytes
-    # Always emit a final slice (covers the empty-string case: one empty frame).
-    slices.append(''.join(current_chars))
+    if logical_json.isascii():
+        # Each ASCII character is one byte, so direct slices keep byte boundaries.
+        slices = [
+            logical_json[start:start + max_frame_bytes]
+            for start in range(0, len(logical_json), max_frame_bytes)
+        ] or ['']
+    else:
+        # Walk codepoints so a frame never splits a multi-byte UTF-8 sequence.
+        slices = []
+        current_chars: List[str] = []
+        current_bytes = 0
+        for ch in logical_json:
+            ch_bytes = _utf8_bytes_of_codepoint(ord(ch))
+            if current_bytes + ch_bytes > max_frame_bytes and current_chars:
+                slices.append(''.join(current_chars))
+                current_chars = []
+                current_bytes = 0
+            current_chars.append(ch)
+            current_bytes += ch_bytes
+        # Always emit a final slice for a non-empty Unicode payload.
+        slices.append(''.join(current_chars))
 
     total = len(slices)
     return [
