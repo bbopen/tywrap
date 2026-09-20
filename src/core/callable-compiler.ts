@@ -5,7 +5,11 @@
  * deterministic step between validated IR and generated wrapper files.
  */
 
-import { VALUE_CONTRACT_REVISION, type ValueContract } from '../contracts/value-contract.js';
+import {
+  VALUE_CONTRACT_REVISION,
+  type ValueContract,
+  type ValueContractField,
+} from '../contracts/value-contract.js';
 import type {
   GeneratedCode,
   Parameter,
@@ -39,6 +43,10 @@ export interface ValueConversionRequest {
   path: string;
   /** Internal recursion counter. Revision 2 rejects contracts deeper than 64 nodes. */
   depth?: number;
+  /** Compile-local resolver for nested named values. */
+  resolveNested?: (request: ValueConversionRequest) => ValueResolution;
+  /** Exact local names already being expanded, used to stop recursive aliases. */
+  activeNames?: readonly string[];
 }
 
 export interface SupportedValueResolution {
@@ -153,8 +161,8 @@ export const DEFAULT_CALLABLE_CAPABILITIES: readonly CapabilityDescription[] = [
   },
   {
     name: 'coroutine-execution',
-    available: false,
-    guidance: 'Coroutine execution belongs to #338. Expose a value-returning adapter until then.',
+    available: true,
+    guidance: 'Use a runtime bridge that awaits Python coroutine results.',
   },
   {
     name: 'dataclass-adapter',
@@ -251,7 +259,7 @@ function resolveTuple(
       },
     };
   }
-  if (items.length === 2 && leafName(items[1]!) === '...') {
+  if (items.length === 2 && items[1]?.kind === 'custom' && items[1].name === '...') {
     return resolveSequence(items[0]!, request, conversion);
   }
   const entries = items.map((item, index) =>
@@ -358,11 +366,36 @@ function resolveNdarray(type: PythonType): ValueResolution {
   };
 }
 
+function resolveTorchFloat16(): ValueResolution {
+  const ndarray = resolveNdarray({
+    kind: 'generic',
+    name: 'ndarray',
+    module: 'numpy',
+    typeArgs: [{ kind: 'custom', name: 'float16', module: 'numpy' }],
+  });
+  if (ndarray.status !== 'supported' || ndarray.value.kind !== 'ndarray-float16') {
+    return ndarray;
+  }
+  return {
+    status: 'supported',
+    value: {
+      kind: 'torch-float16',
+      wire: 'ndarray-envelope',
+      decodedAs: 'tensor-record',
+      dtype: 'torch.float16',
+      value: ndarray.value,
+    },
+  };
+}
+
 /** The conversion set that #335 may use with the frozen value-contract revision. */
 export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
   revision: VALUE_CONTRACT_REVISION,
   resolve(request): ValueResolution {
     const { logicalType: type } = request;
+    const nestedConversion: ValueConversionDescription = request.resolveNested
+      ? { revision: VALUE_CONTRACT_REVISION, resolve: request.resolveNested }
+      : DEFAULT_VALUE_CONVERSION;
     if ((request.depth ?? 0) > 64) {
       return {
         status: 'unsupported',
@@ -416,18 +449,18 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
           guidance: 'Use a supported primitive or an explicit value adapter.',
         };
       case 'annotated':
-        return DEFAULT_VALUE_CONVERSION.resolve({ ...request, logicalType: type.base });
+        return nestedConversion.resolve({ ...request, logicalType: type.base });
       case 'final':
       case 'classvar':
-        return DEFAULT_VALUE_CONVERSION.resolve({ ...request, logicalType: type.type });
+        return nestedConversion.resolve({ ...request, logicalType: type.type });
       case 'optional':
         return resolveUnion(
           [type.type, { kind: 'primitive', name: 'None' }],
           request,
-          DEFAULT_VALUE_CONVERSION
+          nestedConversion
         );
       case 'union':
-        return resolveUnion(type.types, request, DEFAULT_VALUE_CONVERSION);
+        return resolveUnion(type.types, request, nestedConversion);
       case 'collection':
         if (type.name === 'dict') {
           const key = type.itemTypes[0];
@@ -438,20 +471,12 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
               guidance: 'Convert keys to strings before crossing the value RPC boundary.',
             };
           }
-          return resolveRecord(
-            type.itemTypes[1] ?? UNKNOWN_TYPE,
-            request,
-            DEFAULT_VALUE_CONVERSION
-          );
+          return resolveRecord(type.itemTypes[1] ?? UNKNOWN_TYPE, request, nestedConversion);
         }
         if (type.name === 'tuple') {
-          return resolveTuple(type.itemTypes, request, DEFAULT_VALUE_CONVERSION);
+          return resolveTuple(type.itemTypes, request, nestedConversion);
         }
-        return resolveSequence(
-          type.itemTypes[0] ?? UNKNOWN_TYPE,
-          request,
-          DEFAULT_VALUE_CONVERSION
-        );
+        return resolveSequence(type.itemTypes[0] ?? UNKNOWN_TYPE, request, nestedConversion);
       case 'generic': {
         const leaf = leafName(type);
         if (leaf === 'NDArray' || leaf === 'ndarray') {
@@ -467,32 +492,10 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
           ) {
             return { status: 'unresolved', annotation: annotationName(type) };
           }
-          const ndarray = resolveNdarray({
-            kind: 'generic',
-            name: 'ndarray',
-            module: 'numpy',
-            typeArgs: [{ kind: 'custom', name: 'float16', module: 'numpy' }],
-          });
-          if (ndarray.status !== 'supported' || ndarray.value.kind !== 'ndarray-float16') {
-            return ndarray;
-          }
-          return {
-            status: 'supported',
-            value: {
-              kind: 'torch-float16',
-              wire: 'ndarray-envelope',
-              decodedAs: 'tensor-record',
-              dtype: 'torch.float16',
-              value: ndarray.value,
-            },
-          };
+          return resolveTorchFloat16();
         }
         if (['list', 'List', 'Sequence', 'Iterable', 'set', 'frozenset'].includes(leaf ?? '')) {
-          return resolveSequence(
-            type.typeArgs[0] ?? UNKNOWN_TYPE,
-            request,
-            DEFAULT_VALUE_CONVERSION
-          );
+          return resolveSequence(type.typeArgs[0] ?? UNKNOWN_TYPE, request, nestedConversion);
         }
         if (['dict', 'Dict', 'Mapping', 'MutableMapping'].includes(leaf ?? '')) {
           const key = type.typeArgs[0];
@@ -503,12 +506,15 @@ export const DEFAULT_VALUE_CONVERSION: ValueConversionDescription = {
               guidance: 'Convert keys to strings before crossing the value RPC boundary.',
             };
           }
-          return resolveRecord(type.typeArgs[1] ?? UNKNOWN_TYPE, request, DEFAULT_VALUE_CONVERSION);
+          return resolveRecord(type.typeArgs[1] ?? UNKNOWN_TYPE, request, nestedConversion);
         }
         return { status: 'unresolved', annotation: annotationName(type) };
       }
       case 'custom': {
         const leaf = leafName(type);
+        if (type.name === 'HalfTensor' && type.module === 'torch') {
+          return resolveTorchFloat16();
+        }
         if (leaf === 'ndarray' || leaf === 'NDArray') {
           return resolveNdarray(type);
         }
@@ -592,7 +598,7 @@ function diagnosticForResolution(
       severity: 'warning',
       code: 'conversion-unresolved',
       path,
-      message: `${path}: no value conversion is defined for ${resolution.annotation}; the generated type keeps its existing explicit fallback.`,
+      message: `${path}: no value conversion is defined for ${resolution.annotation}; the generated result type is unknown.`,
     };
   }
   return {
@@ -601,6 +607,10 @@ function diagnosticForResolution(
     path,
     message: `${path}: ${resolution.reason} ${resolution.guidance}`,
   };
+}
+
+function outputType(value: ResolvedCallableValue): PythonType {
+  return value.resolution.status === 'supported' ? value.logicalType : UNKNOWN_TYPE;
 }
 
 function valuesMayOverlap(left: ValueContract, right: ValueContract): boolean {
@@ -848,22 +858,22 @@ function resolveCallable(
         guidance: 'Use a TypedDict or an explicit record adapter.',
       };
     }
-    if (
-      value.direction === 'output' &&
-      func.isAsync &&
-      capabilities.get('coroutine-execution')?.available !== true
-    ) {
-      diagnostics.push({
-        severity: 'error',
-        code: 'coroutine-unsupported',
-        path: value.path,
-        message: `${value.path}: this callable requires coroutine execution, which #338 has not implemented.`,
-      });
-      value.resolution = {
-        status: 'unsupported',
-        reason: 'Coroutine execution is unavailable.',
-        guidance: 'Expose a synchronous value-returning adapter until #338 lands.',
-      };
+    if (value.direction === 'output' && func.isAsync) {
+      if (capabilities.get('coroutine-execution')?.available !== true) {
+        diagnostics.push({
+          severity: 'error',
+          code: 'coroutine-unsupported',
+          path: value.path,
+          message: `${value.path}: this callable requires a runtime bridge that awaits Python coroutine results.`,
+        });
+        value.resolution = {
+          status: 'unsupported',
+          reason: 'Coroutine execution is unavailable.',
+          guidance: 'Use a coroutine-capable runtime bridge or a synchronous adapter.',
+        };
+      } else {
+        requiredCapabilities.add('coroutine-execution');
+      }
     }
     if (value.resolution.status === 'supported') {
       const needed = capabilityNamesFor(value.resolution.value);
@@ -901,10 +911,7 @@ function resolveCallable(
           ? UNKNOWN_TYPE
           : parameter.type,
     })),
-    returnType:
-      overloadResults[index]?.resolution.status === 'unsupported'
-        ? UNKNOWN_TYPE
-        : overload.returnType,
+    returnType: overloadResults[index] ? outputType(overloadResults[index]) : overload.returnType,
   }));
   const supportedValue = (value: ResolvedCallableValue): ValueContract | undefined =>
     value.resolution.status === 'supported' ? value.resolution.value : undefined;
@@ -914,16 +921,21 @@ function resolveCallable(
     signature: {
       ...func.signature,
       parameters: resolvedParameters,
-      returnType: result.resolution.status === 'unsupported' ? UNKNOWN_TYPE : func.returnType,
+      returnType: outputType(result),
     },
-    returnType: result.resolution.status === 'unsupported' ? UNKNOWN_TYPE : func.returnType,
+    returnType: outputType(result),
     overloads: resolvedOverloads,
     callableContract: {
       parameterValues: parameters.map(supportedValue),
       returnValue: supportedValue(result),
+      returnValidationType: result.resolution.status === 'unresolved' ? func.returnType : undefined,
       overloads: overloadResults.map((overload, index) => ({
         parameterValues: overloadParameters[index]!.map(supportedValue),
         returnValue: supportedValue(overload),
+        returnValidationType:
+          overload.resolution.status === 'unresolved'
+            ? func.overloads![index]!.returnType
+            : undefined,
       })),
     },
   };
@@ -978,6 +990,83 @@ export function compileContract(
     canonical.typeAliases ?? [],
     options.module.typeAliases ?? canonical.typeAliases ?? []
   );
+  const localTypedDicts = new Map(
+    selectedClasses
+      .filter(cls => cls.kind === 'typed_dict' && !cls.typeParameters?.length)
+      .map(cls => [cls.name, cls] as const)
+  );
+  const localAliases = new Map(
+    selectedAliases
+      .filter(alias => !alias.typeParameters?.length)
+      .map(alias => [alias.name, alias] as const)
+  );
+  const conversion: ValueConversionDescription = {
+    revision: options.conversion.revision,
+    resolve(request): ValueResolution {
+      const type = request.logicalType;
+      const direct = options.conversion.resolve({ ...request, resolveNested: conversion.resolve });
+      if (
+        direct.status !== 'unresolved' ||
+        type.kind !== 'custom' ||
+        (type.module !== undefined && type.module !== ir.module)
+      ) {
+        return direct;
+      }
+      const typedDict = localTypedDicts.get(type.name);
+      if (typedDict) {
+        const key = `typed-dict:${type.name}`;
+        if (request.activeNames?.includes(key)) {
+          return { status: 'unresolved', annotation: annotationName(type) };
+        }
+        if ((request.depth ?? 0) >= 64) {
+          return {
+            status: 'unsupported',
+            reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+            guidance: 'Flatten the value or provide a bounded adapter.',
+          };
+        }
+        const fields: ValueContractField[] = [];
+        for (const property of typedDict.properties) {
+          const field = conversion.resolve({
+            ...request,
+            logicalType: property.type,
+            path: `${request.path}.${property.name}`,
+            depth: (request.depth ?? 0) + 1,
+            activeNames: [...(request.activeNames ?? []), key],
+          });
+          if (field.status !== 'supported') {
+            return field;
+          }
+          fields.push({ name: property.name, value: field.value, required: !property.optional });
+        }
+        return {
+          status: 'supported',
+          value: { kind: 'record', wire: 'json', decodedAs: 'object', fields },
+        };
+      }
+      const alias = localAliases.get(type.name);
+      if (alias) {
+        const key = `alias:${type.name}`;
+        if (request.activeNames?.includes(key)) {
+          return { status: 'unresolved', annotation: annotationName(type) };
+        }
+        if ((request.depth ?? 0) >= 64) {
+          return {
+            status: 'unsupported',
+            reason: 'Revision 2 limits value contracts to 64 nested nodes.',
+            guidance: 'Flatten the value or provide a bounded adapter.',
+          };
+        }
+        return conversion.resolve({
+          ...request,
+          logicalType: alias.type,
+          depth: (request.depth ?? 0) + 1,
+          activeNames: [...(request.activeNames ?? []), key],
+        });
+      }
+      return direct;
+    },
+  };
   const capabilities = new Map(
     options.capabilities.map(capability => [capability.name, capability])
   );
@@ -988,7 +1077,7 @@ export function compileContract(
     const result = resolveCallable(
       func,
       path,
-      options.conversion,
+      conversion,
       capabilities,
       dataclassNames,
       diagnostics
@@ -1006,16 +1095,19 @@ export function compileContract(
     ),
     classes: selectedClasses.map(cls => ({
       ...cls,
-      methods: cls.methods.map(method => {
-        const sourceClassIndex = ir.classes.findIndex(entry => entry.name === cls.name);
-        const sourceMethodIndex = ir.classes[sourceClassIndex]!.methods.findIndex(
-          entry => entry.name === method.name
-        );
-        return compileFunction(
-          method,
-          `$.classes[${sourceClassIndex}].methods[${sourceMethodIndex}]`
-        );
-      }),
+      methods:
+        cls.kind === 'protocol'
+          ? cls.methods
+          : cls.methods.map(method => {
+              const sourceClassIndex = ir.classes.findIndex(entry => entry.name === cls.name);
+              const sourceMethodIndex = ir.classes[sourceClassIndex]!.methods.findIndex(
+                entry => entry.name === method.name
+              );
+              return compileFunction(
+                method,
+                `$.classes[${sourceClassIndex}].methods[${sourceMethodIndex}]`
+              );
+            }),
     })),
     typeAliases: selectedAliases,
   };

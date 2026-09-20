@@ -1850,6 +1850,11 @@ setRuntimeBridge(
 payloads. You must provide a compatible server endpoint. Each call is an
 independent POST request because the protocol is stateless.
 
+Generated async callables have typed results when their return annotations have
+supported value conversions. The in-repo Node and Pyodide bridges await Python
+coroutines. For `HttpBridge`, your server must await coroutines before it sends
+the result. `HttpBridge` cannot verify a remote server's coroutine support.
+
 tywrap does not include an HTTP server. See the [API reference](https://bbopen.github.io/tywrap/reference/api/)
 for the expected request and response format.
 
@@ -3069,6 +3074,12 @@ When `output.declaration` is enabled, `generate()` writes matching
 `.generated.d.ts` files from the same generic-aware pass as the runtime wrapper
 code. Simple `TypeVar` and callable `ParamSpec` declarations are preserved when
 tywrap can represent them safely.
+
+Unresolved return annotations now emit `Promise<unknown>` and a located warning.
+This includes `TypeVar` and `ParamSpec` results without a supported value
+conversion. Input generics remain in the declaration. Earlier versions could
+emit `Promise<T>` without validating the decoded value as `T`; callers must
+narrow the result or use a supported concrete overload.
 
 `generate()` returns:
 

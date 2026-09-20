@@ -74,6 +74,8 @@ export interface PythonFunctionOverload {
 export interface ResolvedCallableSignatureContract {
   parameterValues: readonly (ValueContract | undefined)[];
   returnValue?: ValueContract;
+  /** Original annotation used for best-effort validation when no value contract resolves. */
+  returnValidationType?: PythonType;
 }
 
 /** Internal compiler data consumed by generated validators. */

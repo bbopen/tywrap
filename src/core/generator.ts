@@ -39,7 +39,7 @@ interface GenericRenderContext {
   emittedParamSpecs: Set<string>;
 }
 
-type ReturnDefinitionNames = ReadonlySet<string>;
+type ReturnDefinitionNames = ReadonlySet<string> & { readonly moduleName?: string };
 
 function valueContractToReturnSchema(value: ValueContract): ReturnSchema {
   switch (value.kind) {
@@ -605,7 +605,10 @@ export class CodeGenerator {
               values: schema(current.typeArgs[1] ?? { kind: 'custom', name: 'Any' }),
             };
           }
-          return definitions.has(leaf) ? { kind: 'ref', name: leaf } : { kind: 'any' };
+          return definitions.has(leaf) &&
+            (current.module === undefined || current.module === definitions.moduleName)
+            ? { kind: 'ref', name: leaf }
+            : { kind: 'any' };
         }
         case 'custom': {
           const leaf = current.name.split('.').at(-1) ?? current.name;
@@ -640,7 +643,10 @@ export class CodeGenerator {
           ) {
             return { kind: 'marker', marker: 'sklearn.estimator' };
           }
-          return definitions.has(leaf) ? { kind: 'ref', name: leaf } : { kind: 'any' };
+          return definitions.has(leaf) &&
+            (current.module === undefined || current.module === definitions.moduleName)
+            ? { kind: 'ref', name: leaf }
+            : { kind: 'any' };
         }
         case 'typevar':
         case 'paramspec':
@@ -662,7 +668,10 @@ export class CodeGenerator {
     const value = func.callableContract?.returnValue;
     return value
       ? valueContractToReturnSchema(value)
-      : (this.returnSchema(func.returnType, definitions) as ReturnSchema);
+      : (this.returnSchema(
+          func.callableContract?.returnValidationType ?? func.returnType,
+          definitions
+        ) as ReturnSchema);
   }
 
   private overloadReturnSchemas(
@@ -693,7 +702,10 @@ export class CodeGenerator {
           })),
         result: contract?.returnValue
           ? valueContractToReturnSchema(contract.returnValue)
-          : (this.returnSchema(overload.returnType, definitions) as ReturnSchema),
+          : (this.returnSchema(
+              contract?.returnValidationType ?? overload.returnType,
+              definitions
+            ) as ReturnSchema),
         selectable:
           contract !== undefined &&
           contract.returnValue !== undefined &&
@@ -708,11 +720,12 @@ export class CodeGenerator {
   }
 
   private returnDefinitions(module: PythonModule): ReturnDefinitionNames {
-    return new Set(
+    const names = new Set(
       module.classes
         .filter(cls => cls.kind === 'typed_dict' || cls.decorators.includes('__typed_dict__'))
         .map(cls => cls.name)
     );
+    return Object.assign(names, { moduleName: module.name });
   }
 
   private emitReturnDefinitions(module: PythonModule): string {
