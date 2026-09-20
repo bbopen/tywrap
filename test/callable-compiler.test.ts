@@ -657,6 +657,87 @@ describe('compileContract', () => {
     expect(generated.typescript).toContain('"marker":"torch.tensor","dtype":"torch.float16"');
   });
 
+  it('rejects a Torch float16 response with a mismatched nested dtype', async () => {
+    const source = rawIr.functions[1]!;
+    const ir = validateIrContract({
+      ...rawIr,
+      functions: [{ ...source, name: 'tensor_value', qualname: 'fixture.tensor_value',
+        returns: 'torch.Tensor[torch.float16]' }],
+      classes: [],
+    }, 'Torch contract');
+    expect(ir.ok).toBe(true);
+    if (!ir.ok) {
+      return;
+    }
+    const tensorType: PythonType = {
+      kind: 'generic', name: 'Tensor', module: 'torch',
+      typeArgs: [{ kind: 'custom', name: 'float16', module: 'torch' }],
+    };
+    const original = moduleModel.functions[1]!;
+    const model: PythonModule = {
+      ...moduleModel,
+      classes: [],
+      functions: [{
+        ...original,
+        name: 'tensor_value',
+        returnType: tensorType,
+        signature: { ...original.signature, returnType: tensorType },
+      }],
+    };
+    const compiled = compileContract(ir.contract, {
+      module: model,
+      generator: new CodeGenerator(),
+      conversion: DEFAULT_VALUE_CONVERSION,
+      capabilities: DEFAULT_CALLABLE_CAPABILITIES,
+    });
+    expect(compiled.generated.typescript).toContain('"marker":"torch.tensor","dtype":"torch.float16"');
+
+    let nestedDtype = 'float16';
+    let requestId = 0;
+    const server = createServer((request, response) => {
+      request.resume();
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({
+        id: ++requestId,
+        result: {
+          __tywrap__: 'torch.tensor', codecVersion: 1, encoding: 'ndarray',
+          shape: [], dtype: 'torch.float16', device: 'cpu',
+          value: {
+            __tywrap__: 'ndarray', codecVersion: 1, encoding: 'json',
+            shape: [], dtype: nestedDtype, data: 1.5,
+          },
+        },
+      }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as AddressInfo;
+    const bridge = new HttpBridge({ baseURL: `http://127.0.0.1:${address.port}` });
+    const temporary = await mkdtemp(join(process.cwd(), 'test', '.tywrap-torch-proof-'));
+    try {
+      const outputPath = join(temporary, 'fixture.generated.mjs');
+      const javascript = ts.transpileModule(compiled.generated.typescript, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      }).outputText;
+      await writeFile(outputPath, javascript, 'utf8');
+      setRuntimeBridge(bridge);
+      const generated = (await import(pathToFileURL(outputPath).href)) as {
+        tensorValue: () => Promise<{ data: number; dtype: string }>;
+      };
+      await expect(generated.tensorValue()).resolves.toMatchObject({
+        data: 1.5, dtype: 'torch.float16',
+      });
+      nestedDtype = 'float32';
+      await expect(generated.tensorValue()).rejects.toThrow(/value\.dtype.*must be "float16"/);
+    } finally {
+      clearRuntimeBridge();
+      await bridge.dispose();
+      await new Promise<void>((resolve, reject) =>
+        server.close(error => (error ? reject(error) : resolve()))
+      );
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
   it('degrades unimplemented dataclass and coroutine outputs with local diagnostics', () => {
     const validation = validateIrContract(rawIr, 'fixture contract');
     expect(validation.ok).toBe(true);
