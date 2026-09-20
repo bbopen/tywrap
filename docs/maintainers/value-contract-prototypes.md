@@ -6,21 +6,24 @@ import them.
 
 ## Exact integer option
 
-The generation option is `integerMode: 'bigint'` for one callable. It maps every
-Python `int` parameter and result to TypeScript `bigint`. Safe integers use the
-same type. Python `bool` remains `boolean`. Calls without the option keep the
-safe `number` rule.
+The proposed public option is `integerMode: 'bigint'` for one callable. It would
+map every Python `int` parameter and result to TypeScript `bigint`. Safe
+integers use the same type. Python `bool` remains `boolean`. Calls without the
+option keep the safe `number` rule.
 
-The current value-contract revision represents Python `int` only as a safe JSON
-`number`. The compiler and return validator follow that rule. This prototype
-does not generate `bigint` wrappers; that needs a deliberate contract extension.
+The default value-contract revision 2 represents Python `int` as a safe JSON
+`number`. The bounded revision 3 compiler proof selects
+`EXACT_INTEGER_VALUE_CONVERSION` for a module with one callable. It emits a
+`bigint` wrapper and validator through a test-only runtime binding. A public
+per-callable option and production bridge adapter are not implemented.
 
 The proposed generated wrapper must require `exactIntegerDecimalV2` in the
 bridge's `meta.valueCapabilities`. It must send
 `params.valuePolicy.integer = 'bigint-v2'` on each call. A new bridge must
 reject unknown policies. An old bridge lacks the capability, so the wrapper must
-reject the call before sending a tag. The prototype tests this policy in an
-isolated adapter. The shipped wrapper does not implement it.
+reject the call before sending a tag. The bound proof checks the capability
+before its private adapter encodes arguments. That adapter sends the policy to
+the Python prototype. The default bridge does not implement this mode.
 
 The version 2 integer envelope is
 `{"__tywrap__":"integer","codecVersion":2,"encoding":"decimal","value":"18446744073709551617"}`.
@@ -46,9 +49,9 @@ rejects malformed float tags and nonfinite numbers.
 
 The Python response encoder tags every `int`, including safe values. The
 TypeScript response decoder returns `bigint` at declared integer nodes. The
-generated return validator must require `bigint`. It must reject an ordinary
-number and a raw tag. Arrow int64 keeps its current Arrow encoding and decoded
-type.
+generated revision 3 return validator requires `bigint`. The prototype decoder
+rejects an ordinary number and a raw tag. Arrow int64 keeps its current Arrow
+encoding and decoded type.
 
 Both prototypes walk nested arrays and string-keyed records within depth and
 node limits. They reject unsupported values and malformed envelopes. Encoders
@@ -60,10 +63,15 @@ characters directly, as `JSON.stringify` does. Both paths reject unpaired
 surrogates. Production must check raw wire bytes before parsing; object-level
 checks do not prove equal byte counts for alternate numeric JSON spellings.
 
-The bounded tests must round trip positive and negative values beyond 64 bits.
-They must cover floats, booleans, nested records, malformed tags, digit limits,
-byte limits, and old bridges. Production work needs separate review of
-capability negotiation, generated types, and migration cost.
+The bounded tests round trip positive and negative values beyond 64 bits. They
+cover floats, booleans, nested records, malformed tags, digit limits, byte
+limits, and old bridges. `test/value_extensions_generated_integer.test.ts` uses
+analyzer IR to check `bigint` input, `bigint[]` input, `Promise<bigint>` output,
+and the generated bigint return validator. It also checks signed zero and that
+an incapable bridge receives no exact request. The same fixture under revision 2
+keeps `number` types and uses an ordinary call. Production still needs a public
+opt-in selector, bridge capability negotiation, and application migration
+measurements.
 
 ### Exact integer migration cost
 
