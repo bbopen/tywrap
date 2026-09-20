@@ -356,29 +356,37 @@ function validateFunction(value: unknown, path: string, state: ValidationState):
   requiredString(callable, 'qualname', path, state);
   requiredNullableString(callable, 'docstring', path, state);
   const parameters = requiredArray(callable, 'parameters', path, state);
-  if (parameters) visitArray(parameters, `${path}.parameters`, state, (parameter, entryPath) =>
-    validateParameter(parameter, entryPath, state));
+  if (parameters) {
+    visitArray(parameters, `${path}.parameters`, state, (parameter, entryPath) =>
+      validateParameter(parameter, entryPath, state));
+  }
   requiredNullableString(callable, 'returns', path, state);
   requiredBoolean(callable, 'is_async', path, state);
   requiredBoolean(callable, 'is_generator', path, state);
   const typeParameters = requiredArray(callable, 'type_params', path, state);
-  if (typeParameters) visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
-    validateTypeParameter(parameter, entryPath, state));
+  if (typeParameters) {
+    visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
+      validateTypeParameter(parameter, entryPath, state));
+  }
   const methodKind = requiredString(callable, 'method_kind', path, state);
   if (methodKind !== null && !METHOD_KINDS.has(methodKind)) {
     state.invalid(`${path}.method_kind`, `${path}.method_kind must be instance, class, or static.`);
   }
   const overloads = requiredArray(callable, 'overloads', path, state);
-  if (overloads) visitArray(overloads, `${path}.overloads`, state, (overload, overloadPath) => {
-    const signature = recordAt(overload, overloadPath, state);
-    if (!signature) {
-      return;
-    }
-    const overloadParameters = requiredArray(signature, 'parameters', overloadPath, state);
-    if (overloadParameters) visitArray(overloadParameters, `${overloadPath}.parameters`, state,
-      (parameter, entryPath) => validateParameter(parameter, entryPath, state));
-    requiredNullableString(signature, 'returns', overloadPath, state);
-  });
+  if (overloads) {
+    visitArray(overloads, `${path}.overloads`, state, (overload, overloadPath) => {
+      const signature = recordAt(overload, overloadPath, state);
+      if (!signature) {
+        return;
+      }
+      const overloadParameters = requiredArray(signature, 'parameters', overloadPath, state);
+      if (overloadParameters) {
+        visitArray(overloadParameters, `${overloadPath}.parameters`, state,
+          (parameter, entryPath) => validateParameter(parameter, entryPath, state));
+      }
+      requiredNullableString(signature, 'returns', overloadPath, state);
+    });
+  }
 }
 
 function validateAccessor(value: unknown, path: string, state: ValidationState): void {
@@ -406,26 +414,34 @@ function validateClass(value: unknown, path: string, state: ValidationState): vo
   requiredNullableString(cls, 'docstring', path, state);
   validateStringArray(requiredValue(cls, 'bases', path, state), `${path}.bases`, state);
   const methods = requiredArray(cls, 'methods', path, state);
-  if (methods) visitArray(methods, `${path}.methods`, state, (method, entryPath) =>
-    validateFunction(method, entryPath, state));
+  if (methods) {
+    visitArray(methods, `${path}.methods`, state, (method, entryPath) =>
+      validateFunction(method, entryPath, state));
+  }
   requiredBoolean(cls, 'typed_dict', path, state);
   const total = requiredValue(cls, 'total', path, state);
   if (total !== null && typeof total !== 'boolean') {
     state.invalid(`${path}.total`, `${path}.total must be a boolean or null.`);
   }
   const fields = requiredArray(cls, 'fields', path, state);
-  if (fields) visitArray(fields, `${path}.fields`, state, (field, entryPath) =>
-    validateParameter(field, entryPath, state, FIELD_KINDS));
+  if (fields) {
+    visitArray(fields, `${path}.fields`, state, (field, entryPath) =>
+      validateParameter(field, entryPath, state, FIELD_KINDS));
+  }
   requiredBoolean(cls, 'is_protocol', path, state);
   requiredBoolean(cls, 'is_namedtuple', path, state);
   requiredBoolean(cls, 'is_dataclass', path, state);
   requiredBoolean(cls, 'is_pydantic', path, state);
   const typeParameters = requiredArray(cls, 'type_params', path, state);
-  if (typeParameters) visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
-    validateTypeParameter(parameter, entryPath, state));
+  if (typeParameters) {
+    visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
+      validateTypeParameter(parameter, entryPath, state));
+  }
   const accessors = requiredArray(cls, 'accessors', path, state);
-  if (accessors) visitArray(accessors, `${path}.accessors`, state, (accessor, entryPath) =>
-    validateAccessor(accessor, entryPath, state));
+  if (accessors) {
+    visitArray(accessors, `${path}.accessors`, state, (accessor, entryPath) =>
+      validateAccessor(accessor, entryPath, state));
+  }
 }
 
 function validateConstant(value: unknown, path: string, state: ValidationState): void {
@@ -448,8 +464,10 @@ function validateTypeAlias(value: unknown, path: string, state: ValidationState)
   requiredString(alias, 'definition', path, state, true);
   requiredBoolean(alias, 'is_generic', path, state);
   const typeParameters = requiredArray(alias, 'type_params', path, state);
-  if (typeParameters) visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
-    validateTypeParameter(parameter, entryPath, state));
+  if (typeParameters) {
+    visitArray(typeParameters, `${path}.type_params`, state, (parameter, entryPath) =>
+      validateTypeParameter(parameter, entryPath, state));
+  }
 }
 
 /**
@@ -475,17 +493,25 @@ export function validateIrContract(
   }
   requiredString(contract, 'module', '$', state);
   const functions = requiredArray(contract, 'functions', '$', state);
-  if (functions) visitArray(functions, '$.functions', state, (functionValue, entryPath) =>
-    validateFunction(functionValue, entryPath, state));
+  if (functions) {
+    visitArray(functions, '$.functions', state, (functionValue, entryPath) =>
+      validateFunction(functionValue, entryPath, state));
+  }
   const classes = requiredArray(contract, 'classes', '$', state);
-  if (classes) visitArray(classes, '$.classes', state, (classValue, entryPath) =>
-    validateClass(classValue, entryPath, state));
+  if (classes) {
+    visitArray(classes, '$.classes', state, (classValue, entryPath) =>
+      validateClass(classValue, entryPath, state));
+  }
   const constants = requiredArray(contract, 'constants', '$', state);
-  if (constants) visitArray(constants, '$.constants', state, (constant, entryPath) =>
-    validateConstant(constant, entryPath, state));
+  if (constants) {
+    visitArray(constants, '$.constants', state, (constant, entryPath) =>
+      validateConstant(constant, entryPath, state));
+  }
   const aliases = requiredArray(contract, 'type_aliases', '$', state);
-  if (aliases) visitArray(aliases, '$.type_aliases', state, (alias, entryPath) =>
-    validateTypeAlias(alias, entryPath, state));
+  if (aliases) {
+    visitArray(aliases, '$.type_aliases', state, (alias, entryPath) =>
+      validateTypeAlias(alias, entryPath, state));
+  }
   const metadata = contract.metadata;
   if (metadata === undefined && !options.allowOmittedMetadata) {
     state.invalid('$.metadata', '$ is missing required field metadata.');

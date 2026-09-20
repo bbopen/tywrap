@@ -232,6 +232,13 @@ describe('IR-only integration', () => {
   }, 30_000);
 
   it('preserves Python overload input-to-return relationships in generated declarations', async () => {
+    const support = await processUtils.exec(defaultPythonPath, [
+      '-c',
+      'import typing; raise SystemExit(0 if hasattr(typing, "get_overloads") else 1)',
+    ]);
+    if (support.code !== 0) {
+      return;
+    }
     const tempDir = await mkdtemp(join(process.cwd(), 'test', '.tywrap-overload-contract-'));
     try {
       const outDir = join(tempDir, 'generated');
@@ -289,6 +296,63 @@ void wrong;
         { cwd: process.cwd(), timeoutMs: 30_000 }
       );
 
+      expect(compile.code).toBe(0);
+      expect(compile.stderr).toBe('');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('preserves type variables declared only by overload signatures', async () => {
+    const support = await processUtils.exec(defaultPythonPath, [
+      '-c',
+      'import typing; raise SystemExit(0 if hasattr(typing, "get_overloads") else 1)',
+    ]);
+    if (support.code !== 0) {
+      return;
+    }
+    const tempDir = await mkdtemp(join(process.cwd(), 'test', '.tywrap-generic-overload-'));
+    try {
+      const importDir = join(tempDir, 'py');
+      await mkdir(importDir, { recursive: true });
+      await writeFile(join(importDir, 'generic_overload.py'), `from typing import TypeVar, overload
+
+T = TypeVar("T")
+
+@overload
+def choose(value: T) -> T: ...
+
+@overload
+def choose(value: None) -> None: ...
+
+def choose(value: object) -> object:
+    return value
+`, 'utf8');
+      const outDir = join(tempDir, 'generated');
+      const result = await generate({
+        pythonModules: { generic_overload: { runtime: 'node', typeHints: 'strict' } },
+        pythonImportPath: [importDir],
+        output: { dir: outDir, format: 'esm', declaration: true, sourceMap: false },
+        runtime: { node: { pythonPath: defaultPythonPath } },
+        performance: { caching: false, batching: false, compression: 'none' },
+      } as any);
+      expect(result.failures).toEqual([]);
+      const declaration = await fsUtils.readFile(join(outDir, 'generic_overload.generated.d.ts'));
+      expect(declaration).toContain('export function choose<T>(value: T): Promise<T>;');
+      const consumerPath = join(tempDir, 'consumer.ts');
+      await writeFile(consumerPath, `import { choose } from './generated/generic_overload.generated.js';
+
+const text: Promise<string> = choose('key');
+const integer: Promise<number> = choose(2);
+void text;
+void integer;
+`, 'utf8');
+      const tscPath = join(process.cwd(), 'node_modules', 'typescript', 'lib', 'tsc.js');
+      const compile = await processUtils.exec(process.execPath, [
+        tscPath, '--ignoreConfig', '--noEmit', '--pretty', 'false', '--target', 'ES2022',
+        '--lib', 'ES2022,DOM,DOM.Iterable', '--module', 'ESNext', '--moduleResolution',
+        'bundler', '--skipLibCheck', consumerPath,
+      ], { cwd: process.cwd(), timeoutMs: 30_000 });
       expect(compile.code).toBe(0);
       expect(compile.stderr).toBe('');
     } finally {
