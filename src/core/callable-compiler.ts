@@ -299,6 +299,223 @@ function resolveTuple(
   };
 }
 
+type WireRelation = 'disjoint' | 'same-decoding' | 'ambiguous';
+
+function combineWireRelations(relations: readonly WireRelation[]): WireRelation {
+  if (relations.includes('ambiguous')) {
+    return 'ambiguous';
+  }
+  return relations.includes('same-decoding') ? 'same-decoding' : 'disjoint';
+}
+
+type WireCategory = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'unknown';
+
+function acceptsWireCategory(value: ValueContractV3, category: WireCategory): boolean {
+  if (category === 'unknown' || value.kind === 'unsupported') {
+    return true;
+  }
+  if (value.kind === 'union') {
+    return value.options.some(option => acceptsWireCategory(option, category));
+  }
+  const expected: WireCategory = (() => {
+    switch (value.kind) {
+      case 'null':
+        return 'null';
+      case 'boolean':
+        return 'boolean';
+      case 'integer':
+      case 'float':
+        return 'number';
+      case 'string':
+        return 'string';
+      case 'sequence':
+      case 'tuple':
+        return 'array';
+      case 'bytes':
+      case 'integer-exact':
+      case 'record':
+      case 'ndarray-float16':
+      case 'torch-float16':
+        return 'object';
+    }
+  })();
+  return expected === category;
+}
+
+interface TaggedEnvelopeShape {
+  readonly required: Readonly<Record<string, WireCategory>>;
+  readonly optional?: Readonly<Record<string, WireCategory>>;
+}
+
+function taggedEnvelopeShapes(value: ValueContractV3): readonly TaggedEnvelopeShape[] {
+  switch (value.kind) {
+    case 'integer-exact':
+      return [
+        {
+          required: {
+            __tywrap__: 'string',
+            codecVersion: 'number',
+            encoding: 'string',
+            value: 'string',
+          },
+        },
+      ];
+    case 'bytes':
+      return [
+        { required: { __type__: 'string', encoding: 'string', data: 'string' } },
+        { required: { __tywrap_bytes__: 'boolean', b64: 'string' } },
+      ];
+    case 'ndarray-float16':
+      // Legacy envelopes may omit the version, shape, and dtype.
+      return [
+        {
+          required: { __tywrap__: 'string', encoding: 'string', b64: 'string' },
+          optional: { codecVersion: 'number' },
+        },
+        {
+          required: { __tywrap__: 'string', encoding: 'string', data: 'unknown' },
+          optional: { codecVersion: 'number' },
+        },
+      ];
+    case 'torch-float16':
+      return [
+        {
+          required: { __tywrap__: 'string', encoding: 'string', value: 'object' },
+          optional: {
+            codecVersion: 'number',
+            device: 'string',
+            sourceDtype: 'string',
+            sourceDevice: 'string',
+          },
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
+function recordCanMatchEnvelope(
+  record: Extract<ValueContractV3, { kind: 'record' }>,
+  envelope: TaggedEnvelopeShape
+): boolean {
+  const fields = new Map(record.fields.map(field => [field.name, field] as const));
+  // Current decoders accept extra keys on marker envelopes.
+  for (const [name, category] of Object.entries(envelope.required)) {
+    const field = fields.get(name);
+    if (field && !acceptsWireCategory(field.value, category)) {
+      return false;
+    }
+    if (record.additionalValues && !acceptsWireCategory(record.additionalValues, category)) {
+      return false;
+    }
+  }
+  // An optional marker field proves disjointness only when the record requires it.
+  for (const [name, category] of Object.entries(envelope.optional ?? {})) {
+    const field = fields.get(name);
+    if (field?.required && !acceptsWireCategory(field.value, category)) {
+      return false;
+    }
+    if (
+      field?.required &&
+      record.additionalValues &&
+      !acceptsWireCategory(record.additionalValues, category)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function taggedRecordRelation(
+  record: Extract<ValueContractV3, { kind: 'record' }>,
+  tagged: ValueContractV3
+): WireRelation {
+  return taggedEnvelopeShapes(tagged).some(envelope => recordCanMatchEnvelope(record, envelope))
+    ? 'ambiguous'
+    : 'disjoint';
+}
+
+function recordWireRelation(left: ValueContractV3, right: ValueContractV3): WireRelation {
+  if (left.kind !== 'record' || right.kind !== 'record') {
+    return 'disjoint';
+  }
+  const leftFields = new Map(left.fields.map(field => [field.name, field] as const));
+  const rightFields = new Map(right.fields.map(field => [field.name, field] as const));
+  const relations: WireRelation[] = [];
+  for (const field of left.fields) {
+    const otherField = rightFields.get(field.name);
+    const other = otherField?.value ?? right.additionalValues;
+    if (other) {
+      const relation = valueWireRelation(field.value, other);
+      if (relation === 'disjoint' && (field.required || otherField?.required)) {
+        return 'disjoint';
+      }
+      relations.push(relation);
+    }
+  }
+  for (const field of right.fields) {
+    if (leftFields.has(field.name)) {
+      continue;
+    }
+    if (left.additionalValues) {
+      const relation = valueWireRelation(left.additionalValues, field.value);
+      if (relation === 'disjoint' && field.required) {
+        return 'disjoint';
+      }
+      relations.push(relation);
+    }
+  }
+  if (left.additionalValues && right.additionalValues) {
+    relations.push(valueWireRelation(left.additionalValues, right.additionalValues));
+  }
+  return relations.includes('ambiguous') ? 'ambiguous' : 'same-decoding';
+}
+
+function valueWireRelation(left: ValueContractV3, right: ValueContractV3): WireRelation {
+  if (left.kind === 'unsupported' || right.kind === 'unsupported') {
+    return 'ambiguous';
+  }
+  if (left.kind === 'union') {
+    return combineWireRelations(left.options.map(option => valueWireRelation(option, right)));
+  }
+  if (right.kind === 'union') {
+    return combineWireRelations(right.options.map(option => valueWireRelation(left, option)));
+  }
+  if (left.kind === 'record' && right.kind === 'record') {
+    return recordWireRelation(left, right);
+  }
+  if (left.kind === 'record' && taggedEnvelopeShapes(right).length > 0) {
+    return taggedRecordRelation(left, right);
+  }
+  if (right.kind === 'record' && taggedEnvelopeShapes(left).length > 0) {
+    return taggedRecordRelation(right, left);
+  }
+  if (left.kind === 'sequence' && right.kind === 'sequence') {
+    return valueWireRelation(left.item, right.item) === 'ambiguous' ? 'ambiguous' : 'same-decoding';
+  }
+  if (left.kind === 'tuple' && right.kind === 'tuple') {
+    if (left.items.length !== right.items.length) {
+      return 'disjoint';
+    }
+    const relations = left.items.map((item, index) => valueWireRelation(item, right.items[index]!));
+    return relations.includes('disjoint') ? 'disjoint' : combineWireRelations(relations);
+  }
+  if (left.kind === 'sequence' && right.kind === 'tuple') {
+    const relations = right.items.map(item => valueWireRelation(left.item, item));
+    return relations.includes('disjoint') ? 'disjoint' : combineWireRelations(relations);
+  }
+  if (left.kind === 'tuple' && right.kind === 'sequence') {
+    return valueWireRelation(right, left);
+  }
+  if (
+    (left.kind === 'integer' && right.kind === 'float') ||
+    (left.kind === 'float' && right.kind === 'integer')
+  ) {
+    return 'same-decoding';
+  }
+  return left.kind === right.kind ? 'same-decoding' : 'disjoint';
+}
+
 function resolveUnion(
   options: readonly PythonType[],
   request: ValueConversionRequest,
@@ -340,6 +557,17 @@ function resolveUnion(
       reason: 'An exact integer tag can overlap a record wire value.',
       guidance: 'Use a disjoint tagged record instead of this union.',
     };
+  }
+  for (let index = 0; index < values.length; index += 1) {
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      if (valueWireRelation(values[earlier]!.value, values[index]!.value) === 'ambiguous') {
+        return {
+          status: 'unsupported',
+          reason: 'Union alternatives can share a wire value but decode differently.',
+          guidance: 'Use a disjoint tagged record or split the union.',
+        };
+      }
+    }
   }
   return {
     status: 'supported',
