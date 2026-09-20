@@ -1,0 +1,36 @@
+{
+  "revision": 3,
+  "integerCases": [
+    {
+      "logicalDecimal": "0",
+      "envelope": { "__tywrap__": "integer", "codecVersion": 2, "encoding": "decimal", "value": "0" }
+    },
+    {
+      "logicalDecimal": "9007199254740991",
+      "envelope": { "__tywrap__": "integer", "codecVersion": 2, "encoding": "decimal", "value": "9007199254740991" }
+    },
+    {
+      "logicalDecimal": "18446744073709551617",
+      "envelope": { "__tywrap__": "integer", "codecVersion": 2, "encoding": "decimal", "value": "18446744073709551617" }
+    },
+    {
+      "logicalDecimal": "-18446744073709551617",
+      "envelope": {
+        "__tywrap__": "integer",
+        "codecVersion": 2,
+        "encoding": "decimal",
+        "value": "-18446744073709551617"
+      }
+    }
+  ],
+  "rejectedDecimals": ["-0", "+1", "01", "1.0", "1e3", "١", ""],
+  "floatNegativeZero": {
+    "envelope": { "__tywrap__": "float", "codecVersion": 2, "encoding": "negative-zero" },
+    "decodedAs": "negative zero"
+  },
+  "migration": {
+    "default": "Python int remains a safe JavaScript number under revision 2",
+    "opted": "Python int becomes bigint at every declared integer node under revision 3",
+    "caller": "bigint arithmetic and JSON persistence require explicit handling"
+  }
+}
