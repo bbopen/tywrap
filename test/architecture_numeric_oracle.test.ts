@@ -129,12 +129,16 @@ describe('architecture numeric oracle', () => {
       if (!entry) throw new Error(`Python oracle omitted word ${word}`);
       if (isNonFinite(entry[0])) {
         nonFiniteCount += 1;
-        expect(entry[1]).toBe(false);
+        if (entry[1]) throw new Error(`Non-finite word 0x${word.toString(16)} has a zero flag`);
         continue;
       }
       const value = Number(entry[0]);
-      expect(Number.isFinite(value), `word 0x${word.toString(16)}`).toBe(true);
-      expect(Object.is(value, -0), `word 0x${word.toString(16)}`).toBe(entry[1]);
+      if (!Number.isFinite(value)) {
+        throw new Error(`Python oracle word 0x${word.toString(16)} is not finite`);
+      }
+      if (Object.is(value, -0) !== entry[1]) {
+        throw new Error(`Python oracle word 0x${word.toString(16)} has the wrong zero flag`);
+      }
       words.push(word);
       expected.push(value);
     }
