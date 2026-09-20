@@ -46,7 +46,25 @@ function exactKeys(
 }
 
 function checkPayload(value: unknown, limit: number): void {
-  const encoded = JSON.stringify(value);
+  const assertUnicodeScalars = (text: string): void => {
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const next = text.charCodeAt(index + 1);
+        if (!(next >= 0xdc00 && next <= 0xdfff)) {
+          throw new PrototypeError('payload contains an unpaired Unicode surrogate');
+        }
+        index += 1;
+      } else if (code >= 0xdc00 && code <= 0xdfff) {
+        throw new PrototypeError('payload contains an unpaired Unicode surrogate');
+      }
+    }
+  };
+  const encoded = JSON.stringify(value, (key, item: unknown) => {
+    assertUnicodeScalars(key);
+    if (typeof item === 'string') assertUnicodeScalars(item);
+    return item;
+  });
   if (encoded === undefined || new TextEncoder().encode(encoded).length > limit) {
     throw new PrototypeError(`payload exceeds ${limit} bytes`);
   }

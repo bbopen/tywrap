@@ -18,10 +18,12 @@ capability, so the wrapper rejects the call before sending a tag.
 
 The version 2 integer envelope is
 `{"__tywrap__":"integer","codecVersion":2,"encoding":"decimal","value":"18446744073709551617"}`.
-The decimal must match `^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$`. This excludes `-0`,
-leading zeros, plus signs, spaces, exponents, and Unicode digits. The value
-permits at most 4096 digits, excluding the sign. It uses at most 4097 ASCII
-bytes. Whole request and response byte limits still apply.
+`codecVersion` uses the parsed JSON numeric value. The lexemes `2`, `2.0`, and
+`2e0` all mean version 2. Booleans and strings do not. The decimal must match
+`^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$`. This excludes `-0`, leading zeros, plus
+signs, spaces, exponents, and Unicode digits. The value permits at most 4096
+digits, excluding the sign. It uses at most 4097 ASCII bytes. Whole request and
+response byte limits still apply.
 
 The TypeScript encoder tags every `bigint`, including safe values. The Python
 request decoder requires the tag at each declared integer node. It rejects raw
@@ -46,6 +48,11 @@ Both prototypes walk nested arrays and string-keyed records within depth and
 node limits. They reject unsupported values and malformed envelopes. Encoders
 reject cycles with paths. Ordinary records cannot use `__tywrap__` as a key
 because the decoder reserves it for envelopes.
+
+The prototype counts UTF-8 bytes of compact JSON. Python emits Unicode
+characters directly, as `JSON.stringify` does. Both paths reject unpaired
+surrogates. Production must check raw wire bytes before parsing; object-level
+checks do not prove equal byte counts for alternate numeric JSON spellings.
 
 The bounded tests must round trip positive and negative values beyond 64 bits.
 They must cover floats, booleans, nested records, malformed tags, digit limits,
@@ -75,6 +82,11 @@ fields before it removes the envelope. It returns a plain record. A
 module-private `WeakMap` stores verified type identity. The return validator
 reads that entry before it checks field keys and values. A plain record cannot
 claim dataclass origin. A nested dataclass gets its own entry.
+
+The Python prototype checks the declared root dataclass type. It serializes
+nested dataclasses by their observed runtime type and does not check a compiled
+field contract. The TypeScript decoder rejects unexpected nested identities or
+field values. Server-side field validation remains open.
 
 The bounded prototype still needs a generated `Promise<Point>` wrapper from the
 actual compiler model. It must return `{x: 1, y: 2}` and reject missing, extra,

@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -131,6 +131,22 @@ describe('exact integer rejection prototype', () => {
     expect(() => encodeExactRequest(1n, integer, 20)).toThrow(/payload exceeds 20 bytes/);
   });
 
+  it('counts compact UTF-8 JSON bytes for Unicode strings and nested records', () => {
+    const text: PrototypeContract = { kind: 'string' };
+    expect(encodeExactRequest('é', text, 4)).toBe('é');
+    expect(() => encodeExactRequest('é', text, 3)).toThrow(/payload exceeds 3 bytes/);
+
+    const nested = { café: ['🍵', 'é'] };
+    const nestedContract: PrototypeContract = {
+      kind: 'record',
+      fields: { café: { kind: 'array', item: text } },
+    };
+    const limit = new TextEncoder().encode('{"café":["🍵","é"]}').length;
+    expect(encodeExactRequest(nested, nestedContract, limit)).toEqual(nested);
+    expect(() => encodeExactRequest(nested, nestedContract, limit - 1)).toThrow(/payload exceeds/);
+    expect(() => encodeExactRequest('\ud800', text)).toThrow(/unpaired Unicode surrogate/);
+  });
+
   it('rejects a record key reserved for envelopes', () => {
     const record: PrototypeContract = {
       kind: 'record',
@@ -151,6 +167,53 @@ describe('exact integer rejection prototype', () => {
     ).toThrow(/invalid float envelope/);
   });
 });
+
+describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
+  'cross-language version and Unicode policy',
+  () => {
+    it.each([
+      ['2', true],
+      ['2.0', true],
+      ['2e0', true],
+      ['true', false],
+      ['"2"', false],
+      ['2.5', false],
+      ['null', false],
+    ] as const)('agrees on integer envelope version %s', (version, accepted) => {
+      const raw = `{"meta":{"valueCapabilities":["exactIntegerDecimalV2"]},"policy":"bigint-v2","value":{"__tywrap__":"integer","codecVersion":${version},"encoding":"decimal","value":"7"}}`;
+      const request = JSON.parse(raw) as { value: unknown };
+      if (accepted) {
+        expect(decodeExactResponse(request.value, { kind: 'integer' })).toBe(7n);
+      } else {
+        expect(() => decodeExactResponse(request.value, { kind: 'integer' })).toThrow();
+      }
+      const python = spawnSync(pythonPath, [pythonScript, 'roundtrip-single-integer'], {
+        input: raw,
+        encoding: 'utf8',
+      });
+      expect(python.status === 0).toBe(accepted);
+      if (accepted) {
+        expect(JSON.parse(python.stdout)).toEqual({
+          __tywrap__: 'integer',
+          codecVersion: 2,
+          encoding: 'decimal',
+          value: '7',
+        });
+      }
+    });
+
+    it('agrees on nested Unicode and rejects unpaired surrogates', () => {
+      const nested = { café: ['🍵', 'é'] };
+      expect(pythonAction('encode-integer', JSON.stringify(nested))).toEqual(nested);
+      const bad = spawnSync(pythonPath, [pythonScript, 'encode-integer'], {
+        input: JSON.stringify('\ud800'),
+        encoding: 'utf8',
+      });
+      expect(bad.status).not.toBe(0);
+      expect(bad.stderr).toContain('PrototypeError');
+    });
+  }
+);
 
 describe.skipIf(!PYTHON_AVAILABLE || !existsSync(pythonScript))(
   'dataclass output prototype',
