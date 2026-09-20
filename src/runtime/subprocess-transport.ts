@@ -267,6 +267,15 @@ export class SubprocessTransport extends DisposableBase implements Transport {
   private processExited = false;
   private processError: Error | null = null;
   private readonly shutdownHandlers = new WeakSet<ChildProcess>();
+  private readonly processErrorListener = (error: Error): void => this.handleProcessError(error);
+  private readonly stdoutDataListener = (chunk: Buffer | string): void =>
+    this.handleStdoutData(chunk);
+  private readonly stdoutErrorListener = (error: Error): void => this.handleStdoutError(error);
+  private readonly stderrDataListener = (chunk: Buffer | string): void =>
+    this.handleStderrData(chunk);
+  private readonly stderrErrorListener = (error: Error): void => this.handleStderrError(error);
+  private readonly stdinErrorListener = (error: Error): void => this.handleStdinError(error);
+  private readonly stdinDrainListener = (): void => this.handleStdinDrain();
   private disposalInFlight?: Promise<void>;
 
   // Stream buffers
@@ -478,7 +487,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
           return this.writeRequest(message, messageId, signal, pendingEntry);
         })
         .catch(err => {
-          this.pending.delete(messageId);
+          if (this.pending.get(messageId) === pendingEntry) {
+            this.pending.delete(messageId);
+          }
           if (timer) {
             clearTimeout(timer);
           }
@@ -700,22 +711,22 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.processError = null;
 
     // Set up event handlers
-    this.process.on('error', this.handleProcessError.bind(this));
+    this.process.on('error', this.processErrorListener);
     this.process.on('exit', this.handleProcessExit.bind(this));
 
     if (this.process.stdout) {
-      this.process.stdout.on('data', this.handleStdoutData.bind(this));
-      this.process.stdout.on('error', this.handleStdoutError.bind(this));
+      this.process.stdout.on('data', this.stdoutDataListener);
+      this.process.stdout.on('error', this.stdoutErrorListener);
     }
 
     if (this.process.stderr) {
-      this.process.stderr.on('data', this.handleStderrData.bind(this));
-      this.process.stderr.on('error', this.handleStderrError.bind(this));
+      this.process.stderr.on('data', this.stderrDataListener);
+      this.process.stderr.on('error', this.stderrErrorListener);
     }
 
     if (this.process.stdin) {
-      this.process.stdin.on('drain', this.handleStdinDrain.bind(this));
-      this.process.stdin.on('error', this.handleStdinError.bind(this));
+      this.process.stdin.on('drain', this.stdinDrainListener);
+      this.process.stdin.on('error', this.stdinErrorListener);
     }
 
     // Wait for process to be ready (first heartbeat could be here)
@@ -735,14 +746,22 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.process = null;
     this.processExited = true;
 
-    // Add a catch-all error handler to prevent uncaught exceptions during shutdown
-    // This must be added BEFORE removing other listeners and ending stdin
+    // Keep shutdown errors handled without letting the retired child change a new process.
     if (!this.shutdownHandlers.has(proc)) {
       const noopErrorHandler = (): void => {
         // Ignore errors during shutdown (e.g., EPIPE)
       };
       proc.stdin?.on('error', noopErrorHandler);
       proc.on('error', noopErrorHandler);
+      proc.stdout?.on('error', noopErrorHandler);
+      proc.stderr?.on('error', noopErrorHandler);
+      proc.stdin?.removeListener('error', this.stdinErrorListener);
+      proc.removeListener('error', this.processErrorListener);
+      proc.stdin?.removeListener('drain', this.stdinDrainListener);
+      proc.stdout?.removeListener('data', this.stdoutDataListener);
+      proc.stdout?.removeListener('error', this.stdoutErrorListener);
+      proc.stderr?.removeListener('data', this.stderrDataListener);
+      proc.stderr?.removeListener('error', this.stderrErrorListener);
       this.shutdownHandlers.add(proc);
     }
 
@@ -753,11 +772,9 @@ export class SubprocessTransport extends DisposableBase implements Transport {
       // Ignore errors ending stdin
     }
 
-    // Remove other listeners to prevent callbacks after disposal
+    // Remove live exit callbacks before waiting for this child to exit.
     proc.removeAllListeners('exit');
     proc.removeAllListeners('close');
-    proc.stdout?.removeAllListeners();
-    proc.stderr?.removeAllListeners();
 
     const hasExited = (): boolean =>
       (proc.exitCode !== null && proc.exitCode !== undefined) ||
@@ -833,6 +850,11 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     await this.retirement;
     this.retirement = undefined;
 
+    // Old queued writes belong to the old stdin, even if it never drained.
+    this.rejectAllQueuedWrites(
+      new BridgeProtocolError('Python worker restarted before queued writes completed')
+    );
+
     // Kill existing process
     await this.killProcess();
 
@@ -842,6 +864,7 @@ export class SubprocessTransport extends DisposableBase implements Transport {
     this.stderrBuffer = '';
     this.requestCount = 0;
     this.needsRestart = false;
+    this.draining = false;
     // Drop any partial reassembly + discard tracking: the new process owns a
     // fresh stdout stream, so stale per-id state from the dead process must not
     // leak across the restart boundary.
