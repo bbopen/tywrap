@@ -480,10 +480,18 @@ export async function generate(
           : methodIndex >= 0
             ? `$.classes[${classIndex}].methods[${methodIndex}]`
             : '';
-        const result = compiled.callables.find(callable => callable.path === path)?.result.resolution;
-        if (result?.status === 'supported' && (
-          (result.value.kind === 'ndarray-float16' && candidate?.startsWith('numpy.')) ||
-          (result.value.kind === 'torch-float16' && candidate?.startsWith('torch.'))
+        const callableResult = compiled.callables.find(callable => callable.path === path)?.result;
+        const logicalType = callableResult?.logicalType;
+        const outerName = logicalType &&
+          (logicalType.kind === 'custom' || logicalType.kind === 'generic') &&
+          logicalType.module
+          ? `${logicalType.module}.${logicalType.name}`
+          : undefined;
+        const resolution = callableResult?.resolution;
+        if (resolution?.status === 'supported' && candidate === outerName && (
+          (resolution.value.kind === 'ndarray-float16' &&
+            (candidate === 'numpy.ndarray' || candidate === 'numpy.typing.NDArray')) ||
+          (resolution.value.kind === 'torch-float16' && candidate === 'torch.Tensor')
         )) {
           continue;
         }

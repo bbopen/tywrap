@@ -132,6 +132,7 @@ describe('pinned IR contracts', () => {
 
       const foreign = JSON.parse(await readFile(contractPath, 'utf8')) as {
         functions: Array<{ returns: string }>;
+        warnings: string[];
       };
       foreign.functions[0]!.returns =
         'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[external.float16]]';
@@ -142,6 +143,16 @@ describe('pinned IR contracts', () => {
       )).toBe(true);
       expect(rejected.warnings.some(warning =>
         warning.includes('resolves outside analyzed module: numpy.ndarray')
+      )).toBe(true);
+
+      foreign.functions[0]!.returns =
+        'numpy.ndarray[tuple[typing.Any, ...], numpy.dtype[numpy.float16]]';
+      foreign.warnings[0] =
+        'Return annotation for scientific_fixture.value resolves outside analyzed module: numpy.Opaque.';
+      await writeFile(contractPath, JSON.stringify(foreign), 'utf8');
+      const unrelated = await generate(configured);
+      expect(unrelated.warnings.some(warning =>
+        warning.includes('resolves outside analyzed module: numpy.Opaque')
       )).toBe(true);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
